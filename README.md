@@ -2,6 +2,9 @@
 
 _Mixxx image for the raspberry pi_
 
+Project setup notes, daily progress, hardware details, music workflows, and
+query-friendly runbooks live in the [Mixxx Pi notebook](docs/README.md).
+
 Raspberry pi image - start DJing in minutes with a raspberry pi, screen and DJ controller.
 
  [![Get the latest release](https://img.shields.io/github/release-date/fayaaz/mixxx-pi-gen)](https://github.com/fayaaz/mixxx-pi-gen/releases/latest)

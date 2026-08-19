@@ -1,0 +1,619 @@
+{
+  "name": "Songs I like",
+  "source": "Spotify playlist \"Songs I like\" via SongData.io",
+  "spotify_id": "6BKhthuThNehjtAJZi3hv6",
+  "exported": "2026-08-19",
+  "order": "Harmonic (SongData display order); mix-compatible Camelot keys sit together.",
+  "tracks": [
+    {
+      "crate_position": 1,
+      "playlist_position": 6,
+      "track": "More",
+      "artist": "Flying Lotus, Anderson.Paak",
+      "key": "B Minor",
+      "camelot": "10A",
+      "bpm": 97,
+      "energy": 8
+    },
+    {
+      "crate_position": 2,
+      "playlist_position": 14,
+      "track": "And Then",
+      "artist": "James Tillman",
+      "key": "B Minor",
+      "camelot": "10A",
+      "bpm": 152,
+      "energy": 4
+    },
+    {
+      "crate_position": 3,
+      "playlist_position": 34,
+      "track": "Johny Says Stay Cool",
+      "artist": "Babe Rainbow",
+      "key": "B Minor",
+      "camelot": "10A",
+      "bpm": 137,
+      "energy": 7
+    },
+    {
+      "crate_position": 4,
+      "playlist_position": 36,
+      "track": "Vienna 1971",
+      "artist": "Oranj Goodman",
+      "key": "B Minor",
+      "camelot": "10A",
+      "bpm": 146,
+      "energy": 7
+    },
+    {
+      "crate_position": 5,
+      "playlist_position": 44,
+      "track": "Baby My Love",
+      "artist": "The In Crowd, Jah Stitch",
+      "key": "B Minor",
+      "camelot": "10A",
+      "bpm": 132,
+      "energy": 7
+    },
+    {
+      "crate_position": 6,
+      "playlist_position": 57,
+      "track": "Propaganda",
+      "artist": "Salami Rose Joe Louis, Brijean",
+      "key": "B Minor",
+      "camelot": "10A",
+      "bpm": 105,
+      "energy": 4
+    },
+    {
+      "crate_position": 7,
+      "playlist_position": 33,
+      "track": "Ride or Die",
+      "artist": "Durand Jones & The Indications, Aaron Frazer",
+      "key": "D Major",
+      "camelot": "10B",
+      "bpm": 102,
+      "energy": 6
+    },
+    {
+      "crate_position": 8,
+      "playlist_position": 53,
+      "track": "Icarus",
+      "artist": "Planet Giza",
+      "key": "D Major",
+      "camelot": "10B",
+      "bpm": 108,
+      "energy": 4
+    },
+    {
+      "crate_position": 9,
+      "playlist_position": 11,
+      "track": "Azula",
+      "artist": "Joseph Chilliams, FIG",
+      "key": "F♯ Minor",
+      "camelot": "11A",
+      "bpm": 154,
+      "energy": 6
+    },
+    {
+      "crate_position": 10,
+      "playlist_position": 51,
+      "track": "Moliendo Café",
+      "artist": "Aldemaro y su Onda Nueva",
+      "key": "F♯ Minor",
+      "camelot": "11A",
+      "bpm": 172,
+      "energy": 3
+    },
+    {
+      "crate_position": 11,
+      "playlist_position": 5,
+      "track": "Tesselation",
+      "artist": "Mild High Club",
+      "key": "A Major",
+      "camelot": "11B",
+      "bpm": 74,
+      "energy": 4
+    },
+    {
+      "crate_position": 12,
+      "playlist_position": 28,
+      "track": "Above Below - Nick Hakim Remix",
+      "artist": "Eddie Chacon",
+      "key": "A Major",
+      "camelot": "11B",
+      "bpm": 155,
+      "energy": 9
+    },
+    {
+      "crate_position": 13,
+      "playlist_position": 39,
+      "track": "Amari's Call",
+      "artist": "Dr. Mad",
+      "key": "A Major",
+      "camelot": "11B",
+      "bpm": 176,
+      "energy": 7
+    },
+    {
+      "crate_position": 14,
+      "playlist_position": 58,
+      "track": "In My Head",
+      "artist": "Queens of the Stone Age",
+      "key": "A Major",
+      "camelot": "11B",
+      "bpm": 134,
+      "energy": 9
+    },
+    {
+      "crate_position": 15,
+      "playlist_position": 55,
+      "track": "Why War",
+      "artist": "Christine Salem",
+      "key": "D♭ Minor",
+      "camelot": "12A",
+      "bpm": 157,
+      "energy": 4
+    },
+    {
+      "crate_position": 16,
+      "playlist_position": 60,
+      "track": "SIDEKICK (with Joyce Wrice) - BONUS",
+      "artist": "Jordan Ward, Joyce Wrice",
+      "key": "D♭ Minor",
+      "camelot": "12A",
+      "bpm": 84,
+      "energy": 3
+    },
+    {
+      "crate_position": 17,
+      "playlist_position": 2,
+      "track": "On the Level",
+      "artist": "Mac DeMarco",
+      "key": "A♭ Minor",
+      "camelot": "1A",
+      "bpm": 77,
+      "energy": 5
+    },
+    {
+      "crate_position": 18,
+      "playlist_position": 20,
+      "track": "Closed Place, Open World",
+      "artist": "Slauson Malone 1",
+      "key": "A♭ Minor",
+      "camelot": "1A",
+      "bpm": 98,
+      "energy": 4
+    },
+    {
+      "crate_position": 19,
+      "playlist_position": 3,
+      "track": "Dark & Handsome",
+      "artist": "Blood Orange, Toro y Moi",
+      "key": "B Major",
+      "camelot": "1B",
+      "bpm": 80,
+      "energy": 4
+    },
+    {
+      "crate_position": 20,
+      "playlist_position": 17,
+      "track": "Cycles (feat. Hiatus Kaiyote)",
+      "artist": "Shafiq Husayn, Hiatus Kaiyote",
+      "key": "B Major",
+      "camelot": "1B",
+      "bpm": 94,
+      "energy": 8
+    },
+    {
+      "crate_position": 21,
+      "playlist_position": 30,
+      "track": "Teen Scene (ft. Buddy)",
+      "artist": "Maeta, Buddy",
+      "key": "B Major",
+      "camelot": "1B",
+      "bpm": 215,
+      "energy": 7
+    },
+    {
+      "crate_position": 22,
+      "playlist_position": 49,
+      "track": "Villa",
+      "artist": "El Michels Affair",
+      "key": "B Major",
+      "camelot": "1B",
+      "bpm": 168,
+      "energy": 7
+    },
+    {
+      "crate_position": 23,
+      "playlist_position": 19,
+      "track": "Plastic 100°C",
+      "artist": "Sampha",
+      "key": "E♭ Minor",
+      "camelot": "2A",
+      "bpm": 132,
+      "energy": 4
+    },
+    {
+      "crate_position": 24,
+      "playlist_position": 46,
+      "track": "Please Don't Play with Fire",
+      "artist": "One Acen, Jme",
+      "key": "E♭ Minor",
+      "camelot": "2A",
+      "bpm": 104,
+      "energy": 6
+    },
+    {
+      "crate_position": 25,
+      "playlist_position": 48,
+      "track": "GHOST RIDE",
+      "artist": "BLK ODYSSY, Mereba",
+      "key": "E♭ Minor",
+      "camelot": "2A",
+      "bpm": 147,
+      "energy": 4
+    },
+    {
+      "crate_position": 26,
+      "playlist_position": 27,
+      "track": "Everybody Loves the Sunshine",
+      "artist": "Kiefer, Theo Croker",
+      "key": "F♯ Major",
+      "camelot": "2B",
+      "bpm": 67,
+      "energy": 6
+    },
+    {
+      "crate_position": 27,
+      "playlist_position": 37,
+      "track": "Marvin's Mood",
+      "artist": "Stro Elliot",
+      "key": "F♯ Major",
+      "camelot": "2B",
+      "bpm": 92,
+      "energy": 9
+    },
+    {
+      "crate_position": 28,
+      "playlist_position": 50,
+      "track": "Rafiki",
+      "artist": "Zap Mama",
+      "key": "B♭ Minor",
+      "camelot": "3A",
+      "bpm": 97,
+      "energy": 8
+    },
+    {
+      "crate_position": 29,
+      "playlist_position": 59,
+      "track": "Nobody",
+      "artist": "Skindred",
+      "key": "B♭ Minor",
+      "camelot": "3A",
+      "bpm": 98,
+      "energy": 9
+    },
+    {
+      "crate_position": 30,
+      "playlist_position": 12,
+      "track": "We're All Gonna Be Killed",
+      "artist": "Terrell Hines",
+      "key": "D♭ Major",
+      "camelot": "3B",
+      "bpm": 111,
+      "energy": 7
+    },
+    {
+      "crate_position": 31,
+      "playlist_position": 24,
+      "track": "Shine",
+      "artist": "Cleo Sol",
+      "key": "D♭ Major",
+      "camelot": "3B",
+      "bpm": 140,
+      "energy": 5
+    },
+    {
+      "crate_position": 32,
+      "playlist_position": 25,
+      "track": "Cig Angel",
+      "artist": "Galcher Lustwerk",
+      "key": "D♭ Major",
+      "camelot": "3B",
+      "bpm": 114,
+      "energy": 3
+    },
+    {
+      "crate_position": 33,
+      "playlist_position": 43,
+      "track": "I'm a Rock",
+      "artist": "Jitwam",
+      "key": "D♭ Major",
+      "camelot": "3B",
+      "bpm": 111,
+      "energy": 5
+    },
+    {
+      "crate_position": 34,
+      "playlist_position": 13,
+      "track": "Self Love",
+      "artist": "MAVI",
+      "key": "F Minor",
+      "camelot": "4A",
+      "bpm": 73,
+      "energy": 7
+    },
+    {
+      "crate_position": 35,
+      "playlist_position": 45,
+      "track": "Losalamitoslatinfunklovesong",
+      "artist": "Gene Harris",
+      "key": "F Minor",
+      "camelot": "4A",
+      "bpm": 135,
+      "energy": 7
+    },
+    {
+      "crate_position": 36,
+      "playlist_position": 16,
+      "track": "Why Don't You",
+      "artist": "Cleo Sol",
+      "key": "C Minor",
+      "camelot": "5A",
+      "bpm": 55,
+      "energy": 6
+    },
+    {
+      "crate_position": 37,
+      "playlist_position": 31,
+      "track": "Shadow Man (feat. Phoelix, Smino & Saba)",
+      "artist": "Noname, Phoelix, Smino, Saba",
+      "key": "C Minor",
+      "camelot": "5A",
+      "bpm": 93,
+      "energy": 5
+    },
+    {
+      "crate_position": 38,
+      "playlist_position": 7,
+      "track": "Suede",
+      "artist": "NxWorries, Anderson.Paak, Knxwledge",
+      "key": "G Minor",
+      "camelot": "6A",
+      "bpm": 117,
+      "energy": 7
+    },
+    {
+      "crate_position": 39,
+      "playlist_position": 40,
+      "track": "I Deserve (w/ NOS.)",
+      "artist": "Smino, NOS.",
+      "key": "G Minor",
+      "camelot": "6A",
+      "bpm": 145,
+      "energy": 5
+    },
+    {
+      "crate_position": 40,
+      "playlist_position": 41,
+      "track": "Écoute Chérie",
+      "artist": "Vendredi sur Mer",
+      "key": "G Minor",
+      "camelot": "6A",
+      "bpm": 138,
+      "energy": 2
+    },
+    {
+      "crate_position": 41,
+      "playlist_position": 29,
+      "track": "MANGO (feat. Adi Oasis)",
+      "artist": "KAMAUU, Adi Oasis",
+      "key": "D Minor",
+      "camelot": "7A",
+      "bpm": 83,
+      "energy": 6
+    },
+    {
+      "crate_position": 42,
+      "playlist_position": 35,
+      "track": "Love Will Work It Out",
+      "artist": "Durand Jones & The Indications, Durand Jones, Aaron Frazer",
+      "key": "D Minor",
+      "camelot": "7A",
+      "bpm": 82,
+      "energy": 5
+    },
+    {
+      "crate_position": 43,
+      "playlist_position": 52,
+      "track": "Lemonhaze",
+      "artist": "PawPaw Rod",
+      "key": "D Minor",
+      "camelot": "7A",
+      "bpm": 102,
+      "energy": 5
+    },
+    {
+      "crate_position": 44,
+      "playlist_position": 61,
+      "track": "Makeda",
+      "artist": "Les Nubians",
+      "key": "F Major",
+      "camelot": "7B",
+      "bpm": 86,
+      "energy": 5
+    },
+    {
+      "crate_position": 45,
+      "playlist_position": 9,
+      "track": "Golden Wings",
+      "artist": "Gabriel Garzón- Montano",
+      "key": "A Minor",
+      "camelot": "8A",
+      "bpm": 91,
+      "energy": 6
+    },
+    {
+      "crate_position": 46,
+      "playlist_position": 10,
+      "track": "Hot Cheetos",
+      "artist": "MonoNeon",
+      "key": "A Minor",
+      "camelot": "8A",
+      "bpm": 93,
+      "energy": 8
+    },
+    {
+      "crate_position": 47,
+      "playlist_position": 32,
+      "track": "Strawberry Letter 23",
+      "artist": "Shuggie Otis",
+      "key": "A Minor",
+      "camelot": "8A",
+      "bpm": 171,
+      "energy": 5
+    },
+    {
+      "crate_position": 48,
+      "playlist_position": 42,
+      "track": "In the Air",
+      "artist": "L.A.B.",
+      "key": "A Minor",
+      "camelot": "8A",
+      "bpm": 118,
+      "energy": 6
+    },
+    {
+      "crate_position": 49,
+      "playlist_position": 1,
+      "track": "Shirim",
+      "artist": "Melody's Echo Chamber",
+      "key": "C Major",
+      "camelot": "8B",
+      "bpm": 101,
+      "energy": 7
+    },
+    {
+      "crate_position": 50,
+      "playlist_position": 21,
+      "track": "Lament for the Sky",
+      "artist": "Acidslop",
+      "key": "C Major",
+      "camelot": "8B",
+      "bpm": 103,
+      "energy": 4
+    },
+    {
+      "crate_position": 51,
+      "playlist_position": 18,
+      "track": "Atari",
+      "artist": "Nai Palm",
+      "key": "E Minor",
+      "camelot": "9A",
+      "bpm": 153,
+      "energy": 3
+    },
+    {
+      "crate_position": 52,
+      "playlist_position": 26,
+      "track": "Lost in A Lonely World",
+      "artist": "The Ethics",
+      "key": "E Minor",
+      "camelot": "9A",
+      "bpm": 105,
+      "energy": 1
+    },
+    {
+      "crate_position": 53,
+      "playlist_position": 38,
+      "track": "Redstripe Rhapsody",
+      "artist": "LAUSSE THE CAT",
+      "key": "E Minor",
+      "camelot": "9A",
+      "bpm": 120,
+      "energy": 3
+    },
+    {
+      "crate_position": 54,
+      "playlist_position": 47,
+      "track": "Stormy",
+      "artist": "Gábor Szabó",
+      "key": "E Minor",
+      "camelot": "9A",
+      "bpm": 116,
+      "energy": 3
+    },
+    {
+      "crate_position": 55,
+      "playlist_position": 4,
+      "track": "Ordinary Pleasure",
+      "artist": "Toro y Moi",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 115,
+      "energy": 8
+    },
+    {
+      "crate_position": 56,
+      "playlist_position": 8,
+      "track": "Piece of Mind",
+      "artist": "Linkwood Family",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 103,
+      "energy": 8
+    },
+    {
+      "crate_position": 57,
+      "playlist_position": 15,
+      "track": "Red Room",
+      "artist": "Hiatus Kaiyote",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 81,
+      "energy": 4
+    },
+    {
+      "crate_position": 58,
+      "playlist_position": 22,
+      "track": "Sensitive",
+      "artist": "Dreamer Isioma",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 90,
+      "energy": 6
+    },
+    {
+      "crate_position": 59,
+      "playlist_position": 23,
+      "track": "_21",
+      "artist": "Liv.e",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 84,
+      "energy": 7
+    },
+    {
+      "crate_position": 60,
+      "playlist_position": 54,
+      "track": "Father - Alt. Version",
+      "artist": "CARRTOONS, Rae Khalil",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 88,
+      "energy": 7
+    },
+    {
+      "crate_position": 61,
+      "playlist_position": 56,
+      "track": "Souvenir d'Italie",
+      "artist": "Lelio Luttazzi",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 97,
+      "energy": 5
+    }
+  ]
+}

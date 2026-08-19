@@ -1,0 +1,439 @@
+{
+  "name": "Lotus 72 D",
+  "source": "Spotify playlist \"Lotus 72 D\" via SongData.io",
+  "spotify_id": "4A2BRCIs6cKp0UO9jMtlvn",
+  "exported": "2026-08-19",
+  "order": "Harmonic (SongData display order); mix-compatible Camelot keys sit together.",
+  "tracks": [
+    {
+      "crate_position": 1,
+      "playlist_position": 14,
+      "track": "Volare",
+      "artist": "Rafael Cortijo",
+      "key": "D Major",
+      "camelot": "10B",
+      "bpm": 104,
+      "energy": 7
+    },
+    {
+      "crate_position": 2,
+      "playlist_position": 2,
+      "track": "Tonadas de Ordeño",
+      "artist": "Soledad Bravo",
+      "key": "F♯ Minor",
+      "camelot": "11A",
+      "bpm": 95,
+      "energy": 0
+    },
+    {
+      "crate_position": 3,
+      "playlist_position": 4,
+      "track": "Moliendo Café",
+      "artist": "Aldemaro y su Onda Nueva",
+      "key": "F♯ Minor",
+      "camelot": "11A",
+      "bpm": 172,
+      "energy": 3
+    },
+    {
+      "crate_position": 4,
+      "playlist_position": 22,
+      "track": "Disse Me Disse",
+      "artist": "Orlandivo",
+      "key": "F♯ Minor",
+      "camelot": "11A",
+      "bpm": 98,
+      "energy": 6
+    },
+    {
+      "crate_position": 5,
+      "playlist_position": 24,
+      "track": "O Samba da Minha Terra",
+      "artist": "Rosinha De Valença",
+      "key": "F♯ Minor",
+      "camelot": "11A",
+      "bpm": 89,
+      "energy": 7
+    },
+    {
+      "crate_position": 6,
+      "playlist_position": 16,
+      "track": "Os Grilos (crickets sing for Ana Maria)",
+      "artist": "Deodato",
+      "key": "A Major",
+      "camelot": "11B",
+      "bpm": 97,
+      "energy": 9
+    },
+    {
+      "crate_position": 7,
+      "playlist_position": 28,
+      "track": "Esperar pra Ver",
+      "artist": "Evinha",
+      "key": "D♭ Minor",
+      "camelot": "12A",
+      "bpm": 98,
+      "energy": 7
+    },
+    {
+      "crate_position": 8,
+      "playlist_position": 27,
+      "track": "Bolero",
+      "artist": "Ahmed Malek",
+      "key": "E Major",
+      "camelot": "12B",
+      "bpm": 131,
+      "energy": 7
+    },
+    {
+      "crate_position": 9,
+      "playlist_position": 31,
+      "track": "Saudade Vem Correndo",
+      "artist": "Stan Getz, Luiz Bonfá, Maria Toledo",
+      "key": "E Major",
+      "camelot": "12B",
+      "bpm": 91,
+      "energy": 3
+    },
+    {
+      "crate_position": 10,
+      "playlist_position": 33,
+      "track": "Truth Spoken Here",
+      "artist": "Dorothy Ashby",
+      "key": "B Major",
+      "camelot": "1B",
+      "bpm": 108,
+      "energy": 6
+    },
+    {
+      "crate_position": 11,
+      "playlist_position": 37,
+      "track": "Autorizando",
+      "artist": "Jorge Autuori",
+      "key": "B Major",
+      "camelot": "1B",
+      "bpm": 155,
+      "energy": 8
+    },
+    {
+      "crate_position": 12,
+      "playlist_position": 26,
+      "track": "Casbah",
+      "artist": "Ahmed Malek",
+      "key": "D♭ Major",
+      "camelot": "3B",
+      "bpm": 168,
+      "energy": 9
+    },
+    {
+      "crate_position": 13,
+      "playlist_position": 6,
+      "track": "Cumbiamba",
+      "artist": "Guillermo Portabales",
+      "key": "F Minor",
+      "camelot": "4A",
+      "bpm": 116,
+      "energy": 3
+    },
+    {
+      "crate_position": 14,
+      "playlist_position": 35,
+      "track": "El Hijo De Mamá",
+      "artist": "Ralfi Pagan",
+      "key": "F Minor",
+      "camelot": "4A",
+      "bpm": 80,
+      "energy": 3
+    },
+    {
+      "crate_position": 15,
+      "playlist_position": 42,
+      "track": "Rebirth (Solo Version)",
+      "artist": "Kara Baldus",
+      "key": "F Minor",
+      "camelot": "4A",
+      "bpm": 80,
+      "energy": 1
+    },
+    {
+      "crate_position": 16,
+      "playlist_position": 34,
+      "track": "How Insensitive",
+      "artist": "Triste Janero",
+      "key": "A♭ Major",
+      "camelot": "4B",
+      "bpm": 104,
+      "energy": 3
+    },
+    {
+      "crate_position": 17,
+      "playlist_position": 11,
+      "track": "Donde",
+      "artist": "Bronx River Parkway",
+      "key": "C Minor",
+      "camelot": "5A",
+      "bpm": 130,
+      "energy": 8
+    },
+    {
+      "crate_position": 18,
+      "playlist_position": 13,
+      "track": "Orfeo en los Tambores",
+      "artist": "Tino Contreras",
+      "key": "C Minor",
+      "camelot": "5A",
+      "bpm": 107,
+      "energy": 8
+    },
+    {
+      "crate_position": 19,
+      "playlist_position": 3,
+      "track": "Groovy Flute",
+      "artist": "Manu Dibango",
+      "key": "E♭ Major",
+      "camelot": "5B",
+      "bpm": 105,
+      "energy": 8
+    },
+    {
+      "crate_position": 20,
+      "playlist_position": 10,
+      "track": "En Este Momento",
+      "artist": "Travesía",
+      "key": "G Minor",
+      "camelot": "6A",
+      "bpm": 110,
+      "energy": 9
+    },
+    {
+      "crate_position": 21,
+      "playlist_position": 20,
+      "track": "Sangre De Africa",
+      "artist": "Patato",
+      "key": "G Minor",
+      "camelot": "6A",
+      "bpm": 108,
+      "energy": 4
+    },
+    {
+      "crate_position": 22,
+      "playlist_position": 38,
+      "track": "Canto De Ossanha",
+      "artist": "Dorothy Ashby",
+      "key": "B♭ Major",
+      "camelot": "6B",
+      "bpm": 93,
+      "energy": 6
+    },
+    {
+      "crate_position": 23,
+      "playlist_position": 9,
+      "track": "Ungawa",
+      "artist": "Louie Ramirez",
+      "key": "D Minor",
+      "camelot": "7A",
+      "bpm": 119,
+      "energy": 5
+    },
+    {
+      "crate_position": 24,
+      "playlist_position": 40,
+      "track": "Tema Barroco",
+      "artist": "Agustin Pereyra Lucena",
+      "key": "D Minor",
+      "camelot": "7A",
+      "bpm": 142,
+      "energy": 3
+    },
+    {
+      "crate_position": 25,
+      "playlist_position": 12,
+      "track": "Yiriyiribon - Mambo Afro",
+      "artist": "Beny Moré, Orquesta Rafael de Paz",
+      "key": "F Major",
+      "camelot": "7B",
+      "bpm": 80,
+      "energy": 5
+    },
+    {
+      "crate_position": 26,
+      "playlist_position": 17,
+      "track": "Grazin' In The Grass",
+      "artist": "Orquesta Harlow, Ismael Miranda",
+      "key": "F Major",
+      "camelot": "7B",
+      "bpm": 119,
+      "energy": 7
+    },
+    {
+      "crate_position": 27,
+      "playlist_position": 41,
+      "track": "Tim-Dom-Dom",
+      "artist": "Joao Donato",
+      "key": "F Major",
+      "camelot": "7B",
+      "bpm": 95,
+      "energy": 6
+    },
+    {
+      "crate_position": 28,
+      "playlist_position": 43,
+      "track": "Florinda",
+      "artist": "Angel Pocho Gatti Y Su Orquesta",
+      "key": "F Major",
+      "camelot": "7B",
+      "bpm": 109,
+      "energy": 3
+    },
+    {
+      "crate_position": 29,
+      "playlist_position": 1,
+      "track": "Lotus 72 D",
+      "artist": "Zé Roberto",
+      "key": "A Minor",
+      "camelot": "8A",
+      "bpm": 91,
+      "energy": 7
+    },
+    {
+      "crate_position": 30,
+      "playlist_position": 30,
+      "track": "Onde Anda o Meu Amor",
+      "artist": "Orlandivo",
+      "key": "A Minor",
+      "camelot": "8A",
+      "bpm": 104,
+      "energy": 4
+    },
+    {
+      "crate_position": 31,
+      "playlist_position": 32,
+      "track": "Corcovado (Quiet Nights Of Quiet Stars) - Single Version",
+      "artist": "Stan Getz, João Gilberto, Astrud Gilberto, Antônio Carlos Jobim",
+      "key": "A Minor",
+      "camelot": "8A",
+      "bpm": 128,
+      "energy": 2
+    },
+    {
+      "crate_position": 32,
+      "playlist_position": 7,
+      "track": "Yo Soy Abacua",
+      "artist": "Willie Rosario and His Orchestra, Frank Figueroa",
+      "key": "C Major",
+      "camelot": "8B",
+      "bpm": 103,
+      "energy": 3
+    },
+    {
+      "crate_position": 33,
+      "playlist_position": 8,
+      "track": "Amigo Branco",
+      "artist": "Marcia Maria",
+      "key": "E Minor",
+      "camelot": "9A",
+      "bpm": 91,
+      "energy": 8
+    },
+    {
+      "crate_position": 34,
+      "playlist_position": 18,
+      "track": "Nao Aguento Voce",
+      "artist": "Trio Esperança",
+      "key": "E Minor",
+      "camelot": "9A",
+      "bpm": 109,
+      "energy": 4
+    },
+    {
+      "crate_position": 35,
+      "playlist_position": 23,
+      "track": "Revolucionando",
+      "artist": "New Swing Sextet",
+      "key": "E Minor",
+      "camelot": "9A",
+      "bpm": 101,
+      "energy": 6
+    },
+    {
+      "crate_position": 36,
+      "playlist_position": 29,
+      "track": "Agua de Beber",
+      "artist": "Quarteto Em Cy",
+      "key": "E Minor",
+      "camelot": "9A",
+      "bpm": 96,
+      "energy": 4
+    },
+    {
+      "crate_position": 37,
+      "playlist_position": 39,
+      "track": "Lamento",
+      "artist": "Antônio Carlos Jobim",
+      "key": "E Minor",
+      "camelot": "9A",
+      "bpm": 90,
+      "energy": 4
+    },
+    {
+      "crate_position": 38,
+      "playlist_position": 5,
+      "track": "Get Out Of My Way",
+      "artist": "Joe Torres",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 136,
+      "energy": 6
+    },
+    {
+      "crate_position": 39,
+      "playlist_position": 15,
+      "track": "Candomblé",
+      "artist": "Mario Castro Neves",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 98,
+      "energy": 6
+    },
+    {
+      "crate_position": 40,
+      "playlist_position": 19,
+      "track": "Folie Douce",
+      "artist": "Aldemaro Romero",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 112,
+      "energy": 4
+    },
+    {
+      "crate_position": 41,
+      "playlist_position": 21,
+      "track": "Eres Tu Cosa",
+      "artist": "Joe Bataan",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 111,
+      "energy": 5
+    },
+    {
+      "crate_position": 42,
+      "playlist_position": 25,
+      "track": "Get Out Of My Way",
+      "artist": "Joe Torres",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 136,
+      "energy": 5
+    },
+    {
+      "crate_position": 43,
+      "playlist_position": 36,
+      "track": "Wave",
+      "artist": "Antônio Carlos Jobim",
+      "key": "G Major",
+      "camelot": "9B",
+      "bpm": 145,
+      "energy": 3
+    }
+  ]
+}

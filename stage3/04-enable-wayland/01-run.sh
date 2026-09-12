@@ -1,13 +1,12 @@
-# Enable wayland
+# Sway is our Wayland session. Configure LightDM directly: raspi-config's
+# desktop toggles configure Labwc/Wayfire and require the retired UI meta.
 on_chroot << EOF
-	SUDO_USER=pi raspi-config nonint do_boot_behaviour B4
-	raspi-config nonint do_xcompmgr 0
-	SUDO_USER=pi raspi-config nonint do_wayland W2
+	systemctl enable lightdm.service
 EOF
 
 # Remove cups
 on_chroot << EOF
-    apt-get purge -y cups cups-common libcups2 system-config-printer printer-driver-* pocketsphinx-* pi-printer-support
+    apt-get purge -y cups cups-common system-config-printer printer-driver-* pocketsphinx-* pi-printer-support
     apt-get autoremove -y
 EOF
 

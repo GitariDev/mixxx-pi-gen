@@ -23,11 +23,11 @@ libjack-dev libjack0 portaudio19-dev
 libfaad-dev
 libmp3lame-dev libebur128-dev
 qt5keychain-dev qtdeclarative5-dev libqt5opengl5-dev qtscript5-dev qt6-wayland
-libqt5svg5-dev libqt5x11extras5-dev libvamp-sdk2v5 libhidapi-libusb0 libqt5sql5-sqlite libmodplug-dev
+libqt5svg5-dev libqt5x11extras5-dev libvamp-sdk2t64 libhidapi-libusb0 libqt5sql5-sqlite libmodplug-dev
 libglu1-mesa-dev
 cmake ccache
 debhelper markdown docbook-to-man devscripts
-lightdm foot sway waybar i3status wvkbd fuzzel wdisplays xwayland
+lightdm lightdm-gtk-greeter xserver-xorg foot sway waybar i3status wvkbd fuzzel wdisplays xwayland
 pipewire-audio
 gstreamer1.0-pipewire
 qpwgraph

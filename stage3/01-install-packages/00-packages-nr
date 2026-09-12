@@ -1,1 +1,2 @@
-raspberrypi-ui-mods
+# Sway and LightDM are installed explicitly; raspberrypi-ui-mods was retired
+# in Trixie. Do not pull in a second desktop session through a replacement meta.

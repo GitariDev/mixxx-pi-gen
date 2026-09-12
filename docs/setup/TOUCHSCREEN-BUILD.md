@@ -43,6 +43,11 @@ SD music, display settings and a terminal. Mixxx starts without forced
 fullscreen. If you enter fullscreen manually, the bar overlays its top edge;
 tap Mixxx to leave fullscreen and restore the usable layout.
 
+Desktop utilities share a tabbed workspace: each gets the full screen width,
+and the 32 px tabs below the top bar switch between open apps. This avoids
+splitting Bluetooth, files and network settings into narrow columns at 800 px.
+The Settings launcher remains a floating panel; Mixxx keeps its own workspace.
+
 On first boot choose **Options → Preferences → Interface → Pioneered**.
 The image does not preseed a historical Mixxx database/config or change
 controller/audio device choices. Pioneered's own SETTINGS panel controls its
@@ -134,7 +139,7 @@ mixpi-session swaymsg -t get_tree
 mixpi-session grim /tmp/mixpi-screen.png
 systemctl status bluetooth hciuart ssh --no-pager
 bluetoothctl show
-rfkill list
+/usr/sbin/rfkill list
 df -h / /media/SD-Backup
 lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS
 ```
@@ -186,6 +191,26 @@ Compressed image SHA-256:
 Raw image SHA-256:
 `cbaf169c10bce0383d48ca125a63f96437860bc818e278a7d3160b23360a6873`
 
-Pi boot, rendering, Bluetooth pairing and audio acceptance remain pending until
-the new card is flashed and connected. Roll back by shutting down and restoring
-the original card; do not copy a newer Mixxx database over the original setup.
+## On-device checks
+
+The image above was flashed to the new card and passed Raspberry Pi Imager's
+readback verification. On-device testing confirmed Debian 13, the pinned Mixxx
+and Pioneered versions, native DSI 800×480 at scale 1, automatic root expansion,
+and successful first-boot SSH public-key import. SSH password and root login
+are disabled. System and desktop services had no failed units.
+
+The Pioneered column menu was inspected on the actual screen: white labels,
+filled/empty checkbox states, hover highlighting, and toggling without closing
+the menu all worked. The user also confirmed the menu and Bluetooth mouse work;
+the MX Master 3 is paired, trusted, connected and registered with Sway.
+
+Opening multiple desktop utilities exposed a width problem in the original
+image: they tiled into 400 px columns. The tabbed-layout follow-up in this
+branch was validated by Sway and applied over SSH. Bluetooth, Music and Network
+Connections then each occupied the full 800 px width, with 32 px touch tabs.
+Mixxx retained its 800×444 window and original process throughout these checks.
+This layout follow-up is newer than image run 34699646629.
+
+Keyboard pairing/reconnect, restart persistence, audio playback and the SD
+rekordbox export still need acceptance checks. Roll back by shutting down and
+restoring the original card; do not copy a newer Mixxx database over that setup.

@@ -211,6 +211,16 @@ Connections then each occupied the full 800 px width, with 32 px touch tabs.
 Mixxx retained its 800×444 window and original process throughout these checks.
 This layout follow-up is newer than image run 34699646629.
 
+The follow-up [image build 34706423257](https://github.com/GitariDev/mixxx-pi-gen/actions/runs/34706423257)
+succeeded at commit `f68ad9422c064dce6251776874f909354b691ba2`, including all
+10 host checks, compilation, image creation, checksums and artifact upload.
+Its [image artifact](https://github.com/GitariDev/mixxx-pi-gen/actions/runs/34706423257/artifacts/10301951842)
+is available until 2026-09-26. GitHub reports an archive size of 1,772,519,564 bytes
+and SHA-256 `d9d7d0d84c4af7c93cfbd7e0ae3aaa22ad79cd4a02ddcae016df1314ee4b8bfc`.
+This second image has not been downloaded or flashed locally; the running Pi
+already received the identical Sway configuration over SSH. No reflash is
+needed to use the tested layout on the current card.
+
 The attached export was copied to `/media/SD-Backup`: 320 files totaling
 1,075,207,881 bytes. A checksum-based rsync dry run reported no differences;
 about 7.3 GiB remained available on the root filesystem. Mixxx discovered
@@ -232,3 +242,6 @@ playback interruption or additional time-display patch was applied.
 Keyboard pairing/reconnect, restart persistence, audible playback and a test
 with USB disconnected still need user acceptance. Roll back by shutting down
 and restoring the original card; do not copy a newer Mixxx database over it.
+
+`wtype` was installed on the running Pi as a small keyboard-navigation test
+utility. It is not required for Bluetooth pairing and is not part of the image.

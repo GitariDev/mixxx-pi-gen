@@ -211,6 +211,24 @@ Connections then each occupied the full 800 px width, with 32 px touch tabs.
 Mixxx retained its 800×444 window and original process throughout these checks.
 This layout follow-up is newer than image run 34699646629.
 
-Keyboard pairing/reconnect, restart persistence, audio playback and the SD
-rekordbox export still need acceptance checks. Roll back by shutting down and
-restoring the original card; do not copy a newer Mixxx database over that setup.
+The attached export was copied to `/media/SD-Backup`: 320 files totaling
+1,075,207,881 bytes. A checksum-based rsync dry run reported no differences;
+about 7.3 GiB remained available on the root filesystem. Mixxx discovered
+**SD-Backup**, parsed its playlists, loaded a track into Deck 1, and rendered
+its waveform and cue markers. The open audio file was confirmed under
+`/media/SD-Backup/Contents/`. The USB source remains unchanged and mounted.
+
+To refresh exports in Pioneered, tap **Show**, activate **Rekordbox**, then
+expand its devices. If needed, hide the sidebar and use the refresh link at
+the bottom of the Rekordbox information page. Activate **SD-Backup** to parse
+its playlists, then hide the sidebar to see the tracks.
+
+One upstream Pioneered limitation was observed: its QSS makes the time value
+transparent when the display is set to combined elapsed/remaining mode
+(`PositionDisplay=2`). Clicking the time readout cycles to elapsed or remaining
+mode. This was diagnosed from the pinned skin and Mixxx widget source; no
+playback interruption or additional time-display patch was applied.
+
+Keyboard pairing/reconnect, restart persistence, audible playback and a test
+with USB disconnected still need user acceptance. Roll back by shutting down
+and restoring the original card; do not copy a newer Mixxx database over it.

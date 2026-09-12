@@ -161,7 +161,31 @@ Restart Mixxx after changing the skin stylesheet, once playback has stopped.
 - Run a 30-minute two-deck/controller test. Check `vcgencmd get_throttled`,
   temperature, audio dropouts and `/home/pi/.mixxx/mixxx.log`.
 
-Status: host checks and the image build are tracked in this task. Pi boot,
-rendering, Bluetooth pairing and audio acceptance remain pending until the new
-card is flashed and connected. Roll back by shutting down and restoring the
-original card; do not copy a newer Mixxx database over the original setup.
+## Verified build
+
+[GitHub run 34699646629](https://github.com/GitariDev/mixxx-pi-gen/actions/runs/34699646629)
+succeeded on 2026-09-12 at commit `5aeaa9cd04f864590388355b194a97ef7c173589`.
+All 10 host checks passed; Mixxx compilation, SD image creation, checksums and
+artifact upload completed. The compiler cache and full build log were saved.
+The [image artifact](https://github.com/GitariDev/mixxx-pi-gen/actions/runs/34699646629/artifacts/10299888151)
+is 1,772,607,772 bytes and is retained until 2026-09-26. This is an outer ZIP
+containing the compressed disk image, Debian package and build metadata.
+
+Outer artifact SHA-256:
+`ced9b1e8fd4fedc6cba47f7d8faeb5c96da765635ef1a05ae7c6433bb6acaf0c`
+
+The downloaded artifact and its inner checksums were verified locally.
+`image_2026-09-12-mixxx-pi.zip` expands to a 6,341,787,648-byte image with
+a 512 MiB FAT boot partition and an ext4 root partition; it fits the new
+15,931,539,456-byte card. Every runtime dependency named by the generated
+ARM64 package appears in the image's installed-package manifest.
+
+Compressed image SHA-256:
+`9c07d735072b56b84e0a24a1ca5b025630b3df8d8b4d969d4bbb8e3a11ef66cf`
+
+Raw image SHA-256:
+`cbaf169c10bce0383d48ca125a63f96437860bc818e278a7d3160b23360a6873`
+
+Pi boot, rendering, Bluetooth pairing and audio acceptance remain pending until
+the new card is flashed and connected. Roll back by shutting down and restoring
+the original card; do not copy a newer Mixxx database over the original setup.

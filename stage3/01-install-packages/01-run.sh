@@ -3,10 +3,13 @@
 mkdir -p "${BASE_DIR}/.ccache/"
 mkdir -p "${ROOTFS_DIR}/ccache"
 mount --bind "${BASE_DIR}/.ccache" "${ROOTFS_DIR}/ccache"
+install -m 644 files/mixxx-gcc14-djinterop.patch "${ROOTFS_DIR}/opt/mixxx-gcc14-djinterop.patch"
 on_chroot << EOF
     git clone --depth 1 --branch "${MIXXX_REF}" https://github.com/mixxxdj/mixxx.git /code/
     cd /code/
     test "\$(git rev-parse HEAD)" = "${MIXXX_COMMIT}"
+    git apply --check /opt/mixxx-gcc14-djinterop.patch
+    git apply /opt/mixxx-gcc14-djinterop.patch
     tools/debian_buildenv.sh setup
     git rev-parse HEAD > /opt/mixxx.version
     git describe --tags --always > /opt/mixxx.tag

@@ -1,0 +1,14 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2491,6 +2491,10 @@ if(ENGINEPRIME)
+       CMAKE_ARGS
+         -DBUILD_SHARED_LIBS=OFF
+         -DCMAKE_SKIP_INSTALL_ALL_DEPENDENCY=ON
++        # GCC 14 reports a false-positive for the bundled date.h decimal
++        # buffer reversal at -O3 (at most 10 unsigned digits in 11 slots).
++        # Keep the warning visible, but do not promote it to an error here.
++        -DCMAKE_CXX_FLAGS=-Wno-error=stringop-overflow
+         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+         -DCMAKE_INSTALL_PREFIX:PATH=<INSTALL_DIR>
+         -DCMAKE_PREFIX_PATH=${PIPE_DELIMITED_CMAKE_PREFIX_PATH}

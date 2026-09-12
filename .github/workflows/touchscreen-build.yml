@@ -26,18 +26,36 @@ jobs:
           sudo apt-get install -y coreutils quilt parted kpartx qemu-utils qemu-user qemu-user-binfmt debootstrap zerofree zip dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc gpg pigz xxd kmod
       - name: Prepare compiler cache
         run: mkdir -p .ccache
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
         with:
           path: .ccache
           key: mixpi-2.5.6-arm64-${{ github.run_id }}
           restore-keys: mixpi-2.5.6-arm64-
       - name: Build image
-        run: sudo ./build.sh
+        id: build
+        run: |
+          set -o pipefail
+          sudo ./build.sh 2>&1 | tee touchscreen-build.log
+      - name: Make generated outputs accessible
+        if: always()
+        run: |
+          for path in deploy .ccache; do
+            if [ -d "$path" ]; then
+              sudo chown -R "$(id -u):$(id -g)" "$path"
+            fi
+          done
+      - uses: actions/cache/save@v4
+        if: always() && steps.build.outcome != 'skipped' && steps.compiler-cache.outputs.cache-hit != 'true'
+        with:
+          path: .ccache
+          key: mixpi-2.5.6-arm64-${{ github.run_id }}
       - name: Record checksums
         run: cd deploy && sha256sum *.zip *.deb > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: mixpi-touchscreen-image
+          compression-level: 0
           path: |
             deploy/*.zip
             deploy/*.deb
@@ -52,6 +70,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mixpi-touchscreen-build-log
-          path: work/mixxx-pi/build.log
+          path: touchscreen-build.log
           if-no-files-found: ignore
           retention-days: 14

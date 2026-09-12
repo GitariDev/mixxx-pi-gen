@@ -51,8 +51,8 @@ testing.
 
 ## Recovery information
 
-- Default image credentials documented by the project: user `pi`, password
-  `mixxx`.
+- Local image login: user `pi`, password `mixxx`. The touchscreen test build
+  uses SSH keys for remote login; follow [SSH provisioning](docs/setup/TOUCHSCREEN-BUILD.md).
 - If Mixxx does not appear, use `Super+Enter`, run `mixxx`, and inspect
   `/home/pi/.mixxx/mixxx.log`.
 - Re-flashing destroys all data on the selected card; always re-check the disk

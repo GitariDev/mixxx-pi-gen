@@ -51,7 +51,7 @@ This disables `threadirqs` option which causes a kernel panic on the Pi3.
 
 ### Optional steps:
 
-1. Use scp to copy music to the RPI after plugging in ethernet (username: `pi`, password: `mixxx`, home dir: `/home/pi/`) or plug in a usb stick
+1. Copy music with `scp` using your provisioned SSH key (user `pi`, home `/home/pi/`), or plug in a USB drive. See the [SSH setup](docs/setup/TOUCHSCREEN-BUILD.md); password login is disabled in this test image.
 2. WARNING do this at your own risk - this can corrupt your SD card or worse!! 
 Overclock the raspberry pi. I found that as long as it has some sort
 of cooling solution an overclock to 2GHz on the Pi4 was completely stable. 

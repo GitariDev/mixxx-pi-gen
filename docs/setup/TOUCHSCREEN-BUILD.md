@@ -14,6 +14,14 @@ Branch: `codex/pi-touch-bluetooth-build`. Keep the original boot card as rollbac
 - Build [Mixxx 2.5.6 stable](https://mixxx.org/download/) and the reviewed Pioneered
   revision, recorded in `source-versions`. Package repositories remain live:
   this pins application/skin sources, not every Debian package.
+- The application uses Release mode without benchmark/unit-test binaries for
+  the 16 GB card. Host regression checks still run. GCC 14's stringop-overflow
+  diagnostic in libdjinterop's bundled date.h is kept as a warning in that
+  dependency; its bounded unsigned conversion fits 10 digits into 11 slots.
+  The exact build-only patch is retained at `/opt/mixxx-gcc14-djinterop.patch`.
+- Current Trixie no longer provides `raspberrypi-ui-mods`. Sway and LightDM
+  are installed explicitly with `lightdm-gtk-greeter`, and LightDM is enabled
+  directly instead of using the Labwc/Wayfire toggles in raspi-config.
 - Pioneered styles QMenu items but misses QCheckBox widgets in the library
   column selector. Mixxx's `WTrackTableViewHeader` uses `WMenuCheckBox` inside
   QWidgetAction. The added QSS covers white text, hover, disabled and checked
@@ -52,7 +60,9 @@ Linux runner and uploads an image, Debian package, versions, checksums and log.
 It does not publish a release. Local Linux builds can use `sudo ./build.sh` in
 a checkout whose path contains no spaces. Allow ample disk space (at least
 40 GB recommended); the builder retains multiple root filesystems and compiler
-dependencies. This Mac had only about 11 GB free during planning.
+dependencies. This Mac had only about 11 GB free during planning. A temporary
+Colima VM was removed when direct Pi testing was chosen. The Docker, Colima
+and Lima command-line tools installed for that attempt remain on the Mac.
 
 Run host checks with `python3 -m unittest discover -s tests -v`.
 These validate scripts, SSH provisioning and window switching, not rendering.

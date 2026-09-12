@@ -1,0 +1,5 @@
+# Reviewed 2026-09-12. Update these with the on-device acceptance checks.
+export MIXXX_REF="${MIXXX_REF:-2.5.6}"
+export MIXXX_COMMIT="${MIXXX_COMMIT:-3ebac449e7e5fe2a0186596657696e87ce8b0e56}"
+export PIONEERED_COMMIT="${PIONEERED_COMMIT:-b1b61860d0ee06e4460df599b1d39619fbc1db1e}"
+export PI_DJ_COMMIT="${PI_DJ_COMMIT:-64b2cbf7d1c80710437ca28e6685967a3b43a380}"

@@ -10,6 +10,7 @@ its dated sections record daily changes as bullet points.
 | --- | --- |
 | Current state and today's changes | [`JOURNAL.md`](JOURNAL.md) |
 | Identify the photographed setup | [`setup/HARDWARE.md`](setup/HARDWARE.md) |
+| Build/test the 800×480 UI, Bluetooth, SSH and SD music backup | [`setup/TOUCHSCREEN-BUILD.md`](setup/TOUCHSCREEN-BUILD.md) |
 | Plan a controller upgrade without device lock-in | [`setup/CONTROLLER-UPGRADE.md`](setup/CONTROLLER-UPGRADE.md) |
 | Bring in and prepare a new song | [`skills/incoming-track.md`](skills/incoming-track.md) |
 | Set consistent hot cues and practise phrasing | [`skills/phrasing-hot-cues.md`](skills/phrasing-hot-cues.md) |

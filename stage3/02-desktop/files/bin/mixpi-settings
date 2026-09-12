@@ -1,0 +1,61 @@
+#!/usr/bin/python3
+"""Small touch launcher for the installed Sway desktop utilities."""
+from pathlib import Path
+import subprocess
+
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gio, GLib, Gtk
+
+
+class Settings(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="org.mixpi.Settings", flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.window = None
+
+    def do_activate(self):
+        if self.window is None:
+            GLib.set_prgname("mixpi-settings")
+            self.window = Gtk.ApplicationWindow(application=self, title="MixPi Settings")
+            self.window.set_default_size(640, 340)
+            self.window.set_border_width(12)
+            grid = Gtk.Grid(column_spacing=10, row_spacing=10)
+            self.window.add(grid)
+            actions = [
+                ("Bluetooth", ["blueman-manager"]),
+                ("Wi-Fi", ["nm-connection-editor"]),
+                ("SD music", ["nautilus", str(Path.home() / "Music")]),
+                ("Display", ["wdisplays"]),
+                ("Terminal", ["foot"]),
+                ("Back to Mixxx", ["/usr/local/bin/mixpi-mixxx"]),
+            ]
+            for index, (label, command) in enumerate(actions):
+                button = Gtk.Button(label=label)
+                button.set_size_request(220, 76)
+                button.set_hexpand(True)
+                button.set_vexpand(True)
+                button.connect("clicked", self.launch, command)
+                grid.attach(button, index % 2, index // 2, 1, 1)
+            self.window.connect("delete-event", self.hide_window)
+            self.window.show_all()
+        self.window.present()
+
+    def hide_window(self, window, _event):
+        window.hide()
+        return True
+
+    def launch(self, _button, command):
+        try:
+            subprocess.Popen(command)
+            self.window.hide()
+        except OSError as error:
+            dialog = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.CLOSE,
+                text="Could not open this setting")
+            dialog.format_secondary_text(str(error))
+            dialog.run()
+            dialog.destroy()
+
+
+if __name__ == "__main__":
+    raise SystemExit(Settings().run())

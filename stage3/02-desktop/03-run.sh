@@ -11,12 +11,12 @@ install -m 644 files/udev.mixxx ${ROOTFS_DIR}/etc/udev/rules.d/69-mixxx-usb-uacc
 
 
 # USB Mount
-mkdir -m 644 ${ROOTFS_DIR}/etc/systemd/system/systemd-udevd.service.d
+mkdir -p -m 755 ${ROOTFS_DIR}/etc/systemd/system/systemd-udevd.service.d
 install -m 644 files/00-usbmountflags.conf ${ROOTFS_DIR}/etc/systemd/system/systemd-udevd.service.d/00-usbmountflags.conf
 
 on_chroot << EOF
     apt remove -y cups cups-browsed cups-daemon
-    apt remove -y lxpanel lxsession lxlock lxpolkit lxmenu-data lxsession-logout
+    apt remove -y lxpanel lxsession lxlock lxmenu-data lxsession-logout
     apt remove -y openbox
     apt autoremove -y
 EOF

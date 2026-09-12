@@ -14,13 +14,15 @@ tl;dr just want to dj with the latest image: [instructions](https://github.com/f
 
 This repo is for the generation of a raspbian image for Mixxx.
 Included:
-- Mixxx 2.4 beta built from the [Mixxx](https://mixxx.org) repo
+- Mixxx 2.5.6 stable built from the [Mixxx](https://mixxx.org) repo (pinned in `source-versions`)
 - 64 bit Raspberry Pi OS (Debian 13 "trixie")
 - preempt=full commandline argument on standard kernel and performance CPU governer as standard
 - sway (i3 for wayland) window manager with autostart to Mixxx
 - Working OpenGL waveforms
 - Extra skins included for small screen by @dennisdebel and @timewasternl
 - waybar and (useful) buttons
+- Touch controls for Desktop, Mixxx, Bluetooth, keyboard, and settings
+- SD music backup folders and SSH key provisioning for the test image
 - wallpaper from Unsplash by [Daniel Olah](https://unsplash.com/@danesduet?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash)
 
 
@@ -30,6 +32,9 @@ Included:
 - If you're familiar with flashing an SD card for the Pi, please follow whatever method you normally use. 
 
 Instructions moved to [wiki](https://github.com/fayaaz/mixxx-pi-gen/wiki/How-to-install-on-your-Raspberry-Pi)
+
+The current Pi 4 touchscreen test build and SSH setup are documented in
+[Touchscreen build and test](docs/setup/TOUCHSCREEN-BUILD.md).
 
 ### Important for running on Pi3 - remove threadirqs from boot commandline
 NOT REQUIRED FOR VERSIONS v0.9.0 AND ONWARDS

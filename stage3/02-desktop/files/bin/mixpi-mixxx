@@ -1,0 +1,18 @@
+#!/bin/bash
+set -euo pipefail
+
+# Switching workspaces hides the decks without stopping audio. Return to an
+# existing window, including XWayland builds, instead of starting another copy.
+tree=$(swaymsg -r -t get_tree)
+window_id=$(jq -r '[.. | objects | select(
+    .app_id? == "org.mixxx.Mixxx" or
+    ((.window_properties.class? // "" | ascii_downcase) == "mixxx")
+) | .id][0] // empty' <<< "$tree")
+if [ -n "$window_id" ]; then
+    swaymsg "[con_id=$window_id] fullscreen disable, focus"
+else
+    swaymsg 'workspace "1:Mixxx"'
+    if ! pgrep -u "$(id -u)" -x mixxx >/dev/null; then
+        swaymsg 'exec /usr/bin/mixxx'
+    fi
+fi

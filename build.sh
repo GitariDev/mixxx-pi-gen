@@ -165,6 +165,9 @@ fi
 
 export BASE_DIR
 
+# Exact upstream versions for this build, overridable in the build config.
+source "${BASE_DIR}/source-versions"
+
 if [ -f config ]; then
 	# shellcheck disable=SC1091
 	source config

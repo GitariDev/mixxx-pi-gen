@@ -1,0 +1,157 @@
+# Pi 4 touchscreen build and test
+
+Branch: `codex/pi-touch-bluetooth-build`. Keep the original boot card as rollback.
+
+## Decisions reviewed on 2026-09-12
+
+- The [linked DSI screen](https://shop.ivyliam.com/product/7-inch-capacitive-touch-screen/)
+  is 800×480 at 60 Hz. Keep scale 1 initially. Pioneered declares a 480×420 minimum;
+  a 36 px bar leaves 444 px, or about 420 px with the Mixxx menu visible.
+- Upstream MixxxPi's latest named stable image is v1.2 (2025-09-12). Its latest
+  nightly found during this review was published 2026-09-09 and uses commits
+  after Mixxx 2.5.6. The only upstream main change missing from this fork was a
+  README correction. The image-generation code was already current.
+- Build [Mixxx 2.5.6 stable](https://mixxx.org/download/) and the reviewed Pioneered
+  revision, recorded in `source-versions`. Package repositories remain live:
+  this pins application/skin sources, not every Debian package.
+- Pioneered styles QMenu items but misses QCheckBox widgets in the library
+  column selector. Mixxx's `WTrackTableViewHeader` uses `WMenuCheckBox` inside
+  QWidgetAction. The added QSS covers white text, hover, disabled and checked
+  states while preserving the skin's deck layout.
+- Pi 4B includes Bluetooth 5.0. BlueZ, Pi UART integration, Blueman and a
+  PolicyKit agent provide pairing and authentication in Sway. Bluetooth audio
+  is a separate task; this image retains its existing audio service policy.
+- Use SD folders for backup music, with the existing root partition expanding
+  on first boot. A second partition would reserve space but is unnecessary for
+  this goal and would complicate first-boot resize. Reflashing the whole card
+  erases its music too: maintain the USB/computer copy.
+
+## Touch navigation
+
+The top bar has **Desktop**, **Mixxx**, **Settings**, Bluetooth and keyboard
+buttons. Desktop switches to workspace 2 while Mixxx keeps playing. Mixxx
+returns to the existing window. Settings opens buttons for Bluetooth, Wi-Fi,
+SD music, display settings and a terminal. Mixxx starts without forced
+fullscreen. If you enter fullscreen manually, the bar overlays its top edge;
+tap Mixxx to leave fullscreen and restore the usable layout.
+
+On first boot choose **Options → Preferences → Interface → Pioneered**.
+The image does not preseed a historical Mixxx database/config or change
+controller/audio device choices. Pioneered's own SETTINGS panel controls its
+layout; **Ctrl+P** opens full Mixxx preferences using the touch keyboard.
+
+Pair devices: Bluetooth button → power adapter on if needed → put keyboard
+or mouse into pairing mode → Search → select device → Pair → Trust → Connect.
+For a keyboard PIN, type the displayed code on that keyboard and press Enter.
+Verify reconnect after reboot. The touch keyboard remains available throughout.
+
+## Build and flash the NEW card
+
+The **Touchscreen test image** Actions workflow builds this branch on an ARM64
+Linux runner and uploads an image, Debian package, versions, checksums and log.
+It does not publish a release. Local Linux builds can use `sudo ./build.sh` in
+a checkout whose path contains no spaces. Allow ample disk space (at least
+40 GB recommended); the builder retains multiple root filesystems and compiler
+dependencies. This Mac had only about 11 GB free during planning.
+
+Run host checks with `python3 -m unittest discover -s tests -v`.
+These validate scripts, SSH provisioning and window switching, not rendering.
+
+1. Download the successful build artifact and verify its `SHA256SUMS`.
+2. Identify the **new** SD card by model/capacity before writing anything.
+3. Flash the image using Raspberry Pi Imager's **Use custom** image option.
+4. Before first boot, put this Mac's dedicated **public** key on its boot
+   partition, named `mixpi-authorized-key.pub`:
+
+   ```sh
+   cp ~/.ssh/mixpi_ed25519.pub /Volumes/bootfs/mixpi-authorized-key.pub
+   ```
+
+   Confirm the actual boot volume path first. Never copy the private key.
+   The first-boot service validates and imports the public key, then removes
+   that provisioning file. SSH password login is disabled; the upstream
+   `pi` / `mixxx` local login is not an SSH credential in this build.
+5. Boot the Pi, allow the filesystem resize/reboot to complete, then join home
+   Wi-Fi using the network tray icon. Ethernet also works for initial access.
+6. From this Mac connect with:
+
+   ```sh
+   ssh -i ~/.ssh/mixpi_ed25519 pi@mixxxpi.local
+   ```
+
+   If mDNS fails, use the Pi's address shown in network settings/router.
+   No internet tunnel or router port forwarding is necessary on the same LAN.
+   On another computer, generate an Ed25519 key and provision its `.pub` instead.
+
+## Music stored on the SD card
+
+- Plain audio backup: `~/Music/Backup`. Copy audio from the USB drive with
+  **Settings → SD music**, then add the folder in Mixxx Preferences → Library.
+- Complete rekordbox export: `/media/SD-Backup`, also reachable through
+  `~/Music/Rekordbox`. Copy the USB export's **PIONEER** and **Contents** folders
+  directly inside it. Preserve their folder structure. Refresh the Rekordbox
+  source in Mixxx; it should show **SD-Backup** even after ejecting the USB.
+  This is an ordinary directory on the SD root filesystem, not another disk.
+- Wi-Fi transfer example, from the Mac:
+
+  ```sh
+  scp -i ~/.ssh/mixpi_ed25519 -r /path/to/music/. pi@mixxxpi.local:Music/Backup/
+  ```
+
+  Replace the source path with your actual files. For a complete export, copy
+  `PIONEER` and `Contents` to `/media/SD-Backup/` instead. Copy while not DJing,
+  and leave several GB free for updates, logs and analysis.
+
+Mixxx 2.5.6's Linux source scans folders directly under `/media`, `/media/$USER`
+and `/run/media/$USER` for `PIONEER/rekordbox/export.pdb`. This is why the SD
+export directory uses `/media/SD-Backup`; an arbitrary Music subfolder would
+not be discovered. A Device Library Plus-only export is not that legacy PDB
+format. Use the compatible rekordbox Export mode library. Copying only audio
+does not preserve rekordbox playlists/cues.
+
+References: [Mixxx external library manual](https://manual.mixxx.org/2.5/en/chapters/library#using-the-rekordbox-library),
+[2.5.6 scanner source](https://github.com/mixxxdj/mixxx/blob/2.5.6/src/library/rekordbox/rekordboxfeature.cpp).
+
+## Direct testing over SSH
+
+SSH does not mirror the screen by itself. `mixpi-session` connects commands to
+the already-running desktop user's Sway/Wayland session:
+
+```sh
+cat /opt/mixxx.tag /opt/mixxx.version /opt/pioneered.version
+mixpi-session swaymsg -t get_outputs
+mixpi-session swaymsg -t get_tree
+mixpi-session grim /tmp/mixpi-screen.png
+systemctl status bluetooth hciuart ssh --no-pager
+bluetoothctl show
+rfkill list
+df -h / /media/SD-Backup
+lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS
+```
+
+Fetch a screenshot on the Mac with
+`scp -i ~/.ssh/mixpi_ed25519 pi@mixxxpi.local:/tmp/mixpi-screen.png ./mixpi-screen.png`.
+After editing the desktop config, `mixpi-session swaymsg reload` reloads Sway;
+Waybar config/style changes require `systemctl --user restart waybar`.
+Restart Mixxx after changing the skin stylesheet, once playback has stopped.
+
+## Acceptance checks on the new card
+
+- Confirm native 800×480 at scale 1. Check all bar buttons and the bottom of
+  Pioneered's Browse/Overview/Samples pages, including with the keyboard open.
+- Open the library column selector. Check white labels, distinct checked and
+  unchecked boxes, hover/focus, scrolling to the last entries, and toggling
+  several columns without the menu unexpectedly closing.
+- While two tracks play, tap Desktop → Settings → Bluetooth, then Mixxx.
+  Audio must continue and there must still be only one Mixxx process.
+- Pair/trust/connect a keyboard and mouse using touch alone. Reboot and test
+  reconnect. Verify Preferences, display and network dialogs remain reachable.
+- Copy a small complete rekordbox export to SD-Backup. Eject USB and load both
+  decks from SD, confirming playlist, cues and beatgrid on representative tracks.
+- Run a 30-minute two-deck/controller test. Check `vcgencmd get_throttled`,
+  temperature, audio dropouts and `/home/pi/.mixxx/mixxx.log`.
+
+Status: host checks and the image build are tracked in this task. Pi boot,
+rendering, Bluetooth pairing and audio acceptance remain pending until the new
+card is flashed and connected. Roll back by shutting down and restoring the
+original card; do not copy a newer Mixxx database over the original setup.

@@ -1,0 +1,34 @@
+
+/* MixxxPi: readable menus, including widgets inside the column selector.
+ * QMenu::item alone does not style embedded QCheckBox/QLabel widgets. */
+QMenuBar, QMenuBar::item, QMenu, QMenu::item {
+    background-color: #17191f;
+    color: #ffffff;
+}
+QMenu QWidget, QMenu QCheckBox, QMenu QLabel {
+    background-color: #17191f;
+    color: #ffffff;
+}
+QMenu::item { padding: 6px 28px 6px 12px; }
+QMenu QCheckBox { padding: 6px; spacing: 8px; }
+QMenuBar::item:selected, QMenuBar::item:pressed,
+QMenu::item:selected, QMenu::item:pressed,
+QMenu QCheckBox:hover, QMenu QCheckBox:focus {
+    background-color: #285a88;
+    color: #ffffff;
+}
+QMenu::item:disabled, QMenu QCheckBox:disabled, QMenu QLabel:disabled {
+    color: #b5bac5;
+}
+QMenu::separator { height: 1px; background-color: #596171; margin: 4px; }
+QMenu QCheckBox::indicator { width: 18px; height: 18px; }
+QMenu QCheckBox::indicator:unchecked {
+    background-color: #17191f;
+    border: 2px solid #e5e6ea;
+    border-radius: 3px;
+}
+QMenu QCheckBox::indicator:checked {
+    background-color: #ffffff;
+    border: 2px solid #68baff;
+    border-radius: 3px;
+}

@@ -1,0 +1,57 @@
+name: Touchscreen test image
+
+on:
+  push:
+    branches: [codex/pi-touch-bluetooth-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: touchscreen-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check scripts and desktop helpers
+        run: python3 -m unittest discover -s tests -v
+      - name: Install image build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y coreutils quilt parted kpartx qemu-utils qemu-user qemu-user-binfmt debootstrap zerofree zip dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc gpg pigz xxd kmod
+      - name: Prepare compiler cache
+        run: mkdir -p .ccache
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: mixpi-2.5.6-arm64-${{ github.run_id }}
+          restore-keys: mixpi-2.5.6-arm64-
+      - name: Build image
+        run: sudo ./build.sh
+      - name: Record checksums
+        run: cd deploy && sha256sum *.zip *.deb > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mixpi-touchscreen-image
+          path: |
+            deploy/*.zip
+            deploy/*.deb
+            deploy/*.info
+            deploy/*.version
+            deploy/*.tag
+            deploy/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mixpi-touchscreen-build-log
+          path: work/**/build.log
+          if-no-files-found: ignore
+          retention-days: 14

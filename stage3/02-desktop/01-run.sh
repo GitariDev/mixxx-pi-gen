@@ -6,7 +6,8 @@ on_chroot << EOF
 	systemctl set-default graphical.target
 EOF
 
-install -m 644 files/autologin.conf ${ROOTFS_DIR}/etc/systemd/system/getty@tty1.service.d/autologin.conf
+# LightDM handles graphical autologin in stage3/04-enable-wayland.
+# There is no files/autologin.conf; a tty override is unnecessary here.
 
 # Set up sudoers.d for user patch
 rm -f ${ROOTFS_DIR}/etc/sudoers.d/010_pi-nopasswd

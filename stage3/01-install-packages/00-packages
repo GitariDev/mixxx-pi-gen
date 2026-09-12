@@ -2,6 +2,11 @@ git
 alsa-utils
 polkitd
 rfkill
+bluez blueman pi-bluetooth
+lxpolkit
+openssh-server avahi-daemon
+python3-gi gir1.2-gtk-3.0
+grim
 fonts-droid-fallback
 fonts-liberation2 fonts-font-awesome fonts-jetbrains-mono
 systemd-timesyncd

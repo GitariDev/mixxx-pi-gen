@@ -1,57 +1,40 @@
 {
-    "layer": "top",
-    "modules-left": ["sway/workspaces", "sway/mode"],
-    "modules-center": ["sway/window"],
-    "modules-right": ["backlight", "clock","tray","custom/keyboard", "custom/mixxx", "custom/power"],
-    "sway/window": {
-        "max-length": 50
-    },
-    "tray": {
-        "spacing": 10
-    },
-    "battery": {
-        "format": "{capacity}% {icon}",
-        "format-icons": ["", "", "", "", ""]
-    },
-    "clock": {
-        "format-alt": "{:%a, %d. %b  %H:%M}"
-    },
-    "custom/keyboard": {
-        "format": "  ",
-        "tooltip-format": "Keyboard",
-	    "on-click": "/bin/bash $HOME/.config/waybar/wvkeyboard.sh",
-        "spacing": 10
+    "layer": "overlay",
+    "position": "top",
+    "height": 36,
+    "exclusive": true,
+    "modules-left": ["custom/desktop", "custom/mixxx", "custom/settings"],
+    "modules-center": [],
+    "modules-right": ["clock", "tray", "custom/bluetooth", "custom/keyboard", "custom/power"],
+    "clock": {"format": "{:%H:%M}", "tooltip-format": "{:%A %d %B}"},
+    "tray": {"icon-size": 22, "spacing": 8},
+    "custom/desktop": {
+        "format": "Desktop",
+        "tooltip-format": "Hide Mixxx; playback continues",
+        "on-click": "swaymsg 'workspace \"2:Desktop\"'"
     },
     "custom/mixxx": {
-        "format": "  ",
-        "tooltip-format": "Mixxx",
-        "on-click": "/bin/bash $HOME/.config/waybar/mixxx.sh",
-        "spacing": 10
+        "format": "Mixxx",
+        "tooltip-format": "Return to Mixxx",
+        "on-click": "/usr/local/bin/mixpi-mixxx"
+    },
+    "custom/settings": {
+        "format": "Settings",
+        "on-click": "swaymsg 'workspace \"2:Desktop\"; exec /usr/local/bin/mixpi-settings'"
+    },
+    "custom/bluetooth": {
+        "format": "",
+        "tooltip-format": "Pair a Bluetooth keyboard or mouse",
+        "on-click": "swaymsg 'workspace \"2:Desktop\"; exec blueman-manager'"
+    },
+    "custom/keyboard": {
+        "format": "",
+        "tooltip-format": "On-screen keyboard",
+        "on-click": "/bin/bash $HOME/.config/waybar/wvkeyboard.sh"
     },
     "custom/power": {
-        "format": "  ",
+        "format": "⏻",
         "tooltip-format": "Power",
-        "on-click": "swaynag -t warning -m 'Power Menu Options' -b 'Shutdown'  'shutdown -h now' -b 'Restart' 'shutdown -r now' -b 'Logout' 'swaymsg exit' --background=#005566 --button-background=#009999 --button-border=#002b33 --border-bottom=#002b33"
-    },
-    "custom/mixxxnowplaying": {
-        "format": " {} ⏯︎ ",
-        "on-click": "/bin/bash $HOME/.config/waybar/mixxxnowplaying.sh start",
-        "on-click-right": "pkill -f mixxxnowplaying.sh",
-        "exec": "/bin/bash $HOME/.config/waybar/mixxxnowplaying.sh status",
-        "interval": 5,
-        "return-type": ""
-    },
-    "custom/syncthing": {
-        "format": "  {} ",
-        "on-click": "systemctl --user start syncthing.service",
-        "on-click-right": "systemctl --user stop syncthing.service",
-        "on-double-click": "syncthing -browser-only",
-        "exec": "systemctl --user is-active syncthing.service ||:",
-        "interval": 10,
-        "return-type": ""
-    },
-    "backlight": {
-        "format": "{percent}% {icon}",
-        "format-icons": [""]
+        "on-click": "swaynag -t warning -m 'Power' -b 'Shut down' 'shutdown -h now' -b 'Restart' 'shutdown -r now'"
     }
 }

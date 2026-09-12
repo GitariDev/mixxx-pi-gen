@@ -1,0 +1,12 @@
+[Unit]
+Description=Import MixPi SSH public key from the boot partition
+After=local-fs.target
+Before=ssh.service sshd.service
+ConditionPathExists=/boot/firmware/mixpi-authorized-key.pub
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mixpi-import-ssh-key
+
+[Install]
+WantedBy=multi-user.target

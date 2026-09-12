@@ -21,6 +21,7 @@ on_chroot << EOF
     export QT_QPA_PLATFORM="offscreen"
     mkdir -p build && cd build
     cmake \
+      -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF \
       -DKEYFINDER=ON -DFFMPEG=ON -DMAD=ON -DMODPLUG=ON -DWAVPACK=ON -DBULK=ON \
       -DCMAKE_INSTALL_PREFIX=/usr/ -S /code -B /code/build
     cmake --build /code/build --target install

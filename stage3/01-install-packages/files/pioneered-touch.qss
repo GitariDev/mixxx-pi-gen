@@ -1,0 +1,65 @@
+/* Browse is the only Pioneered page with a LibraryWrapper. Keep the decks
+ * and Overview/Samples at their existing sizes on the 800x444 display. */
+#LibraryWrapper QTableView,
+#LibraryWrapper WLibraryTextBrowser,
+#LibraryWrapper WLibrarySidebar {
+    font-size: 17px;
+}
+
+#LibraryWrapper WTrackTableViewHeader::section {
+    font-size: 16px;
+    min-height: 34px;
+    padding: 0px 7px;
+    margin: 0px;
+    border-right: 1px solid #596171;
+}
+
+#LibraryWrapper WLibrarySidebar::item {
+    min-height: 36px;
+    padding: 0px 6px;
+}
+
+#LibraryWrapper QScrollBar {
+    background-color: #17191f;
+    border: 0px;
+    margin: 0px;
+}
+#LibraryWrapper QScrollBar:horizontal {
+    height: 26px;
+}
+#LibraryWrapper QScrollBar:vertical {
+    width: 26px;
+}
+#LibraryWrapper QScrollBar::handle {
+    background-color: #9aa8bd;
+    border: 3px solid #17191f;
+    border-radius: 6px;
+}
+#LibraryWrapper QScrollBar::handle:horizontal {
+    min-width: 56px;
+    border: 3px solid #17191f;
+}
+#LibraryWrapper QScrollBar::handle:vertical {
+    min-height: 56px;
+}
+#LibraryWrapper QScrollBar::handle:pressed {
+    background-color: #68baff;
+}
+#LibraryWrapper QScrollBar::add-page,
+#LibraryWrapper QScrollBar::sub-page {
+    background-color: #17191f;
+}
+
+#LibraryActionsButton, #SidebarButton {
+    background-color: #112f5c;
+    border: 2px solid #b5bac5;
+    border-radius: 4px;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: bold;
+    margin: 1px;
+}
+#LibraryActionsButton[value="1"] {
+    background-color: #285a88;
+    border-color: #68baff;
+}

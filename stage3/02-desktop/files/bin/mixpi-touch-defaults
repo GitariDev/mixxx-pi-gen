@@ -1,0 +1,69 @@
+#!/usr/bin/python3
+"""Seed missing touch defaults before Mixxx starts; retain every saved choice."""
+import argparse
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import tempfile
+
+
+def add_missing(source, section, defaults):
+    sections = list(re.finditer(r"(?m)^\[([^\]\r\n]+)\][ \t]*\r?$", source))
+    matches = [match for match in sections if match.group(1) == section]
+    if len(matches) > 1:
+        raise ValueError(f"Duplicate [{section}] sections; keep configuration unchanged")
+    if not matches:
+        return source.rstrip() + f"\n\n[{section}]\n" + "".join(
+            f"{key} {value}\n" for key, value in defaults.items())
+    match = matches[0]
+    following = [item.start() for item in sections if item.start() > match.start()]
+    end = following[0] if following else len(source)
+    block = source[match.end():end]
+    missing = [f"{key} {value}\n" for key, value in defaults.items()
+               if not re.search(r"(?m)^" + re.escape(key) + r"(?:[ \t]|\r?$)", block)]
+    if not missing:
+        return source
+    return source[:match.end()] + "\n" + "".join(missing) + block.lstrip("\r\n") + source[end:]
+
+
+def seed(config):
+    existed = config.exists()
+    source = config.read_text() if existed else ""
+    result = add_missing(source, "Library", {
+        "RowHeight": "34", "Font": "Sans Serif,-1,17,5,50,0,0,0,0,0"})
+    if not existed:
+        result = add_missing(result, "Config", {"ResizableSkin": "Pioneered"})
+    if result == source:
+        return
+    config.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(config.stat().st_mode) if existed else 0o600
+    with tempfile.NamedTemporaryFile(mode="w", dir=config.parent,
+                                     prefix=".mixpi-touch-", delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(result)
+            handle.flush()
+            os.fchmod(handle.fileno(), mode)
+            os.replace(temporary, config)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=Path.home() / ".mixxx/mixxx.cfg")
+    args = parser.parse_args()
+    running = subprocess.run(["pgrep", "-u", str(os.getuid()), "-x", "mixxx"],
+                             stdout=subprocess.DEVNULL, check=False)
+    if running.returncode != 1:
+        parser.exit(1, "Mixxx may be running; touch defaults were not changed.\n")
+    try:
+        seed(args.config)
+    except (OSError, ValueError) as error:
+        parser.exit(1, f"Touch defaults unchanged: {error}\n")
+
+
+if __name__ == "__main__":
+    main()

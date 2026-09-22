@@ -25,13 +25,14 @@ class Settings(Gtk.Application):
                 ("Bluetooth", ["blueman-manager"]),
                 ("Wi-Fi", ["nm-connection-editor"]),
                 ("SD music", ["nautilus", str(Path.home() / "Music")]),
+                ("USB → Pi", ["/usr/local/bin/mixpi-media"]),
                 ("Display", ["wdisplays"]),
                 ("Terminal", ["foot"]),
                 ("Back to Mixxx", ["/usr/local/bin/mixpi-mixxx"]),
             ]
             for index, (label, command) in enumerate(actions):
                 button = Gtk.Button(label=label)
-                button.set_size_request(220, 76)
+                button.set_size_request(220, 66)
                 button.set_hexpand(True)
                 button.set_vexpand(True)
                 button.connect("clicked", self.launch, command)

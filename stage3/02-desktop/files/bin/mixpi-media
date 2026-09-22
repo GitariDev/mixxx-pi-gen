@@ -1,0 +1,601 @@
+#!/usr/bin/python3
+"""Copy a mounted USB drive to SD without modifying it or replacing a backup.
+
+No arguments opens the touch interface. `list`, `plan --source PATH` and
+`copy --source PATH` provide the same workflow without GTK. A complete
+Rekordbox export is kept intact for Mixxx; ordinary files go to Music/Backup.
+"""
+import argparse
+import ctypes
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
+
+CHUNK = 1024 * 1024
+RESERVE = 512 * 1024 * 1024
+RECEIPT = ".mixpi-transfer.json"
+IGNORED_NAMES = frozenset(name.casefold() for name in (
+    ".Trashes", ".Spotlight-V100", ".fseventsd", ".TemporaryItems",
+    ".apdisk", ".DS_Store", "$RECYCLE.BIN", "System Volume Information",
+))
+
+
+class TransferError(Exception):
+    pass
+
+
+class Cancelled(TransferError):
+    pass
+
+
+def check_cancel(cancel):
+    if cancel is not None and cancel.is_set():
+        raise Cancelled("Copy cancelled. USB files are unchanged.")
+
+
+def size_text(value):
+    for suffix in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or suffix == "TiB":
+            return f"{value:.1f} {suffix}"
+        value /= 1024
+
+
+def mounted_drives(data=None):
+    """Return mounted USB/removable filesystems, excluding the entire boot disk."""
+    if data is None:
+        try:
+            result = subprocess.run([
+                "lsblk", "--json", "--bytes", "--output",
+                "NAME,PATH,TYPE,RM,TRAN,SIZE,LABEL,UUID,MOUNTPOINTS,MAJ:MIN",
+            ], check=True, capture_output=True, text=True)
+            data = json.loads(result.stdout)
+        except (OSError, subprocess.CalledProcessError, ValueError) as error:
+            raise TransferError(f"Could not list USB drives: {error}") from error
+    drives = []
+
+    def walk(node):
+        yield node
+        for child in node.get("children", []):
+            yield from walk(child)
+
+    for disk in data.get("blockdevices", []):
+        nodes = list(walk(disk))
+        if any(mount in ("/", "/boot", "/boot/firmware", "/home")
+               for node in nodes for mount in (node.get("mountpoints") or [])):
+            continue
+        removable = disk.get("tran") == "usb" or bool(disk.get("rm"))
+        for node in nodes:
+            if not (removable or node.get("tran") == "usb" or node.get("rm")):
+                continue
+            for mount in node.get("mountpoints") or []:
+                if not mount or not (mount.startswith("/media/") or mount.startswith("/run/media/")):
+                    continue
+                drives.append({
+                    "source": mount, "label": node.get("label") or Path(mount).name,
+                    "uuid": node.get("uuid") or node.get("maj:min") or node["path"],
+                    "device": node["path"], "size": node.get("size", 0),
+                })
+    return sorted(drives, key=lambda drive: (drive["label"], drive["source"]))
+
+
+def checked_directory(path, create=False):
+    """Refuse symlink components, including symlinks to apparently safe paths."""
+    path = Path(os.path.abspath(path))
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        if create:
+            try:
+                current.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+        try:
+            info = current.lstat()
+        except FileNotFoundError as error:
+            raise TransferError(f"Folder is not available: {current}") from error
+        if not stat.S_ISDIR(info.st_mode):
+            raise TransferError(f"Folder must not be a symlink or special file: {current}")
+    return path
+
+
+def validate_relative(value):
+    path = Path(value)
+    if path.is_absolute() or not path.parts or any(part in ("..", ".") for part in path.parts):
+        raise TransferError("Unsafe path in transfer inventory.")
+    return path
+
+
+@contextmanager
+def open_directory(path):
+    path = checked_directory(path)
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def open_relative(root_fd, relative):
+    parts = validate_relative(relative).parts
+    current = os.dup(root_fd)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current)
+            os.close(current)
+            current = next_fd
+        descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=current)
+        with os.fdopen(descriptor, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise TransferError(f"Only regular files can be copied: {relative}")
+            yield handle
+    finally:
+        os.close(current)
+
+
+def identity(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
+def inventory(source, cancel=None, include_roots=None):
+    files, directories = [], []
+    source = checked_directory(source)
+    root_identity = identity(source.stat())[:2]
+
+    def visit(descriptor, prefix):
+        check_cancel(cancel)
+        for name in sorted(os.listdir(descriptor)):
+            check_cancel(cancel)
+            if name.casefold() in IGNORED_NAMES or name.startswith(("._", ".Trash-")):
+                continue
+            if not prefix.parts and include_roots is not None and name not in include_roots:
+                continue
+            relative = str(prefix / name)
+            validate_relative(relative)
+            info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            if info.st_dev != root_identity[0]:
+                raise TransferError(f"Nested filesystems cannot be copied: {relative}")
+            if stat.S_ISDIR(info.st_mode):
+                directories.append(relative)
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+                try:
+                    visit(child, Path(relative))
+                finally:
+                    os.close(child)
+            elif stat.S_ISREG(info.st_mode):
+                files.append({"path": relative, "size": info.st_size,
+                              "mtime_ns": info.st_mtime_ns, "identity": identity(info)})
+            else:
+                raise TransferError(f"Symlinks and special files are not copied: {relative}")
+    with open_directory(source) as descriptor:
+        visit(descriptor, Path())
+    if (source / RECEIPT).exists():
+        raise TransferError("This is already a MixPi backup. Select the original USB drive.")
+    return root_identity, directories, files
+
+
+@dataclass
+class Plan:
+    source: Path
+    destination: Path
+    state_root: Path
+    kind: str
+    fingerprint: str
+    root_identity: tuple
+    directories: list
+    files: list
+    total: int
+    reserve: int
+    include_roots: tuple
+
+    def summary(self):
+        return {"source": str(self.source), "destination": str(self.destination),
+                "kind": self.kind, "files": len(self.files), "bytes": self.total,
+                "required_free_bytes": self.total + self.reserve,
+                "existing_backup": self.destination.exists(),
+                "ready": readiness_error(self) is None,
+                "unavailable_reason": readiness_error(self)}
+
+
+def readiness_error(plan):
+    if not os.path.lexists(plan.destination) and shutil.disk_usage(plan.destination.parent).free < plan.total + plan.reserve:
+        return (f"Not enough SD space. Need {size_text(plan.total + plan.reserve)} free, "
+                f"including a {size_text(plan.reserve)} reserve.")
+    return None
+
+
+def make_plan(source, label, source_id, export_root=None, audio_root=None,
+              state_root=None, reserve=RESERVE, cancel=None):
+    source = checked_directory(source)
+    export_root = Path(export_root or f"/media/{os.environ.get('USER', 'pi')}")
+    audio_root = Path(audio_root or Path.home() / "Music/Backup")
+    state_root = Path(state_root or Path.home() / ".local/share/mixpi-media")
+    has_pioneer = os.path.lexists(source / "PIONEER")
+    include_roots = ("PIONEER", "Contents") if has_pioneer else None
+    root_identity, directories, files = inventory(source, cancel, include_roots)
+    if not files:
+        raise TransferError("No files found on this drive.")
+    paths = {entry["path"] for entry in files}
+    rekordbox = "PIONEER/rekordbox/export.pdb" in paths
+    if rekordbox and "Contents" not in directories:
+        raise TransferError("Incomplete Rekordbox export: the Contents folder is missing.")
+    if has_pioneer and not rekordbox:
+        raise TransferError("No compatible export.pdb found. Export a compatible Rekordbox library first.")
+    root = export_root if rekordbox else audio_root
+    # Planning does not create destination folders or staging directories.
+    root = checked_directory(root)
+    fingerprint_data = {"source_id": source_id, "directories": directories,
+                        "files": [{key: item[key] for key in ("path", "size", "mtime_ns")}
+                                  for item in files]}
+    fingerprint = hashlib.sha256(json.dumps(fingerprint_data, sort_keys=True,
+                                           ensure_ascii=True).encode()).hexdigest()
+    name = re.sub(r"[^\w-]+", "-", label, flags=re.UNICODE).strip("-_")[:40] or "USB"
+    destination = root / f"MixPi-{name}-{fingerprint[:12]}"
+    if destination == source or source in destination.parents or destination in source.parents:
+        raise TransferError("Source and destination folders must be separate.")
+    return Plan(source, destination, state_root,
+                "Rekordbox export" if rekordbox else "Files / audio", fingerprint,
+                root_identity, directories, files, sum(item["size"] for item in files), reserve, include_roots)
+
+
+def atomic_publish(source, destination):
+    """Atomically publish a directory, refusing even an empty existing target."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith("linux"):
+        rename = libc.renameat2
+        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        result = rename(-100, os.fsencode(source), -100, os.fsencode(destination), 1)
+    elif sys.platform == "darwin":
+        rename = libc.renamex_np
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        result = rename(os.fsencode(source), os.fsencode(destination), 4)
+    else:
+        raise TransferError("Atomic folder publication is unsupported on this system.")
+    if result:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), str(destination))
+
+
+def hash_file(handle, cancel=None):
+    digest = hashlib.sha256()
+    while True:
+        check_cancel(cancel)
+        chunk = handle.read(CHUNK)
+        if not chunk:
+            return digest.hexdigest()
+        digest.update(chunk)
+
+
+def verify_existing(plan, cancel, progress):
+    checked_directory(plan.destination)
+    with open_directory(plan.destination) as descriptor, open_directory(plan.source) as source_fd:
+        try:
+            with open_relative(descriptor, RECEIPT) as handle:
+                receipt = json.load(handle)
+            if receipt.get("fingerprint") != plan.fingerprint:
+                raise TransferError("A different folder already uses this backup name. It was not changed.")
+            checksums = receipt["sha256"]
+            if set(checksums) != {entry["path"] for entry in plan.files}:
+                raise TransferError("Existing backup inventory is incomplete; it was not changed.")
+            for number, entry in enumerate(plan.files):
+                check_cancel(cancel)
+                progress(number / len(plan.files), "Checking existing backup…")
+                with open_relative(descriptor, entry["path"]) as handle:
+                    if os.fstat(handle.fileno()).st_size != entry["size"] or hash_file(handle, cancel) != checksums[entry["path"]]:
+                        raise TransferError("Existing backup failed verification; it was not changed.")
+                with open_relative(source_fd, entry["path"]) as handle:
+                    if identity(os.fstat(handle.fileno())) != entry["identity"] or hash_file(handle, cancel) != checksums[entry["path"]]:
+                        raise TransferError("USB contents differ from the existing backup; neither was changed.")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise TransferError(f"Cannot verify existing backup; it was not changed: {error}") from error
+    return {"status": "already_copied", "destination": str(plan.destination), "files": len(plan.files)}
+
+
+def copy_plan(plan, cancel=None, progress=lambda fraction, message: None):
+    """Stage, checksum-verify and atomically publish; never delete source files."""
+    check_cancel(cancel)
+    source = checked_directory(plan.source)
+    destination_root = checked_directory(plan.destination.parent)
+    state_root = Path(os.path.abspath(plan.state_root))
+    if state_root == source or source in state_root.parents:
+        raise TransferError("Staging must be outside the USB source.")
+    if state_root == destination_root or destination_root in state_root.parents:
+        raise TransferError("Staging must be outside the published backup folders.")
+    state_root = checked_directory(state_root, create=True)
+    if state_root.stat().st_dev != destination_root.stat().st_dev:
+        raise TransferError("Staging and destination must use the same SD filesystem.")
+    lock_fd = os.open(state_root / "copy.lock", os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    staging = None
+    try:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise TransferError("Another USB copy is in progress.") from error
+        if inventory(source, cancel, plan.include_roots) != (plan.root_identity, plan.directories, plan.files):
+            raise TransferError("The USB contents changed. Refresh the drive and try again.")
+        if os.path.lexists(plan.destination):
+            return verify_existing(plan, cancel, progress)
+        unavailable = readiness_error(plan)
+        if unavailable:
+            raise TransferError(unavailable)
+        stage_parent = checked_directory(state_root / "staging", create=True)
+        staging = Path(tempfile.mkdtemp(prefix="copy-", dir=stage_parent))
+        for relative in plan.directories:
+            (staging / validate_relative(relative)).mkdir(mode=0o700, parents=True, exist_ok=True)
+        checksums, completed = {}, 0
+        with open_directory(source) as source_fd:
+            if identity(os.fstat(source_fd))[:2] != plan.root_identity:
+                raise TransferError("The selected USB drive has changed or disappeared.")
+            for entry in plan.files:
+                check_cancel(cancel)
+                relative = entry["path"]
+                target = staging / validate_relative(relative)
+                digest = hashlib.sha256()
+                with open_relative(source_fd, relative) as source_file, target.open("xb") as output:
+                    if identity(os.fstat(source_file.fileno())) != entry["identity"]:
+                        raise TransferError("USB files changed during transfer. Refresh and try again.")
+                    while True:
+                        check_cancel(cancel)
+                        chunk = source_file.read(CHUNK)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                        digest.update(chunk)
+                        completed += len(chunk)
+                        progress(0.8 * completed / max(plan.total, 1), f"Copying {size_text(completed)} / {size_text(plan.total)}")
+                    output.flush()
+                    os.fsync(output.fileno())
+                    if identity(os.fstat(source_file.fileno())) != entry["identity"]:
+                        raise TransferError("USB files changed during transfer. Refresh and try again.")
+                checksums[relative] = digest.hexdigest()
+                os.utime(target, ns=(entry["mtime_ns"], entry["mtime_ns"]))
+        progress(0.8, "Verifying copied files…")
+        for index, entry in enumerate(plan.files):
+            target = staging / entry["path"]
+            with target.open("rb") as handle:
+                if target.stat().st_size != entry["size"] or hash_file(handle, cancel) != checksums[entry["path"]]:
+                    raise TransferError("Copied files failed verification. Nothing was published.")
+            progress(0.8 + 0.19 * (index + 1) / len(plan.files), "Verifying copied files…")
+        if inventory(source, cancel, plan.include_roots) != (plan.root_identity, plan.directories, plan.files):
+            raise TransferError("USB contents changed during transfer. Nothing was published.")
+        with (staging / RECEIPT).open("x") as handle:
+            json.dump({"version": 1, "fingerprint": plan.fingerprint, "sha256": checksums}, handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # Directory entries must reach the SD card before publication as well.
+        for directory, _, _ in os.walk(staging, topdown=False):
+            with open_directory(directory) as descriptor:
+                os.fsync(descriptor)
+        check_cancel(cancel)
+        atomic_publish(staging, plan.destination)
+        staging = None
+        with open_directory(destination_root) as descriptor:
+            os.fsync(descriptor)
+        progress(1.0, "Copy verified. USB files are unchanged.")
+        return {"status": "copied", "destination": str(plan.destination), "files": len(plan.files)}
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging)
+        os.close(lock_fd)
+
+
+def plan_drive(drive, cancel=None):
+    return make_plan(drive["source"], drive["label"], drive["uuid"], cancel=cancel)
+
+
+def run_gui():
+    if os.geteuid() == 0:
+        print("Run USB → Pi as your desktop user, without sudo.", file=sys.stderr)
+        return 1
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gio, GLib, Gtk, Pango
+
+    class MediaApp(Gtk.Application):
+        def __init__(self):
+            super().__init__(application_id="org.mixpi.Media", flags=Gio.ApplicationFlags.FLAGS_NONE)
+            self.window = None
+            self.busy = False
+            self.plan = None
+            self.cancel_event = threading.Event()
+            self.drives = []
+            self.last_progress = 0
+
+        def do_activate(self):
+            if self.window:
+                self.window.present()
+                return
+            GLib.set_prgname("mixpi-media")
+            self.window = Gtk.ApplicationWindow(application=self, title="USB → Pi")
+            self.window.set_default_size(760, 420)
+            self.window.set_border_width(14)
+            self.window.connect("delete-event", self.close)
+            css = Gtk.CssProvider()
+            css.load_from_data(b"* { font-size: 17px; } button, combobox { min-height: 42px; } progressbar trough { min-height: 16px; }")
+            Gtk.StyleContext.add_provider_for_screen(self.window.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
+            self.window.add(box)
+            intro = Gtk.Label(label="Copy USB music to the Pi. Playlists stay with their music.")
+            intro.set_xalign(0)
+            box.pack_start(intro, False, False, 0)
+            row = Gtk.Box(spacing=8)
+            self.select = Gtk.ComboBoxText()
+            self.select.set_hexpand(True)
+            self.select.connect("changed", self.selection_changed)
+            row.pack_start(self.select, True, True, 0)
+            self.refresh = Gtk.Button(label="Refresh USB")
+            self.refresh.connect("clicked", self.refresh_drives)
+            row.pack_start(self.refresh, False, False, 0)
+            box.pack_start(row, False, False, 0)
+            self.details = Gtk.Label(label="Plug in a USB drive, then refresh.")
+            self.details.set_xalign(0)
+            self.details.set_line_wrap(True)
+            self.details.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            self.details.set_max_width_chars(65)
+            box.pack_start(self.details, True, True, 0)
+            self.progress = Gtk.ProgressBar()
+            box.pack_start(self.progress, False, False, 0)
+            row = Gtk.Box(spacing=8)
+            self.copy = Gtk.Button(label="Copy to Pi")
+            self.copy.connect("clicked", self.start_copy)
+            self.copy.set_sensitive(False)
+            row.pack_start(self.copy, True, True, 0)
+            self.cancel = Gtk.Button(label="Cancel")
+            self.cancel.set_sensitive(False)
+            self.cancel.connect("clicked", lambda _: self.cancel_event.set())
+            row.pack_start(self.cancel, True, True, 0)
+            box.pack_start(row, False, False, 0)
+            self.status = Gtk.Label(label="Copies complete Rekordbox exports or ordinary files. USB files stay unchanged.")
+            self.status.set_xalign(0)
+            self.status.set_line_wrap(True)
+            self.status.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            self.status.set_max_width_chars(65)
+            box.pack_start(self.status, False, False, 0)
+            self.window.show_all()
+            self.refresh_drives()
+
+        def close(self, *_):
+            if self.busy:
+                self.cancel_event.set()
+                self.status.set_text("Stopping safely… close again when finished.")
+                return True
+            return False
+
+        def set_busy(self, busy):
+            self.busy = busy
+            self.select.set_sensitive(not busy)
+            self.refresh.set_sensitive(not busy)
+            self.cancel.set_sensitive(busy)
+            self.copy.set_sensitive(not busy and self.plan is not None and readiness_error(self.plan) is None)
+
+        def work(self, action, done):
+            self.cancel_event.clear()
+            self.last_progress = 0
+            self.set_busy(True)
+            def worker():
+                try:
+                    result = action()
+                    GLib.idle_add(self.finished, done, result, None)
+                except Exception as error:
+                    GLib.idle_add(self.finished, done, None, str(error))
+            threading.Thread(target=worker, daemon=True).start()
+
+        def finished(self, done, result, error):
+            self.set_busy(False)
+            if error:
+                self.plan = None
+                self.copy.set_sensitive(False)
+                self.status.set_text(error)
+            else:
+                done(result)
+            return False
+
+        def refresh_drives(self, *_):
+            self.plan = None
+            self.copy.set_sensitive(False)
+            try:
+                self.drives = mounted_drives()
+                self.select.remove_all()
+                for drive in self.drives:
+                    self.select.append_text(f"{drive['label']} — {size_text(drive['size'])}")
+                if self.drives:
+                    self.select.set_active(0)
+                else:
+                    self.details.set_text("No mounted USB drives. Plug one in, wait a moment and refresh.")
+            except Exception as error:
+                self.status.set_text(str(error))
+
+        def selection_changed(self, *_):
+            index = self.select.get_active()
+            if index < 0:
+                return
+            drive = self.drives[index]
+            self.plan = None
+            self.details.set_text("Checking the drive and available space…")
+            self.progress.set_fraction(0)
+            self.work(lambda: plan_drive(drive, self.cancel_event), self.show_plan)
+
+        def show_plan(self, plan):
+            self.plan = plan
+            free = shutil.disk_usage(plan.destination.parent).free
+            self.details.set_text(f"{plan.kind} · {len(plan.files)} files · {size_text(plan.total)}\n"
+                                  f"SD free: {size_text(free)}\nTo: {plan.destination}")
+            unavailable = readiness_error(plan)
+            self.copy.set_sensitive(unavailable is None)
+            self.copy.set_label("Verify existing copy" if plan.destination.exists() else "Copy to Pi")
+            scope = "PIONEER + Contents only." if plan.include_roots else "Copies ordinary folders; skips OS metadata."
+            self.status.set_text(unavailable or f"{scope} Copy while not performing. Keep USB connected until finished.")
+
+        def start_copy(self, *_):
+            plan = self.plan
+            if plan is None:
+                return
+            self.work(lambda: copy_plan(plan, self.cancel_event, self.update_progress), self.copied)
+
+        def update_progress(self, fraction, message):
+            now = time.monotonic()
+            if fraction < 1 and now - self.last_progress < 0.1:
+                return
+            self.last_progress = now
+            GLib.idle_add(self.apply_progress, fraction, message)
+
+        def apply_progress(self, fraction, message):
+            self.progress.set_fraction(fraction)
+            self.status.set_text(message)
+            return False
+
+        def copied(self, result):
+            self.progress.set_fraction(1)
+            prefix = "Existing copy verified." if result["status"] == "already_copied" else "Copy verified."
+            if self.plan.kind == "Rekordbox export":
+                self.status.set_text(f"{prefix} Open Mixxx → Rekordbox; refresh devices if needed. USB files are unchanged.")
+            else:
+                self.status.set_text(f"{prefix} Open Mixxx → Computer → Music → Backup to browse the files.")
+            self.copy.set_label("Verify existing copy")
+
+    return MediaApp().run([sys.argv[0]])
+
+
+def main():
+    if len(sys.argv) == 1:
+        return run_gui()
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("list", help="List mounted removable drives as JSON")
+    for command in ("plan", "copy"):
+        subparsers.add_parser(command).add_argument("--source", required=True)
+    args = parser.parse_args()
+    try:
+        drives = mounted_drives()
+        if args.command == "list":
+            print(json.dumps(drives, ensure_ascii=False, indent=2))
+            return 0
+        selected = [drive for drive in drives if drive["source"] == args.source]
+        if len(selected) != 1:
+            raise TransferError("Select a mounted removable drive from 'mixpi-media list'.")
+        plan = plan_drive(selected[0])
+        if args.command == "plan":
+            print(json.dumps(plan.summary(), ensure_ascii=False, indent=2))
+        else:
+            result = copy_plan(plan, progress=lambda fraction, message: print(f"{fraction:.0%} {message}", file=sys.stderr))
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    except (TransferError, OSError, ValueError) as error:
+        print(f"USB copy: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

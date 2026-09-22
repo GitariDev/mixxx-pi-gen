@@ -22,7 +22,7 @@ class BuildSyntaxTests(unittest.TestCase):
                 subprocess.run(["bash", "-n", str(path)], check=True, capture_output=True)
 
     def test_python_syntax(self):
-        for name in ("mixpi-session", "mixpi-settings"):
+        for name in ("mixpi-session", "mixpi-settings", "mixpi-touch-defaults"):
             compile((BIN / name).read_text(), name, "exec")
 
     def test_waybar_valid_and_leaves_room_for_skin(self):
@@ -46,6 +46,7 @@ class MixxxNavigationTests(unittest.TestCase):
                     "CALLS": str(self.log), "TREE": str(self.tree), "RUNNING": "1"}
         self.command("swaymsg", 'if [ "$1" = "-r" ]; then cat "$TREE"; else printf "%s\\n" "$*" >> "$CALLS"; fi')
         self.command("pgrep", 'exit "$RUNNING"')
+        self.command("mixpi-touch-defaults", 'printf "%s\\n" seed-defaults >> "$CALLS"')
 
     def command(self, name, body):
         path = self.path / name
@@ -68,12 +69,13 @@ class MixxxNavigationTests(unittest.TestCase):
 
     def test_launches_on_deck_workspace_if_closed(self):
         calls = self.run_launcher([{"id": 2, "app_id": "foot"}])
-        self.assertEqual(calls.splitlines(), ['workspace "1:Mixxx"', 'exec /usr/bin/mixxx'])
+        self.assertEqual(calls.splitlines(), ['workspace "1:Mixxx"', 'seed-defaults', 'exec /usr/bin/mixxx'])
 
     def test_does_not_duplicate_process_still_starting(self):
         self.env["RUNNING"] = "0"
         calls = self.run_launcher([])
         self.assertNotIn("exec", calls)
+        self.assertNotIn("seed-defaults", calls)
 
 
 @unittest.skipUnless(shutil.which("ssh-keygen"), "OpenSSH required")

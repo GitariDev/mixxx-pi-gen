@@ -3,7 +3,7 @@
     "position": "top",
     "height": 36,
     "exclusive": true,
-    "modules-left": ["custom/desktop", "custom/mixxx", "custom/settings"],
+    "modules-left": ["custom/desktop", "custom/mixxx", "custom/settings", "custom/media"],
     "modules-center": [],
     "modules-right": ["clock", "tray", "custom/bluetooth", "custom/keyboard", "custom/power"],
     "clock": {"format": "{:%H:%M}", "tooltip-format": "{:%A %d %B}"},
@@ -21,6 +21,11 @@
     "custom/settings": {
         "format": "Settings",
         "on-click": "swaymsg 'workspace \"2:Desktop\"; exec /usr/local/bin/mixpi-settings'"
+    },
+    "custom/media": {
+        "format": "USB → Pi",
+        "tooltip-format": "Copy USB music and playlists to the Pi",
+        "on-click": "swaymsg 'workspace \"2:Desktop\"; exec /usr/local/bin/mixpi-media'"
     },
     "custom/bluetooth": {
         "format": "",

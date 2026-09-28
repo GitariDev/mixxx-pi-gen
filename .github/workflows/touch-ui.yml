@@ -1,0 +1,37 @@
+name: Touch utility UI checks
+on:
+  push:
+    branches: [main, master, codex/pi-touch-bluetooth-build]
+    paths:
+      - 'stage3/02-desktop/**'
+      - 'tests/**'
+      - '.github/workflows/touch-ui.yml'
+  pull_request:
+    paths:
+      - 'stage3/02-desktop/**'
+      - 'tests/**'
+      - '.github/workflows/touch-ui.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi gir1.2-gtk-3.0 xvfb xauth dbus-x11 fonts-dejavu-core jq g++
+      - name: Test helpers and render touchscreen states
+        env:
+          MIXPI_UI_SCREENSHOTS: output/ui-review
+          NO_AT_BRIDGE: '1'
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 800x480x24' /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Save rendered screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: touch-utility-screens
+          path: output/ui-review/*.png
+          if-no-files-found: warn

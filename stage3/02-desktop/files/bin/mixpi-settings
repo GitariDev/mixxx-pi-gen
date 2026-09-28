@@ -1,11 +1,12 @@
 #!/usr/bin/python3
-"""Small touch launcher for the installed Sway desktop utilities."""
+"""Task-based touch launcher for the installed Sway desktop utilities."""
 from pathlib import Path
 import subprocess
 
 import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gio, GLib, Gtk
+from mixpi_ui import button, label, message, shell, tile
 
 
 class Settings(Gtk.Application):
@@ -16,30 +17,33 @@ class Settings(Gtk.Application):
     def do_activate(self):
         if self.window is None:
             GLib.set_prgname("mixpi-settings")
-            self.window = Gtk.ApplicationWindow(application=self, title="MixPi Settings")
-            self.window.set_default_size(640, 340)
-            self.window.set_border_width(12)
-            grid = Gtk.Grid(column_spacing=10, row_spacing=10)
-            self.window.add(grid)
-            actions = [
-                ("Speaker / Spotify", ["/usr/local/bin/mixpi-speaker"]),
-                ("Audio settings", ["/usr/local/bin/mixpi-speaker"]),
-                ("Mixxx preferences", ["/usr/local/bin/mixpi-audio-preferences"]),
-                ("Bluetooth", ["blueman-manager"]),
-                ("Wi-Fi", ["nm-connection-editor"]),
-                ("SD music", ["nautilus", str(Path.home() / "Music")]),
-                ("USB → Pi", ["/usr/local/bin/mixpi-media"]),
-                ("Display", ["wdisplays"]),
-                ("Terminal", ["foot"]),
-                ("Back to Mixxx", ["/usr/local/bin/mixpi-mixxx"]),
+            self.window, body, footer = shell(self, "Settings", "UTILITY")
+            body.pack_start(label("Choose what you want to set up.", "muted"), False, False, 0)
+            grid = Gtk.Grid(column_spacing=10, row_spacing=8, column_homogeneous=True)
+            body.pack_start(grid, False, False, 0)
+            groups = [
+                ("PLAYBACK", [
+                    ("Speaker mode", "Spotify, phone & output", ["/usr/local/bin/mixpi-speaker"]),
+                    ("Mixxx preferences", "DJ audio & controllers", ["/usr/local/bin/mixpi-audio-preferences"]),
+                ]),
+                ("CONNECTIONS", [
+                    ("Wi-Fi", "Manage networks", ["nm-connection-editor"]),
+                    ("Bluetooth devices", "Pair & manage devices", ["blueman-manager"]),
+                    ("Display", "Screen & orientation", ["wdisplays"]),
+                ]),
+                ("FILES & SYSTEM", [
+                    ("USB → Pi", "Copy music to this Pi", ["/usr/local/bin/mixpi-media"]),
+                    ("Music on Pi", "Browse saved files", ["nautilus", str(Path.home() / "Music")]),
+                    ("Terminal", "Advanced commands", ["foot"]),
+                ]),
             ]
-            for index, (label, command) in enumerate(actions):
-                button = Gtk.Button(label=label)
-                button.set_size_request(220, 54)
-                button.set_hexpand(True)
-                button.set_vexpand(True)
-                button.connect("clicked", self.launch, command)
-                grid.attach(button, index % 2, index // 2, 1, 1)
+            for column, (heading, actions) in enumerate(groups):
+                grid.attach(label(heading, "eyebrow"), column, 0, 1, 1)
+                for row, (title, description, command) in enumerate(actions, 1):
+                    item = tile(title, description, lambda _, cmd=command: self.launch(cmd))
+                    grid.attach(item, column, row, 1, 1)
+            footer.pack_start(button("Close settings", lambda _: self.window.hide()), False, False, 0)
+            footer.pack_end(button("Back to Mixxx", lambda _: self.launch(["/usr/local/bin/mixpi-mixxx"]), True), False, False, 0)
             self.window.connect("delete-event", self.hide_window)
             self.window.show_all()
         self.window.present()
@@ -48,17 +52,12 @@ class Settings(Gtk.Application):
         window.hide()
         return True
 
-    def launch(self, _button, command):
+    def launch(self, command):
         try:
             subprocess.Popen(command)
             self.window.hide()
         except OSError as error:
-            dialog = Gtk.MessageDialog(transient_for=self.window, modal=True,
-                message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.CLOSE,
-                text="Could not open this setting")
-            dialog.format_secondary_text(str(error))
-            dialog.run()
-            dialog.destroy()
+            message(self.window, "Could not open this setting", str(error))
 
 
 if __name__ == "__main__":

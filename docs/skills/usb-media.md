@@ -14,7 +14,11 @@ Use the Computer paths below for ordinary folders or as a manual fallback.
 ## Copy USB music onto the Pi
 
 Tap **USB → Pi** in the top bar (also available in Settings), choose a mounted drive and review the copy size
-and available space. A compatible export copies `PIONEER` and `Contents`
+and available space. The screen separates **From / USB drive**, **To / this Pi’s
+SD card**, and the current transfer state. Tap **Copy to Pi**; wait for
+**Copy complete · Verified** before using the copy. **Open copy** opens the
+completed folder. **Cancel transfer** stops safely and clears unfinished staging.
+**Refresh USB** starts a fresh check after an error or drive change. A compatible export copies `PIONEER` and `Contents`
 together into a new named internal source under `/media/pi/MixPi-…`. Ordinary
 folders go under `~/Music/Backup`. The original USB files are preserved.
 

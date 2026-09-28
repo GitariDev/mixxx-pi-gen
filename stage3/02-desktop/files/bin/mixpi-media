@@ -395,13 +395,12 @@ def plan_drive(drive, cancel=None):
     return make_plan(drive["source"], drive["label"], drive["uuid"], cancel=cancel)
 
 
-def run_gui():
-    if os.geteuid() == 0:
-        print("Run USB → Pi as your desktop user, without sudo.", file=sys.stderr)
-        return 1
+def create_media_app():
+    """Build the native interface; construction is separate for headless UI checks."""
     import gi
     gi.require_version("Gtk", "3.0")
     from gi.repository import Gio, GLib, Gtk, Pango
+    from mixpi_ui import button, compact_label, label, message, panel, shell, style
 
     class MediaApp(Gtk.Application):
         def __init__(self):
@@ -412,75 +411,93 @@ def run_gui():
             self.cancel_event = threading.Event()
             self.drives = []
             self.last_progress = 0
+            self.completed_destination = None
 
         def do_activate(self):
             if self.window:
                 self.window.present()
                 return
             GLib.set_prgname("mixpi-media")
-            self.window = Gtk.ApplicationWindow(application=self, title="USB → Pi")
-            self.window.set_default_size(760, 420)
-            self.window.set_border_width(14)
+            self.window, body, footer = shell(self, "USB → Pi", "MUSIC TRANSFER")
             self.window.connect("delete-event", self.close)
-            css = Gtk.CssProvider()
-            css.load_from_data(b"* { font-size: 17px; } button, combobox { min-height: 42px; } progressbar trough { min-height: 16px; }")
-            Gtk.StyleContext.add_provider_for_screen(self.window.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
-            self.window.add(box)
-            intro = Gtk.Label(label="Copy USB music to the Pi. Playlists stay with their music.")
-            intro.set_xalign(0)
-            box.pack_start(intro, False, False, 0)
+            self.step = label("01  SELECT USB   →   02  REVIEW COPY   →   03  COPY & VERIFY", "eyebrow")
+            body.pack_start(self.step, False, False, 0)
             row = Gtk.Box(spacing=8)
             self.select = Gtk.ComboBoxText()
             self.select.set_hexpand(True)
+            for renderer in self.select.get_cells():
+                renderer.set_property("ellipsize", Pango.EllipsizeMode.END)
+                renderer.set_property("width-chars", 24)
             self.select.connect("changed", self.selection_changed)
+            self.select.get_accessible().set_name("USB source drive")
             row.pack_start(self.select, True, True, 0)
-            self.refresh = Gtk.Button(label="Refresh USB")
-            self.refresh.connect("clicked", self.refresh_drives)
+            self.refresh = button("Refresh USB", self.refresh_drives)
             row.pack_start(self.refresh, False, False, 0)
-            box.pack_start(row, False, False, 0)
-            self.details = Gtk.Label(label="Plug in a USB drive, then refresh.")
-            self.details.set_xalign(0)
-            self.details.set_line_wrap(True)
-            self.details.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            self.details.set_max_width_chars(65)
-            box.pack_start(self.details, True, True, 0)
-            self.progress = Gtk.ProgressBar()
-            box.pack_start(self.progress, False, False, 0)
-            row = Gtk.Box(spacing=8)
-            self.copy = Gtk.Button(label="Copy to Pi")
-            self.copy.connect("clicked", self.start_copy)
+            body.pack_start(row, False, False, 0)
+            route = Gtk.Box(spacing=8, homogeneous=True)
+            source = panel()
+            source.pack_start(label("FROM  /  USB DRIVE", "eyebrow"), False, False, 0)
+            self.details = label("Insert a USB drive to get started.", wrap=True)
+            source.pack_start(self.details, True, True, 0)
+            destination = panel()
+            destination.pack_start(label("TO  /  THIS PI’S SD CARD", "eyebrow"), False, False, 0)
+            self.destination = label("A separate, verified copy", wrap=True)
+            destination.pack_start(self.destination, False, False, 0)
+            self.destination_path = compact_label("Original USB files stay unchanged", "muted")
+            destination.pack_start(self.destination_path, False, False, 0)
+            route.pack_start(source, True, True, 0)
+            route.pack_start(destination, True, True, 0)
+            body.pack_start(route, False, False, 0)
+            feedback = panel()
+            self.phase = label("Waiting for USB", "status")
+            feedback.pack_start(self.phase, False, False, 0)
+            self.progress = Gtk.ProgressBar(show_text=True)
+            self.progress.get_accessible().set_name("Copy and verification progress")
+            self.progress.set_text("No transfer running")
+            feedback.pack_start(self.progress, False, False, 0)
+            self.status = label("Plug in a drive, then tap Refresh USB.", "muted", wrap=True)
+            feedback.pack_start(self.status, False, False, 0)
+            body.pack_start(feedback, False, False, 0)
+            self.copy = button("Copy to Pi", self.start_copy, True)
             self.copy.set_sensitive(False)
-            row.pack_start(self.copy, True, True, 0)
-            self.cancel = Gtk.Button(label="Cancel")
+            footer.pack_end(self.copy, False, False, 0)
+            self.cancel = button("Cancel transfer", self.cancel_transfer)
             self.cancel.set_sensitive(False)
-            self.cancel.connect("clicked", lambda _: self.cancel_event.set())
-            row.pack_start(self.cancel, True, True, 0)
-            box.pack_start(row, False, False, 0)
-            self.status = Gtk.Label(label="Copies complete Rekordbox exports or ordinary files. USB files stay unchanged.")
-            self.status.set_xalign(0)
-            self.status.set_line_wrap(True)
-            self.status.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            self.status.set_max_width_chars(65)
-            box.pack_start(self.status, False, False, 0)
+            footer.pack_end(self.cancel, False, False, 0)
+            self.open_copy = button("Open copy", self.open_destination)
+            self.open_copy.set_sensitive(False)
+            footer.pack_start(self.open_copy, False, False, 0)
+            self.close_button = button("Close", lambda _: self.window.close())
+            footer.pack_start(self.close_button, False, False, 0)
             self.window.show_all()
             self.refresh_drives()
 
         def close(self, *_):
             if self.busy:
-                self.cancel_event.set()
+                self.cancel_transfer()
                 self.status.set_text("Stopping safely… close again when finished.")
                 return True
+            self.window = None
             return False
+
+        def cancel_transfer(self, *_):
+            if self.busy:
+                self.cancel_event.set()
+                self.cancel.set_sensitive(False)
+                self.phase.set_text("Cancelling…")
+                self.status.set_text("Removing the unfinished copy. Keep USB connected for now.")
 
         def set_busy(self, busy):
             self.busy = busy
             self.select.set_sensitive(not busy)
             self.refresh.set_sensitive(not busy)
             self.cancel.set_sensitive(busy)
+            self.open_copy.set_sensitive(not busy and self.completed_destination is not None)
             self.copy.set_sensitive(not busy and self.plan is not None and readiness_error(self.plan) is None)
 
         def work(self, action, done):
+            if self.busy:
+                return
             self.cancel_event.clear()
             self.last_progress = 0
             self.set_busy(True)
@@ -489,7 +506,7 @@ def run_gui():
                     result = action()
                     GLib.idle_add(self.finished, done, result, None)
                 except Exception as error:
-                    GLib.idle_add(self.finished, done, None, str(error))
+                    GLib.idle_add(self.finished, done, None, error)
             threading.Thread(target=worker, daemon=True).start()
 
         def finished(self, done, result, error):
@@ -497,75 +514,143 @@ def run_gui():
             if error:
                 self.plan = None
                 self.copy.set_sensitive(False)
-                self.status.set_text(error)
+                cancelled = isinstance(error, Cancelled)
+                self.phase.set_text("Transfer cancelled" if cancelled else "Could not complete transfer")
+                if not cancelled:
+                    style(self.phase, "error")
+                self.status.set_text(str(error) + " Tap Refresh USB to try again.")
+                self.progress.set_fraction(0)
+                self.progress.set_text("Cancelled" if cancelled else "Not completed")
             else:
                 done(result)
             return False
 
+        def reset_feedback(self):
+            context = self.phase.get_style_context()
+            context.remove_class("error")
+            context.remove_class("success")
+            self.completed_destination = None
+            self.open_copy.set_sensitive(False)
+            self.progress.set_fraction(0)
+            self.progress.set_text("No transfer running")
+
         def refresh_drives(self, *_):
+            if self.busy:
+                return
             self.plan = None
             self.copy.set_sensitive(False)
-            try:
-                self.drives = mounted_drives()
-                self.select.remove_all()
-                for drive in self.drives:
-                    self.select.append_text(f"{drive['label']} — {size_text(drive['size'])}")
-                if self.drives:
-                    self.select.set_active(0)
-                else:
-                    self.details.set_text("No mounted USB drives. Plug one in, wait a moment and refresh.")
-            except Exception as error:
-                self.status.set_text(str(error))
+            self.copy.set_label("Copy to Pi")
+            self.reset_feedback()
+            self.phase.set_text("Looking for USB drives…")
+            self.details.set_text("Checking connected drives…")
+            self.destination.set_text("A separate, verified copy")
+            self.destination_path.set_text("Original USB files stay unchanged")
+            self.destination_path.set_tooltip_text(None)
+            self.status.set_text("Wait while the Pi checks mounted USB drives.")
+            def scan():
+                drives = mounted_drives()
+                check_cancel(self.cancel_event)
+                return drives
+            self.work(scan, self.show_drives)
+
+        def show_drives(self, drives):
+            self.drives = drives
+            self.select.remove_all()
+            for drive in drives:
+                self.select.append_text(f"{drive['label']} · {size_text(drive['size'])}")
+            if drives:
+                self.select.set_active(0)
+            else:
+                self.phase.set_text("No USB drive found")
+                self.details.set_text("Insert a USB drive to get started.")
+                self.status.set_text("Connect a drive, wait a moment, then tap Refresh USB.")
 
         def selection_changed(self, *_):
             index = self.select.get_active()
-            if index < 0:
+            if index < 0 or self.busy:
                 return
             drive = self.drives[index]
             self.plan = None
-            self.details.set_text("Checking the drive and available space…")
-            self.progress.set_fraction(0)
+            self.reset_feedback()
+            self.phase.set_text("Checking files & SD space…")
+            self.details.set_text("Reading the selected USB drive…")
+            self.destination.set_text("Checking available space…")
+            self.destination_path.set_text("")
+            self.status.set_text("Keep USB connected. You can cancel this check.")
             self.work(lambda: plan_drive(drive, self.cancel_event), self.show_plan)
 
         def show_plan(self, plan):
             self.plan = plan
             free = shutil.disk_usage(plan.destination.parent).free
-            self.details.set_text(f"{plan.kind} · {len(plan.files)} files · {size_text(plan.total)}\n"
-                                  f"SD free: {size_text(free)}\nTo: {plan.destination}")
+            self.details.set_text(f"{plan.kind}\n{len(plan.files):,} files · {size_text(plan.total)}")
+            location = "Rekordbox library" if plan.kind == "Rekordbox export" else "Music / Backup"
+            self.destination.set_text(f"{location}\n{size_text(free)} available on SD")
+            self.destination_path.set_text(str(plan.destination))
+            self.destination_path.set_tooltip_text(str(plan.destination))
             unavailable = readiness_error(plan)
+            existing = plan.destination.exists()
             self.copy.set_sensitive(unavailable is None)
-            self.copy.set_label("Verify existing copy" if plan.destination.exists() else "Copy to Pi")
-            scope = "PIONEER + Contents only." if plan.include_roots else "Copies ordinary folders; skips OS metadata."
-            self.status.set_text(unavailable or f"{scope} Copy while not performing. Keep USB connected until finished.")
+            self.copy.set_label("Verify existing copy" if existing else "Copy to Pi")
+            self.phase.set_text("More SD space needed" if unavailable else "Copy already exists" if existing else "Ready to copy")
+            if unavailable:
+                style(self.phase, "error")
+            scope = "Playlists and music stay together." if plan.include_roots else "Copies files and folders; skips system metadata."
+            self.status.set_text(unavailable or ("Check the saved files against this USB. Neither copy will be replaced." if existing else f"{scope} Copy between sets; keep USB connected until verified."))
 
         def start_copy(self, *_):
             plan = self.plan
-            if plan is None:
+            if plan is None or self.busy:
                 return
+            self.reset_feedback()
+            self.phase.set_text("Checking existing copy…" if plan.destination.exists() else "Copying to Pi…")
+            self.status.set_text("Keep USB connected until verification finishes.")
+            self.progress.set_text("0%")
             self.work(lambda: copy_plan(plan, self.cancel_event, self.update_progress), self.copied)
 
-        def update_progress(self, fraction, message):
+        def update_progress(self, fraction, text):
             now = time.monotonic()
             if fraction < 1 and now - self.last_progress < 0.1:
                 return
             self.last_progress = now
-            GLib.idle_add(self.apply_progress, fraction, message)
+            GLib.idle_add(self.apply_progress, fraction, text)
 
-        def apply_progress(self, fraction, message):
+        def apply_progress(self, fraction, text):
+            if not self.busy or self.cancel_event.is_set():
+                return False
             self.progress.set_fraction(fraction)
-            self.status.set_text(message)
+            self.progress.set_text(f"{fraction:.0%}")
+            self.phase.set_text("Verifying files…" if "Verif" in text or "Checking" in text else "Copying to Pi…")
+            self.status.set_text(text)
             return False
 
         def copied(self, result):
             self.progress.set_fraction(1)
-            prefix = "Existing copy verified." if result["status"] == "already_copied" else "Copy verified."
+            self.progress.set_text("100% · Verified")
+            self.phase.set_text("Existing copy verified" if result["status"] == "already_copied" else "Copy complete · Verified")
+            style(self.phase, "success")
+            self.completed_destination = result["destination"]
+            self.open_copy.set_sensitive(True)
             if self.plan.kind == "Rekordbox export":
-                self.status.set_text(f"{prefix} Open Mixxx → Rekordbox; refresh devices if needed. USB files are unchanged.")
+                self.status.set_text("In Mixxx, open Rekordbox to find this library. Original USB files are unchanged.")
             else:
-                self.status.set_text(f"{prefix} Open Mixxx → Computer → Music → Backup to browse the files.")
+                self.status.set_text("In Mixxx, open Computer → Music → Backup. Original USB files are unchanged.")
             self.copy.set_label("Verify existing copy")
 
-    return MediaApp().run([sys.argv[0]])
+        def open_destination(self, *_):
+            if self.completed_destination:
+                try:
+                    subprocess.Popen(["nautilus", self.completed_destination])
+                except OSError as error:
+                    message(self.window, "Could not open the copy", str(error))
+
+    return MediaApp()
+
+
+def run_gui():
+    if os.geteuid() == 0:
+        print("Run USB → Pi as your desktop user, without sudo.", file=sys.stderr)
+        return 1
+    return create_media_app().run([sys.argv[0]])
 
 
 def main():

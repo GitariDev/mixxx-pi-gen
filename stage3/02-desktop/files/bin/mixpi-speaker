@@ -6,7 +6,8 @@ import threading
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gio, GLib, Gtk
+from gi.repository import Gio, GLib, Gtk, Pango
+from mixpi_ui import button, compact_label, label, message, panel, shell, style
 
 CONTROL = "/usr/local/bin/mixpi-speaker-control"
 
@@ -16,6 +17,8 @@ class Speaker(Gtk.Application):
         super().__init__(application_id="org.mixpi.Speaker", flags=Gio.ApplicationFlags.FLAGS_NONE)
         self.window = None
         self.busy = False
+        self.current_state = None
+        self.current_output = None
 
     def do_activate(self):
         if self.window:
@@ -23,136 +26,186 @@ class Speaker(Gtk.Application):
             self.refresh()
             return
         GLib.set_prgname("mixpi-speaker")
-        self.window = Gtk.ApplicationWindow(application=self, title="Mix Pi · Speaker")
-        self.window.set_default_size(780, 410)
-        self.window.set_border_width(14)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.window.add(box)
-        self.status = Gtk.Label(xalign=0)
-        box.pack_start(self.status, False, False, 0)
-        help_text = Gtk.Label(xalign=0, label="Spotify: on the same Wi-Fi, choose Mix Pi in Devices, then Start a Jam.\nBluetooth: tap Pair phone, then choose Mix Pi in your phone’s Bluetooth settings.")
-        help_text.set_line_wrap(True)
-        box.pack_start(help_text, False, False, 0)
+        self.window, self.body, self.footer = shell(self, "Speaker mode", "AUDIO")
+        self.window.connect("delete-event", self.hide_window)
+        status_row = panel()
+        row = Gtk.Box(spacing=12)
+        status_row.pack_start(row, False, False, 0)
+        self.spinner = Gtk.Spinner()
+        row.pack_start(self.spinner, False, False, 0)
+        self.status = compact_label("Checking audio…", "status")
+        row.pack_start(self.status, True, True, 0)
+        self.toggle = button("Start speaker mode", self.toggle_mode, True)
+        row.pack_end(self.toggle, False, False, 0)
+        self.body.pack_start(status_row, False, False, 0)
+        sources = Gtk.Box(spacing=8, homogeneous=True)
+        spotify = panel()
+        spotify.pack_start(label("01  SPOTIFY CONNECT", "eyebrow"), False, False, 0)
+        spotify.pack_start(label("On the same Wi-Fi, open Spotify and\nchoose Mix Pi in the device list.", wrap=True), True, True, 0)
+        spotify.pack_start(label("Premium required · Start a Jam in Spotify", "muted"), False, False, 0)
+        bluetooth = panel()
+        bluetooth.pack_start(label("02  BLUETOOTH AUDIO", "eyebrow"), False, False, 0)
+        bluetooth.pack_start(label("Play audio from your phone.", "muted"), False, False, 0)
+        self.pair_button = button("Pair phone", self.pair)
+        bluetooth.pack_start(self.pair_button, False, False, 0)
+        sources.pack_start(spotify, True, True, 0)
+        sources.pack_start(bluetooth, True, True, 0)
+        self.body.pack_start(sources, False, False, 0)
+        output_panel = panel()
+        output_panel.pack_start(label("SPEAKER OUTPUT", "eyebrow"), False, False, 0)
         row = Gtk.Box(spacing=8)
-        box.pack_start(row, False, False, 0)
-        row.pack_start(Gtk.Label(label="Audio output"), False, False, 0)
         self.output = Gtk.ComboBoxText()
         self.output.set_hexpand(True)
+        self.output.get_accessible().set_name("Speaker audio output")
+        for renderer in self.output.get_cells():
+            renderer.set_property("ellipsize", Pango.EllipsizeMode.END)
+            renderer.set_property("width-chars", 20)
+        self.output.connect("changed", self.output_changed)
         row.pack_start(self.output, True, True, 0)
-        self.button(row, "Use output", self.select_output)
-        self.button(row, "Refresh", lambda *_: self.refresh())
-        grid = Gtk.Grid(column_spacing=10, row_spacing=10, column_homogeneous=True)
-        box.pack_start(grid, True, True, 0)
-        actions = [
-            ("Start Speaker mode", self.start),
-            ("Audio settings", self.audio),
-            ("Pair phone · Bluetooth", self.pair),
-            ("Stop Speaker mode", self.stop),
-            ("Back to Mixxx", self.mixxx),
-            ("Mixxx audio preferences", self.preferences),
-        ]
-        for index, (label, callback) in enumerate(actions):
-            button = Gtk.Button(label=label)
-            button.set_size_request(180, 52)
-            button.connect("clicked", callback)
-            grid.attach(button, index % 2, index // 2, 1, 1)
+        self.apply = button("Use output", self.select_output)
+        row.pack_start(self.apply, False, False, 0)
+        self.mixer = button("Volume & mixer", self.audio)
+        row.pack_start(self.mixer, False, False, 0)
+        output_panel.pack_start(row, False, False, 0)
+        self.output_hint = compact_label("Start speaker mode to choose an output.", "muted")
+        output_panel.pack_start(self.output_hint, False, False, 0)
+        self.body.pack_start(output_panel, False, False, 0)
+        self.footer.pack_start(button("Refresh", lambda _: self.refresh()), False, False, 0)
+        self.footer.pack_start(button("Close", lambda _: self.window.hide()), False, False, 0)
+        self.footer.pack_end(button("Back to Mixxx", self.mixxx), False, False, 0)
         self.window.show_all()
         self.refresh()
 
-    def button(self, row, label, callback):
-        button = Gtk.Button(label=label)
-        button.set_size_request(-1, 44)
-        button.connect("clicked", callback)
-        row.pack_start(button, False, False, 0)
-
-    def message(self, title, detail, question=False):
-        dialog = Gtk.MessageDialog(transient_for=self.window, modal=True,
-            message_type=Gtk.MessageType.QUESTION if question else Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK_CANCEL if question else Gtk.ButtonsType.CLOSE,
-            text=title)
-        dialog.format_secondary_text(detail)
-        response = dialog.run()
-        dialog.destroy()
-        return response == Gtk.ResponseType.OK
+    def hide_window(self, window, _event):
+        window.hide()
+        return True
 
     def state(self):
-        return json.loads(subprocess.check_output([CONTROL, "status"], text=True, timeout=5))
+        state = json.loads(subprocess.check_output([CONTROL, "status"], text=True, timeout=5))
+        state["outputs"] = []
+        state["output"] = None
+        if state["active"]:
+            state["outputs"] = json.loads(subprocess.check_output([CONTROL, "outputs"], text=True, timeout=5))
+            state["output"] = subprocess.check_output(["pactl", "get-default-sink"], text=True, timeout=5).strip()
+        return state
 
-    def refresh(self):
-        if self.busy:
-            return
-        try:
-            state = self.state()
-            self.status.set_markup("<b>Speaker mode is on · Spotify device: Mix Pi</b>" if state["active"] else "<b>Speaker mode is off</b>")
-            self.output.remove_all()
-            if state["active"]:
-                sinks = json.loads(subprocess.check_output([CONTROL, "outputs"], text=True, timeout=5))
-                current = subprocess.check_output(["pactl", "get-default-sink"], text=True, timeout=5).strip()
-                for sink in sinks:
-                    label = "Starlight Main 1–2" if sink["name"] == "mixpi_starlight_main" else sink.get("description", sink["name"])
-                    self.output.append(sink["name"], label)
-                self.output.set_active_id(current)
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            self.status.set_text("Could not read audio status: " + str(error))
+    def show_state(self, state):
+        # Keep a user's un-applied selection while refreshing device availability.
+        selected = self.output.get_active_id()
+        self.current_state = state
+        self.current_output = state["output"]
+        self.status.set_text("ON · Ready for phone audio" if state["active"] else "OFF · Start to connect your phone")
+        context = self.status.get_style_context()
+        context.remove_class("error")
+        (context.add_class if state["active"] else context.remove_class)("success")
+        self.toggle.set_label("Stop speaker mode" if state["active"] else "Start speaker mode")
+        toggle_context = self.toggle.get_style_context()
+        (toggle_context.remove_class if state["active"] else toggle_context.add_class)("primary")
+        self.output.remove_all()
+        names = []
+        active_label = "No output connected"
+        for sink in state["outputs"]:
+            name = sink["name"]
+            title = "Starlight · Main 1–2" if name == "mixpi_starlight_main" else sink.get("description", name)
+            self.output.append(name, title)
+            names.append(name)
+            if name == self.current_output:
+                active_label = title
+        chosen = selected if selected in names else self.current_output
+        if chosen:
+            self.output.set_active_id(chosen)
+        self.output.set_sensitive(state["active"] and bool(names))
+        self.mixer.set_sensitive(state["active"])
+        self.pair_button.set_sensitive(state["active"])
+        self.output_hint.set_text(("Selected output: " + active_label) if state["active"] else "Start speaker mode to choose an output and pair a phone.")
+        self.output_hint.set_tooltip_text(self.output_hint.get_text())
+        self.output_changed()
 
-    def task(self, args, after=None):
+    def output_changed(self, *_):
+        selected = self.output.get_active_id()
+        self.apply.set_sensitive(bool(selected) and selected != self.current_output)
+
+    def job(self, action, done, text="Switching audio…"):
         if self.busy:
             return
         self.busy = True
-        self.window.set_sensitive(False)
-        self.status.set_text("Switching audio…")
+        self.body.set_sensitive(False)
+        self.footer.set_sensitive(False)
+        self.status.set_text(text)
+        self.spinner.start()
         def worker():
-            error = None
             try:
-                result = subprocess.run(args, text=True, capture_output=True, timeout=60)
-                if result.returncode:
-                    error = result.stderr.strip() or result.stdout.strip() or "The audio command failed."
-            except (OSError, subprocess.SubprocessError) as failure:
-                error = str(failure)
-            GLib.idle_add(finish, error)
-        def finish(error):
+                result, error = action(), None
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError) as failure:
+                result, error = None, str(failure)
+            GLib.idle_add(finish, result, error)
+        def finish(result, error):
             self.busy = False
-            self.window.set_sensitive(True)
-            self.refresh()
+            self.body.set_sensitive(True)
+            self.footer.set_sensitive(True)
+            self.spinner.stop()
             if error:
-                self.message("Could not switch audio", error)
-            elif after:
-                after()
+                self.current_state = None
+                self.status.set_text("Audio unavailable · Tap Refresh to retry")
+                style(self.status, "error")
+                self.output.set_sensitive(False)
+                self.apply.set_sensitive(False)
+                self.pair_button.set_sensitive(False)
+                self.mixer.set_sensitive(False)
+                self.status.set_tooltip_text(error)
+                message(self.window, "Could not update audio", error)
+            else:
+                self.status.set_tooltip_text(None)
+                done(result)
             return False
         threading.Thread(target=worker, daemon=True).start()
 
-    def start(self, *_args, after=None):
-        state = self.state()
-        if state["active"]:
+    def refresh(self, after=None):
+        def ready(state):
+            self.show_state(state)
+            if after:
+                after(state)
+        self.job(self.state, ready, "Checking audio…")
+
+    def task(self, args, after=None, text="Switching audio…"):
+        def run():
+            result = subprocess.run(args, text=True, capture_output=True, timeout=60)
+            if result.returncode:
+                raise ValueError(result.stderr.strip() or result.stdout.strip() or "The audio command failed.")
+            return self.state()
+        def done(state):
+            self.show_state(state)
             if after:
                 after()
-            return
-        if state["mixxx"] and not self.message("Switch to Speaker mode?", "This closes Mixxx and stops any DJ playback so Spotify and Bluetooth can use the audio output. Mixxx will save its settings normally.", question=True):
-            return
-        self.task([CONTROL, "start", "--close-mixxx"], after)
+        self.job(run, done, text)
+
+    def toggle_mode(self, *_):
+        def checked(state):
+            if state["active"]:
+                self.task([CONTROL, "stop"], text="Stopping speaker audio…")
+            elif not state["mixxx"] or message(self.window, "Stop DJ playback and start speaker mode?",
+                    "Mixxx will close and save its settings. Spotify and Bluetooth will use the speaker output.",
+                    confirm="Start speaker mode"):
+                self.task([CONTROL, "start", "--close-mixxx"], text="Starting speaker mode…")
+        self.refresh(after=checked)
 
     def audio(self, *_):
-        self.start(after=lambda: subprocess.Popen(["pavucontrol", "--tab=3"]))
+        try:
+            subprocess.Popen(["pavucontrol", "--tab=3"])
+        except OSError as error:
+            message(self.window, "Could not open the mixer", str(error))
 
     def pair(self, *_):
-        def pair_now():
-            # Blueman's existing desktop agent handles approval on the Pi.
-            self.task([CONTROL, "pair"], lambda: self.message("Pair with Mix Pi", "Mix Pi is visible for 3 minutes. Select it in your phone’s Bluetooth settings and accept the pairing request on the Pi. Then play audio on your phone."))
-        self.start(after=pair_now)
-
-    def stop(self, *_):
-        self.task([CONTROL, "stop"])
+        self.task([CONTROL, "pair"], lambda: message(self.window, "Choose Mix Pi on your phone",
+            "Open your phone’s Bluetooth settings and select Mix Pi. Accept the matching pairing request on the Pi, then play audio.\n\nMix Pi is visible for 3 minutes."), text="Making Mix Pi visible…")
 
     def mixxx(self, *_):
-        self.task(["/usr/local/bin/mixpi-mixxx"], self.window.hide)
-
-    def preferences(self, *_):
-        self.task(["/usr/local/bin/mixpi-audio-preferences"], self.window.hide)
+        self.task(["/usr/local/bin/mixpi-mixxx"], self.window.hide, "Returning to Mixxx…")
 
     def select_output(self, *_):
         name = self.output.get_active_id()
         if name:
-            self.task([CONTROL, "output", name])
+            self.task([CONTROL, "output", name], text="Changing speaker output…")
 
 
 if __name__ == "__main__":

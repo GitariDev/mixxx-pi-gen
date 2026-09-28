@@ -22,7 +22,7 @@ class BuildSyntaxTests(unittest.TestCase):
                 subprocess.run(["bash", "-n", str(path)], check=True, capture_output=True)
 
     def test_python_syntax(self):
-        for name in ("mixpi-session", "mixpi-settings", "mixpi-touch-defaults", "mixpi-speaker", "mixpi-speaker-control"):
+        for name in ("mixpi-session", "mixpi-settings", "mixpi-touch-defaults", "mixpi-speaker", "mixpi-speaker-control", "mixpi_ui.py"):
             compile((BIN / name).read_text(), name, "exec")
 
     def test_desktop_install_ignores_generated_python_cache(self):
@@ -47,10 +47,11 @@ class BuildSyntaxTests(unittest.TestCase):
             )
             installed = rootfs / "usr/local/bin"
             expected = {path.name for path in BIN.glob("mixpi-*") if path.is_file()}
+            expected.add("mixpi_ui.py")
             self.assertEqual({path.name for path in installed.iterdir()}, expected)
             for name in expected:
                 self.assertEqual((installed / name).read_bytes(), (BIN / name).read_bytes())
-                self.assertEqual((installed / name).stat().st_mode & 0o777, 0o755)
+                self.assertEqual((installed / name).stat().st_mode & 0o777, 0o644 if name == "mixpi_ui.py" else 0o755)
 
     def test_waybar_valid_and_leaves_room_for_skin(self):
         config = json.loads((ROOT / "stage3/02-desktop/files/waybar/config").read_text())

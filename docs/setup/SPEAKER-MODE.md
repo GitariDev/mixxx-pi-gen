@@ -1,6 +1,6 @@
 # Spotify and Bluetooth speaker mode
 
-Tap **Speaker** in the top bar, then **Start Speaker mode**. If Mixxx is open,
+Tap **Speaker** in the top bar, then **Start speaker mode**. If Mixxx is open,
 confirm the switch: Mixxx closes normally and saves its settings, then the
 speaker audio services start. The Pi still boots into Mixxx by default.
 
@@ -16,23 +16,23 @@ stay in the Spotify phone app. This is an unofficial Spotify Connect receiver.
 
 ## Audio output and volume
 
-The Speaker screen has an **Audio output** selector. Choose an output and tap
+The Speaker screen has an **Speaker output** selector. Choose an output and tap
 **Use output**. **Refresh** detects changes after connecting a device.
 
 With the Hercules DJControl Starlight attached, the initial output is
-**Starlight Main 1-2**. This maps stereo audio only to its main output channels;
+**Starlight · Main 1–2**. This maps stereo audio only to its main output channels;
 it does not send the speaker mix to headphone channels 3–4. The raw four-channel
 Starlight output is also available for manual routing. Built-in Pi audio and
 other outputs detected by PipeWire can be selected.
 
-Tap **Audio settings** for volume, mute, playback streams and device profiles.
+Tap **Volume & mixer** for volume, mute, playback streams and device profiles.
 Select **All Output Devices** at the bottom if the virtual Starlight output is
 hidden by the hardware-only filter. The phone also controls Spotify volume.
 The first speaker session starts with moderate output and Spotify volume.
 
 ## Bluetooth audio from a phone
 
-1. Start Speaker mode and tap **Pair phone · Bluetooth**.
+1. Start Speaker mode and tap **Pair phone**.
 2. In the phone's Bluetooth settings, select **Mix Pi**.
 3. Accept the pairing request on the Pi, then play audio on your phone.
 
@@ -45,7 +45,7 @@ you do not want both streams audible together.
 
 Tap **Mixxx** in the top bar or **Back to Mixxx** on the Speaker screen. This
 stops Spotify and the speaker audio services before starting Mixxx, releasing
-the controller for Mixxx's direct ALSA audio. **Mixxx audio preferences** opens
+the controller for Mixxx's direct ALSA audio. **Settings → Mixxx preferences** opens
 the full Preferences dialog; select **Sound Hardware** for DJ output routing.
 These controls are also accessible through **Settings**.
 
@@ -83,3 +83,12 @@ validation and `git diff --check` also passed. Evidence is saved locally in
 Sources: [Spotify Jam](https://support.spotify.com/au/article/jam/),
 [Raspotify](https://github.com/dtcooper/raspotify),
 [WirePlumber Bluetooth](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/bluetooth.html).
+
+## September 28 interface update
+
+The source now uses the shared dark DJ utility theme, a single Start/Stop
+control, separate phone-source instructions, and an explicit output section.
+Pairing and output selection are enabled only while Speaker mode is on.
+Settings removes the duplicate audio shortcut and groups tools by task.
+See [the design and validation notes](../design/DESIGN.md). These new screens
+were tested in a Linux GTK virtual display, not installed on the live Pi.

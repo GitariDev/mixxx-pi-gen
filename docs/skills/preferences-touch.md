@@ -16,6 +16,12 @@ Mixxx Preferences dialog.
 
 ## Reliable path
 
+Tap **Settings** in the top bar, then **Mixxx preferences** under Playback.
+Select **Sound Hardware** for DJ routing or **Controllers** for mappings.
+For Spotify/phone output and volume, use **Settings → Speaker mode** instead.
+
+Keyboard/menu fallback:
+
 1. With the mouse, leave fullscreen or use the normal Mixxx menu and open **Options → Preferences**.
 2. If the menu is unavailable, tap the keyboard icon in the top Waybar. The image includes `wvkbd` and wires this icon to toggle it.
 3. On the on-screen keyboard, tap `Ctrl`, then `P`.

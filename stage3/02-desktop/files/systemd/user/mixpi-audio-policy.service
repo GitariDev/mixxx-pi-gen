@@ -1,0 +1,9 @@
+[Unit]
+Description=Mix Pi audio devices and Bluetooth receiver
+Requires=mixpi-audio.service
+After=mixpi-audio.service
+PartOf=mixpi-speaker.target
+Conflicts=wireplumber.service
+[Service]
+ExecStart=/usr/bin/wireplumber
+Restart=on-failure

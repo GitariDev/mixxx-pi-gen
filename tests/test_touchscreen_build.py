@@ -15,14 +15,14 @@ class BuildSyntaxTests(unittest.TestCase):
     def test_shell_syntax(self):
         files = list(ROOT.glob("stage*/**/*run.sh"))
         files += [ROOT / "build.sh", ROOT / "config", ROOT / "source-versions",
-                  BIN / "mixpi-mixxx",
+                  BIN / "mixpi-mixxx", BIN / "mixpi-audio-preferences",
                   ROOT / "stage3/02-desktop/files/ssh/mixpi-import-ssh-key"]
         for path in files:
             with self.subTest(path=path.relative_to(ROOT)):
                 subprocess.run(["bash", "-n", str(path)], check=True, capture_output=True)
 
     def test_python_syntax(self):
-        for name in ("mixpi-session", "mixpi-settings", "mixpi-touch-defaults"):
+        for name in ("mixpi-session", "mixpi-settings", "mixpi-touch-defaults", "mixpi-speaker", "mixpi-speaker-control"):
             compile((BIN / name).read_text(), name, "exec")
 
     def test_desktop_install_ignores_generated_python_cache(self):
@@ -72,6 +72,7 @@ class MixxxNavigationTests(unittest.TestCase):
         self.env = {**os.environ, "PATH": f"{self.path}:{os.environ['PATH']}",
                     "CALLS": str(self.log), "TREE": str(self.tree), "RUNNING": "1"}
         self.command("swaymsg", 'if [ "$1" = "-r" ]; then cat "$TREE"; else printf "%s\\n" "$*" >> "$CALLS"; fi')
+        self.command("systemctl", "exit 3")
         self.command("pgrep", 'exit "$RUNNING"')
         self.command("mixpi-touch-defaults", 'printf "%s\\n" seed-defaults >> "$CALLS"')
 

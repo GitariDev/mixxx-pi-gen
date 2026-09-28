@@ -8,7 +8,7 @@ visible.
 
 | Component | Identification | Evidence and notes |
 | --- | --- | --- |
-| Computer | Raspberry Pi 4 Model B | Board layout matches a Pi 4B; recent setup task explicitly established a Pi 4B. Exact RAM capacity is not visible. |
+| Computer | Raspberry Pi 4 Model B Rev 1.1, 4 GB | Confirmed over SSH on 2026-09-22 (about 3.7 GiB usable RAM). |
 | Display | Generic 7-inch DSI display, 800×480 | The rear PCB is printed `7inch DSI Display 800*480 Pixel`. It uses the Pi display ribbon plus GPIO power leads. Exact brand/model is not legible. |
 | DJ controller | Hercules DJControl Starlight | Brand and Starlight layout are visible; recent task history independently identified it. Compact two-deck controller with integrated audio connections. |
 | Navigation | USB mouse | Added and working; resolves the immediate settings/Preferences access problem without relying on the touch keyboard. Exact model is not important. |
@@ -26,6 +26,17 @@ visible.
 
 ## Power and cooling notes
 
+- **Post-gig update, 2026-09-22:** the hub was used without its separate supply,
+  adding peripherals caused cutouts, and the Starlight did not fully power up.
+  The USB 3 extender is also suspect. Exact wiring and failure cause remain
+  unconfirmed. See the [power action plan](../ideas/POST-GIG-PLAN.md#power-baseline)
+  for a dedicated supply, accessible case USB-C connection and full-load test.
+- **Connected test:** user confirmed the same hub was powering the Pi. A short
+  two-deck Starlight test worked by the user's report; 21 power samples over
+  about 3 minutes stayed at `throttled=0x0`, peaking at 76.4 °C while an SSH
+  backup also ran. This did not complete the 30-minute endurance or extender
+  comparison tests. Starlight master 1–2 and headphones 3–4 were saved at
+  44.1 kHz; the current boot card is 14.8 GiB and replacement card 62.2 GB.
 - Use a stable Pi 4 supply near 5.1 V / 3 A for development. A power bank is only suitable after a sustained load test confirms no undervoltage, USB resets, or audio dropouts.
 - The display and a **5 V** fan can use different physical pins on the same 5 V/GND rails: 5 V on physical pin 2 or 4; ground on a ground pin such as 6, 9, 14, 20, 25, 30, 34, or 39.
 - Never use a normal 3.3 V GPIO output as a fan power source.
@@ -33,11 +44,10 @@ visible.
 
 ## Questions to resolve
 
-- Exact Pi RAM capacity and boot-storage device.
 - Display manufacturer/product link and whether touch uses DSI or a separate USB link.
 - Power-bank brand, capacity, 5 V continuous-current rating, and whether all ports share one limit.
 - Exact Harman Kardon model and whether audio is wired, USB, or Bluetooth.
-- Whether headphone cue and master are both routed through the Starlight's audio interface.
+- Separate headphone-cue listening check, beyond the saved Starlight routing.
 - Which controller will replace/upgrade the Starlight and whether it will provide the primary audio interface.
 - Final fan model, voltage, current draw, and mounting direction.
 

@@ -1,0 +1,7 @@
+[Unit]
+Description=Mix Pi speaker audio
+PartOf=mixpi-speaker.target
+Conflicts=pipewire.service
+[Service]
+ExecStart=/usr/bin/pipewire
+Restart=on-failure

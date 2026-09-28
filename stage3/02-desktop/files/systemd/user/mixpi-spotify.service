@@ -1,0 +1,10 @@
+[Unit]
+Description=Mix Pi Spotify Connect speaker
+Requires=mixpi-audio-pulse.service
+After=mixpi-audio-pulse.service
+PartOf=mixpi-speaker.target
+[Service]
+ExecStart=/usr/bin/librespot --name "Mix Pi" --device-type speaker --backend pulseaudio --bitrate 320 --enable-volume-normalisation --initial-volume 50 --disable-audio-cache --system-cache %h/.local/state/mixpi-spotify
+Restart=on-failure
+RestartSec=3
+UMask=0077

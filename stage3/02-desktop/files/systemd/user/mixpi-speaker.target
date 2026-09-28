@@ -1,0 +1,4 @@
+[Unit]
+Description=Mix Pi Spotify and Bluetooth speaker mode
+Requires=mixpi-audio.service mixpi-audio-policy.service mixpi-audio-pulse.service mixpi-spotify.service
+After=mixpi-audio.service mixpi-audio-policy.service mixpi-audio-pulse.service mixpi-spotify.service

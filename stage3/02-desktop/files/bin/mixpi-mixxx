@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+# Release the speaker audio device before Mixxx opens ALSA.
+if systemctl --user is-active --quiet mixpi-speaker.target; then
+    /usr/local/bin/mixpi-speaker-control stop
+fi
+
 # Switching workspaces hides the decks without stopping audio. Return to an
 # existing window, including XWayland builds, instead of starting another copy.
 tree=$(swaymsg -r -t get_tree)

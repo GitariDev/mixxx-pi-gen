@@ -3,8 +3,12 @@
 **Aliases:** preferences, settings, skin settings, fullscreen, on-screen
 keyboard, controller settings
 
-**Current status:** resolved. A USB mouse now provides reliable settings access;
-this page remains as a fallback/recovery runbook.
+**Current status (2026-09-22):** the live Pi has larger Pioneered Browse rows,
+menus and horizontal/vertical scrollbars. Select a track and tap **Actions**
+beside Search to open its context menu. This was verified through the native
+Wayland session, and the user confirmed the hands-on check worked. Header/sidebar long-press menus
+remain open in the [GIG-03 action plan](../ideas/POST-GIG-PLAN.md#gig-03--context-menus-without-a-mouse).
+These skin changes do not replace the full Preferences dialog.
 
 The **SETTINGS** control beside `ON AIR` in the Pioneered skin changes the skin
 layout (samplers, waveforms, mixer, and similar panels). It is not the full

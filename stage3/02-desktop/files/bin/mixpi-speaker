@@ -1,0 +1,159 @@
+#!/usr/bin/python3
+"""Touch controls for Spotify Connect, Bluetooth and speaker audio."""
+import json
+import subprocess
+import threading
+
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gio, GLib, Gtk
+
+CONTROL = "/usr/local/bin/mixpi-speaker-control"
+
+
+class Speaker(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="org.mixpi.Speaker", flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.window = None
+        self.busy = False
+
+    def do_activate(self):
+        if self.window:
+            self.window.present()
+            self.refresh()
+            return
+        GLib.set_prgname("mixpi-speaker")
+        self.window = Gtk.ApplicationWindow(application=self, title="Mix Pi · Speaker")
+        self.window.set_default_size(780, 410)
+        self.window.set_border_width(14)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.window.add(box)
+        self.status = Gtk.Label(xalign=0)
+        box.pack_start(self.status, False, False, 0)
+        help_text = Gtk.Label(xalign=0, label="Spotify: on the same Wi-Fi, choose Mix Pi in Devices, then Start a Jam.\nBluetooth: tap Pair phone, then choose Mix Pi in your phone’s Bluetooth settings.")
+        help_text.set_line_wrap(True)
+        box.pack_start(help_text, False, False, 0)
+        row = Gtk.Box(spacing=8)
+        box.pack_start(row, False, False, 0)
+        row.pack_start(Gtk.Label(label="Audio output"), False, False, 0)
+        self.output = Gtk.ComboBoxText()
+        self.output.set_hexpand(True)
+        row.pack_start(self.output, True, True, 0)
+        self.button(row, "Use output", self.select_output)
+        self.button(row, "Refresh", lambda *_: self.refresh())
+        grid = Gtk.Grid(column_spacing=10, row_spacing=10, column_homogeneous=True)
+        box.pack_start(grid, True, True, 0)
+        actions = [
+            ("Start Speaker mode", self.start),
+            ("Audio settings", self.audio),
+            ("Pair phone · Bluetooth", self.pair),
+            ("Stop Speaker mode", self.stop),
+            ("Back to Mixxx", self.mixxx),
+            ("Mixxx audio preferences", self.preferences),
+        ]
+        for index, (label, callback) in enumerate(actions):
+            button = Gtk.Button(label=label)
+            button.set_size_request(180, 52)
+            button.connect("clicked", callback)
+            grid.attach(button, index % 2, index // 2, 1, 1)
+        self.window.show_all()
+        self.refresh()
+
+    def button(self, row, label, callback):
+        button = Gtk.Button(label=label)
+        button.set_size_request(-1, 44)
+        button.connect("clicked", callback)
+        row.pack_start(button, False, False, 0)
+
+    def message(self, title, detail, question=False):
+        dialog = Gtk.MessageDialog(transient_for=self.window, modal=True,
+            message_type=Gtk.MessageType.QUESTION if question else Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK_CANCEL if question else Gtk.ButtonsType.CLOSE,
+            text=title)
+        dialog.format_secondary_text(detail)
+        response = dialog.run()
+        dialog.destroy()
+        return response == Gtk.ResponseType.OK
+
+    def state(self):
+        return json.loads(subprocess.check_output([CONTROL, "status"], text=True, timeout=5))
+
+    def refresh(self):
+        if self.busy:
+            return
+        try:
+            state = self.state()
+            self.status.set_markup("<b>Speaker mode is on · Spotify device: Mix Pi</b>" if state["active"] else "<b>Speaker mode is off</b>")
+            self.output.remove_all()
+            if state["active"]:
+                sinks = json.loads(subprocess.check_output([CONTROL, "outputs"], text=True, timeout=5))
+                current = subprocess.check_output(["pactl", "get-default-sink"], text=True, timeout=5).strip()
+                for sink in sinks:
+                    label = "Starlight Main 1–2" if sink["name"] == "mixpi_starlight_main" else sink.get("description", sink["name"])
+                    self.output.append(sink["name"], label)
+                self.output.set_active_id(current)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            self.status.set_text("Could not read audio status: " + str(error))
+
+    def task(self, args, after=None):
+        if self.busy:
+            return
+        self.busy = True
+        self.window.set_sensitive(False)
+        self.status.set_text("Switching audio…")
+        def worker():
+            error = None
+            try:
+                result = subprocess.run(args, text=True, capture_output=True, timeout=60)
+                if result.returncode:
+                    error = result.stderr.strip() or result.stdout.strip() or "The audio command failed."
+            except (OSError, subprocess.SubprocessError) as failure:
+                error = str(failure)
+            GLib.idle_add(finish, error)
+        def finish(error):
+            self.busy = False
+            self.window.set_sensitive(True)
+            self.refresh()
+            if error:
+                self.message("Could not switch audio", error)
+            elif after:
+                after()
+            return False
+        threading.Thread(target=worker, daemon=True).start()
+
+    def start(self, *_args, after=None):
+        state = self.state()
+        if state["active"]:
+            if after:
+                after()
+            return
+        if state["mixxx"] and not self.message("Switch to Speaker mode?", "This closes Mixxx and stops any DJ playback so Spotify and Bluetooth can use the audio output. Mixxx will save its settings normally.", question=True):
+            return
+        self.task([CONTROL, "start", "--close-mixxx"], after)
+
+    def audio(self, *_):
+        self.start(after=lambda: subprocess.Popen(["pavucontrol", "--tab=3"]))
+
+    def pair(self, *_):
+        def pair_now():
+            # Blueman's existing desktop agent handles approval on the Pi.
+            self.task([CONTROL, "pair"], lambda: self.message("Pair with Mix Pi", "Mix Pi is visible for 3 minutes. Select it in your phone’s Bluetooth settings and accept the pairing request on the Pi. Then play audio on your phone."))
+        self.start(after=pair_now)
+
+    def stop(self, *_):
+        self.task([CONTROL, "stop"])
+
+    def mixxx(self, *_):
+        self.task(["/usr/local/bin/mixpi-mixxx"], self.window.hide)
+
+    def preferences(self, *_):
+        self.task(["/usr/local/bin/mixpi-audio-preferences"], self.window.hide)
+
+    def select_output(self, *_):
+        name = self.output.get_active_id()
+        if name:
+            self.task([CONTROL, "output", name])
+
+
+if __name__ == "__main__":
+    raise SystemExit(Speaker().run())

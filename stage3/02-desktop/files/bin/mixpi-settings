@@ -22,6 +22,9 @@ class Settings(Gtk.Application):
             grid = Gtk.Grid(column_spacing=10, row_spacing=10)
             self.window.add(grid)
             actions = [
+                ("Speaker / Spotify", ["/usr/local/bin/mixpi-speaker"]),
+                ("Audio settings", ["/usr/local/bin/mixpi-speaker"]),
+                ("Mixxx preferences", ["/usr/local/bin/mixpi-audio-preferences"]),
                 ("Bluetooth", ["blueman-manager"]),
                 ("Wi-Fi", ["nm-connection-editor"]),
                 ("SD music", ["nautilus", str(Path.home() / "Music")]),
@@ -32,7 +35,7 @@ class Settings(Gtk.Application):
             ]
             for index, (label, command) in enumerate(actions):
                 button = Gtk.Button(label=label)
-                button.set_size_request(220, 66)
+                button.set_size_request(220, 54)
                 button.set_hexpand(True)
                 button.set_vexpand(True)
                 button.connect("clicked", self.launch, command)

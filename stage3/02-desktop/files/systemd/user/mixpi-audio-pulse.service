@@ -1,0 +1,9 @@
+[Unit]
+Description=Mix Pi desktop audio controls
+Requires=mixpi-audio.service
+After=mixpi-audio.service mixpi-audio-policy.service
+PartOf=mixpi-speaker.target
+Conflicts=pipewire-pulse.service pulseaudio.service
+[Service]
+ExecStart=/usr/bin/pipewire-pulse
+Restart=on-failure

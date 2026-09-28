@@ -9,6 +9,7 @@ its dated sections record daily changes as bullet points.
 | Need | Open |
 | --- | --- |
 | Current state and today's changes | [`JOURNAL.md`](JOURNAL.md) |
+| First-gig feedback and the USB/touch/file-transfer action plan | [`ideas/POST-GIG-PLAN.md`](ideas/POST-GIG-PLAN.md) |
 | Identify the photographed setup | [`setup/HARDWARE.md`](setup/HARDWARE.md) |
 | Build/test the 800×480 UI, Bluetooth, SSH and SD music backup | [`setup/TOUCHSCREEN-BUILD.md`](setup/TOUCHSCREEN-BUILD.md) |
 | Plan a controller upgrade without device lock-in | [`setup/CONTROLLER-UPGRADE.md`](setup/CONTROLLER-UPGRADE.md) |
@@ -19,12 +20,14 @@ its dated sections record daily changes as bullet points.
 | Load and perform with samples | [`skills/sampling.md`](skills/sampling.md) |
 | Run a structured practice session | [`skills/practice-session.md`](skills/practice-session.md) |
 | Find music on a USB drive | [`skills/usb-media.md`](skills/usb-media.md) |
+| Spotify, Bluetooth speaker mode and audio output | [`setup/SPEAKER-MODE.md`](setup/SPEAKER-MODE.md) |
 | Open Preferences on the touchscreen | [`skills/preferences-touch.md`](skills/preferences-touch.md) |
 | Configure or replace a DJ controller | [`skills/controller-setup.md`](skills/controller-setup.md) |
 | Diagnose common failures | [`skills/troubleshooting.md`](skills/troubleshooting.md) |
 | Plan crates, playlists, and sets | [`music/PLAYLISTS.md`](music/PLAYLISTS.md) |
 | Capture and test effect ideas | [`music/EFFECTS.md`](music/EFFECTS.md) |
 | Build a Stream Deck/F1-style control surface | [`ideas/CONTROL-SURFACE.md`](ideas/CONTROL-SURFACE.md) |
+| Plan Rekordbox metadata, genre tagging, and beatgrid repair tools | [`ideas/DJ-LIBRARY-TOOLS.md`](ideas/DJ-LIBRARY-TOOLS.md) |
 | Research basis and useful links | [`research/MIXXX-NOTES.md`](research/MIXXX-NOTES.md) |
 
 ## How to maintain it

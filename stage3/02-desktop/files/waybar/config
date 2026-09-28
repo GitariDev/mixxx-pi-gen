@@ -3,11 +3,29 @@
     "position": "top",
     "height": 36,
     "exclusive": true,
-    "modules-left": ["custom/desktop", "custom/mixxx", "custom/settings", "custom/media"],
+    "modules-left": [
+        "custom/desktop",
+        "custom/mixxx",
+        "custom/speaker",
+        "custom/settings",
+        "custom/media"
+    ],
     "modules-center": [],
-    "modules-right": ["clock", "tray", "custom/bluetooth", "custom/keyboard", "custom/power"],
-    "clock": {"format": "{:%H:%M}", "tooltip-format": "{:%A %d %B}"},
-    "tray": {"icon-size": 22, "spacing": 8},
+    "modules-right": [
+        "clock",
+        "tray",
+        "custom/bluetooth",
+        "custom/keyboard",
+        "custom/power"
+    ],
+    "clock": {
+        "format": "{:%H:%M}",
+        "tooltip-format": "{:%A %d %B}"
+    },
+    "tray": {
+        "icon-size": 22,
+        "spacing": 8
+    },
     "custom/desktop": {
         "format": "Desktop",
         "tooltip-format": "Hide Mixxx; playback continues",
@@ -23,23 +41,28 @@
         "on-click": "swaymsg 'workspace \"2:Desktop\"; exec /usr/local/bin/mixpi-settings'"
     },
     "custom/media": {
-        "format": "USB → Pi",
+        "format": "USB \u2192 Pi",
         "tooltip-format": "Copy USB music and playlists to the Pi",
         "on-click": "swaymsg 'workspace \"2:Desktop\"; exec /usr/local/bin/mixpi-media'"
     },
     "custom/bluetooth": {
-        "format": "",
+        "format": "\uf294",
         "tooltip-format": "Pair a Bluetooth keyboard or mouse",
         "on-click": "swaymsg 'workspace \"2:Desktop\"; exec blueman-manager'"
     },
     "custom/keyboard": {
-        "format": "",
+        "format": "\uf11c",
         "tooltip-format": "On-screen keyboard",
         "on-click": "/bin/bash $HOME/.config/waybar/wvkeyboard.sh"
     },
     "custom/power": {
-        "format": "⏻",
+        "format": "\u23fb",
         "tooltip-format": "Power",
         "on-click": "swaynag -t warning -m 'Power' -b 'Shut down' 'shutdown -h now' -b 'Restart' 'shutdown -r now'"
+    },
+    "custom/speaker": {
+        "format": "Speaker",
+        "tooltip-format": "Spotify, Bluetooth and audio output",
+        "on-click": "swaymsg 'workspace \"2:Desktop\"; exec /usr/local/bin/mixpi-speaker'"
     }
 }

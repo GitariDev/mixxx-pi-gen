@@ -1,0 +1,176 @@
+#!/usr/bin/python3
+"""Switch between exclusive Mixxx audio and a desktop speaker session."""
+import fcntl
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+TARGET = "mixpi-speaker.target"
+STATE = Path.home() / ".config/mixpi/speaker.json"
+
+
+def run(*args, check=True):
+    result = subprocess.run(args, text=True, capture_output=True, timeout=35)
+    if check and result.returncode:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Command failed: " + args[0])
+    return result.stdout.strip()
+
+
+def active():
+    return run("systemctl", "--user", "is-active", TARGET, check=False) == "active"
+
+
+def mixxx_running():
+    return bool(run("pgrep", "-u", str(os.getuid()), "-x", "mixxx", check=False))
+
+
+def outputs():
+    return json.loads(run("pactl", "--format=json", "list", "sinks"))
+
+
+def prepare_outputs():
+    sinks = outputs()
+    master = next((s for s in sinks if s["name"].startswith("alsa_output.")
+                   and "Starlight" in s["name"] and "front-left" in s["channel_map"]), None)
+    if master and not any(s["name"] == "mixpi_starlight_main" for s in sinks):
+        run("pactl", "load-module", "module-remap-sink",
+            "sink_name=mixpi_starlight_main",
+            "sink_properties=device.description=Starlight_Main_1-2",
+            "master=" + master["name"], "channels=2", "rate=44100",
+            "channel_map=front-left,front-right", "master_channel_map=front-left,front-right", "remix=no")
+        # Control listening volume on the stereo output; preserve front/rear routing.
+        run("pactl", "set-sink-volume", master["name"], "100%")
+        run("pactl", "set-sink-mute", master["name"], "0")
+        sinks = outputs()
+    return sinks
+
+
+def saved_output():
+    try:
+        return json.loads(STATE.read_text()).get("output")
+    except (OSError, ValueError):
+        return None
+
+
+def choose_output(name, save=True):
+    sinks = outputs()
+    if name not in {sink["name"] for sink in sinks}:
+        raise RuntimeError("That output is disconnected. Refresh the output list and try again.")
+    run("pactl", "set-default-sink", name)
+    for stream in json.loads(run("pactl", "--format=json", "list", "sink-inputs")):
+        # Never move the internal streams of virtual/remapped sinks.
+        if stream.get("properties", {}).get("media.class") == "Stream/Output/Audio" and stream.get("properties", {}).get("node.virtual") == "true":
+            continue
+        run("pactl", "move-sink-input", str(stream["index"]), name, check=False)
+    if save:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        temp = STATE.with_suffix(".tmp")
+        temp.write_text(json.dumps({"output": name}) + "\n")
+        temp.replace(STATE)
+
+
+def start(close_mixxx=False):
+    if active():
+        return
+    if mixxx_running():
+        if not close_mixxx:
+            raise RuntimeError("Mixxx is open. Use the Speaker screen to close Mixxx and switch audio.")
+        # Sway sends a normal window-close request so Mixxx saves its library/settings.
+        tree = json.loads(run("swaymsg", "-r", "-t", "get_tree"))
+        def windows(node):
+            if node.get("app_id") == "org.mixxx.Mixxx" or node.get("window_properties", {}).get("class", "").lower() == "mixxx":
+                yield node["id"]
+            for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                yield from windows(child)
+        for window in windows(tree):
+            run("swaymsg", f"[con_id={window}] kill")
+        deadline = time.monotonic() + 30
+        while mixxx_running():
+            if time.monotonic() > deadline:
+                raise RuntimeError("Mixxx is still open. Finish its confirmation dialog, then try Speaker mode again.")
+            time.sleep(0.25)
+    try:
+        run("systemctl", "--user", "start", TARGET)
+        deadline = time.monotonic() + 12
+        sinks = []
+        while time.monotonic() < deadline:
+            try:
+                sinks = [s for s in outputs() if s["name"] != "auto_null"]
+                if sinks:
+                    break
+            except RuntimeError:
+                pass
+            time.sleep(0.25)
+        if not sinks:
+            raise RuntimeError("No audio output found. Connect the Starlight or another audio device and try again.")
+        sinks = prepare_outputs()
+        names = {s["name"] for s in sinks}
+        preferred = saved_output()
+        starlight = "mixpi_starlight_main" if "mixpi_starlight_main" in names else None
+        selected = preferred if preferred in names else starlight or run("pactl", "get-default-sink")
+        first_start = not STATE.exists()
+        choose_output(selected, save=first_start)
+        # A first-time output starts at a moderate volume; later sessions retain it.
+        if first_start:
+            run("pactl", "set-sink-volume", selected, "50%")
+        run("pactl", "set-sink-mute", selected, "0")
+    except Exception:
+        run("systemctl", "--user", "stop", TARGET, check=False)
+        raise
+
+
+def stop():
+    # Stop pairing advertisements; paired keyboards/mice remain connected.
+    run("bluetoothctl", "discoverable", "off", check=False)
+    run("systemctl", "--user", "stop", TARGET)
+
+
+def pair():
+    if not active():
+        raise RuntimeError("Start Speaker mode first.")
+    run("/usr/sbin/rfkill", "unblock", "bluetooth")
+    deadline = time.monotonic() + 8
+    while "Powered: yes" not in run("bluetoothctl", "show"):
+        run("bluetoothctl", "power", "on", check=False)
+        if time.monotonic() > deadline:
+            raise RuntimeError("Bluetooth could not power on. Check the adapter and try again.")
+        time.sleep(0.5)
+    run("bluetoothctl", "system-alias", "Mix Pi")
+    run("bluetoothctl", "discoverable-timeout", "180")
+    run("bluetoothctl", "pairable", "on")
+    run("bluetoothctl", "discoverable", "on")
+
+
+def main():
+    command = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if command == "status":
+        print(json.dumps({"active": active(), "mixxx": mixxx_running()}))
+        return
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+    with (runtime / "mixpi-audio.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("An audio mode switch is already in progress. Try again when it finishes.")
+        if command == "start":
+            start("--close-mixxx" in sys.argv)
+        elif command == "stop":
+            stop()
+        elif command == "outputs":
+            print(json.dumps(prepare_outputs()))
+        elif command == "output":
+            choose_output(sys.argv[2])
+        elif command == "pair":
+            pair()
+        else:
+            raise RuntimeError("Unknown speaker command")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+        sys.exit(str(error))

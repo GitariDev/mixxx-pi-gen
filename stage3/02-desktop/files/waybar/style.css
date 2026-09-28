@@ -4,7 +4,7 @@
     min-height: 0;
 }
 window#waybar { background: #17191f; color: #ffffff; }
-#custom-desktop, #custom-mixxx, #custom-settings, #custom-media,
+#custom-speaker, #custom-desktop, #custom-mixxx, #custom-settings, #custom-media,
 #custom-bluetooth, #custom-keyboard, #custom-power {
     min-width: 36px;
     min-height: 32px;
@@ -20,3 +20,5 @@ window#waybar { background: #17191f; color: #ffffff; }
 #custom-power { color: #ffb3b3; }
 #clock, #tray { padding: 0 6px; }
 tooltip, menu { background: #17191f; color: #ffffff; }
+
+#custom-speaker { background: #246344; }

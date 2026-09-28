@@ -91,4 +91,8 @@ control, separate phone-source instructions, and an explicit output section.
 Pairing and output selection are enabled only while Speaker mode is on.
 Settings removes the duplicate audio shortcut and groups tools by task.
 See [the design and validation notes](../design/DESIGN.md). These new screens
-were tested in a Linux GTK virtual display, not installed on the live Pi.
+were tested in a Linux GTK virtual display, then deployed to the live Pi over
+SSH on September 28. All three windows fit 800×412 with empty logs. Speaker
+mode remained active through Starlight, without restarting its audio services.
+The existing copied library and Mixxx profile were preserved. Live evidence
+and rollback details are in `deploy/ui-20260928/RESULTS.md`.

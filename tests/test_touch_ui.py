@@ -262,6 +262,39 @@ class TouchUiTests(unittest.TestCase):
         self.assertLessEqual(checked[0][1], 412)
         self.assertEqual(checked[0][2], "Keep playing")
 
+    def test_pairing_notice_has_readable_rendered_colors(self):
+        import mixpi_ui
+        app, _ = self.speaker_app(True)
+        checked = []
+        def luminance(color):
+            def linear(v):
+                return v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4
+            return sum(linear(v) * weight for v, weight in
+                       zip((color.red, color.green, color.blue), (.2126, .7152, .0722)))
+        def inspect_dialog():
+            dialogs = [w for w in Gtk.Window.list_toplevels() if isinstance(w, Gtk.MessageDialog)]
+            if not dialogs:
+                return True
+            dialog = dialogs[0]
+            background = dialog.get_style_context().get_background_color(Gtk.StateFlags.NORMAL)
+            for item in dialog.get_message_area().get_children():
+                if isinstance(item, Gtk.Label):
+                    color = item.get_style_context().get_color(Gtk.StateFlags.NORMAL)
+                    low, high = sorted((luminance(color), luminance(background)))
+                    checked.append((high + .05) / (low + .05))
+            if os.environ.get("MIXPI_UI_SCREENSHOTS"):
+                Path(os.environ["MIXPI_UI_SCREENSHOTS"]).mkdir(parents=True, exist_ok=True)
+                width, height = dialog.get_size()
+                pixbuf = Gdk.pixbuf_get_from_window(dialog.get_window(), 0, 0, width, height)
+                pixbuf.savev(str(Path(os.environ["MIXPI_UI_SCREENSHOTS"]) / "pairing-notice.png"), "png", [], [])
+            dialog.response(Gtk.ResponseType.CLOSE)
+            return False
+        GLib.timeout_add(200, inspect_dialog)
+        mixpi_ui.message(app.window, "Choose Mix Pi on your phone",
+            "Open your phone’s Bluetooth settings and select Mix Pi. Accept the matching pairing request on the Pi, then play audio.\n\nMix Pi is visible for 3 minutes.")
+        self.assertEqual(len(checked), 2)
+        self.assertTrue(all(ratio >= 4.5 for ratio in checked), checked)
+
     def test_media_empty_ready_and_verified(self):
         app = self.media_app()
         self.assertFalse(app.copy.get_sensitive())

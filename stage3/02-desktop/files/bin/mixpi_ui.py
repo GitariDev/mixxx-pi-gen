@@ -5,7 +5,7 @@ from gi.repository import Gtk, Pango
 
 CSS = b"""
 * { font-family: 'DejaVu Sans', sans-serif; font-size: 16px; }
-window, dialog, menu { background: #101216; color: #f4f6f8; }
+window, dialog, messagedialog, menu { background: #101216; color: #f4f6f8; }
 label { color: #f4f6f8; }
 .title { font-size: 24px; font-weight: bold; }
 .eyebrow { font-size: 12px; font-weight: bold; color: #aeb8c4; }
@@ -118,6 +118,9 @@ def message(window, title, detail, confirm=None):
     dialog = Gtk.MessageDialog(transient_for=window, modal=True,
         message_type=Gtk.MessageType.QUESTION if confirm else Gtk.MessageType.INFO,
         buttons=Gtk.ButtonsType.NONE, text=title)
+    dialog.set_application(window.get_application())
+    dialog.set_title("Mix Pi · Confirm" if confirm else "Mix Pi · Notice")
+    dialog.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
     dialog.set_default_size(620, -1)
     dialog.format_secondary_text(detail)
     if confirm:

@@ -92,7 +92,21 @@ MIXPI_UI_SCREENSHOTS=output/ui-review \
 The optional upstream Pioneered fixture still requires `PIONEERED_TEST_SKIN`.
 GTK tests skip on hosts without GTK/display support. These checks do not prove
 physical touch accuracy, audible playback, phone pairing or a new image boot.
-The September 28 redesign has not been installed on the physical Pi.
+On September 28 the redesign was deployed over SSH and all three screens were
+visually checked on the physical Pi at 800×412, with empty UI logs. Audio service
+PIDs, library inventory/receipt, and Mixxx profile hashes were unchanged. The
+database quick check passed. No new playback, pairing, real USB transfer or
+reboot was exercised. Local deployment evidence: `deploy/ui-20260928/RESULTS.md`.
+
+The subsequent Pair phone check exposed GTK's distinct `messagedialog` CSS
+node: the original selector left its background light while styling text white.
+The shared theme now covers that node, and notices/confirmations have explicit
+titles and a Sway floating rule so they stay centered above the utility window.
+A native regression test measures actual rendered text/background contrast.
+The fix was installed on the Pi and the actual Pair phone button was exercised:
+the instructions were readable, Bluetooth was discoverable/pairable for 180
+seconds, and the Audio Sink role was present. Phone-side acceptance/audio
+remains a user check. Evidence: `deploy/ui-20260928/dialog-fix/`.
 
 ## References used
 

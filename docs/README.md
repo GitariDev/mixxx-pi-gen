@@ -20,7 +20,9 @@ its dated sections record daily changes as bullet points.
 | Load and perform with samples | [`skills/sampling.md`](skills/sampling.md) |
 | Run a structured practice session | [`skills/practice-session.md`](skills/practice-session.md) |
 | Find music on a USB drive | [`skills/usb-media.md`](skills/usb-media.md) |
+| Record a mix and move it to a USB drive | [`skills/usb-media.md`](skills/usb-media.md#move-recordings-onto-a-usb-drive) |
 | Spotify, Bluetooth speaker mode and audio output | [`setup/SPEAKER-MODE.md`](setup/SPEAKER-MODE.md) |
+| Speaker-mode request, implementation and misplaced-chat handoff | [`handoffs/2026-09-25-speaker-mode-chat.md`](handoffs/2026-09-25-speaker-mode-chat.md) |
 | Open Preferences on the touchscreen | [`skills/preferences-touch.md`](skills/preferences-touch.md) |
 | Configure or replace a DJ controller | [`skills/controller-setup.md`](skills/controller-setup.md) |
 | Diagnose common failures | [`skills/troubleshooting.md`](skills/troubleshooting.md) |

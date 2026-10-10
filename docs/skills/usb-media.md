@@ -1,7 +1,7 @@
 # Find music on a USB drive
 
 **Aliases:** USB missing, flash drive, thumb drive, removable media, mount,
-Computer folder
+Computer folder, export recording, save mix, move recordings
 
 **Installed and tested (2026-09-22):** the live Pi automatically discovers
 compatible Rekordbox exports. A temporary export and the idle MANTACORE USB
@@ -13,7 +13,8 @@ Use the Computer paths below for ordinary folders or as a manual fallback.
 
 ## Copy USB music onto the Pi
 
-Tap **USB → Pi** in the top bar (also available in Settings), choose a mounted drive and review the copy size
+Tap **USB ⇄ Pi** in the top bar (also available in Settings) and stay on
+**Music → Pi**. Choose a mounted drive and review the copy size
 and available space. The screen separates **From / USB drive**, **To / this Pi’s
 SD card**, and the current transfer state. Tap **Copy to Pi**; wait for
 **Copy complete · Verified** before using the copy. **Open copy** opens the
@@ -28,6 +29,36 @@ instead of duplicating it. Cancellation removes incomplete staging. Leave the
 USB inserted until completion, then check the copied playlists and audio in
 Mixxx before relying on the internal copy. Individual-playlist selection and
 browser uploads are not part of this first version.
+
+## Move recordings onto a USB drive
+
+Record in Mixxx with **Browse → Recordings → Start Recording** (or **Ctrl+R**).
+Mixxx saves a 16-bit WAV named after the start time, such as
+`2026-10-10_21h05m33s.wav`, plus a `.cue` track list, in
+`~/Music/Mixxx/Recordings`. Budget roughly 600 MB per hour.
+
+1. Stop the recording, then tap **USB ⇄ Pi** and choose **Recordings → USB**.
+2. Every recording on the Pi is listed, newest first, already ticked. Untick
+   any you want to keep on the Pi. One still being written shows **In use**
+   and cannot be ticked.
+3. Pick the drive under **To / USB drive** and tap **Move to USB**.
+4. Wait for **Move complete · Verified**, then eject the drive from the tray
+   before unplugging it.
+
+Recordings go into a **Mix Pi Recordings** folder at the top of the drive. On a
+Rekordbox drive this sits beside `PIONEER` and `Contents`, which are not
+touched, and **Music → Pi** skips that folder when copying the drive back.
+
+Each file is copied, flushed and read back from the drive; only a matching
+SHA-256 removes the Pi's original, with a recording and its cue sheet deleted
+together. A different file of the same name is never replaced. Cancelling or
+unplugging leaves every unverified recording on the Pi, and repeating the move
+finishes the job. FAT32 drives cannot hold a file over 4 GiB; Mixxx splits
+recordings just under that size, so normal recordings fit.
+
+Over SSH: `mixpi-media recordings` lists them and
+`mixpi-media move-recordings --usb /media/pi/LABEL [--only NAME …]` moves them.
+The folder follows Mixxx **Preferences → Recording** if you change it there.
 
 ## Touch-first path
 

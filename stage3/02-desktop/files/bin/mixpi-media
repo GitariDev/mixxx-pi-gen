@@ -4,10 +4,15 @@
 No arguments opens the touch interface. `list`, `plan --source PATH` and
 `copy --source PATH` provide the same workflow without GTK. A complete
 Rekordbox export is kept intact for Mixxx; ordinary files go to Music/Backup.
+
+`recordings` and `move-recordings --usb PATH` take Mixxx recordings the other
+way. Each one leaves the Pi only after its copy on the USB drive is verified.
 """
 import argparse
 import ctypes
+import errno
 import fcntl
+import glob
 import hashlib
 import json
 import os
@@ -26,6 +31,12 @@ from dataclasses import dataclass
 CHUNK = 1024 * 1024
 RESERVE = 512 * 1024 * 1024
 RECEIPT = ".mixpi-transfer.json"
+STATE_ROOT = Path.home() / ".local/share/mixpi-media"
+# Recordings get their own top-level USB folder, beside PIONEER and Contents.
+RECORDINGS_FOLDER = "Mix Pi Recordings"
+PARTIAL = ".mixpi-partial"
+USB_RESERVE = 16 * 1024 * 1024
+FAT_FILE_LIMIT = 4 * 1024 ** 3 - 1
 IGNORED_NAMES = frozenset(name.casefold() for name in (
     ".Trashes", ".Spotlight-V100", ".fseventsd", ".TemporaryItems",
     ".apdisk", ".DS_Store", "$RECYCLE.BIN", "System Volume Information",
@@ -58,7 +69,7 @@ def mounted_drives(data=None):
         try:
             result = subprocess.run([
                 "lsblk", "--json", "--bytes", "--output",
-                "NAME,PATH,TYPE,RM,TRAN,SIZE,LABEL,UUID,MOUNTPOINTS,MAJ:MIN",
+                "NAME,PATH,TYPE,RM,TRAN,SIZE,LABEL,UUID,FSTYPE,MOUNTPOINTS,MAJ:MIN",
             ], check=True, capture_output=True, text=True)
             data = json.loads(result.stdout)
         except (OSError, subprocess.CalledProcessError, ValueError) as error:
@@ -86,6 +97,7 @@ def mounted_drives(data=None):
                     "source": mount, "label": node.get("label") or Path(mount).name,
                     "uuid": node.get("uuid") or node.get("maj:min") or node["path"],
                     "device": node["path"], "size": node.get("size", 0),
+                    "fstype": node.get("fstype") or "",
                 })
     return sorted(drives, key=lambda drive: (drive["label"], drive["source"]))
 
@@ -162,6 +174,9 @@ def inventory(source, cancel=None, include_roots=None):
                 continue
             if not prefix.parts and include_roots is not None and name not in include_roots:
                 continue
+            # Recordings moved here from the Pi are not music to copy back.
+            if not prefix.parts and name == RECORDINGS_FOLDER:
+                continue
             relative = str(prefix / name)
             validate_relative(relative)
             info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
@@ -221,7 +236,7 @@ def make_plan(source, label, source_id, export_root=None, audio_root=None,
     source = checked_directory(source)
     export_root = Path(export_root or f"/media/{os.environ.get('USER', 'pi')}")
     audio_root = Path(audio_root or Path.home() / "Music/Backup")
-    state_root = Path(state_root or Path.home() / ".local/share/mixpi-media")
+    state_root = Path(state_root or STATE_ROOT)
     has_pioneer = os.path.lexists(source / "PIONEER")
     include_roots = ("PIONEER", "Contents") if has_pioneer else None
     root_identity, directories, files = inventory(source, cancel, include_roots)
@@ -268,7 +283,7 @@ def atomic_publish(source, destination):
         raise OSError(code, os.strerror(code), str(destination))
 
 
-def hash_file(handle, cancel=None):
+def hash_file(handle, cancel=None, tick=None):
     digest = hashlib.sha256()
     while True:
         check_cancel(cancel)
@@ -276,6 +291,8 @@ def hash_file(handle, cancel=None):
         if not chunk:
             return digest.hexdigest()
         digest.update(chunk)
+        if tick:
+            tick(len(chunk))
 
 
 def verify_existing(plan, cancel, progress):
@@ -395,6 +412,235 @@ def plan_drive(drive, cancel=None):
     return make_plan(drive["source"], drive["label"], drive["uuid"], cancel=cancel)
 
 
+def recordings_directory(config=None):
+    """Mixxx's saved Recordings folder, or its built-in default when none is saved."""
+    section = None
+    try:
+        for line in Path(config or Path.home() / ".mixxx/mixxx.cfg").read_text(errors="replace").splitlines():
+            if line.startswith("["):
+                section = line.strip()
+            elif section == "[Recording]" and line.startswith("Directory "):
+                if line[10:].strip():
+                    return Path(line[10:].strip())
+    except OSError:
+        pass
+    return Path.home() / "Music/Mixxx/Recordings"
+
+
+def files_in_use(directory):
+    """Names in a folder that a running program has open, such as a mix still recording."""
+    directory, names = os.path.realpath(directory), set()
+    for descriptors in glob.glob("/proc/[0-9]*/fd"):
+        try:
+            entries = os.listdir(descriptors)
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                path = os.readlink(os.path.join(descriptors, entry))
+            except OSError:
+                continue
+            if os.path.dirname(path) == directory:
+                names.add(os.path.basename(path))
+    return names
+
+
+def list_recordings(directory, in_use=None):
+    """Group each recording with its cue sheet, newest first. No folder means none."""
+    directory = Path(directory)
+    if not os.path.lexists(directory):
+        return []
+    groups = {}
+    with open_directory(directory) as descriptor:
+        for name in sorted(os.listdir(descriptor)):
+            if name.startswith(".") or name.casefold() in IGNORED_NAMES:
+                continue
+            info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            if stat.S_ISREG(info.st_mode):
+                groups.setdefault(Path(name).stem, []).append({
+                    "path": name, "size": info.st_size,
+                    "mtime_ns": info.st_mtime_ns, "identity": identity(info)})
+    busy = files_in_use(directory) if in_use is None else set(in_use)
+    recordings = [{"name": name, "files": files,
+                   "bytes": sum(item["size"] for item in files),
+                   "mtime_ns": max(item["mtime_ns"] for item in files),
+                   "busy": any(item["path"] in busy for item in files)}
+                  for name, files in groups.items()]
+    return sorted(recordings, key=lambda item: (item["mtime_ns"], item["name"]), reverse=True)
+
+
+def usb_target(drive):
+    """Where recordings would go on a mounted drive. Looks only; writes nothing."""
+    mount = checked_directory(drive["source"])
+    info = os.statvfs(mount)
+    return {"mount": str(mount), "destination": str(mount / RECORDINGS_FOLDER),
+            "device": mount.stat().st_dev, "fstype": drive.get("fstype") or "",
+            "free": info.f_bavail * info.f_frsize,
+            "read_only": bool(info.f_flag & os.ST_RDONLY) or not os.access(mount, os.W_OK),
+            "rekordbox": os.path.lexists(mount / "PIONEER")}
+
+
+def move_error(recordings, target):
+    if not recordings:
+        return "Select at least one recording."
+    for recording in recordings:
+        if recording["busy"]:
+            return f"{recording['name']} is in use. Stop recording in Mixxx first."
+    if target["read_only"]:
+        return "This USB drive is read-only, so recordings cannot be saved to it."
+    if target["fstype"] == "vfat":
+        for recording in recordings:
+            for entry in recording["files"]:
+                if entry["size"] > FAT_FILE_LIMIT:
+                    return (f"{entry['path']} is over 4 GiB, the largest file a FAT32 "
+                            "drive can hold. Use an exFAT drive.")
+    needed = sum(recording["bytes"] for recording in recordings) + USB_RESERVE
+    if target["free"] < needed:
+        return (f"Not enough USB space. Need {size_text(needed)} free; "
+                f"this drive has {size_text(target['free'])}.")
+    return None
+
+
+def publish_file(partial, target):
+    """Give a verified file its final name without replacing another file."""
+    try:
+        atomic_publish(partial, target)
+    except OSError as error:
+        # FUSE drivers such as ntfs-3g reject the no-replace flag.
+        if error.errno not in (errno.EINVAL, errno.ENOSYS, errno.ENOTSUP):
+            raise
+        if os.path.lexists(target):
+            raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), str(target)) from error
+        os.rename(partial, target)
+
+
+def sync_directory(descriptor):
+    try:
+        os.fsync(descriptor)
+    except OSError as error:
+        if error.errno != errno.EINVAL:
+            raise
+
+
+def store_verified(source_fd, usb_fd, destination, entry, cancel, advance):
+    """Leave a verified copy of one file on the USB; never replace a different one."""
+    name = entry["path"]
+    target, partial = destination / name, destination / f".{name}{PARTIAL}"
+    existing = os.path.lexists(target)
+    changed = TransferError(f"{name} changed during the move")
+    try:
+        with open_relative(source_fd, name) as source:
+            if identity(os.fstat(source.fileno())) != entry["identity"]:
+                raise changed
+            if existing:
+                expected = hash_file(source, cancel, lambda count: advance(count, f"Checking {name} already on USB"))
+            else:
+                # Left by a move that was interrupted before verification.
+                if os.path.lexists(partial):
+                    os.unlink(partial)
+                digest = hashlib.sha256()
+                with partial.open("xb") as output:
+                    while True:
+                        check_cancel(cancel)
+                        chunk = source.read(CHUNK)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                        digest.update(chunk)
+                        advance(len(chunk), f"Copying {name}")
+                    output.flush()
+                    os.fsync(output.fileno())
+                    # Drop cached pages so verification reads the drive itself.
+                    if hasattr(os, "posix_fadvise"):
+                        os.posix_fadvise(output.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+                expected = digest.hexdigest()
+            if identity(os.fstat(source.fileno())) != entry["identity"]:
+                raise changed
+        with open_relative(usb_fd, name if existing else partial.name) as stored:
+            matches = (os.fstat(stored.fileno()).st_size == entry["size"] and
+                       hash_file(stored, cancel, lambda count: advance(count, f"Verifying {name} on USB")) == expected)
+        if existing:
+            if not matches:
+                raise TransferError(f"A different {name} is already on the USB; it was not replaced")
+            return
+        if not matches:
+            raise TransferError(f"{name} failed verification on the USB")
+        os.utime(partial, ns=(entry["mtime_ns"], entry["mtime_ns"]))
+        publish_file(partial, target)
+    except BaseException:
+        if not existing and os.path.lexists(partial):
+            try:
+                os.unlink(partial)
+            except OSError:
+                pass
+        raise
+
+
+def require_unchanged(source_fd, recording, moment):
+    for entry in recording["files"]:
+        if identity(os.stat(entry["path"], dir_fd=source_fd, follow_symlinks=False)) != entry["identity"]:
+            raise TransferError(f"{entry['path']} changed {moment}")
+
+
+def move_recordings(directory, recordings, target, state_root=None, cancel=None,
+                    progress=lambda fraction, message: None):
+    """Copy to USB, verify what the drive holds, then delete each Pi original."""
+    moved, lock_fd = [], None
+
+    def remaining():
+        return (f" {len(moved)} already moved; the rest are" if moved else " Recordings are") + " still on the Pi."
+    try:
+        check_cancel(cancel)
+        directory = checked_directory(directory)
+        current = usb_target({"source": target["mount"], "fstype": target["fstype"]})
+        if current["device"] != target["device"]:
+            raise TransferError("The USB drive changed or was removed")
+        unavailable = move_error(recordings, current)
+        if unavailable:
+            raise TransferError(unavailable)
+        state_root = checked_directory(state_root or STATE_ROOT, create=True)
+        lock_fd = os.open(state_root / "copy.lock", os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise TransferError("Another USB transfer is in progress") from error
+        destination = Path(current["destination"])
+        try:
+            os.mkdir(destination)
+        except FileExistsError:
+            pass
+        destination = checked_directory(destination)
+        # Every byte is read twice: once to copy it, once back from the drive.
+        total, done = 2 * max(sum(recording["bytes"] for recording in recordings), 1), 0
+
+        def advance(count, message):
+            nonlocal done
+            done += count
+            progress(0.99 * done / total, message)
+        with open_directory(directory) as source_fd, open_directory(destination) as usb_fd:
+            for recording in recordings:
+                require_unchanged(source_fd, recording, "after it was listed")
+                for entry in recording["files"]:
+                    store_verified(source_fd, usb_fd, destination, entry, cancel, advance)
+                sync_directory(usb_fd)
+                require_unchanged(source_fd, recording, "during the move")
+                for entry in recording["files"]:
+                    os.unlink(entry["path"], dir_fd=source_fd)
+                os.fsync(source_fd)
+                moved.append(recording["name"])
+        progress(1.0, "Recordings verified on USB.")
+        return {"status": "moved", "destination": str(destination), "recordings": len(moved),
+                "files": sum(len(recording["files"]) for recording in recordings),
+                "bytes": sum(recording["bytes"] for recording in recordings)}
+    except Cancelled:
+        raise Cancelled("Move cancelled." + remaining()) from None
+    except (TransferError, OSError) as error:
+        raise TransferError(str(error).rstrip(".") + "." + remaining()) from error
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+
+
 def create_media_app():
     """Build the native interface; construction is separate for headless UI checks."""
     import gi
@@ -412,17 +658,31 @@ def create_media_app():
             self.drives = []
             self.last_progress = 0
             self.completed_destination = None
+            self.mode = "music"
+            self.directory = None
+            self.recordings = []
+            self.target = None
+            self.checks = {}
 
         def do_activate(self):
             if self.window:
                 self.window.present()
                 return
             GLib.set_prgname("mixpi-media")
-            self.window, body, footer = shell(self, "USB → Pi", "MUSIC TRANSFER")
+            switch = Gtk.Box(spacing=4)
+            self.music_mode = Gtk.RadioButton.new_with_label(None, "Music → Pi")
+            self.recordings_mode = Gtk.RadioButton.new_with_label_from_widget(self.music_mode, "Recordings → USB")
+            for item in (self.music_mode, self.recordings_mode):
+                item.set_mode(False)
+                item.set_size_request(-1, 48)
+                switch.pack_start(style(item, "segment"), False, False, 0)
+            self.recordings_mode.connect("toggled", self.mode_changed)
+            self.window, body, footer = shell(self, "USB ⇄ Pi", "MUSIC TRANSFER", switch)
             self.window.connect("delete-event", self.close)
+            self.body = body
             self.step = label("01  SELECT USB   →   02  REVIEW COPY   →   03  COPY & VERIFY", "eyebrow")
             body.pack_start(self.step, False, False, 0)
-            row = Gtk.Box(spacing=8)
+            row = self.drive_row = Gtk.Box(spacing=8)
             self.select = Gtk.ComboBoxText()
             self.select.set_hexpand(True)
             for renderer in self.select.get_cells():
@@ -447,7 +707,11 @@ def create_media_app():
             destination.pack_start(self.destination_path, False, False, 0)
             route.pack_start(source, True, True, 0)
             route.pack_start(destination, True, True, 0)
-            body.pack_start(route, False, False, 0)
+            self.pages = Gtk.Stack()
+            self.pages.set_vhomogeneous(False)
+            self.pages.add_named(route, "music")
+            self.pages.add_named(self.recordings_page(), "recordings")
+            body.pack_start(self.pages, False, False, 0)
             feedback = panel()
             self.phase = label("Waiting for USB", "status")
             feedback.pack_start(self.phase, False, False, 0)
@@ -472,6 +736,43 @@ def create_media_app():
             self.window.show_all()
             self.refresh_drives()
 
+        def recordings_page(self):
+            page = Gtk.Box(spacing=8, homogeneous=True)
+            source = panel()
+            source.pack_start(label("FROM  /  MIXXX RECORDINGS ON THIS PI", "eyebrow"), False, False, 0)
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_name("recordings")
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            # A permanent scrollbar shows that a long list continues.
+            scroller.set_overlay_scrolling(False)
+            scroller.get_accessible().set_name("Recordings on this Pi")
+            self.rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            scroller.add(self.rows)
+            source.pack_start(scroller, True, True, 0)
+            self.usb_panel = panel()
+            self.usb_panel.pack_start(label("TO  /  USB DRIVE", "eyebrow"), False, False, 0)
+            self.usb_details = label("", wrap=True)
+            self.usb_panel.pack_start(self.usb_details, False, False, 0)
+            self.usb_note = compact_label("", "muted")
+            self.usb_panel.pack_start(self.usb_note, False, False, 0)
+            page.pack_start(source, True, True, 0)
+            page.pack_start(self.usb_panel, True, True, 0)
+            return page
+
+        def mode_changed(self, *_):
+            recordings = self.recordings_mode.get_active()
+            self.mode = "recordings" if recordings else "music"
+            # The drive selector sits in the TO panel so the list gets the height.
+            home = self.usb_panel if recordings else self.body
+            self.drive_row.get_parent().remove(self.drive_row)
+            home.pack_start(self.drive_row, False, False, 0)
+            home.reorder_child(self.drive_row, 1)
+            self.step.set_visible(not recordings)
+            self.pages.set_visible_child_name(self.mode)
+            self.body.set_child_packing(self.pages, recordings, True, 0, Gtk.PackType.START)
+            self.open_copy.set_label("Open folder" if recordings else "Open copy")
+            self.refresh_drives()
+
         def close(self, *_):
             if self.busy:
                 self.cancel_transfer()
@@ -487,13 +788,18 @@ def create_media_app():
                 self.phase.set_text("Cancelling…")
                 self.status.set_text("Removing the unfinished copy. Keep USB connected for now.")
 
+        def ready(self):
+            if self.mode == "recordings":
+                return self.target is not None and move_error(self.selected(), self.target) is None
+            return self.plan is not None and readiness_error(self.plan) is None
+
         def set_busy(self, busy):
             self.busy = busy
-            self.select.set_sensitive(not busy)
-            self.refresh.set_sensitive(not busy)
+            for control in (self.select, self.refresh, self.music_mode, self.recordings_mode, self.rows):
+                control.set_sensitive(not busy)
             self.cancel.set_sensitive(busy)
             self.open_copy.set_sensitive(not busy and self.completed_destination is not None)
-            self.copy.set_sensitive(not busy and self.plan is not None and readiness_error(self.plan) is None)
+            self.copy.set_sensitive(not busy and self.ready())
 
         def work(self, action, done):
             if self.busy:
@@ -513,7 +819,14 @@ def create_media_app():
             self.set_busy(False)
             if error:
                 self.plan = None
+                self.target = None
                 self.copy.set_sensitive(False)
+                if self.mode == "recordings" and self.directory:
+                    # An interrupted move may already have taken some recordings.
+                    try:
+                        self.fill_recordings(list_recordings(self.directory))
+                    except (TransferError, OSError):
+                        pass
                 cancelled = isinstance(error, Cancelled)
                 self.phase.set_text("Transfer cancelled" if cancelled else "Could not complete transfer")
                 if not cancelled:
@@ -538,14 +851,17 @@ def create_media_app():
             if self.busy:
                 return
             self.plan = None
+            self.target = None
             self.copy.set_sensitive(False)
-            self.copy.set_label("Copy to Pi")
+            self.copy.set_label("Move to USB" if self.mode == "recordings" else "Copy to Pi")
             self.reset_feedback()
             self.phase.set_text("Looking for USB drives…")
             self.details.set_text("Checking connected drives…")
             self.destination.set_text("A separate, verified copy")
             self.destination_path.set_text("Original USB files stay unchanged")
             self.destination_path.set_tooltip_text(None)
+            self.usb_details.set_text("Checking connected drives…")
+            self.usb_note.set_text("")
             self.status.set_text("Wait while the Pi checks mounted USB drives.")
             def scan():
                 drives = mounted_drives()
@@ -560,6 +876,8 @@ def create_media_app():
                 self.select.append_text(f"{drive['label']} · {size_text(drive['size'])}")
             if drives:
                 self.select.set_active(0)
+            elif self.mode == "recordings":
+                self.load_recordings(None)
             else:
                 self.phase.set_text("No USB drive found")
                 self.details.set_text("Insert a USB drive to get started.")
@@ -570,6 +888,9 @@ def create_media_app():
             if index < 0 or self.busy:
                 return
             drive = self.drives[index]
+            if self.mode == "recordings":
+                self.load_recordings(drive)
+                return
             self.plan = None
             self.reset_feedback()
             self.phase.set_text("Checking files & SD space…")
@@ -597,9 +918,116 @@ def create_media_app():
             scope = "Playlists and music stay together." if plan.include_roots else "Copies files and folders; skips system metadata."
             self.status.set_text(unavailable or ("Check the saved files against this USB. Neither copy will be replaced." if existing else f"{scope} Copy between sets; keep USB connected until verified."))
 
+        def load_recordings(self, drive):
+            self.target = None
+            self.reset_feedback()
+            self.phase.set_text("Checking recordings…")
+            self.status.set_text("Reading the Mixxx Recordings folder and the USB drive.")
+            def scan():
+                directory = recordings_directory()
+                return directory, list_recordings(directory), usb_target(drive) if drive else None
+            self.work(scan, self.show_recordings)
+
+        def fill_recordings(self, recordings):
+            # A refreshed list keeps the user's ticks; new recordings start ticked.
+            chosen = {name: check.get_active() for name, check in self.checks.items()}
+            self.recordings, self.checks = recordings, {}
+            for row in self.rows.get_children():
+                self.rows.remove(row)
+            for recording in recordings:
+                row = Gtk.Box(spacing=8)
+                check = Gtk.CheckButton(label=recording["name"])
+                check.set_size_request(-1, 44)
+                check.get_child().set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+                check.set_active(not recording["busy"] and chosen.get(recording["name"], True))
+                check.set_sensitive(not recording["busy"])
+                check.connect("toggled", self.update_move)
+                row.pack_start(check, True, True, 0)
+                row.pack_end(label("In use" if recording["busy"] else size_text(recording["bytes"]), "muted"), False, False, 0)
+                self.rows.pack_start(row, False, False, 0)
+                self.checks[recording["name"]] = check
+            if not recordings:
+                self.rows.pack_start(label("Nothing recorded yet.", "muted"), False, False, 0)
+            self.rows.show_all()
+
+        def selected(self):
+            return [recording for recording in self.recordings
+                    if self.checks[recording["name"]].get_active()]
+
+        def show_target(self):
+            if self.target:
+                self.usb_details.set_text(f"“{RECORDINGS_FOLDER}” folder\n{size_text(self.target['free'])} free on USB")
+                self.usb_note.set_text("Rekordbox library on this USB stays untouched" if self.target["rekordbox"]
+                                       else "Other files on this USB stay untouched")
+            else:
+                self.usb_details.set_text("Insert a USB drive to get started.")
+                self.usb_note.set_text("")
+
+        def show_recordings(self, result):
+            self.directory, recordings, self.target = result
+            self.fill_recordings(recordings)
+            self.show_target()
+            self.update_move()
+
+        def update_move(self, *_):
+            if self.busy:
+                return
+            chosen = self.selected()
+            unavailable = move_error(chosen, self.target) if self.target else None
+            self.phase.get_style_context().remove_class("error")
+            self.copy.set_sensitive(self.target is not None and unavailable is None)
+            summary = f"{len(chosen)} of {len(self.recordings)} selected · {size_text(sum(item['bytes'] for item in chosen))}."
+            if not self.recordings:
+                self.phase.set_text("No recordings on this Pi")
+                self.status.set_text("In Mixxx, open Browse → Recordings and tap Start Recording.")
+            elif self.target is None:
+                self.phase.set_text("No USB drive found")
+                self.status.set_text(f"{summary} Connect a drive, wait a moment, then tap Refresh USB.")
+            elif not chosen:
+                self.phase.set_text("Choose recordings")
+                self.status.set_text("Tick the recordings to move to this USB drive.")
+            elif unavailable:
+                style(self.phase, "error").set_text("Cannot move yet")
+                self.status.set_text(unavailable)
+            else:
+                self.phase.set_text("Ready to move")
+                self.status.set_text(f"{summary} Each leaves the Pi only after its USB copy is verified.")
+
+        def start_move(self):
+            chosen, target = self.selected(), self.target
+            if not chosen or target is None:
+                return
+            self.reset_feedback()
+            self.phase.set_text("Moving to USB…")
+            self.status.set_text("Keep USB connected until every recording is verified.")
+            self.progress.set_text("0%")
+            directory = self.directory
+            self.work(lambda: move_recordings(directory, chosen, target, cancel=self.cancel_event,
+                                              progress=self.update_progress), self.moved)
+
+        def moved(self, result):
+            self.progress.set_fraction(1)
+            self.progress.set_text("100% · Verified")
+            self.phase.set_text("Move complete · Verified")
+            style(self.phase, "success")
+            self.completed_destination = result["destination"]
+            self.open_copy.set_sensitive(True)
+            count = result["recordings"]
+            self.status.set_text(f"{count} recording{'' if count == 1 else 's'} now on the USB in “{RECORDINGS_FOLDER}” "
+                                 "and removed from the Pi. Eject the USB before unplugging it.")
+            self.target["free"] = max(self.target["free"] - result["bytes"], 0)
+            self.show_target()
+            self.fill_recordings(list_recordings(self.directory))
+            self.copy.set_sensitive(self.ready())
+
         def start_copy(self, *_):
+            if self.busy:
+                return
+            if self.mode == "recordings":
+                self.start_move()
+                return
             plan = self.plan
-            if plan is None or self.busy:
+            if plan is None:
                 return
             self.reset_feedback()
             self.phase.set_text("Checking existing copy…" if plan.destination.exists() else "Copying to Pi…")
@@ -619,7 +1047,11 @@ def create_media_app():
                 return False
             self.progress.set_fraction(fraction)
             self.progress.set_text(f"{fraction:.0%}")
-            self.phase.set_text("Verifying files…" if "Verif" in text or "Checking" in text else "Copying to Pi…")
+            verifying = "Verif" in text or "Checking" in text
+            if self.mode == "recordings":
+                self.phase.set_text("Verifying on USB…" if verifying else "Moving to USB…")
+            else:
+                self.phase.set_text("Verifying files…" if verifying else "Copying to Pi…")
             self.status.set_text(text)
             return False
 
@@ -648,7 +1080,7 @@ def create_media_app():
 
 def run_gui():
     if os.geteuid() == 0:
-        print("Run USB → Pi as your desktop user, without sudo.", file=sys.stderr)
+        print("Run USB ⇄ Pi as your desktop user, without sudo.", file=sys.stderr)
         return 1
     return create_media_app().run([sys.argv[0]])
 
@@ -661,20 +1093,44 @@ def main():
     subparsers.add_parser("list", help="List mounted removable drives as JSON")
     for command in ("plan", "copy"):
         subparsers.add_parser(command).add_argument("--source", required=True)
+    subparsers.add_parser("recordings", help="List Mixxx recordings on this Pi as JSON")
+    move = subparsers.add_parser("move-recordings", help="Move recordings to a mounted USB drive")
+    move.add_argument("--usb", required=True, help="Mount path from 'mixpi-media list'")
+    move.add_argument("--only", nargs="+", metavar="NAME", help="Recording names; default is all")
     args = parser.parse_args()
+    report = lambda fraction, message: print(f"{fraction:.0%} {message}", file=sys.stderr)
     try:
+        if args.command == "recordings":
+            directory = recordings_directory()
+            print(json.dumps({"directory": str(directory), "recordings": [
+                {"name": item["name"], "files": [entry["path"] for entry in item["files"]],
+                 "bytes": item["bytes"], "busy": item["busy"]}
+                for item in list_recordings(directory)]}, ensure_ascii=False, indent=2))
+            return 0
         drives = mounted_drives()
         if args.command == "list":
             print(json.dumps(drives, ensure_ascii=False, indent=2))
             return 0
-        selected = [drive for drive in drives if drive["source"] == args.source]
+        source = args.usb if args.command == "move-recordings" else args.source
+        selected = [drive for drive in drives if drive["source"] == source]
         if len(selected) != 1:
             raise TransferError("Select a mounted removable drive from 'mixpi-media list'.")
+        if args.command == "move-recordings":
+            directory = recordings_directory()
+            recordings = list_recordings(directory)
+            missing = set(args.only or ()) - {item["name"] for item in recordings}
+            if missing:
+                raise TransferError(f"No such recording: {', '.join(sorted(missing))}.")
+            if args.only:
+                recordings = [item for item in recordings if item["name"] in args.only]
+            result = move_recordings(directory, recordings, usb_target(selected[0]), progress=report)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         plan = plan_drive(selected[0])
         if args.command == "plan":
             print(json.dumps(plan.summary(), ensure_ascii=False, indent=2))
         else:
-            result = copy_plan(plan, progress=lambda fraction, message: print(f"{fraction:.0%} {message}", file=sys.stderr))
+            result = copy_plan(plan, progress=report)
             print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (TransferError, OSError, ValueError) as error:

@@ -1,13 +1,16 @@
 #!/usr/bin/python3
 """Touch controls for Spotify Connect, Bluetooth and speaker audio."""
 import json
+import queue
 import subprocess
 import threading
+import time
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gio, GLib, Gtk, Pango
-from mixpi_ui import button, compact_label, label, message, panel, shell, style
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango
+from mixpi_ui import backdrop, button, compact_label, label, message, panel, shell, style
 
 CONTROL = "/usr/local/bin/mixpi-speaker-control"
 
@@ -18,7 +21,16 @@ class Speaker(Gtk.Application):
         self.window = None
         self.busy = False
         self.current_state = None
-        self.current_output = None
+        self.current_outputs = set()
+        self.output_checks = {}
+        self.timing_dialog = None
+        self.spotify_backdrop = None
+        self.spotify_queue = queue.Queue()
+        self.spotify_request = 0
+        self.spotify_waiting = 0
+        self.spotify_poll = None
+        self.spotify_volume_timer = None
+        self.spotify_volume_held = 0
 
     def do_activate(self):
         if self.window:
@@ -52,26 +64,41 @@ class Speaker(Gtk.Application):
         sources.pack_start(bluetooth, True, True, 0)
         self.body.pack_start(sources, False, False, 0)
         output_panel = panel()
-        output_panel.pack_start(label("SPEAKER OUTPUT", "eyebrow"), False, False, 0)
+        output_panel.pack_start(label("SPEAKER OUTPUTS", "eyebrow"), False, False, 0)
         row = Gtk.Box(spacing=8)
-        self.output = Gtk.ComboBoxText()
+        self.output = Gtk.MenuButton()
+        self.output.set_size_request(-1, 48)
         self.output.set_hexpand(True)
-        self.output.get_accessible().set_name("Speaker audio output")
-        for renderer in self.output.get_cells():
-            renderer.set_property("ellipsize", Pango.EllipsizeMode.END)
-            renderer.set_property("width-chars", 20)
-        self.output.connect("changed", self.output_changed)
+        self.output.get_accessible().set_name("Speaker audio outputs")
+        self.output_label = compact_label("Choose outputs ▾")
+        self.output.add(self.output_label)
+        self.output_popover = Gtk.Popover.new(self.output)
+        self.output_popover.set_border_width(8)
+        output_scroll = Gtk.ScrolledWindow()
+        output_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        output_scroll.set_min_content_height(144)
+        output_scroll.set_max_content_height(240)
+        output_scroll.set_propagate_natural_height(True)
+        self.output_choices = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        output_scroll.add(self.output_choices)
+        self.output_popover.add(output_scroll)
+        self.output.set_popover(self.output_popover)
         row.pack_start(self.output, True, True, 0)
-        self.apply = button("Use output", self.select_output)
+        self.apply = button("Use outputs", self.select_output)
         row.pack_start(self.apply, False, False, 0)
         self.mixer = button("Volume & mixer", self.audio)
         row.pack_start(self.mixer, False, False, 0)
         output_panel.pack_start(row, False, False, 0)
-        self.output_hint = compact_label("Start speaker mode to choose an output.", "muted")
+        self.output_hint = compact_label("Start speaker mode to choose outputs.", "muted")
         output_panel.pack_start(self.output_hint, False, False, 0)
         self.body.pack_start(output_panel, False, False, 0)
         self.footer.pack_start(button("Refresh", lambda _: self.refresh()), False, False, 0)
         self.footer.pack_start(button("Close", lambda _: self.window.hide()), False, False, 0)
+        self.fine = button("Fine adjustment", self.fine_adjustment)
+        self.footer.pack_start(self.fine, False, False, 0)
+        self.spotify_button = button("Spotify controls", self.open_spotify)
+        self.footer.pack_start(self.spotify_button, False, False, 0)
+        self.build_spotify_controls()
         self.footer.pack_end(button("Back to Mixxx", self.mixxx), False, False, 0)
         self.window.show_all()
         self.refresh()
@@ -83,17 +110,20 @@ class Speaker(Gtk.Application):
     def state(self):
         state = json.loads(subprocess.check_output([CONTROL, "status"], text=True, timeout=5))
         state["outputs"] = []
-        state["output"] = None
+        state["selected"] = []
         if state["active"]:
-            state["outputs"] = json.loads(subprocess.check_output([CONTROL, "outputs"], text=True, timeout=5))
-            state["output"] = subprocess.check_output(["pactl", "get-default-sink"], text=True, timeout=5).strip()
+            state.update(json.loads(subprocess.check_output([CONTROL, "routing"], text=True, timeout=5)))
         return state
 
+    def checked_outputs(self):
+        return {name for name, check in self.output_checks.items() if check.get_active()}
+
     def show_state(self, state):
-        # Keep a user's un-applied selection while refreshing device availability.
-        selected = self.output.get_active_id()
+        # Retain pending edits on Refresh, but reflect routing changes after Apply.
+        pending = self.checked_outputs()
+        dirty = self.current_state is not None and pending != self.current_outputs
         self.current_state = state
-        self.current_output = state["output"]
+        self.current_outputs = set(state["selected"])
         self.status.set_text("ON · Ready for phone audio" if state["active"] else "OFF · Start to connect your phone")
         context = self.status.get_style_context()
         context.remove_class("error")
@@ -101,29 +131,298 @@ class Speaker(Gtk.Application):
         self.toggle.set_label("Stop speaker mode" if state["active"] else "Start speaker mode")
         toggle_context = self.toggle.get_style_context()
         (toggle_context.remove_class if state["active"] else toggle_context.add_class)("primary")
-        self.output.remove_all()
-        names = []
-        active_label = "No output connected"
+        names = {sink["name"] for sink in state["outputs"]}
+        chosen = (pending if dirty else self.current_outputs) & names
+        # A disconnected pending choice falls back to the active routing.
+        if pending and dirty and not chosen:
+            chosen = self.current_outputs & names
+        for child in self.output_choices.get_children():
+            child.destroy()
+        self.output_checks = {}
+        titles = {}
         for sink in state["outputs"]:
             name = sink["name"]
             title = "Starlight · Main 1–2" if name == "mixpi_starlight_main" else sink.get("description", name)
-            self.output.append(name, title)
-            names.append(name)
-            if name == self.current_output:
-                active_label = title
-        chosen = selected if selected in names else self.current_output
-        if chosen:
-            self.output.set_active_id(chosen)
+            if name == "mixpi_starlight_headphones":
+                title = "Starlight · Headphones 3–4"
+            elif sink.get("properties", {}).get("alsa.card_name") == "bcm2835 Headphones":
+                title = "Pi · 3.5 mm jack"
+            titles[name] = title
+            check = Gtk.CheckButton(label=title)
+            check.set_size_request(320, 48)
+            check.get_child().set_ellipsize(Pango.EllipsizeMode.END)
+            check.get_child().set_max_width_chars(36)
+            check.set_tooltip_text(title)
+            check.set_active(name in chosen)
+            check.connect("toggled", self.output_changed)
+            self.output_checks[name] = check
+            self.output_choices.pack_start(check, False, False, 0)
+        self.output_popover.get_child().show_all()
         self.output.set_sensitive(state["active"] and bool(names))
         self.mixer.set_sensitive(state["active"])
         self.pair_button.set_sensitive(state["active"])
-        self.output_hint.set_text(("Selected output: " + active_label) if state["active"] else "Start speaker mode to choose an output and pair a phone.")
+        self.spotify_button.set_sensitive(state["active"])
+        active_labels = [titles[n] for n in titles if n in self.current_outputs]
+        self.output_hint.set_text(("Playing through: " + " + ".join(active_labels) if active_labels else "No output connected")
+            if state["active"] else "Start speaker mode to choose outputs and pair a phone.")
         self.output_hint.set_tooltip_text(self.output_hint.get_text())
         self.output_changed()
 
     def output_changed(self, *_):
-        selected = self.output.get_active_id()
-        self.apply.set_sensitive(bool(selected) and selected != self.current_output)
+        selected = self.checked_outputs()
+        self.output_label.set_text(f"{len(selected)} outputs selected ▾" if len(selected) > 1 else
+            (self.output_checks[next(iter(selected))].get_label() + " ▾" if selected else "Choose outputs ▾"))
+        self.apply.set_sensitive(bool(selected) and selected != self.current_outputs)
+        self.fine.set_sensitive(bool(self.current_state and self.current_state["active"])
+                                and bool(self.current_outputs) and selected == self.current_outputs)
+
+    def fine_adjustment(self, *_):
+        if self.timing_dialog:
+            self.timing_dialog.present()
+            return
+        if self.busy or not self.current_state or not self.current_outputs:
+            return
+        dialog = Gtk.Dialog(title="Mix Pi · Fine adjustment", transient_for=self.window, modal=True)
+        self.timing_dialog = dialog
+        dialog.set_application(self.window.get_application())
+        dialog.set_default_size(760, 350)
+        dialog.set_border_width(12)
+        dialog.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        dialog.connect("delete-event", lambda *_: self.busy)
+        dialog.connect("destroy", lambda *_: setattr(self, "timing_dialog", None))
+        body = dialog.get_content_area()
+        body.set_spacing(8)
+        body.pack_start(label("Audio sync", "title"), False, False, 0)
+        body.pack_start(label("Increase delay on the output you hear first, then apply to listen.", wrap=True), False, False, 0)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        scroll.add(rows)
+        body.pack_start(scroll, True, True, 0)
+        saved = self.current_state.get("delays_ms", {})
+        self.timing_values = {name: saved.get(name, 0) for name in self.current_outputs}
+        self.timing_saved = dict(self.timing_values)
+        self.timing_labels, self.timing_steps = {}, {}
+        for name in sorted(self.current_outputs):
+            row = Gtk.Box(spacing=6)
+            title = self.output_checks[name].get_label()
+            caption = compact_label(title)
+            caption.set_tooltip_text(title)
+            row.pack_start(caption, True, True, 0)
+            self.timing_steps[name] = []
+            for step in (-10, -1):
+                control = button(f"−{abs(step)}", lambda _, n=name, s=step: self.change_delay(n, s))
+                control.get_accessible().set_name(f"{title}: reduce delay by {abs(step)} milliseconds")
+                row.pack_start(control, False, False, 0)
+                self.timing_steps[name].append((step, control))
+            value = Gtk.Label()
+            value.set_width_chars(7)
+            row.pack_start(value, False, False, 0)
+            self.timing_labels[name] = value
+            for step in (1, 10):
+                control = button(f"+{step}", lambda _, n=name, s=step: self.change_delay(n, s))
+                control.get_accessible().set_name(f"{title}: increase delay by {step} milliseconds")
+                row.pack_start(control, False, False, 0)
+                self.timing_steps[name].append((step, control))
+            rows.pack_start(row, False, False, 0)
+        self.timing_hint = label("0–500 ms · Applying may briefly interrupt audio.", "muted", wrap=True)
+        body.pack_start(self.timing_hint, False, False, 0)
+        actions = dialog.get_action_area()
+        actions.pack_start(button("Reset", self.reset_delays), False, False, 0)
+        actions.pack_start(button("Close", lambda _: dialog.destroy() if not self.busy else None), False, False, 0)
+        self.timing_apply = button("Apply & save", self.apply_delays, True)
+        actions.pack_start(self.timing_apply, False, False, 0)
+        self.update_delay_controls()
+        dialog.show_all()
+
+    def update_delay_controls(self):
+        for name, ms in self.timing_values.items():
+            self.timing_labels[name].set_text(f"{ms} ms")
+            for step, control in self.timing_steps[name]:
+                control.set_sensitive(ms > 0 if step < 0 else ms < 500)
+        self.timing_apply.set_sensitive(self.timing_values != self.timing_saved)
+
+    def change_delay(self, name, step):
+        self.timing_values[name] = max(0, min(500, self.timing_values[name] + step))
+        self.timing_hint.set_text("Not applied · Apply & save to hear these settings.")
+        self.update_delay_controls()
+
+    def reset_delays(self, *_):
+        self.timing_values = dict.fromkeys(self.timing_values, 0)
+        self.timing_hint.set_text("Reset to zero · Apply & save to remove the delays.")
+        self.update_delay_controls()
+
+    def apply_delays(self, *_):
+        values = dict(self.timing_values)
+        def saved():
+            self.timing_saved = values
+            self.timing_hint.set_text("Applied and saved · Play a steady beat and listen.")
+            self.update_delay_controls()
+        self.task([CONTROL, "delay", json.dumps(values)], saved, "Applying speaker timing…")
+
+    def build_spotify_controls(self):
+        dialog = self.spotify_dialog = Gtk.Window(title="Mix Pi · Spotify controls", transient_for=self.window,
+            modal=True, resizable=False, destroy_with_parent=True, type_hint=Gdk.WindowTypeHint.DIALOG)
+        dialog.set_application(self.window.get_application())
+        dialog.set_position(Gtk.WindowPosition.CENTER_ON_PARENT)
+        # Only its Close button dismisses it; Sway's own close request is ignored.
+        dialog.connect("delete-event", lambda *_: True)
+        box = style(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8), "sheet")
+        box.set_size_request(600, -1)
+        header = Gtk.Box(spacing=12)
+        header.pack_start(label("SPOTIFY ON MIX PI", "eyebrow"), True, True, 0)
+        header.pack_end(button("Close", self.close_spotify), False, False, 0)
+        box.pack_start(header, False, False, 0)
+        self.spotify_title = compact_label("", "track")
+        self.spotify_detail = compact_label("", "muted")
+        for text in (self.spotify_title, self.spotify_detail):
+            text.set_ellipsize(Pango.EllipsizeMode.END)
+            box.pack_start(text, False, False, 0)
+        transport = Gtk.Box(spacing=8, homogeneous=True)
+        self.spotify_previous = button("Previous", lambda _: self.spotify_call("previous"))
+        self.spotify_play = button("Play", lambda _: self.spotify_call("toggle"), True)
+        self.spotify_next = button("Next", lambda _: self.spotify_call("next"))
+        for control in (self.spotify_previous, self.spotify_play, self.spotify_next):
+            transport.pack_start(control, True, True, 0)
+        box.pack_start(transport, False, False, 0)
+        volume = Gtk.Box(spacing=8)
+        volume.pack_start(label("VOLUME", "eyebrow"), False, False, 0)
+        self.spotify_quieter = button("−", lambda _: self.step_spotify_volume(-5))
+        self.spotify_quieter.get_accessible().set_name("Spotify volume down")
+        volume.pack_start(self.spotify_quieter, False, False, 0)
+        self.spotify_volume = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.spotify_volume.set_draw_value(False)
+        self.spotify_volume.get_accessible().set_name("Spotify volume")
+        self.spotify_volume_changed = self.spotify_volume.connect("value-changed", self.change_spotify_volume)
+        volume.pack_start(self.spotify_volume, True, True, 0)
+        self.spotify_louder = button("+", lambda _: self.step_spotify_volume(5))
+        self.spotify_louder.get_accessible().set_name("Spotify volume up")
+        volume.pack_start(self.spotify_louder, False, False, 0)
+        self.spotify_level = Gtk.Label(xalign=1)
+        self.spotify_level.set_width_chars(5)
+        volume.pack_start(self.spotify_level, False, False, 0)
+        box.pack_start(volume, False, False, 0)
+        dialog.add(box)
+        box.show_all()
+        self.window.connect("destroy", self.stop_spotify)
+        threading.Thread(target=self.spotify_worker, daemon=True).start()
+        self.show_spotify(None)
+
+    def spotify(self, *command):
+        result = subprocess.run([CONTROL, "spotify", *command], text=True, capture_output=True, timeout=15)
+        if result.returncode:
+            raise ValueError(result.stderr.strip() or "The Spotify command failed.")
+        return json.loads(result.stdout)
+
+    def spotify_worker(self):
+        # One worker keeps taps and volume changes in the order they were made.
+        while True:
+            item = self.spotify_queue.get()
+            if item is None:
+                return
+            request, command = item
+            try:
+                result, error = self.spotify(*command), None
+            except (OSError, ValueError, subprocess.SubprocessError) as failure:
+                result, error = None, str(failure)
+            GLib.idle_add(self.spotify_done, request, result, error)
+
+    def spotify_call(self, *command):
+        if command:
+            # A tap replaces whatever an earlier status check is about to report.
+            self.spotify_request += 1
+        elif self.spotify_waiting:
+            return
+        self.spotify_waiting += 1
+        self.spotify_queue.put((self.spotify_request, command))
+
+    def spotify_done(self, request, result, error):
+        self.spotify_waiting -= 1
+        if request == self.spotify_request:
+            self.show_spotify(result, error)
+        return False
+
+    def show_spotify(self, state, error=None):
+        connected = bool(state and state.get("connected"))
+        track = connected and bool(state.get("title"))
+        if error:
+            title, detail = "Spotify controls unavailable", error
+        elif state is None:
+            title, detail = "Checking Spotify…", ""
+        elif not connected:
+            title, detail = "No phone connected", "In Spotify, choose Mix Pi in the device list."
+        elif not track:
+            title, detail = "Nothing playing", "Choose music in Spotify on your phone."
+        else:
+            title, detail = state["title"], " · ".join(filter(None, (state.get("artist"), state.get("album"))))
+        self.spotify_title.set_text(title)
+        context = self.spotify_title.get_style_context()
+        (context.add_class if error else context.remove_class)("error")
+        self.spotify_detail.set_text(detail)
+        for text in (self.spotify_title, self.spotify_detail):
+            text.set_tooltip_text(text.get_text() or None)
+        self.spotify_play.set_label("Pause" if track and state.get("playing") else "Play")
+        for control in (self.spotify_previous, self.spotify_play, self.spotify_next):
+            control.set_sensitive(track)
+        for control in (self.spotify_quieter, self.spotify_volume, self.spotify_louder):
+            control.set_sensitive(connected)
+        # A level just set here wins over what the player reported meanwhile.
+        if connected and time.monotonic() >= self.spotify_volume_held:
+            with self.spotify_volume.handler_block(self.spotify_volume_changed):
+                self.spotify_volume.set_value(state.get("volume", 0))
+        self.spotify_level.set_text(f"{int(self.spotify_volume.get_value())}%" if connected else "")
+
+    def change_spotify_volume(self, *_):
+        self.spotify_level.set_text(f"{int(self.spotify_volume.get_value())}%")
+        self.spotify_volume_held = time.monotonic() + 1.5
+        if self.spotify_volume_timer:
+            GLib.source_remove(self.spotify_volume_timer)
+        # Send the level once the finger settles instead of on every pixel.
+        self.spotify_volume_timer = GLib.timeout_add(200, self.send_spotify_volume)
+
+    def send_spotify_volume(self):
+        self.spotify_volume_timer = None
+        self.spotify_call("volume", str(int(self.spotify_volume.get_value())))
+        return False
+
+    def step_spotify_volume(self, step):
+        self.spotify_volume.set_value(self.spotify_volume.get_value() + step)
+
+    def open_spotify(self, *_):
+        if not self.spotify_dialog.get_visible():
+            self.show_spotify(None)
+            self.spotify_backdrop = backdrop(self.window)
+        self.spotify_dialog.present()
+        self.spotify_call()
+        if not self.spotify_poll:
+            self.spotify_poll = GLib.timeout_add_seconds(2, self.poll_spotify)
+
+    def poll_spotify(self):
+        if self.window.get_visible():
+            self.spotify_call()
+        return True
+
+    def close_spotify(self, *_):
+        self.spotify_dialog.hide()
+        if self.spotify_backdrop:
+            self.spotify_backdrop.destroy()
+            self.spotify_backdrop = None
+        if self.spotify_volume_timer:
+            # Keep a level set just before closing.
+            GLib.source_remove(self.spotify_volume_timer)
+            self.send_spotify_volume()
+        if self.spotify_poll:
+            GLib.source_remove(self.spotify_poll)
+            self.spotify_poll = None
+
+    def stop_spotify(self, *_):
+        for timer in (self.spotify_poll, self.spotify_volume_timer):
+            if timer:
+                GLib.source_remove(timer)
+        self.spotify_poll = self.spotify_volume_timer = None
+        # Results still on their way belong to widgets that no longer exist.
+        self.spotify_request += 1
+        self.spotify_queue.put(None)
 
     def job(self, action, done, text="Switching audio…"):
         if self.busy:
@@ -131,6 +430,9 @@ class Speaker(Gtk.Application):
         self.busy = True
         self.body.set_sensitive(False)
         self.footer.set_sensitive(False)
+        if self.timing_dialog:
+            self.timing_dialog.get_content_area().set_sensitive(False)
+            self.timing_dialog.get_action_area().set_sensitive(False)
         self.status.set_text(text)
         self.spinner.start()
         def worker():
@@ -144,6 +446,9 @@ class Speaker(Gtk.Application):
             self.body.set_sensitive(True)
             self.footer.set_sensitive(True)
             self.spinner.stop()
+            if self.timing_dialog:
+                self.timing_dialog.get_content_area().set_sensitive(True)
+                self.timing_dialog.get_action_area().set_sensitive(True)
             if error:
                 self.current_state = None
                 self.status.set_text("Audio unavailable · Tap Refresh to retry")
@@ -152,8 +457,9 @@ class Speaker(Gtk.Application):
                 self.apply.set_sensitive(False)
                 self.pair_button.set_sensitive(False)
                 self.mixer.set_sensitive(False)
+                self.fine.set_sensitive(False)
                 self.status.set_tooltip_text(error)
-                message(self.window, "Could not update audio", error)
+                message(self.timing_dialog or self.window, "Could not update audio", error)
             else:
                 self.status.set_tooltip_text(None)
                 done(result)
@@ -174,6 +480,7 @@ class Speaker(Gtk.Application):
                 raise ValueError(result.stderr.strip() or result.stdout.strip() or "The audio command failed.")
             return self.state()
         def done(state):
+            self.current_state = None
             self.show_state(state)
             if after:
                 after()
@@ -203,9 +510,10 @@ class Speaker(Gtk.Application):
         self.task(["/usr/local/bin/mixpi-mixxx"], self.window.hide, "Returning to Mixxx…")
 
     def select_output(self, *_):
-        name = self.output.get_active_id()
-        if name:
-            self.task([CONTROL, "output", name], text="Changing speaker output…")
+        names = sorted(self.checked_outputs())
+        if names:
+            self.output_popover.popdown()
+            self.task([CONTROL, "output", *names], text="Changing speaker outputs…")
 
 
 if __name__ == "__main__":

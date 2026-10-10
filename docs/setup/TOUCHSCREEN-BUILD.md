@@ -89,11 +89,12 @@ one physical USB plus SD and do not certify two-USB playback handover.
 
 ## Touch navigation
 
-The top bar has **Desktop**, **Mixxx**, **Settings**, **USB → Pi**, Bluetooth
-and keyboard buttons. **USB → Pi** opens the music copier directly on the
-desktop workspace. Desktop switches to workspace 2 while Mixxx keeps playing. Mixxx
+The top bar has **Desktop**, **Mixxx**, **Settings**, **USB ⇄ Pi**, Bluetooth
+and keyboard buttons. **USB ⇄ Pi** opens the transfer window directly on the
+desktop workspace: **Music → Pi** copies a drive in, **Recordings → USB** moves
+Mixxx recordings out. Desktop switches to workspace 2 while Mixxx keeps playing. Mixxx
 returns to the existing window. Settings opens buttons for Bluetooth, Wi-Fi,
-SD music, **USB → Pi**, display settings and a terminal. Mixxx starts without forced
+SD music, **USB ⇄ Pi**, display settings and a terminal. Mixxx starts without forced
 fullscreen. If you enter fullscreen manually, the bar overlays its top edge;
 tap Mixxx to leave fullscreen and restore the usable layout.
 
@@ -273,8 +274,8 @@ outer artifact ZIP and an extracted copy of its inner image ZIP.
 
 ## Music stored on the SD card
 
-- Tap **USB → Pi** in the top bar (also available in **Settings**) to open
-  the local touch copier. Select a mounted
+- Tap **USB ⇄ Pi** in the top bar (also available in **Settings**) to open
+  the local touch copier on **Music → Pi**. Select a mounted
   drive, review the file count, space and destination, then tap **Copy to Pi**.
   It copies a compatible Rekordbox export's complete `PIONEER` and `Contents`
   trees together to a new `/media/pi/MixPi-<label>-<fingerprint>/` directory.
@@ -290,6 +291,12 @@ outer artifact ZIP and an extracted copy of its inner image ZIP.
   one of the mounted removable drives reported by `list`. No browser/server
   is needed for this first version. A verified copy still needs to be opened
   in Mixxx; it does not directly edit the running Mixxx database.
+- **Recordings → USB** in the same window moves Mixxx recordings from
+  `~/Music/Mixxx/Recordings` into a `Mix Pi Recordings` folder on the drive,
+  beside any `PIONEER`/`Contents` export. Each original is deleted only after
+  its USB copy is read back and matches. SSH equivalents are
+  `mixpi-media recordings` and `mixpi-media move-recordings --usb PATH`. See
+  [the USB runbook](../skills/usb-media.md#move-recordings-onto-a-usb-drive).
 - Plain audio backup: `~/Music/Backup`. Copy audio from the USB drive with
   **Settings → SD music**, then add the folder in Mixxx Preferences → Library.
 - Complete rekordbox export: `/media/SD-Backup`, also reachable through
@@ -371,7 +378,7 @@ Restart Mixxx after changing the skin stylesheet, once playback has stopped.
   reconnect. Verify Preferences, display and network dialogs remain reachable.
 - Copy a small complete rekordbox export to SD-Backup. Eject USB and load both
   decks from SD, confirming playlist, cues and beatgrid on representative tracks.
-- Use **USB → Pi** to copy a small export and ordinary files. Verify checksums,
+- Use **USB ⇄ Pi** to copy a small export and ordinary files. Verify checksums,
   retry the same copy, cancel a transfer, and test insufficient-space handling.
   Load the finished SD copy in Mixxx with USB removed. This is additional to
   the older direct-copy check above.

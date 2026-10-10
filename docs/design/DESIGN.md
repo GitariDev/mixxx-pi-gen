@@ -1,6 +1,6 @@
 # Mix Pi touchscreen utilities
 
-The Speaker, Settings and USB → Pi windows use a shared native GTK 3 design.
+The Speaker, Settings and USB ⇄ Pi windows use a shared native GTK 3 design.
 This extends the rig’s Pioneer/Pioneered DJ theme to its utilities. It is an
 original interface inspired by DJ equipment; it uses no Pioneer logos or assets.
 
@@ -19,9 +19,20 @@ mode, source, destination and the next action visible independently.
   section. Pairing/output controls are unavailable until speaker mode is on.
   Refresh checks outputs again after hardware changes and keeps an unapplied
   choice if that device is still connected.
-- USB → Pi separates the selected drive, copy summary, destination, and transfer
+- Spotify transport and volume live in a dialog opened from the Speaker footer,
+  so the three sections keep their space. It sits in the centre of the screen
+  over a blurred, dimmed picture of the Speaker screen and stays until its own
+  Close button is tapped. Play/Pause is the one amber action; the track is the
+  title.
+- USB ⇄ Pi separates the selected drive, copy summary, destination, and transfer
   state. Progress has readable percentages. Completion means checksum
   verification succeeded; Open copy becomes available only after success.
+- The same window has two directions, chosen with a two-button switch in the
+  header: **Music → Pi** and **Recordings → USB**. The selected one has an amber
+  outline, underline and text. Both keep From on the left, To on the right and
+  the shared status panel and bottom actions, so only the middle changes.
+  Recordings are a ticked list with sizes; the drive selector moves into the
+  To panel so three 44 px rows are visible before the list scrolls.
 
 ## Surface and color
 
@@ -71,6 +82,13 @@ Closing during work requests safe cancellation and leaves the window open until
 cleanup finishes. Refresh resets stale progress/errors. Copy and verification
 continue to use the existing no-overwrite, source-preserving backend.
 
+Moving recordings is the one flow that deletes from the Pi, so the button says
+**Move**, the status line states that each recording leaves the Pi only after
+its USB copy is verified, and nothing is ticked that is still being written.
+A recording being written is listed as **In use** with a disabled tick. After
+a move the list refreshes and keeps the ticks of what stayed behind. The list
+is the only region that scrolls, with a permanent scrollbar.
+
 ## Implementation
 
 `stage3/02-desktop/files/bin/mixpi_ui.py` owns the shared CSS and widgets and is
@@ -79,7 +97,8 @@ production package is needed. CLI media operations still work without GTK.
 
 Native UI tests are in `tests/test_touch_ui.py`. They use real GTK widgets with
 fixture audio state and temporary USB files, sharing one GTK application host
-inside the test process. The existing backend tests exercise transfer integrity
+inside the test process. `tests/test_recordings_move.py` covers the move
+backend on real files. The existing backend tests exercise transfer integrity
 and audio-routing behavior. Run on Debian with Python GI, GTK 3, Xvfb, xauth,
 D-Bus, DejaVu fonts, jq and a C++ compiler:
 
@@ -107,6 +126,14 @@ The fix was installed on the Pi and the actual Pair phone button was exercised:
 the instructions were readable, Bluetooth was discoverable/pairable for 180
 seconds, and the Audio Sink role was present. Phone-side acceptance/audio
 remains a user check. Evidence: `deploy/ui-20260928/dialog-fix/`.
+
+On October 10 the recordings direction was installed over SSH. With no Xvfb
+on the Pi, the full suite ran there inside a throwaway headless Sway with
+Xwayland, leaving the live desktop alone. Fixture recordings were then moved on
+the physical screen by pointer taps to a loop-mounted FAT32 image and checked
+by hash after a remount. A real removable drive was not attached, so drive
+detection and eject were not exercised. Evidence:
+`deploy/recordings-20261010/RESULTS.md`.
 
 ## References used
 

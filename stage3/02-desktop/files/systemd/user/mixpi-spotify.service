@@ -4,7 +4,7 @@ Requires=mixpi-audio-pulse.service
 After=mixpi-audio-pulse.service
 PartOf=mixpi-speaker.target
 [Service]
-ExecStart=/usr/bin/librespot --name "Mix Pi" --device-type speaker --backend pulseaudio --bitrate 320 --enable-volume-normalisation --initial-volume 50 --disable-audio-cache --system-cache %h/.local/state/mixpi-spotify
+ExecStart=/usr/local/bin/go-librespot --config_dir %h/.local/state/mixpi-spotify -c "device_name=Mix Pi" -c device_type=speaker -c audio_backend=pulseaudio -c bitrate=320 -c initial_volume=50 -c zeroconf_enabled=true -c zeroconf_backend=avahi -c credentials.type=zeroconf -c credentials.zeroconf.persist_credentials=true -c server.enabled=true -c server.address=127.0.0.1 -c server.port=3678
 Restart=on-failure
 RestartSec=3
 UMask=0077

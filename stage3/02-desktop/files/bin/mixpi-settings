@@ -32,7 +32,7 @@ class Settings(Gtk.Application):
                     ("Display", "Screen & orientation", ["wdisplays"]),
                 ]),
                 ("FILES & SYSTEM", [
-                    ("USB → Pi", "Copy music to this Pi", ["/usr/local/bin/mixpi-media"]),
+                    ("USB ⇄ Pi", "Music in, recordings out", ["/usr/local/bin/mixpi-media"]),
                     ("Music on Pi", "Browse saved files", ["nautilus", str(Path.home() / "Music")]),
                     ("Terminal", "Advanced commands", ["foot"]),
                 ]),

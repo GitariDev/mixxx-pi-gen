@@ -1,15 +1,25 @@
 #!/usr/bin/python3
 """Switch between exclusive Mixxx audio and a desktop speaker session."""
 import fcntl
+import hashlib
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 
 TARGET = "mixpi-speaker.target"
+COMBINED_PREFIX = "mixpi_combined_"
+DELAY_PREFIX = "mixpi_delay_"
+MAX_DELAY_MS = 500
 STATE = Path.home() / ".config/mixpi/speaker.json"
+# mixpi-spotify.service serves go-librespot's control API on loopback only.
+SPOTIFY_API = "http://127.0.0.1:3678"
+SPOTIFY_ACTIONS = {"toggle": "/player/playpause", "next": "/player/next", "previous": "/player/prev"}
 
 
 def run(*args, check=True):
@@ -31,45 +41,237 @@ def outputs():
     return json.loads(run("pactl", "--format=json", "list", "sinks"))
 
 
+def starlight_master(sink):
+    return sink["name"].startswith("alsa_output.") and "Starlight" in sink["name"]
+
+
 def prepare_outputs():
     sinks = outputs()
-    master = next((s for s in sinks if s["name"].startswith("alsa_output.")
-                   and "Starlight" in s["name"] and "front-left" in s["channel_map"]), None)
-    if master and not any(s["name"] == "mixpi_starlight_main" for s in sinks):
+    master = next((s for s in sinks if starlight_master(s)), None)
+    if not master:
+        return sinks
+    names = {s["name"] for s in sinks}
+    routes = (
+        ("mixpi_starlight_main", "Starlight_Main_1-2", "front-left,front-right"),
+        ("mixpi_starlight_headphones", "Starlight_Headphones_3-4", "rear-left,rear-right"),
+    )
+    for name, description, channels in routes:
+        if name in names or not set(channels.split(",")) <= set(master["channel_map"].split(",")):
+            continue
         run("pactl", "load-module", "module-remap-sink",
-            "sink_name=mixpi_starlight_main",
-            "sink_properties=device.description=Starlight_Main_1-2",
-            "master=" + master["name"], "channels=2", "rate=44100",
-            "channel_map=front-left,front-right", "master_channel_map=front-left,front-right", "remix=no")
-        # Control listening volume on the stereo output; preserve front/rear routing.
-        run("pactl", "set-sink-volume", master["name"], "100%")
-        run("pactl", "set-sink-mute", master["name"], "0")
-        sinks = outputs()
-    return sinks
+            "sink_name=" + name, "sink_properties=device.description=" + description,
+            "master=" + master["name"], "channels=2",
+            "channel_map=front-left,front-right", "master_channel_map=" + channels, "remix=no")
+        if name == "mixpi_starlight_headphones":
+            # This newly exposed jack may already have an amplifier connected.
+            run("pactl", "set-sink-volume", name, "50%")
+        # Preserve the physical device's volume and mute state while adding routes.
+    return outputs()
 
 
-def saved_output():
+def selectable_outputs(sinks):
+    has_main = any(s["name"] == "mixpi_starlight_main" for s in sinks)
+    return [s for s in sinks if s["name"] != "auto_null"
+            and not s["name"].startswith((COMBINED_PREFIX, DELAY_PREFIX))
+            and not (has_main and starlight_master(s))]
+
+
+def migrate_outputs(names, sinks):
+    # The former raw four-channel choice carried stereo on main channels only.
+    raw_names = {s["name"] for s in sinks if starlight_master(s)}
+    has_main = any(s["name"] == "mixpi_starlight_main" for s in sinks)
+    return list(dict.fromkeys("mixpi_starlight_main" if has_main and n in raw_names else n for n in names))
+
+
+def saved_state():
     try:
-        return json.loads(STATE.read_text()).get("output")
+        state = json.loads(STATE.read_text())
+        return state if isinstance(state, dict) else {}
     except (OSError, ValueError):
-        return None
+        return {}
+
+
+def save_state(**changes):
+    state = saved_state()
+    state.update(changes)
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    temp = STATE.with_suffix(".tmp")
+    temp.write_text(json.dumps(state) + "\n")
+    temp.replace(STATE)
+
+
+def saved_outputs():
+    state = saved_state()
+    names = state.get("outputs", [state["output"]] if state.get("output") else [])
+    return names if isinstance(names, list) and all(isinstance(n, str) for n in names) else []
+
+
+def validate_delays(delays):
+    if not isinstance(delays, dict) or any(
+            not isinstance(name, str) or type(ms) is not int or not 0 <= ms <= MAX_DELAY_MS
+            for name, ms in delays.items()):
+        raise RuntimeError(f"Delays must be whole milliseconds from 0 to {MAX_DELAY_MS}.")
+    return delays
+
+
+def saved_delays():
+    try:
+        return validate_delays(saved_state().get("delays_ms", {}))
+    except RuntimeError:
+        return {}
+
+
+def routed_outputs(sinks):
+    default = run("pactl", "get-default-sink")
+    sink = next((s for s in sinks if s["name"] == default), None)
+    if not sink:
+        return []
+    if default.startswith(COMBINED_PREFIX):
+        modules = json.loads(run("pactl", "--format=json", "list", "modules"))
+        names = []
+        for module in modules:
+            if module.get("name") != "module-combine-sink":
+                continue
+            arguments = dict(arg.split("=", 1) for arg in shlex.split(module.get("argument", "")) if "=" in arg)
+            if arguments.get("sink_name") == default:
+                names = arguments.get("sinks", "").split(",")
+                break
+    else:
+        names = [default]
+    return names
+
+
+def selected_outputs(sinks):
+    names = routed_outputs(sinks)
+    details = delay_details(sinks)
+    names = [details[n][0] if n in details else n for n in names]
+    available = {s["name"] for s in selectable_outputs(sinks)}
+    return [n for n in migrate_outputs(names, sinks) if n in available]
+
+
+def delay_route(name, ms):
+    return DELAY_PREFIX + hashlib.sha256(name.encode()).hexdigest()[:16] + f"_{ms}"
+
+
+def delay_details(sinks):
+    # PipeWire 1.4's Pulse LADSPA wrapper drops custom sink properties.
+    # Resolve the stable route name instead of depending on those properties.
+    names = [s["name"] for s in selectable_outputs(sinks)]
+    details = {}
+    for sink in sinks:
+        route = sink["name"]
+        if not route.startswith(DELAY_PREFIX):
+            continue
+        try:
+            ms = int(route.rsplit("_", 1)[1])
+        except ValueError:
+            continue
+        if 0 < ms <= MAX_DELAY_MS:
+            for name in names:
+                if delay_route(name, ms) == route:
+                    details[route] = (name, ms)
+                    break
+    return details
+
+
+def current_delays(sinks):
+    delays = saved_delays()
+    details = delay_details(sinks)
+    for name in routed_outputs(sinks):
+        if name in details:
+            original, ms = details[name]
+            delays[original] = ms
+        elif not name.startswith(DELAY_PREFIX):
+            delays[name] = 0
+    return delays
+
+
+def choose_outputs(names, save=True, delays=None):
+    names = sorted(set(names))
+    if not names:
+        raise RuntimeError("Select at least one speaker output.")
+    sinks = outputs()
+    available = {s["name"] for s in selectable_outputs(sinks)}
+    if not set(names) <= available:
+        raise RuntimeError("An output is disconnected. Refresh the output list and try again.")
+    delays = validate_delays(saved_delays() if delays is None else delays)
+    existing = {s["name"] for s in sinks}
+    routes, created = [], []
+    try:
+        for name in names:
+            ms = delays.get(name, 0)
+            route = name
+            if ms:
+                route = delay_route(name, ms)
+                if route not in existing:
+                    # The plugin delays samples without advertising that intentional
+                    # offset as device latency, so combine compensation retains it.
+                    created.append(run("pactl", "load-module", "module-ladspa-sink",
+                        "sink_name=" + route, "sink_master=" + name,
+                        f"sink_properties=device.description=Speaker_timing_{ms}ms",
+                        "channels=2", "channel_map=front-left,front-right",
+                        "plugin=delay_1898", "label=delay_l", f"control=1,{ms / 1000:.3f}"))
+            routes.append(route)
+        target = routes[0]
+        if len(routes) > 1:
+            target = COMBINED_PREFIX + hashlib.sha256(",".join(routes).encode()).hexdigest()[:16]
+            if target not in existing:
+                created.append(run("pactl", "load-module", "module-combine-sink",
+                    "sink_name=" + target, "sinks=" + ",".join(routes),
+                    "sink_properties=device.description=Multiple_speaker_outputs",
+                    "channels=2", "channel_map=front-left,front-right", "remix=no",
+                    "latency_compensate=true"))
+        if created and target.startswith(COMBINED_PREFIX) and any(
+                s["name"].startswith(COMBINED_PREFIX) for s in sinks):
+            previous = run("pactl", "get-default-sink")
+            old = next((s for s in sinks if s["name"] == previous and
+                        previous.startswith(COMBINED_PREFIX)), None)
+            if old and old.get("volume"):
+                # Keep the combined output's master gain/mute across timing edits.
+                # Individual jack levels remain on their original sinks.
+                levels = [str(v["value"]) for v in old["volume"].values()]
+                run("pactl", "set-sink-volume", target, *levels)
+                run("pactl", "set-sink-mute", target, "1" if old.get("mute") else "0")
+        run("pactl", "set-default-sink", target)
+    except Exception:
+        for module in reversed(created):
+            run("pactl", "unload-module", module, check=False)
+        raise
+    for stream in json.loads(run("pactl", "--format=json", "list", "sink-inputs")):
+        # Moving a remap/combine stream into itself would create a feedback loop.
+        props = stream.get("properties", {})
+        if str(props.get("node.virtual", "")).lower() == "true":
+            continue
+        run("pactl", "move-sink-input", str(stream["index"]), target, check=False)
+    # Retire the old combined device only after music has moved to the new one.
+    for sink in sinks:
+        if sink["name"].startswith(COMBINED_PREFIX) and sink["name"] != target:
+            run("pactl", "unload-module", str(sink["owner_module"]), check=False)
+    for sink in sinks:
+        if sink["name"].startswith(DELAY_PREFIX) and sink["name"] not in routes:
+            run("pactl", "unload-module", str(sink["owner_module"]), check=False)
+    if save:
+        save_state(outputs=names, delays_ms=delays)
+    return target
+
+
+def adjust_delays(changes):
+    validate_delays(changes)
+    if not active():
+        raise RuntimeError("Start Speaker mode before adjusting timing.")
+    sinks = outputs()
+    selected = selected_outputs(sinks)
+    if not changes or not set(changes) <= set(selected):
+        raise RuntimeError("The active outputs changed. Close Fine adjustment and open it again.")
+    delays = current_delays(sinks)
+    delays.update(changes)
+    choose_outputs(selected, save=False, delays=delays)
+    # Keep remembered outputs even when a device is temporarily unplugged.
+    save_state(delays_ms=delays)
 
 
 def choose_output(name, save=True):
-    sinks = outputs()
-    if name not in {sink["name"] for sink in sinks}:
-        raise RuntimeError("That output is disconnected. Refresh the output list and try again.")
-    run("pactl", "set-default-sink", name)
-    for stream in json.loads(run("pactl", "--format=json", "list", "sink-inputs")):
-        # Never move the internal streams of virtual/remapped sinks.
-        if stream.get("properties", {}).get("media.class") == "Stream/Output/Audio" and stream.get("properties", {}).get("node.virtual") == "true":
-            continue
-        run("pactl", "move-sink-input", str(stream["index"]), name, check=False)
-    if save:
-        STATE.parent.mkdir(parents=True, exist_ok=True)
-        temp = STATE.with_suffix(".tmp")
-        temp.write_text(json.dumps({"output": name}) + "\n")
-        temp.replace(STATE)
+    return choose_outputs([name], save=save)
 
 
 def start(close_mixxx=False):
@@ -106,17 +308,22 @@ def start(close_mixxx=False):
             time.sleep(0.25)
         if not sinks:
             raise RuntimeError("No audio output found. Connect the Starlight or another audio device and try again.")
-        sinks = prepare_outputs()
+        all_sinks = prepare_outputs()
+        sinks = selectable_outputs(all_sinks)
         names = {s["name"] for s in sinks}
-        preferred = saved_output()
+        preferred = [n for n in migrate_outputs(saved_outputs(), all_sinks) if n in names]
         starlight = "mixpi_starlight_main" if "mixpi_starlight_main" in names else None
-        selected = preferred if preferred in names else starlight or run("pactl", "get-default-sink")
+        if not sinks:
+            raise RuntimeError("No speaker output connected.")
+        selected = preferred or [starlight or sinks[0]["name"]]
         first_start = not STATE.exists()
-        choose_output(selected, save=first_start)
+        target = choose_outputs(selected, save=first_start)
         # A first-time output starts at a moderate volume; later sessions retain it.
         if first_start:
-            run("pactl", "set-sink-volume", selected, "50%")
-        run("pactl", "set-sink-mute", selected, "0")
+            for name in selected:
+                run("pactl", "set-sink-volume", name, "50%")
+        for name in set(selected + [target]):
+            run("pactl", "set-sink-mute", name, "0")
     except Exception:
         run("systemctl", "--user", "stop", TARGET, check=False)
         raise
@@ -144,10 +351,61 @@ def pair():
     run("bluetoothctl", "discoverable", "on")
 
 
+def spotify_request(path, body=None):
+    request = urllib.request.Request(SPOTIFY_API + path, method="GET" if body is None else "POST",
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"})
+    # Ignore any desktop proxy settings; the player is on this Pi.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=4) as response:
+            data = response.read()
+            return response.status, json.loads(data) if data.strip() else None
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f"Spotify did not accept that control ({error.code}).")
+    except (OSError, ValueError):
+        raise RuntimeError("Spotify is not running. Start Speaker mode, then try again.")
+
+
+def spotify_status():
+    # The player answers 204 until a phone has chosen Mix Pi.
+    code, status = spotify_request("/status")
+    if code != 200 or not isinstance(status, dict):
+        return {"connected": False}
+    track = (not status.get("stopped") and status.get("track")) or {}
+    steps = status.get("volume_steps") or 100
+    return {"connected": True,
+            "playing": bool(track) and not status.get("paused"),
+            "title": track.get("name") or "",
+            "artist": ", ".join(track.get("artist_names") or []),
+            "album": track.get("album_name") or "",
+            "volume": max(0, min(100, round(100 * status.get("volume", 0) / steps)))}
+
+
+def spotify_control(action="status", *values):
+    if action in SPOTIFY_ACTIONS and not values:
+        spotify_request(SPOTIFY_ACTIONS[action], {})
+    elif action == "volume" and len(values) == 1:
+        if not values[0].isdecimal() or int(values[0]) > 100:
+            raise RuntimeError("Spotify volume must be a whole number from 0 to 100.")
+        code, volume = spotify_request("/player/volume")
+        if code == 200:
+            # Spotify counts volume in the player's own steps.
+            steps = (volume or {}).get("max") or 100
+            spotify_request("/player/volume", {"volume": round(int(values[0]) * steps / 100)})
+    elif action != "status" or values:
+        raise RuntimeError("Unknown Spotify command")
+    return spotify_status()
+
+
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else "status"
     if command == "status":
         print(json.dumps({"active": active(), "mixxx": mixxx_running()}))
+        return
+    if command == "spotify":
+        # Playback controls leave audio routing alone, so they skip the mode lock.
+        print(json.dumps(spotify_control(*sys.argv[2:])))
         return
     runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
     with (runtime / "mixpi-audio.lock").open("w") as lock:
@@ -160,9 +418,17 @@ def main():
         elif command == "stop":
             stop()
         elif command == "outputs":
-            print(json.dumps(prepare_outputs()))
+            print(json.dumps(selectable_outputs(prepare_outputs())))
+        elif command == "routing":
+            sinks = prepare_outputs()
+            print(json.dumps({"outputs": selectable_outputs(sinks), "selected": selected_outputs(sinks),
+                              "delays_ms": current_delays(sinks)}))
         elif command == "output":
-            choose_output(sys.argv[2])
+            choose_outputs(sys.argv[2:])
+        elif command == "delay":
+            if len(sys.argv) != 3:
+                raise RuntimeError("Supply output delays as a JSON object.")
+            adjust_delays(json.loads(sys.argv[2]))
         elif command == "pair":
             pair()
         else:

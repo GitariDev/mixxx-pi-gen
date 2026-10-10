@@ -24,6 +24,9 @@ watching the waveform continuously.
 7. Add no more than one sample to each transition.
 8. Review the recording for phrase errors, clashing vocals, double basslines, clipping, and abrupt level changes.
 
+Start and stop recording from **Browse → Recordings**. To listen away from the
+rig, [move the recording to a USB drive](usb-media.md#move-recordings-onto-a-usb-drive).
+
 ## Combo drills
 
 - **Standard:** compatible selection, Pad 1 launch, long fade, bass handoff, A out.

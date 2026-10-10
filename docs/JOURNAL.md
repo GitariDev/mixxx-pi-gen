@@ -5,12 +5,81 @@
 - **Goal:** a compact, touchscreen-first, standalone-feeling DJ system built on a Raspberry Pi and Mixxx.
 - **Current rig:** Raspberry Pi 4B; generic 7-inch 800×480 DSI touchscreen; USB mouse; Hercules DJControl Starlight as the current/temporary DJ controller; portable USB storage; external speaker; portable power under test.
 - **Software:** the current build pins Mixxx 2.5.6 and Pioneered on 64-bit Raspberry Pi OS Trixie. SSH inspection on 2026-09-22 confirmed those versions, Sway 1.10.1, an 800×480 display at scale 1, and native Wayland Mixxx in an 800×444 window below the top bar, without forced fullscreen.
-- **Working:** first EthioJazz gig completed. The live Pi now has larger Browse rows/menus, horizontal scrolling, an Actions button for track context menus, and a USB → Pi copier accessible directly from the top bar. Starlight master/cue routing and the saved MIDI mapping were exercised; the user confirmed the audio/controller/touch test worked.
+- **Working:** first EthioJazz gig completed. The live Pi now has larger Browse rows/menus, horizontal scrolling, an Actions button for track context menus, and a two-way USB ⇄ Pi window on the top bar: music copies in, Mixxx recordings move out. Starlight master/cue routing and the saved MIDI mapping were exercised; the user confirmed the audio/controller/touch test worked.
 - **Known friction:** gig power cutouts and the USB 3 extension remain unresolved. General touchscreen long-press and live MIDI auto-discovery are still open; automatic Rekordbox discovery is installed and passed silent checks with one USB plus SD.
 - **Next milestone:** finish selective migration on the verified new card: restore Starlight MIDI mapping/headphone cue routing and the older music while preserving the user's new library. Removable-device handovers and a sustained power test remain outstanding; see [`POST-GIG-PLAN.md`](ideas/POST-GIG-PLAN.md). Controller upgrade planning remains in [`CONTROLLER-UPGRADE.md`](setup/CONTROLLER-UPGRADE.md).
 - **Longer-term direction:** support replaceable DJ controllers, audio interfaces, storage, displays, and auxiliary control surfaces without baking a single device into the core image.
 - **DJ preparation tools:** two open issues cover Rekordbox metadata/genre enrichment and beatgrid repair; see [`DJ-LIBRARY-TOOLS.md`](ideas/DJ-LIBRARY-TOOLS.md). These are proposed Python tools with executable packaging, separate from the Pi image.
 - **Backlog:** browser-based transfer and individual-playlist selection (the first copier handles a whole export), automatic MIDI mapping (stretch), and permanently installed stems tooling (long term; exact software/format unconfirmed).
+
+## 2026-10-10
+
+- **Spotify controls:** user asked for pause/play, next, previous and Spotify
+  volume on the Pi during a Jam, in a centred dialog over a blurred Speaker
+  screen that only closes by its own Close button. librespot 0.8.0 exposes no local controls, so the receiver changes to
+  pinned go-librespot 0.10.3 with a loopback-only API. **Spotify controls** in
+  the Speaker footer opens it. 126 tests passed on the Pi; the exact
+  service command and control CLI were checked there from `/tmp` without
+  touching the live session. **Not installed on the live Pi yet**: the swap
+  interrupts playback and the phone must choose Mix Pi again, so it waits for
+  the user's go-ahead. Details: [`SPEAKER-MODE.md`](setup/SPEAKER-MODE.md#october-10-spotify-controls).
+- **Recordings → USB:** user asked how recording works and for a way to move
+  recordings off the Pi from the USB copier. Live config confirmed Mixxx saves
+  16-bit WAV plus `.cue` to `~/Music/Mixxx/Recordings`; the pinned Pioneered
+  skin has no REC button, so recording starts from **Browse → Recordings** or
+  Ctrl+R. The copier is now **USB ⇄ Pi** with two directions. The new one lists
+  every recording, ticked, and moves the chosen ones into `Mix Pi Recordings`
+  on the drive, beside any Rekordbox `PIONEER`/`Contents`.
+- **Safety:** copy, flush, read back from the drive, compare SHA-256, then
+  delete the Pi original. No overwrite of a different same-named file; open
+  (still recording) files are refused; a repeat finishes an interrupted move.
+  **Music → Pi** skips the recordings folder. Procedure:
+  [`usb-media.md`](skills/usb-media.md#move-recordings-onto-a-usb-drive).
+- **Validation:** 116 tests passed on the Pi (2 optional fixtures skipped),
+  including 20 native GTK checks at 800×412 run in an isolated headless Sway,
+  and 16 new backend cases. The Mac run skips GTK.
+- **Live deployment:** installed `mixpi-media`, `mixpi_ui.py`, `mixpi-settings`
+  and the Waybar label. Moved fixture recordings to loop-mounted FAT32 and
+  exFAT images; hashes matched after remount and the fixture export files were
+  unchanged. Repeated on the physical screen by pointer taps. Fixtures, images
+  and mounts were removed; Speaker mode and its audio services were not
+  touched. Backup: `~/.local/state/mixpi-backups/recordings-20261010-151217/`;
+  evidence: `deploy/recordings-20261010/`.
+- **Not exercised:** no removable drive was attached, so real USB detection,
+  write speed and eject remain a hands-on check, as does moving a recording
+  made by Mixxx itself.
+
+## 2026-10-03
+
+- **Manual speaker timing installed:** added **Fine adjustment** to the Speaker
+  screen. Its Audio sync menu has independent 0–500 ms delays for active outputs,
+  ±1/±10 ms buttons, Apply & save, and Reset. Settings persist across sessions;
+  the Starlight main and headphone/sub jacks remain separate. Nonzero delays use
+  the `swh-plugins` stereo delay filter; zero bypasses it.
+- **Validation:** 22 routing tests, 17 native GTK interaction/layout tests, and
+  11 build/navigation checks passed. A private PipeWire 1.4.2 session on ARM64
+  Debian measured 1, 50 and 500 ms settings within one sample (0.021 ms) on both
+  stereo channels and verified reset/reuse/cleanup. The menu fits 760×350, with
+  all three output rows visible. Evidence: `deploy/speaker-sync-20261003/`.
+- **Live deployment:** after explicit user approval, installed the two helpers,
+  `swh-plugins`, and the floating-menu rule on the Pi. Opened Fine adjustment
+  with all three active outputs at zero delay. The actual menu fits the 800×480
+  screen with an empty application log. Audio service PIDs, default sink, music
+  routing and saved settings remained unchanged. Backup:
+  `~/.local/state/mixpi-backups/speaker-sync-20261003-164504/`.
+  The user is ready to perform the listening adjustment; audible alignment
+  remains unverified.
+
+## 2026-09-28
+
+- **Pairing dialog repaired:** user reported a blank white popup. Actual GTK colors confirmed white text on a light `messagedialog` background missed by the original CSS selector. Added that selector, explicit dialog titles and a centered floating-window rule, plus a native contrast regression test. Deployed the fix; 12 native GTK checks and 61 host checks passed. At the user's request returned from Mixxx to Speaker mode and exercised the actual Pair phone button: readable instructions, discoverable/pairable for 180 seconds, Audio Sink advertised. Phone acceptance/audio remains unverified. Backup: `~/.local/state/mixpi-backups/dialog-20260928-210057/`; evidence: `deploy/ui-20260928/dialog-fix/`.
+
+- **UI deployed over SSH:** installed the three new launchers and shared GTK theme from `d328221`, updated only the Settings window rule, validated/reloaded Sway, and visually verified all three actual screens at 800×412 with empty logs. Speaker remained active on Starlight; all audio service PIDs were unchanged. The internal export’s 613 receipt-listed files, inventory/receipt hashes and Mixxx profile hashes were preserved; database quick check passed. Backup: `~/.local/state/mixpi-backups/ui-20260928-204507/`. Local evidence: `deploy/ui-20260928/RESULTS.md`. No rebuild or reboot was needed.
+
+- **Utility UI redesign:** saved the existing work to GitHub `main` (`3bf0bed`) before editing. Speaker, Settings and USB → Pi now share a dark DJ-style GTK theme, grouped controls and clearer states. Open Design, AlphaTheta and W3C references and implementation notes are in [the design contract](design/DESIGN.md).
+- **Validation:** 61 host tests and 11 native GTK interaction/layout checks passed; the optional upstream skin fixture was skipped. Captures in `output/ui-review/` show real GTK rendering at 800×412 using fixture data. Added a native UI CI workflow. The later SSH deployment is recorded below; audible playback/phone pairing were not re-tested.
+
+- **Speaker chat preserved:** at the user's request, saved the full requirements, agreed scope, September 25 installation, verification, backup/evidence paths, outstanding checks and failed chat-relocation attempt in [the Speaker mode chat handoff](handoffs/2026-09-25-speaker-mode-chat.md). The original task remains under panelai; it was not moved or deleted. This follow-up changed documentation only and did not reconnect to or alter the Pi.
 
 ## 2026-09-23
 

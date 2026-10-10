@@ -41,8 +41,8 @@
         "on-click": "swaymsg 'workspace \"2:Desktop\"; exec /usr/local/bin/mixpi-settings'"
     },
     "custom/media": {
-        "format": "USB \u2192 Pi",
-        "tooltip-format": "Copy USB music and playlists to the Pi",
+        "format": "USB \u21c4 Pi",
+        "tooltip-format": "Copy USB music to the Pi or move recordings to USB",
         "on-click": "swaymsg 'workspace \"2:Desktop\"; exec /usr/local/bin/mixpi-media'"
     },
     "custom/bluetooth": {

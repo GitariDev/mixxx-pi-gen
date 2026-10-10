@@ -1,12 +1,13 @@
 #!/bin/bash -eu
-# Pin the official ARM64 Raspotify package; the desktop uses its librespot
-# binary through mixpi-spotify.service, only while Speaker mode is active.
+# Pin the official ARM64 go-librespot release. mixpi-spotify.service runs it
+# only while Speaker mode is active; its control API backs the Speaker screen's
+# Spotify controls.
 on_chroot <<'EOF'
     set -eu
-    package=/tmp/mixpi-raspotify.deb
-    curl -fL --retry 3 'https://github.com/dtcooper/raspotify/releases/download/0.48.3/raspotify_0.48.3.librespot.v0.8.0-939dc5e_arm64.deb' -o "$package"
-    echo '2097b3994824cf17163ecc47c6f6a5a695202987e2ab0b650f50d663291c63f2  /tmp/mixpi-raspotify.deb' | sha256sum -c -
-    ln -sf /dev/null /etc/systemd/system/raspotify.service
-    apt-get install -y "$package"
+    package=/tmp/mixpi-go-librespot.tar.gz
+    curl -fL --retry 3 'https://github.com/devgianlu/go-librespot/releases/download/v0.10.3/go-librespot_linux_arm64.tar.gz' -o "$package"
+    echo 'fdab3c06f3a776a3f696afb26aa59fbdea63557e24d3c39f2df2830ab1851a42  /tmp/mixpi-go-librespot.tar.gz' | sha256sum -c -
+    tar -xzf "$package" -C /usr/local/bin --no-same-owner go-librespot
+    chmod 755 /usr/local/bin/go-librespot
     rm "$package"
 EOF

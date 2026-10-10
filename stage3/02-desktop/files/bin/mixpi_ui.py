@@ -1,16 +1,20 @@
 """Shared GTK 3 controls for the 800 × 480 Mix Pi touchscreen."""
+import cairo
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Pango
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, GdkPixbuf, Gtk, Pango
 
 CSS = b"""
 * { font-family: 'DejaVu Sans', sans-serif; font-size: 16px; }
-window, dialog, messagedialog, menu { background: #101216; color: #f4f6f8; }
+window, dialog, messagedialog, menu, popover { background: #101216; color: #f4f6f8; }
 label { color: #f4f6f8; }
 .title { font-size: 24px; font-weight: bold; }
+.track { font-size: 20px; font-weight: bold; }
 .eyebrow { font-size: 12px; font-weight: bold; color: #aeb8c4; }
 .muted { color: #b7c1cd; font-size: 14px; }
 .panel { background: #1b2027; border: 1px solid #46515e; border-radius: 6px; padding: 8px; }
+.sheet { background: #101216; border: 1px solid #657383; padding: 12px; }
 .status { color: #ffbb55; font-weight: bold; }
 .success { color: #79dfac; }
 .error { color: #ffaaaa; }
@@ -25,6 +29,9 @@ button.primary label { color: #101216; }
 button.primary:hover { background-color: #ffd08a; }
 button:disabled { background-color: #1b2027; border-color: #3c4550; color: #85909d; }
 button:disabled label { color: #85909d; }
+button.segment:checked { background-color: #101216; border-color: #ffbb55;
+  box-shadow: inset 0 -3px #ffbb55; }
+button.segment:checked label { color: #ffbb55; }
 button.tile { min-height: 60px; padding: 6px 12px; }
 button.tile label { font-weight: bold; }
 button.tile .muted { font-size: 13px; font-weight: normal; }
@@ -32,9 +39,23 @@ combobox button { min-height: 44px; }
 combobox cellview { color: #f4f6f8; }
 menuitem { min-height: 44px; padding: 0 12px; }
 menuitem:hover { background: #364251; }
+popover { border: 1px solid #657383; }
+checkbutton { padding: 0 8px; }
+checkbutton:hover { background: #364251; }
+checkbutton check { min-width: 22px; min-height: 22px; background: #272e38;
+  border: 1px solid #aeb8c4; color: #f4f6f8; }
+checkbutton check:checked { background: #ffbb55; color: #101216; border-color: #ffbb55; }
+checkbutton:disabled label { color: #85909d; }
 progressbar trough { min-height: 10px; background: #303945; border-radius: 3px; }
 progressbar progress { min-height: 10px; background: #ffbb55; border-radius: 3px; }
 progressbar text { color: #f4f6f8; font-size: 14px; }
+scale { min-height: 44px; padding: 0 4px; }
+scale trough { min-height: 10px; background: #303945; border: none; border-radius: 3px; }
+scale highlight { min-height: 10px; background: #ffbb55; border: none; border-radius: 3px; }
+scale slider { min-width: 32px; min-height: 32px; margin: -12px; background: #f4f6f8;
+  border: 1px solid #657383; border-radius: 16px; box-shadow: none; }
+scale:disabled highlight { background: #657383; }
+scale:disabled slider { background: #85909d; }
 scrollbar slider { min-width: 14px; min-height: 32px; background: #657383; }
 separator { background: #46515e; min-height: 1px; }
 """
@@ -91,18 +112,21 @@ def panel():
     return style(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4), "panel")
 
 
-def shell(application, title, section):
+def shell(application, title, section, header_end=None):
     window = Gtk.ApplicationWindow(application=application, title="Mix Pi · " + title)
     window.set_default_size(800, 412)
-    window.set_border_width(12)
     css = Gtk.CssProvider()
     css.load_from_data(CSS)
     Gtk.StyleContext.add_provider_for_screen(window.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
     root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-    window.add(root)
+    root.set_border_width(12)
+    # The overlay lets backdrop() cover the whole screen behind a sheet.
+    overlay = Gtk.Overlay()
+    overlay.add(root)
+    window.add(overlay)
     header = Gtk.Box(spacing=12)
     header.pack_start(label(title, "title"), True, True, 0)
-    header.pack_end(label("MIX PI  /  " + section, "eyebrow"), False, False, 0)
+    header.pack_end(header_end or label("MIX PI  /  " + section, "eyebrow"), False, False, 0)
     root.pack_start(header, False, False, 0)
     scroller = Gtk.ScrolledWindow()
     scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -112,6 +136,29 @@ def shell(application, title, section):
     footer = Gtk.Box(spacing=8)
     root.pack_end(footer, False, False, 0)
     return window, body, footer
+
+
+def backdrop(window):
+    """Cover a shell window with a dimmed, blurred picture of itself; destroy the cover to clear it."""
+    width, height = window.get_allocated_width(), window.get_allocated_height()
+    surface = cairo.ImageSurface(cairo.FORMAT_RGB24, width, height)
+    window.draw(cairo.Context(surface))
+    picture = Gdk.pixbuf_get_from_surface(surface, 0, 0, width, height)
+    # Shrinking and enlarging is a blur the Pi does in about 30 ms; repeating
+    # it smooths away the grid a single pass leaves.
+    for _ in range(3):
+        picture = picture.scale_simple(max(1, width // 4), max(1, height // 4), GdkPixbuf.InterpType.BILINEAR)
+        picture = picture.scale_simple(width, height, GdkPixbuf.InterpType.BILINEAR)
+    cover = Gtk.DrawingArea()
+    def draw(_, context):
+        Gdk.cairo_set_source_pixbuf(context, picture, 0, 0)
+        context.paint()
+        context.set_source_rgba(16 / 255, 18 / 255, 22 / 255, .45)
+        context.paint()
+    cover.connect("draw", draw)
+    window.get_child().add_overlay(cover)
+    cover.show()
+    return cover
 
 
 def message(window, title, detail, confirm=None):

@@ -195,19 +195,24 @@ export function Dialog({
   title,
   onClose,
   children,
+  wide = false,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  wide?: boolean;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDivElement>(null),
+    // Escape calls the latest onClose, not the one from when the dialog opened.
+    closing = useRef(onClose);
+  closing.current = onClose;
   useEffect(() => {
     const prior = document.activeElement as HTMLElement | null;
     ref.current?.focus();
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        closing.current();
       }
       if (e.key !== "Tab") return;
       const items = Array.from(
@@ -242,7 +247,7 @@ export function Dialog({
   return (
     <div className="library-modal">
       <div
-        className="library-dialog"
+        className={wide ? "library-dialog wide" : "library-dialog"}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -508,6 +513,8 @@ export function ImportMusic({
   onClose,
   receiptId,
   requestError,
+  sessions = [],
+  onTag,
 }: {
   folder: string;
   request: Request;
@@ -515,6 +522,8 @@ export function ImportMusic({
   onClose: () => void;
   receiptId?: string;
   requestError?: string;
+  sessions?: { id: string; state: string; total: number }[];
+  onTag?: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]),
     [mode, setMode] = useState("move");
@@ -540,6 +549,16 @@ export function ImportMusic({
   }, [receipt?.id, started, receiptId]);
   const ready =
     receipt?.entries.filter((e) => e.status === "ready").length ?? 0;
+  const tagging = sessions.find((s) => s.id === receipt?.id),
+    wasChecking = useRef(false);
+  // Once the checks finish, go straight on to tagging the tracks.
+  useEffect(() => {
+    if (tagging?.state === "checking") wasChecking.current = true;
+    else if (tagging?.state === "ready" && wasChecking.current) {
+      wasChecking.current = false;
+      onTag?.(tagging.id);
+    }
+  }, [tagging?.state]);
   return (
     <Dialog
       title={receiptId ? "Import receipt" : "Add music"}
@@ -584,12 +603,17 @@ export function ImportMusic({
                 Move · remove originals after verification
               </option>
               <option value="copy">Copy · keep originals</option>
+              <option value="index">
+                Leave in place · add files where they are
+              </option>
             </select>
           </label>
           <p className="fine">
             {mode === "move"
               ? "Each original is removed only after its copy is verified. A file rekordbox already lists moves too and keeps its entry, cues and playlists; quit rekordbox first for those."
-              : "Originals stay in Downloads or on their source drive. Names are preserved; collisions get a numbered filename."}
+              : mode === "copy"
+                ? "Originals stay in Downloads or on their source drive. Names are preserved; collisions get a numbered filename."
+                : "Nothing is copied or moved: each file is added to the Dex from where it is now, inside the music folder or not."}
           </p>
           <button
             className="primary"
@@ -636,6 +660,25 @@ export function ImportMusic({
               </div>
             ))}
           </div>
+          {tagging && (
+            <div className="callout">
+              <strong>
+                {tagging.state === "checking"
+                  ? `Checking ${tagging.total} imported tracks`
+                  : `${tagging.total} imported tracks are ready to tag`}
+              </strong>
+              <p>
+                {tagging.state === "checking"
+                  ? "Metadata, genres and duplicates are checked first. Tagging opens when the checks finish."
+                  : "Listen to each track and give it My Tags and playlists."}
+              </p>
+              {tagging.state !== "checking" && (
+                <button className="primary" onClick={() => onTag?.(tagging.id)}>
+                  Tag {tagging.total} tracks
+                </button>
+              )}
+            </div>
+          )}
           <div className="button-row">
             {(!receipt.state || receipt.state === "preview") && (
               <>
@@ -657,8 +700,9 @@ export function ImportMusic({
                     }
                   }}
                 >
-                  {receipt.mode === "move" ? "Move" : "Copy"} {ready} files &
-                  add to Dex
+                  {receipt.mode === "index"
+                    ? `Add ${ready} files to Dex`
+                    : `${receipt.mode === "move" ? "Move" : "Copy"} ${ready} files & add to Dex`}
                 </button>
               </>
             )}
@@ -693,8 +737,8 @@ export function ImportMusic({
                 Download rekordbox import playlist
               </a>
               <p className="fine">
-                Files are in your music folder. The playlist references those
-                files. Song Dex does not start rekordbox analysis itself.
+                The playlist references each file where it now is. Song Dex
+                does not start rekordbox analysis itself.
               </p>
             </section>
           )}

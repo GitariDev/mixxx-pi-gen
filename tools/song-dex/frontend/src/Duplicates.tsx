@@ -1,6 +1,15 @@
 import { useMemo, useState } from "react";
 import { Dialog } from "./LibraryTools";
+import "./duplicates.css";
 
+/** Copies of one version inside a larger group; different versions stay apart. */
+export type DuplicateVersion = {
+  label: string;
+  tracks: number[];
+  keep: number;
+  warnings: string[];
+  same_file: boolean;
+};
 export type DuplicateGroup = {
   kind: string;
   tracks: number[];
@@ -9,6 +18,7 @@ export type DuplicateGroup = {
   keep: number;
   awaiting_removal: number[];
   merged: boolean;
+  versions?: DuplicateVersion[];
 };
 type Entry = {
   id: number;
@@ -20,7 +30,14 @@ type Entry = {
 };
 type Choice = { keep: number; remove: number[] };
 type Merge = { keep: number; remove: number[]; okay?: boolean };
-type Plan = { merges: Merge[]; okay: DuplicateGroup[] };
+type Plan = { merges: Merge[]; okay: DuplicateGroup[]; versions?: number };
+type Role = {
+  name: string;
+  kept: boolean;
+  merging: boolean;
+  onKeep: () => void;
+  onMerge?: () => void;
+};
 
 const OWN = "Song Dex / ";
 const kinds: Record<string, string> = {
@@ -83,6 +100,8 @@ export function Duplicates({
   onOpen: (id: number) => void;
 }) {
   const [choices, setChoices] = useState<Record<string, Choice>>({}),
+    [split, setSplit] = useState<Record<string, Choice[]>>({}),
+    [across, setAcross] = useState<Set<string>>(new Set()),
     [picked, setPicked] = useState<Set<string>>(new Set()),
     [show, setShow] = useState("open"),
     [limit, setLimit] = useState(40),
@@ -99,6 +118,26 @@ export function Duplicates({
           ? []
           : candidates(g).filter((id) => id !== g.keep),
     };
+  /** Versions to merge within, unless the group was switched to one choice across them. */
+  const versionsOf = (g: DuplicateGroup) =>
+    !g.merged && !across.has(keyOf(g)) ? g.versions : undefined;
+  const splitFor = (g: DuplicateGroup): Choice[] =>
+    split[keyOf(g)] ??
+    versionsOf(g)!.map((v) => ({
+      keep: v.keep,
+      // Copies with warnings wait for a tick, as in a flagged group.
+      remove:
+        v.warnings.length || v.tracks.length < 2
+          ? []
+          : v.tracks.filter((id) => id !== v.keep),
+    }));
+  /** The merges a group asks for; versions merge copies and mark the rest as okay. */
+  const mergesFor = (g: DuplicateGroup): Merge[] =>
+    versionsOf(g)
+      ? splitFor(g)
+          .filter((c) => c.remove.length)
+          .map((c) => ({ ...c, okay: true }))
+      : [choiceFor(g)].filter((c) => c.remove.length);
   const open = groups.filter((g) => !g.merged),
     merged = groups.filter((g) => g.merged),
     clear = open.filter((g) => !g.warnings.length),
@@ -106,10 +145,25 @@ export function Duplicates({
   const visible = { open, clear, flagged, merged }[show] ?? open;
   const chosen = open.filter((g) => picked.has(keyOf(g)));
   const mergesOf = (list: DuplicateGroup[]) =>
-    list
-      .map((g) => choiceFor(g))
-      .filter((c) => c.remove.length)
-      .slice(0, 500);
+    list.flatMap(mergesFor).slice(0, 500);
+  /** Clean copies of one version inside flagged groups; the group stays open. */
+  const versionMerges = flagged.flatMap((g) => {
+    const found = versionsOf(g);
+    if (!found) return [];
+    const picks = splitFor(g);
+    return found.flatMap((v, i) =>
+      v.tracks.length > 1 && !v.warnings.length && picks[i].remove.length
+        ? [{ ...picks[i], okay: false }]
+        : [],
+    );
+  });
+  const clearMerges = clear
+      .flatMap(mergesFor)
+      .map((m) => ({ ...m, okay: false })),
+    cleanMerges = [...clearMerges, ...versionMerges].slice(0, 500);
+  const groupOf = new Map(
+    groups.flatMap((g) => g.tracks.map((id) => [id, keyOf(g)] as const)),
+  );
   const summary = (merges: Merge[]) => {
     let playlists = 0,
       tags = 0,
@@ -126,6 +180,52 @@ export function Duplicates({
   };
   const set = (g: DuplicateGroup, choice: Choice) =>
     setChoices({ ...choices, [keyOf(g)]: choice });
+  const setPart = (g: DuplicateGroup, index: number, choice: Choice) =>
+    setSplit({
+      ...split,
+      [keyOf(g)]: splitFor(g).map((c, i) => (i === index ? choice : c)),
+    });
+  const toggleAcross = (g: DuplicateGroup) => {
+    const next = new Set(across);
+    next.has(keyOf(g)) ? next.delete(keyOf(g)) : next.add(keyOf(g));
+    setAcross(next);
+  };
+  /** Keep and Merge for a set of entries where one is kept and ticked ones merge. */
+  const roleIn = (
+    name: string,
+    choice: Choice,
+    id: number,
+    pair: boolean,
+    update: (c: Choice) => void,
+  ): Role => {
+    const kept = id === choice.keep,
+      merging = choice.remove.includes(id);
+    return {
+      name,
+      kept,
+      merging,
+      onKeep: () =>
+        update({
+          keep: id,
+          remove: pair
+            ? [choice.keep]
+            : [
+                ...choice.remove.filter((i) => i !== id),
+                // The entry that was kept takes the place of this one.
+                ...(merging ? [choice.keep] : []),
+              ],
+        }),
+      onMerge: pair
+        ? undefined
+        : () =>
+            update({
+              keep: choice.keep,
+              remove: merging
+                ? choice.remove.filter((i) => i !== id)
+                : [...choice.remove, id],
+            }),
+    };
+  };
   const pick = (keys: string[], on: boolean) => {
     const next = new Set(picked);
     for (const key of keys) on ? next.add(key) : next.delete(key);
@@ -134,6 +234,8 @@ export function Duplicates({
   const locked = busy || !capability.enabled;
   /** Some entries are ticked and others are not: remixes and versions that stay. */
   const partial = (g: DuplicateGroup) => {
+    // Versions have their own merge; marking them as okay keeps every entry.
+    if (versionsOf(g)) return false;
     const ticked = choiceFor(g).remove.length;
     return (
       capability.enabled && ticked > 0 && ticked < candidates(g).length - 1
@@ -213,10 +315,19 @@ export function Duplicates({
             </label>
             <button
               className="primary"
-              disabled={locked || !clear.length}
-              onClick={() => setPending({ merges: mergesOf(clear), okay: [] })}
+              disabled={locked || !cleanMerges.length}
+              onClick={() =>
+                setPending({
+                  merges: cleanMerges,
+                  okay: [],
+                  versions: Math.max(
+                    0,
+                    cleanMerges.length - clearMerges.length,
+                  ),
+                })
+              }
             >
-              Merge all {clear.length} without warnings
+              Merge all {clear.length + versionMerges.length} without warnings
             </button>
             {dismissed > 0 && (
               <button
@@ -269,122 +380,172 @@ export function Duplicates({
       {visible.slice(0, limit).map((g, index) => {
         const choice = choiceFor(g),
           pair = candidates(g).length === 2,
-          keep = byId.get(choice.keep)!,
+          found = versionsOf(g),
+          picks = found ? splitFor(g) : [choice],
+          ticked = picks.reduce((n, c) => n + c.remove.length, 0),
           plan = new Map(
-            moves(
-              keep,
-              choice.remove.map((id) => byId.get(id)!),
-            ).map((m) => [m.id, m]),
+            picks.flatMap((c) =>
+              moves(
+                byId.get(c.keep)!,
+                c.remove.map((id) => byId.get(id)!),
+              ).map((m) => [m.id, m] as const),
+            ),
           );
-        const entries = (
-          <>
-            {g.tracks.map((id) => {
-              const t = byId.get(id)!,
-                waiting = g.awaiting_removal.includes(id),
-                kept = !g.merged && id === choice.keep,
-                merging = choice.remove.includes(id),
-                move = plan.get(id),
-                cues = t.stats?.cues ?? 0;
-              return (
-                <div
-                  className={`duplicate-entry${kept ? " kept" : ""}`}
-                  key={id}
-                >
-                  {!g.merged && !waiting && (
-                    <div className="duplicate-roles">
-                      <label>
-                        <input
-                          type="radio"
-                          name={`keep-${keyOf(g)}`}
-                          checked={kept}
-                          onChange={() =>
-                            set(g, {
-                              keep: id,
-                              remove: pair
-                                ? [choice.keep]
-                                : [
-                                    ...choice.remove.filter((i) => i !== id),
-                                    // The entry that was kept takes the place of this one.
-                                    ...(merging ? [choice.keep] : []),
-                                  ],
-                            })
-                          }
-                        />{" "}
-                        Keep
-                      </label>
-                      {!pair && (
-                        <label>
-                          <input
-                            type="checkbox"
-                            disabled={kept}
-                            checked={merging}
-                            onChange={() =>
-                              set(g, {
-                                keep: choice.keep,
-                                remove: merging
-                                  ? choice.remove.filter((i) => i !== id)
-                                  : [...choice.remove, id],
-                              })
-                            }
-                          />{" "}
-                          Merge
-                        </label>
-                      )}
-                    </div>
+        const entry = (
+          id: number,
+          role: Role | null,
+          kept: boolean,
+          suggested: boolean,
+        ) => {
+          const t = byId.get(id)!,
+            waiting = g.awaiting_removal.includes(id),
+            merging = picks.some((c) => c.remove.includes(id)),
+            move = plan.get(id),
+            cues = t.stats?.cues ?? 0;
+          return (
+            <div className={`duplicate-entry${kept ? " kept" : ""}`} key={id}>
+              {role && (
+                <div className="duplicate-roles">
+                  <label>
+                    <input
+                      type="radio"
+                      name={role.name}
+                      checked={role.kept}
+                      onChange={role.onKeep}
+                    />{" "}
+                    Keep
+                  </label>
+                  {role.onMerge && (
+                    <label>
+                      <input
+                        type="checkbox"
+                        disabled={role.kept}
+                        checked={role.merging}
+                        onChange={role.onMerge}
+                      />{" "}
+                      Merge
+                    </label>
                   )}
-                  <div className="duplicate-detail">
-                    <strong>
-                      {t.metadata.title || "Untitled"}{" "}
-                      {id === g.keep && !g.merged && (
-                        <span className="badge success">Suggested keep</span>
-                      )}{" "}
-                      {waiting && (
-                        <span className="badge warn">Remove in rekordbox</span>
-                      )}{" "}
-                      {!t.available && <span className="badge">Offline</span>}
-                    </strong>
-                    <p>
-                      NO. {String(id).padStart(4, "0")} ·{" "}
-                      {t.metadata.artist || "Unknown artist"} ·{" "}
-                      {t.metadata.format || "?"}
-                      {Number(t.metadata.bitrate) > 0 &&
-                        ` ${Math.round(Number(t.metadata.bitrate) / 1000)} kbps`}{" "}
-                      · {length(t.metadata.duration)} · {t.metadata.bpm || "—"}{" "}
-                      BPM
-                      {t.metadata.key ? ` · ${t.metadata.key}` : ""} ·{" "}
-                      {plural(cues, "cue")}
-                      {t.stats?.added && ` · ${added(t.stats.added)}`}
-                    </p>
-                    <small>
-                      {t.playlists.map((p) => p.name).join(" / ") ||
-                        "No playlist membership"}
-                      {t.my_tags.length > 0 &&
-                        ` · My Tags: ${t.my_tags.map((m) => m.name).join(", ")}`}
-                    </small>
-                    {merging && move && (
-                      <p className="duplicate-move">
-                        →{" "}
-                        {move.playlists.length || move.myTags.length
-                          ? `Moves to the kept entry: ${[
-                              ...move.playlists.map((p) => p.name),
-                              ...move.myTags.map((m) => `My Tag ${m.name}`),
-                            ].join(", ")}`
-                          : "Nothing to move; it is only listed for removal"}
-                        {cues > 0 &&
-                          ` · △ ${plural(cues, "cue")} stay behind on this entry`}
-                      </p>
+                </div>
+              )}
+              <div className="duplicate-detail">
+                <strong>
+                  {t.metadata.title || "Untitled"}{" "}
+                  {suggested && (
+                    <span className="badge success">Suggested keep</span>
+                  )}{" "}
+                  {waiting && (
+                    <span className="badge warn">Remove in rekordbox</span>
+                  )}{" "}
+                  {!t.available && <span className="badge">Offline</span>}
+                </strong>
+                <p>
+                  NO. {String(id).padStart(4, "0")} ·{" "}
+                  {t.metadata.artist || "Unknown artist"} ·{" "}
+                  {t.metadata.format || "?"}
+                  {Number(t.metadata.bitrate) > 0 &&
+                    ` ${Math.round(Number(t.metadata.bitrate) / 1000)} kbps`}{" "}
+                  · {length(t.metadata.duration)} · {t.metadata.bpm || "—"} BPM
+                  {t.metadata.key ? ` · ${t.metadata.key}` : ""} ·{" "}
+                  {plural(cues, "cue")}
+                  {t.stats?.added && ` · ${added(t.stats.added)}`}
+                </p>
+                <small>
+                  {t.playlists.map((p) => p.name).join(" / ") ||
+                    "No playlist membership"}
+                  {t.my_tags.length > 0 &&
+                    ` · My Tags: ${t.my_tags.map((m) => m.name).join(", ")}`}
+                </small>
+                {merging && move && (
+                  <p className="duplicate-move">
+                    →{" "}
+                    {move.playlists.length || move.myTags.length
+                      ? `Moves to the kept entry: ${[
+                          ...move.playlists.map((p) => p.name),
+                          ...move.myTags.map((m) => `My Tag ${m.name}`),
+                        ].join(", ")}`
+                      : "Nothing to move; it is only listed for removal"}
+                    {cues > 0 &&
+                      ` · △ ${plural(cues, "cue")} stay behind on this entry`}
+                  </p>
+                )}
+              </div>
+              <button
+                className="quiet"
+                aria-label={`Open ${t.metadata.title} in Song Dex`}
+                onClick={() => onOpen(id)}
+              >
+                ↗
+              </button>
+            </div>
+          );
+        };
+        const list = found ? (
+          <>
+            {found.map((v, i) => {
+              const copies = v.tracks.length > 1;
+              return (
+                <div className="duplicate-version" key={v.tracks[0]}>
+                  <div className="duplicate-version-head">
+                    <span className="badge">{v.label}</span>
+                    <span>
+                      {copies
+                        ? plural(v.tracks.length, "copy")
+                        : "1 entry · stays"}
+                    </span>
+                    {v.same_file && (
+                      <span className="badge success">Same file</span>
                     )}
+                    {v.warnings.map((w) => (
+                      <span className="duplicate-version-warn" key={w}>
+                        △ {w}
+                      </span>
+                    ))}
                   </div>
-                  <button
-                    className="quiet"
-                    aria-label={`Open ${t.metadata.title} in Song Dex`}
-                    onClick={() => onOpen(id)}
-                  >
-                    ↗
-                  </button>
+                  {v.tracks.map((id) =>
+                    entry(
+                      id,
+                      copies
+                        ? roleIn(
+                            `keep-${keyOf(g)}-${i}`,
+                            picks[i],
+                            id,
+                            false,
+                            (c) => setPart(g, i, c),
+                          )
+                        : null,
+                      copies && id === picks[i].keep,
+                      copies && id === v.keep,
+                    ),
+                  )}
                 </div>
               );
             })}
+            {g.awaiting_removal.length > 0 && (
+              <div className="duplicate-version">
+                <div className="duplicate-version-head">
+                  <span className="badge warn">Merged earlier</span>
+                  <span>{plural(g.awaiting_removal.length, "entry")}</span>
+                </div>
+                {g.awaiting_removal.map((id) => entry(id, null, false, false))}
+              </div>
+            )}
+          </>
+        ) : (
+          g.tracks.map((id) =>
+            entry(
+              id,
+              !g.merged && !g.awaiting_removal.includes(id)
+                ? roleIn(`keep-${keyOf(g)}`, choice, id, pair, (c) => set(g, c))
+                : null,
+              !g.merged && id === choice.keep,
+              id === g.keep && !g.merged,
+            ),
+          )
+        );
+        const entries = (
+          <>
+            {list}
             {g.warnings.map((w) => (
               <p className="difference" key={w}>
                 △ {w}
@@ -393,21 +554,39 @@ export function Duplicates({
             {g.note && <p className="duplicate-note">{g.note}</p>}
             {!g.merged && (
               <div className="button-row duplicate-actions">
-                <button
-                  disabled={locked || !choice.remove.length}
-                  onClick={() => setPending({ merges: [choice], okay: [] })}
-                >
-                  {pair
-                    ? "Merge into the kept entry"
-                    : choice.remove.length
-                      ? `Merge ${plural(choice.remove.length, "ticked entry")} into the kept entry`
-                      : "Tick entries to merge"}
-                </button>
+                {found ? (
+                  <button
+                    disabled={locked || !ticked}
+                    onClick={() =>
+                      setPending({ merges: mergesFor(g), okay: [] })
+                    }
+                  >
+                    {ticked
+                      ? `Merge ${plural(ticked, "copy")}, keep the ${found.length} versions apart`
+                      : "Tick copies to merge"}
+                  </button>
+                ) : (
+                  <button
+                    disabled={locked || !choice.remove.length}
+                    onClick={() => setPending({ merges: [choice], okay: [] })}
+                  >
+                    {pair
+                      ? "Merge into the kept entry"
+                      : choice.remove.length
+                        ? `Merge ${plural(choice.remove.length, "ticked entry")} into the kept entry`
+                        : "Tick entries to merge"}
+                  </button>
+                )}
                 <button disabled={busy} onClick={() => okay([g])}>
                   {partial(g)
                     ? "Merge ticked, mark the rest as okay"
                     : "Mark as okay"}
                 </button>
+                {g.versions && (
+                  <button className="quiet" onClick={() => toggleAcross(g)}>
+                    {found ? "Choose across versions" : "Group by version"}
+                  </button>
+                )}
               </div>
             )}
           </>
@@ -464,19 +643,31 @@ export function Duplicates({
       )}
       {pending &&
         (() => {
-          const { merges, okay: untouched } = pending,
+          const { merges, okay: untouched, versions = 0 } = pending,
             totals = summary(merges),
             entries = merges.reduce((n, m) => n + m.remove.length, 0),
-            okayed = merges.filter((m) => m.okay).length + untouched.length;
+            // Versions send one merge each, so count the groups they belong to.
+            inGroups = new Set(merges.map((m) => groupOf.get(m.keep))).size,
+            okayed =
+              new Set(
+                merges.filter((m) => m.okay).map((m) => groupOf.get(m.keep)),
+              ).size + untouched.length;
           return (
             <Dialog title="Merge duplicates?" onClose={() => setPending(null)}>
               <p>
-                {plural(entries, "entry")} in {plural(merges.length, "group")}{" "}
-                will be merged into the entries you keep:{" "}
+                {plural(entries, "entry")} in {plural(inGroups, "group")} will
+                be merged into the entries you keep:{" "}
                 {plural(totals.playlists, "playlist place")} and{" "}
                 {plural(totals.tags, "My Tag")} move, and the merged entries are
                 listed in <em>Song Dex / Duplicates to remove</em>.
               </p>
+              {versions > 0 && (
+                <p>
+                  This includes {plural(versions, "set")} of copies of one
+                  version inside larger groups. Their other versions stay open
+                  for you to decide.
+                </p>
+              )}
               {okayed > 0 && (
                 <p>
                   Entries that are not ticked stay untouched, and{" "}
@@ -511,6 +702,7 @@ export function Duplicates({
                       "Merged. In rekordbox, open Song Dex / Duplicates to remove, remove those entries from the collection, then rescan.",
                     );
                     setChoices({});
+                    setSplit({});
                     setPicked(new Set());
                   }}
                 >

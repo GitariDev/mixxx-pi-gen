@@ -57,8 +57,16 @@ class Service:
                 note = self.scan(job_id, payload)
             elif job["kind"] == "import_music":
                 from .importing import Importing
+                from .tagging import Tagging
 
                 note = Importing(self).run(job_id, payload)
+                # Then the scan checks, so the tracks are ready to tag.
+                checked = Tagging(self).prepare(job_id, payload["import_id"])
+                note = " ".join(filter(None, [note, checked])) or None
+            elif job["kind"] == "tag_check":
+                from .tagging import Tagging
+
+                note = Tagging(self).prepare(job_id, payload["session_id"])
             elif job["kind"] == "approve":
                 from .editing import Editing
 
@@ -106,43 +114,28 @@ class Service:
                         message=f"Checked {index + 1} file locations",
                     )
             elif job["kind"] == "enrich":
-                ids = payload.get("ids") or [
-                    t["id"]
-                    for t in self.store.tracks()
-                    if t["source"] != "demo"
-                    and (payload.get("refresh") or not t["evidence"] or t["error"])
-                ]
-                self.progress(job_id, total=len(ids), payload=dump({"ids": ids}))
-                errors = 0
-                for index, tid in enumerate(ids):
-                    if index < job["progress"]:
-                        continue
-                    track = self.store.track(tid)
-                    track["metadata"] = {**track["metadata"], **track["accepted"]}
-                    error = None
-                    try:
-                        evidence = self.providers.enrich(track)
-                    except Exception as exc:
-                        error = f"{type(exc).__name__}: provider lookup failed. Retry when available."
-                        evidence = track["evidence"]
-                        errors += 1
-                    with self.store.connect() as db:
-                        db.execute(
-                            "UPDATE tracks SET evidence=?,error=? WHERE id=?",
-                            (dump(evidence), error, tid),
+                from .scanning import Scanning
+
+                if "ids" not in payload:
+                    # A lookup started before scans listed their tracks up front.
+                    tracks = [
+                        t
+                        for t in self.store.tracks()
+                        if t["source"] != "demo"
+                        and (payload.get("refresh") or not t["evidence"] or t["error"])
+                    ]
+                    payload = {"ids": [t["id"] for t in tracks], "label": "New tracks"}
+                    if not tracks:
+                        self.progress(
+                            job_id, state="complete", message="Nothing to scan"
                         )
-                    self.progress(
-                        job_id,
-                        progress=index + 1,
-                        message=f"Checked {index + 1} of {len(ids)} tracks",
-                    )
-                if errors:
-                    self.progress(
-                        job_id,
-                        state="partial",
-                        message=f"Finished with {errors} lookup failures; existing metadata preserved",
-                    )
-                    return
+                        return
+                    self.progress(job_id, payload=dump(payload))
+                state, message = Scanning(self).run(job_id, payload)
+                self.progress(job_id, state=state, message=message)
+                if state == "complete":
+                    self.store.log("enrich", "Operation completed")
+                return
             self.progress(job_id, state="complete", message=note or "Finished")
             self.store.log(job["kind"], "Operation completed")
         except Exception as exc:
@@ -155,6 +148,39 @@ class Service:
             # A scan may have found rekordbox changed, which spends its backups.
             Backups(self).prune()
             self.lock.release()
+            self.save_queued()
+
+    def save_queued(self):
+        """Approvals queued just as a scan finished, which it did not get to."""
+        from .editing import Editing
+
+        editing = Editing(self)
+        if editing.queued() and self.lock.acquire(blocking=False):
+            try:
+                editing.drain()
+            except Exception:
+                pass
+            finally:
+                self.lock.release()
+
+    def enrich_track(self, tid, genre=True):
+        """Look one track up with the providers; 1 when the lookup failed, else 0."""
+        track = self.store.track(tid)
+        track["metadata"] = {**track["metadata"], **track["accepted"]}
+        error = None
+        try:
+            evidence = self.providers.enrich(track, genre)
+        except Exception as exc:
+            error = (
+                f"{type(exc).__name__}: provider lookup failed. Retry when available."
+            )
+            evidence = track["evidence"]
+        with self.store.connect() as db:
+            db.execute(
+                "UPDATE tracks SET evidence=?,error=? WHERE id=?",
+                (dump(evidence), error, tid),
+            )
+        return int(error is not None)
 
     def settle(self):
         """Record a job that died while the catalog was unwritable, once it is writable."""
@@ -184,6 +210,16 @@ class Service:
         )
         source_hash = rekordbox.snapshot(source, destination)
         rows = rekordbox.read_collection(destination / "master.db")
+        try:
+            from .duplicates import FOLDER
+
+            # What tagging offers; a scan still counts without it.
+            self.store.set_setting(
+                "library_choices",
+                rekordbox.read_choices(destination / "master.db", FOLDER),
+            )
+        except Exception:
+            pass
         with self.store.connect() as db:
             existing = {
                 r[0]
@@ -215,9 +251,13 @@ class Service:
         self.store.set_setting("last_scan", now())
         self.store.set_setting("last_scan_source", str(source))
         from .relocating import Relocating
+        from .tagging import Tagging
 
         # Files that moved into the music folder get their rekordbox path back.
-        return Relocating(self).repair(str(source), rows)
+        repaired = Relocating(self).repair(str(source), rows)
+        # Newly imported tracks rekordbox now lists get the tags and playlists chosen for them.
+        tagged = Tagging(self).after_scan()
+        return " ".join(filter(None, [repaired, tagged])) or None
 
     def ingest(self, source, row):
         path = row["path"]

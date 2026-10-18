@@ -20,9 +20,14 @@
   pinned go-librespot 0.10.3 with a loopback-only API. **Spotify controls** in
   the Speaker footer opens it. 126 tests passed on the Pi; the exact
   service command and control CLI were checked there from `/tmp` without
-  touching the live session. **Not installed on the live Pi yet**: the swap
-  interrupts playback and the phone must choose Mix Pi again, so it waits for
-  the user's go-ahead. Details: [`SPEAKER-MODE.md`](setup/SPEAKER-MODE.md#october-10-spotify-controls).
+  touching the live session. Pushed as `d4897a0`, then **installed on the live
+  Pi** at the user's request. The first attempt restarted only the Spotify
+  service, which systemd extends to the whole speaker stack and so dropped the
+  combined-output routes; the installer rolled back, and the second attempt
+  stopped and started Speaker mode instead and restored the saved outputs and
+  levels. The phone reconnected and played through go-librespot; the dialog
+  showed the live track and volume. Transport taps, the slider and a Jam still
+  need the user's hands-on check. Details: [`SPEAKER-MODE.md`](setup/SPEAKER-MODE.md#october-10-spotify-controls).
 - **Recordings → USB:** user asked how recording works and for a way to move
   recordings off the Pi from the USB copier. Live config confirmed Mixxx saves
   16-bit WAV plus `.cue` to `~/Music/Mixxx/Recordings`; the pinned Pioneered

@@ -2427,3 +2427,162 @@ form label select {
     grid-template-columns: 1fr 1fr;
   }
 }
+.library-dialog.wide {
+  width: min(1040px, 100%);
+}
+.tagging-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.tagging-progress progress {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.tagging-track {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  margin: 16px 0 12px;
+}
+.tagging-art {
+  width: 112px;
+  height: 112px;
+  flex: none;
+  border: 2px solid var(--ink);
+  background: var(--shell);
+}
+.tagging-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.tagging-titles {
+  min-width: 0;
+}
+.tagging-titles small {
+  font-family: var(--display);
+  color: var(--muted);
+}
+.tagging-titles h3 {
+  margin: 2px 0;
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+.library-dialog .tagging-titles p {
+  margin: 0 0 4px;
+}
+.tagging-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tagging-player {
+  width: 100%;
+}
+.tagging-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  font-size: 14px;
+  margin: 6px 0 4px;
+}
+.tagging-section {
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+.tagging-section h4 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.tagging-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.tag-category {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 8px;
+}
+.tag-category > span {
+  font-size: 13px;
+  color: var(--muted);
+  padding-top: 6px;
+}
+.tag-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+button.tag-choice {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 14px;
+  border-bottom-width: 2px;
+}
+button.tag-choice[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: #0d433e;
+  color: #fff;
+}
+button.tag-choice[aria-pressed="true"]:disabled {
+  background: #5c8a84;
+  opacity: 1;
+}
+button.tag-choice.suggestion {
+  text-align: left;
+  align-items: flex-start;
+}
+button.tag-choice.suggestion span {
+  display: grid;
+}
+button.tag-choice small {
+  font-size: 11px;
+  opacity: 0.8;
+}
+button.tag-choice kbd {
+  font-family: var(--display);
+  font-size: 11px;
+  border: 1px solid currentColor;
+  padding: 0 4px;
+  margin-top: 2px;
+}
+.playlist-search {
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+  margin-top: 10px;
+}
+.playlist-choices {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  background: #e9ecdc;
+  margin-top: 6px;
+  padding: 6px 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 2px 16px;
+  font-size: 14px;
+}
+.playlist-choices label {
+  overflow-wrap: anywhere;
+}
+.tagging-nav {
+  justify-content: space-between;
+  margin-top: 16px;
+}
+@media (max-width: 640px) {
+  .tag-category {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

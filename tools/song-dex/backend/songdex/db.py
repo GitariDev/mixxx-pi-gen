@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS manual_edits(track_id INTEGER REFERENCES tracks(id), 
 CREATE TABLE IF NOT EXISTS local_writes(id TEXT PRIMARY KEY, track_id INTEGER REFERENCES tracks(id),
  kind TEXT NOT NULL, state TEXT NOT NULL, manifest TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS imports(id TEXT PRIMARY KEY, state TEXT NOT NULL, plan TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tag_sessions(id TEXT PRIMARY KEY, tracks TEXT NOT NULL, checked TEXT NOT NULL DEFAULT '[]',
+ position INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS assignments(track_id INTEGER NOT NULL REFERENCES tracks(id), kind TEXT NOT NULL,
+ target TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL,
+ PRIMARY KEY(track_id,kind,target));
+CREATE TABLE IF NOT EXISTS scan_items(job_id TEXT NOT NULL, track_id INTEGER NOT NULL, position INTEGER NOT NULL,
+ catalog TEXT NOT NULL DEFAULT 'queued', genre TEXT NOT NULL DEFAULT 'queued', tags TEXT NOT NULL DEFAULT 'queued',
+ PRIMARY KEY(job_id,track_id));
+CREATE TABLE IF NOT EXISTS approval_queue(proposal_id INTEGER PRIMARY KEY, created_at TEXT NOT NULL);
 """
 
 
@@ -106,6 +115,13 @@ class Store:
             }:
                 db.execute(
                     "ALTER TABLE tracks ADD COLUMN stats TEXT NOT NULL DEFAULT '{}'"
+                )
+            # Why a scan suggested a My Tag or playlist ('suggested' assignments).
+            if "reasons" not in {
+                r["name"] for r in db.execute("PRAGMA table_info(assignments)")
+            }:
+                db.execute(
+                    "ALTER TABLE assignments ADD COLUMN reasons TEXT NOT NULL DEFAULT '[]'"
                 )
         self.recover()
         self.normalize_years()

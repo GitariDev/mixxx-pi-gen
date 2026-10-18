@@ -189,6 +189,21 @@ def test_import_folder_move_and_same_selection_duplicates(
     assert (source / "notes.txt").exists()
 
 
+def test_import_leave_in_place_indexes_files_where_they_are(
+    importer, service, audio_file, tmp_path
+):
+    source = tmp_path / "Downloads"
+    source.mkdir()
+    path = Path(shutil.move(audio_file(), source / "kept.flac"))
+    plan = importer.preview([str(source)], "index")
+    (entry,) = plan["entries"]
+    assert (entry["destination"], entry["status"]) == (str(path), "ready")
+    importer.run(job(service, plan["id"]), {"import_id": plan["id"]})
+    assert path.is_file()
+    assert [t["path"] for t in service.store.tracks()] == [str(path)]
+    assert importer.get(plan["id"])["entries"][0]["status"] == "complete"
+
+
 def test_import_changed_source_retained_then_retry(importer, service, audio_file):
     path = audio_file()
     plan = importer.preview([str(path)], "move")

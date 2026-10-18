@@ -6,14 +6,25 @@ rekordbox action; Song Dex never deletes collection rows or files.
 
 Marking a group as okay records the entries that stay separate, such as remixes
 and other versions. Entries merged out of the group keep waiting for removal.
+
+Larger groups are checked a second time and split into versions, so copies of one
+version can merge while the versions themselves stay apart.
 """
 
 from __future__ import annotations
 
+import re
+
 from . import rekordbox
+from .providers import normalized, version_signature, version_tokens
 
 FOLDER, REMOVAL = "Song Dex", "Duplicates to remove"
 LOSSLESS = {"FLAC", "WAV", "AIFF", "AIF"}
+# Open entries a group needs before it is split into versions; a trio can hold a pair.
+VERSIONS_FROM = 3
+GENERIC = {"", "original", "original mix", "original version"}
+FRAGMENT = r"\(([^)]*)\)|\[([^]]*)\]"
+ORIGINAL = r"[(\[]\s*original(?: mix| version)?\s*[)\]]"
 
 
 def awaiting_removal(track):
@@ -36,6 +47,101 @@ def strength(track):
     )
 
 
+def merged(track):
+    return {**track["metadata"], **track["accepted"]}
+
+
+def number(m, field):
+    return float(m.get(field) or 0)
+
+
+def same_version(a, b):
+    """One recording: same version labels, duration within 1% and BPM within 1."""
+    ma, mb = merged(a), merged(b)
+    if version_signature(ma.get("title", ""), ma.get("version", "")) != (
+        version_signature(mb.get("title", ""), mb.get("version", ""))
+    ):
+        return False
+    da, db = number(ma, "duration"), number(mb, "duration")
+    if abs(da - db) > max(2, max(da, db) * 0.01):
+        return False
+    ba, bb = number(ma, "bpm"), number(mb, "bpm")
+    return not (ba and bb and abs(ba - bb) > 1)
+
+
+def capitalized(text):
+    return " ".join(w[:1].upper() + w[1:] for w in text.split())
+
+
+def version_label(track):
+    """The version qualifiers as written ("Extended Mix"), or "Original" without any."""
+    m = merged(track)
+    title, version = str(m.get("title") or ""), str(m.get("version") or "")
+    parts = [a or b for a, b in re.findall(FRAGMENT, title) if version_tokens(a or b)]
+    if normalized(version) not in GENERIC:
+        parts.append(version)
+    if not parts:
+        # Qualifiers outside brackets, such as a title every entry shares.
+        words = version_tokens(f"{title} {version}")
+        parts = [w for w in normalized(f"{title} {version}").split() if w in words]
+        parts = [" ".join(dict.fromkeys(parts))] if parts else []
+    labels = {normalized(p): capitalized(p) for p in parts if p.strip()}
+    return " / ".join(labels.values()) or "Original"
+
+
+def plain_title(track):
+    """The title without a generic "(Original Mix)", which names no other version."""
+    return normalized(
+        re.sub(ORIGINAL, "", str(merged(track).get("title") or ""), flags=re.I)
+    )
+
+
+def clock(seconds):
+    return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+
+
+def versions(entries):
+    """Cluster a group's open entries into versions, or None when there is nothing to pair."""
+    clusters = []
+    for t in entries:
+        home = next(
+            (
+                c
+                for c in clusters
+                if t.get("file_hash")
+                and any(o.get("file_hash") == t["file_hash"] for o in c)
+            ),
+            None,
+        ) or next((c for c in clusters if same_version(c[0], t)), None)
+        if home:
+            home.append(t)
+        else:
+            clusters.append([t])
+    if len(clusters) < 2 or all(len(c) < 2 for c in clusters):
+        return None
+    # Copies to merge lead, larger first; single versions follow in group order.
+    clusters.sort(key=len, reverse=True)
+    keeps = [max(c, key=strength) for c in clusters]
+    labels = [version_label(k) for k in keeps]
+    found = []
+    for c, keep, label in zip(clusters, keeps, labels):
+        if labels.count(label) > 1:
+            label = f"{label} · {clock(number(merged(keep), 'duration'))}"
+        hashes = {t.get("file_hash") for t in c}
+        found.append(
+            {
+                "label": label,
+                "tracks": [t["id"] for t in c],
+                "keep": keep["id"],
+                "warnings": ["Titles differ beyond punctuation"]
+                if len({plain_title(t) for t in c}) > 1
+                else [],
+                "same_file": len(c) > 1 and len(hashes) == 1 and None not in hashes,
+            }
+        )
+    return found
+
+
 class Duplicates:
     def __init__(self, operations):
         self.operations = operations
@@ -54,14 +160,21 @@ class Duplicates:
             okayed = any(set(open_ids) <= known for known in dismissed)
             if okayed and not waiting:
                 continue
-            groups.append(
-                {
-                    **group,
-                    "keep": max(open_ids or ids, key=lambda i: strength(by_id[i])),
-                    "awaiting_removal": waiting,
-                    "merged": okayed or len(open_ids) < 2,
-                }
-            )
+            closed = okayed or len(open_ids) < 2
+            found = None
+            if not closed and len(open_ids) >= VERSIONS_FROM:
+                found = versions([by_id[i] for i in open_ids])
+            entry = {
+                **group,
+                "keep": max(open_ids or ids, key=lambda i: strength(by_id[i])),
+                "awaiting_removal": waiting,
+                "merged": closed,
+            }
+            if found:
+                # Entries follow their versions; those waiting for removal come last.
+                entry["versions"] = found
+                entry["tracks"] = [*(i for v in found for i in v["tracks"]), *waiting]
+            groups.append(entry)
         return groups
 
     def dismiss(self, groups):
@@ -90,7 +203,7 @@ class Duplicates:
         tracks = {t["id"]: t for t in self.store.tracks()}
         groups = [g for g in self.groups(list(tracks.values())) if not g["merged"]]
         source = self.store.setting("last_scan_source")
-        plan, used, rest = [], set(), []
+        plan, used, okayed = [], set(), {}
         for merge in merges:
             ids = [merge["keep"], *merge["remove"]]
             group = next((g for g in groups if set(ids) <= set(g["tracks"])), None)
@@ -108,11 +221,7 @@ class Duplicates:
                 )
             used |= set(ids)
             if merge.get("okay"):
-                rest.append(
-                    set(group["tracks"])
-                    - set(group["awaiting_removal"])
-                    - set(merge["remove"])
-                )
+                okayed[frozenset(group["tracks"])] = group
             plan.append(
                 {
                     "keep": tracks[merge["keep"]]["source_id"],
@@ -122,6 +231,12 @@ class Duplicates:
         if not plan:
             raise ValueError("Choose at least one duplicate group to merge")
         leftovers = [i for merge in plan for i in merge["remove"]]
+        # Several merges in one group, one per version, leave one set of entries okay.
+        removed = {i for merge in merges for i in merge["remove"]}
+        rest = [
+            set(g["tracks"]) - set(g["awaiting_removal"]) - removed
+            for g in okayed.values()
+        ]
 
         def mutate(staged):
             moved = rekordbox.merge_entries(staged, plan, FOLDER)

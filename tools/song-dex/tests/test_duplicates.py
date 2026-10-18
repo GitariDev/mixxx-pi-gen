@@ -9,31 +9,29 @@ from songdex.operations import Operations
 REMOVAL_LIST = {"name": f"{FOLDER} / {REMOVAL}", "id": "9", "position": 1}
 
 
-def row(source_id, path, playlists=(), tags=(), cues=0, title="Same Song"):
+def row(source_id, path, playlists=(), tags=(), cues=0, title="Same Song", **more):
     return {
         "source_id": source_id,
         "path": str(path),
-        "metadata": {"title": title, "artist": "Artist", "format": path.suffix[1:]},
+        "metadata": {
+            "title": title,
+            "artist": "Artist",
+            "format": path.suffix[1:],
+            **more,
+        },
         "playlists": [{"name": n, "id": n, "position": 1} for n in playlists],
         "my_tags": [{"id": t, "name": t, "category": ""} for t in tags],
         "stats": {"cues": cues, "plays": 0, "rating": 0},
     }
 
 
-@pytest.fixture
-def library(service, tmp_path, monkeypatch):
-    """Three entries for one song and one unrelated track, behind a fake rekordbox layer."""
+def fake_rekordbox(service, tmp_path, monkeypatch, before, after):
+    """`before` behind a fake rekordbox layer; after a merge it reads as `after(plans)`."""
     source = tmp_path / "library/master.db"
     source.parent.mkdir()
     source.write_bytes(b"original")
     xml = source.parent / "masterPlaylists6.xml"
     xml.write_bytes(b"playlists")
-    before = [
-        row("1", tmp_path / "a.mp3", ["Warm up"], ["Vocal"]),
-        row("2", tmp_path / "b.flac", ["Peak"], cues=3),
-        row("3", tmp_path / "c.mp3", ["Warm up", "Closing"], ["Bootleg"]),
-        row("4", tmp_path / "d.flac", title="Another Song"),
-    ]
     plans = []
 
     def snapshot(src, destination):
@@ -48,14 +46,7 @@ def library(service, tmp_path, monkeypatch):
         return {"playlists": 2, "my_tags": 2}
 
     def read_collection(path):
-        if path.read_bytes() != b"merged":
-            return before
-        return [
-            row("1", tmp_path / "a.mp3", [REMOVAL_LIST["name"]]),
-            row("2", tmp_path / "b.flac", ["Peak", "Warm up", "Closing"], ["Vocal"], 3),
-            row("3", tmp_path / "c.mp3", ["Warm up", REMOVAL_LIST["name"]]),
-            before[3],
-        ]
+        return after(plans) if path.read_bytes() == b"merged" else before
 
     @contextmanager
     def database(path):
@@ -82,6 +73,24 @@ def library(service, tmp_path, monkeypatch):
         service.ingest(str(source), entry)
     ids = {t["source_id"]: t["id"] for t in service.store.tracks()}
     return Duplicates(Operations(service)), source, xml, ids, plans
+
+
+@pytest.fixture
+def library(service, tmp_path, monkeypatch):
+    """Three entries for one song and one unrelated track."""
+    before = [
+        row("1", tmp_path / "a.mp3", ["Warm up"], ["Vocal"]),
+        row("2", tmp_path / "b.flac", ["Peak"], cues=3),
+        row("3", tmp_path / "c.mp3", ["Warm up", "Closing"], ["Bootleg"]),
+        row("4", tmp_path / "d.flac", title="Another Song"),
+    ]
+    after = [
+        row("1", tmp_path / "a.mp3", [REMOVAL_LIST["name"]]),
+        row("2", tmp_path / "b.flac", ["Peak", "Warm up", "Closing"], ["Vocal"], 3),
+        row("3", tmp_path / "c.mp3", ["Warm up", REMOVAL_LIST["name"]]),
+        before[3],
+    ]
+    return fake_rekordbox(service, tmp_path, monkeypatch, before, lambda plans: after)
 
 
 def test_group_suggests_the_entry_with_cues_and_better_audio(library):
@@ -224,3 +233,137 @@ def test_dismissed_group_stays_hidden_until_it_grows(library, service, tmp_path)
     assert len(duplicates.groups()[0]["tracks"]) == 4
     duplicates.reset_dismissed()
     assert len(duplicates.groups()) == 1
+
+
+def six(tmp_path):
+    """One song six times: the Original from three albums, two Extended, one Radio Edit."""
+    entry = lambda n, title, album, duration, **more: row(  # noqa: E731
+        n,
+        tmp_path / f"{n}.mp3",
+        title=title,
+        album=album,
+        duration=duration,
+        bpm=124,
+        **more,
+    )
+    return [
+        entry("1", "Same Song", "Single", 330),
+        entry("2", "Same Song (Extended Mix)", "Single", 412),
+        entry("3", "Same Song (Radio Edit)", "Single", 215),
+        entry("4", "Same Song (Original Mix)", "Club Hits 2019", 331, cues=4),
+        entry("5", "Same Song [Extended Mix]", "Extended Club", 412.5, cues=1),
+        entry("6", "Same Song", "Best Of", 330.5),
+    ]
+
+
+@pytest.fixture
+def versioned(service, tmp_path, monkeypatch):
+    """The six entries; a merge lists the removed ones for removal."""
+    before = six(tmp_path)
+
+    def after(plans):
+        removed = {i for plan in plans for merge in plan for i in merge["remove"]}
+        return [
+            {**r, "playlists": [REMOVAL_LIST]} if r["source_id"] in removed else r
+            for r in before
+        ]
+
+    return fake_rekordbox(service, tmp_path, monkeypatch, before, after)
+
+
+def test_large_group_is_ordered_and_labelled_by_version(versioned):
+    duplicates, _, _, ids, _ = versioned
+    (group,) = duplicates.groups()
+    by = lambda *n: [ids[i] for i in n]  # noqa: E731
+    assert group["tracks"] == by("1", "4", "6", "2", "5", "3")
+    assert group["versions"] == [
+        {
+            "label": "Original",
+            "tracks": by("1", "4", "6"),
+            "keep": ids["4"],
+            "warnings": [],
+            "same_file": False,
+        },
+        {
+            "label": "Extended Mix",
+            "tracks": by("2", "5"),
+            "keep": ids["5"],
+            "warnings": [],
+            "same_file": False,
+        },
+        {
+            "label": "Radio Edit",
+            "tracks": by("3"),
+            "keep": ids["3"],
+            "warnings": [],
+            "same_file": False,
+        },
+    ]
+    assert "Different version labels" in group["warnings"]
+
+
+def test_small_or_single_version_groups_get_no_versions(service, tmp_path):
+    for r in six(tmp_path)[:2]:
+        service.ingest("test", r)
+    # Three copies of one version need no second check either.
+    for n in ("7", "8", "9"):
+        service.ingest("test", row(n, tmp_path / f"{n}.mp3", title="Other"))
+    groups = Duplicates(Operations(service)).groups()
+    assert sorted(len(g["tracks"]) for g in groups) == [2, 3]
+    assert all("versions" not in g for g in groups)
+
+
+def test_versions_sharing_a_label_are_told_apart_by_duration(service, tmp_path):
+    for n, duration in (("1", 332), ("2", 332.5), ("3", 250)):
+        service.ingest("test", row(n, tmp_path / f"{n}.mp3", duration=duration))
+    (group,) = Duplicates(Operations(service)).groups()
+    assert [v["label"] for v in group["versions"]] == [
+        "Original · 5:32",
+        "Original · 4:10",
+    ]
+    assert "Duration differs significantly" in group["warnings"]
+
+
+def test_titles_that_differ_beyond_a_version_warn_inside_the_version(service, tmp_path):
+    for n, title in (("1", "Same Song"), ("2", "Same Song (feat. Singer)")):
+        service.ingest("test", row(n, tmp_path / f"{n}.mp3", title=title, duration=300))
+    service.ingest("test", row("3", tmp_path / "3.mp3", title="Same Song (Dub Remix)"))
+    (group,) = Duplicates(Operations(service)).groups()
+    assert [(v["label"], v["warnings"]) for v in group["versions"]] == [
+        ("Original", ["Titles differ beyond punctuation"]),
+        ("Dub Remix", []),
+    ]
+
+
+def test_okay_merges_per_version_close_the_group(versioned):
+    duplicates, _, _, ids, plans = versioned
+    result = duplicates.merge(
+        [
+            {"keep": ids["4"], "remove": [ids["1"], ids["6"]], "okay": True},
+            {"keep": ids["5"], "remove": [ids["2"]], "okay": True},
+        ]
+    )
+    assert result["manifest"]["library_status"] == "complete"
+    assert plans == [
+        [{"keep": "4", "remove": ["1", "6"]}, {"keep": "5", "remove": ["2"]}]
+    ]
+    (group,) = duplicates.groups()
+    assert group["merged"] is True and "versions" not in group
+    assert set(group["awaiting_removal"]) == {ids["1"], ids["6"], ids["2"]}
+    assert duplicates.store.setting("duplicates_dismissed") == [
+        sorted([ids["4"], ids["5"], ids["3"]])
+    ]
+
+
+def test_merging_one_version_leaves_the_rest_open(versioned):
+    duplicates, _, _, ids, _ = versioned
+    duplicates.merge([{"keep": ids["4"], "remove": [ids["1"], ids["6"]]}])
+    (group,) = duplicates.groups()
+    assert group["merged"] is False
+    assert [v["label"] for v in group["versions"]] == [
+        "Extended Mix",
+        "Radio Edit",
+        "Original",
+    ]
+    assert group["tracks"][-2:] == [ids["1"], ids["6"]]
+    assert duplicates.store.setting("duplicates_dismissed", []) == []

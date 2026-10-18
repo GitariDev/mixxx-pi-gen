@@ -129,22 +129,72 @@ def read_my_tags(path):
         return tag_membership(db)
 
 
+def playlist_namer(db):
+    """Full "Folder / Playlist" name for a playlist ID."""
+    folders = {p.ID: p for p in db.get_playlist()}
+
+    def full_name(pid):
+        names, seen = [], set()
+        while pid in folders and pid not in seen:
+            seen.add(pid)
+            p = folders[pid]
+            names.append(p.Name)
+            pid = p.ParentID
+        return " / ".join(reversed(names))
+
+    return full_name
+
+
+def read_choices(path, own_folder=None):
+    """The My Tags and normal playlists a track can be given.
+
+    Categories, folders and smart playlists are left out, as are the playlists
+    inside `own_folder` (Song Dex's own lists).
+    """
+    from pyrekordbox.db6 import tables
+
+    with database(path) as db:
+        rows = list(db.query(tables.DjmdMyTag))
+        categories = {str(t.ID): t for t in rows if t.Attribute == 1}
+        tags = sorted(
+            (t for t in rows if t.Attribute == 0),
+            key=lambda t: (
+                getattr(categories.get(str(t.ParentID)), "Seq", None) or 0,
+                t.Seq or 0,
+            ),
+        )
+        full_name = playlist_namer(db)
+        playlists = list(db.get_playlist())
+        own = next(
+            (p.ID for p in playlists if p.Name == own_folder and p.ParentID == "root"),
+            None,
+        )
+        return {
+            "tags": [
+                {
+                    "id": str(t.ID),
+                    "name": t.Name or "Unnamed tag",
+                    "category": getattr(categories.get(str(t.ParentID)), "Name", ""),
+                }
+                for t in tags
+            ],
+            "playlists": sorted(
+                (
+                    {"id": str(p.ID), "name": full_name(p.ID)}
+                    for p in playlists
+                    if p.Attribute == 0 and (own is None or p.ParentID != own)
+                ),
+                key=lambda p: p["name"].casefold(),
+            ),
+        }
+
+
 def read_collection(path):
     from pyrekordbox.db6 import tables
 
     with database(path) as db:
         my_tags = tag_membership(db)
-        folders = {p.ID: p for p in db.get_playlist()}
-
-        def full_name(pid):
-            names, seen = [], set()
-            while pid in folders and pid not in seen:
-                seen.add(pid)
-                p = folders[pid]
-                names.append(p.Name)
-                pid = p.ParentID
-            return " / ".join(reversed(names))
-
+        full_name = playlist_namer(db)
         cues = Counter(str(c.ContentID) for c in db.get_cue())
         membership = {}
         for s in db.query(tables.DjmdSongPlaylist):
@@ -504,6 +554,80 @@ def merge_entries(path, merges, own_folder=None):
         if not expected <= actual:
             raise ValueError("rekordbox verification failed")
     return moved
+
+
+def assign(path, plan):
+    """Give entries My Tags and playlist places: plan = {content id: {"tags", "playlists"}}.
+
+    Only adds. A new place goes at the end of its playlist, and a tag row is made
+    the way rekordbox makes its own (no track number). Assignments an entry
+    already has are left as they are.
+    """
+    from datetime import datetime
+
+    from pyrekordbox.db6 import tables
+
+    require_stopped()
+    added, expected = {"my_tags": 0, "playlists": 0}, set()
+    with database(path) as db:
+        require_writable(db)
+        tags = {str(t.ID): t for t in db.query(tables.DjmdMyTag)}
+        for content_id, wanted in plan.items():
+            content_id = str(content_id)
+            if db.get_content(ID=content_id) is None:
+                raise ValueError("rekordbox entry no longer exists")
+            held = {str(r.MyTagID) for r in db.get_my_tag_songs(ContentID=content_id)}
+            for tag_id in map(str, wanted.get("tags", [])):
+                if tag_id not in tags or tags[tag_id].Attribute != 0:
+                    raise ValueError(
+                        "A My Tag was removed in rekordbox. Rescan and choose again"
+                    )
+                expected.add(("my_tags", content_id, tag_id))
+                if tag_id in held:
+                    continue
+                stamp = datetime.now()
+                db.add(
+                    tables.DjmdSongMyTag.create(
+                        ID=str(uuid4()),
+                        MyTagID=tag_id,
+                        ContentID=content_id,
+                        UUID=str(uuid4()),
+                        created_at=stamp,
+                        updated_at=stamp,
+                    )
+                )
+                held.add(tag_id)
+                added["my_tags"] += 1
+            listed = {
+                str(s.PlaylistID)
+                for s in db.query(tables.DjmdSongPlaylist).filter_by(
+                    ContentID=content_id
+                )
+            }
+            for playlist_id in map(str, wanted.get("playlists", [])):
+                playlist = db.get_playlist(ID=playlist_id)
+                if playlist is None or playlist.Attribute != 0:
+                    raise ValueError(
+                        "A playlist was removed in rekordbox. Rescan and choose again"
+                    )
+                expected.add(("playlists", content_id, playlist_id))
+                if playlist_id in listed:
+                    continue
+                db.add_to_playlist(playlist, content_id)
+                listed.add(playlist_id)
+                added["playlists"] += 1
+        db.commit()
+    with database(path) as db:
+        actual = {
+            ("playlists", str(r.ContentID), str(r.PlaylistID))
+            for r in db.query(tables.DjmdSongPlaylist)
+        } | {
+            ("my_tags", str(r.ContentID), str(r.MyTagID))
+            for r in db.query(tables.DjmdSongMyTag)
+        }
+        if not expected <= actual:
+            raise ValueError("rekordbox verification failed")
+    return added
 
 
 def relocate(path, moves):

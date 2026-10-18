@@ -143,11 +143,90 @@ class Editing:
             fields[p["field"]] = (p["new_value"], i)
         return changes
 
+    def scanning(self):
+        with self.store.connect() as db:
+            return bool(
+                db.execute(
+                    "SELECT 1 FROM jobs WHERE kind='enrich' AND state='running'"
+                ).fetchone()
+            )
+
+    def queue(self, ids):
+        """While a scan runs it holds the write lock, so approvals wait for it to save them."""
+        changes = self.plan(ids)
+        ids = [i for fields in changes.values() for _, i in fields.values()]
+        with self.store.connect() as db:
+            db.executemany(
+                "INSERT OR IGNORE INTO approval_queue VALUES (?,?)",
+                [(i, now()) for i in ids],
+            )
+        # The scan may have finished in the meantime; then nobody else will save them.
+        if self.service.lock.acquire(False):
+            try:
+                self.drain()
+            finally:
+                self.service.lock.release()
+        return {
+            "queued": ids,
+            "message": f"Approved {len(ids)} fields on {len(changes)} tracks; "
+            "they are saved as the scan goes.",
+        }
+
+    def queued(self):
+        with self.store.connect() as db:
+            return [
+                r[0]
+                for r in db.execute(
+                    "SELECT proposal_id FROM approval_queue ORDER BY created_at"
+                )
+            ]
+
+    def drain(self):
+        """Save queued approvals; the caller holds the lock. Returns how many tracks were saved."""
+        queued = self.queued()
+        if not queued:
+            return 0
+        proposals = {p["id"]: p for p in self.store.proposals()}
+        changes = {}
+        # The latest approval for a field wins; others for it were superseded anyway.
+        for i in queued:
+            if i in proposals:
+                p = proposals[i]
+                changes.setdefault(p["track_id"], {})[p["field"]] = (p["new_value"], i)
+        saved = 0
+        if changes:
+            self.require_space()
+        for tid, fields in changes.items():
+            try:
+                self._save(
+                    tid,
+                    {k: v for k, (v, _) in fields.items()},
+                    revision(self.store.track(tid)),
+                )
+            except ValueError as exc:
+                self.store.log("review", f"A queued approval was not saved: {exc}", tid)
+                continue
+            saved += 1
+            with self.store.connect() as db:
+                db.executemany(
+                    "UPDATE proposals SET status='applied' WHERE id=?",
+                    [(i,) for _, i in fields.values()],
+                )
+        with self.store.connect() as db:
+            db.executemany(
+                "DELETE FROM approval_queue WHERE proposal_id=?",
+                [(i,) for i in queued],
+            )
+        return saved
+
     def approve(self, ids):
         """Accept suggestions: saved in the Dex, then written wherever a destination is ready.
 
         A few tracks are done on the spot; a larger batch runs as a background job.
+        During a scan they are queued and the scan saves them.
         """
+        if self.service.lock.locked() and self.scanning():
+            return self.queue(ids)
         changes = self.plan(ids)
         skipped = len(ids)
         ids = [i for fields in changes.values() for _, i in fields.values()]

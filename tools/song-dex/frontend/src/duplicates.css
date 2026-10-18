@@ -1,0 +1,35 @@
+/* Versions inside a larger duplicate group: one section per version. */
+.duplicate-version + .duplicate-version {
+  border-top: 2px solid var(--border);
+}
+.duplicate-version-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.duplicate-version-head .badge {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.duplicate-version-head .badge:first-child {
+  color: var(--ink);
+  border-width: 2px;
+  box-shadow: 2px 2px 0 #13191f33;
+}
+.duplicate-version-warn {
+  color: var(--warn);
+}
+@media (max-width: 720px) {
+  .duplicate-version-head {
+    padding: 6px 12px;
+  }
+}

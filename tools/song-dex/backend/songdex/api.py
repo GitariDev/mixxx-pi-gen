@@ -19,7 +19,10 @@ from .editing import Editing, revision
 from .importing import Importing, default_music_folder, new_to_rekordbox
 from .operations import Operations
 from .providers import discogs_auth, genre_name
+from .scanning import Scanning, scope
+from .scanning import stop as stop_scan
 from .service import Service
+from .tagging import Tagging
 
 
 class Selection(BaseModel):
@@ -76,6 +79,28 @@ class ImportPreview(BaseModel):
     mode: str = "move"
 
 
+class Lookup(BaseModel):
+    scope: str
+    kind: str | None = None
+    ids: list[int] = Field(default=[], max_length=20000)
+
+
+class Suggested(BaseModel):
+    track_id: int
+    kind: str
+    target: str
+
+
+class SuggestedSelection(BaseModel):
+    items: list[Suggested] = Field(min_length=1, max_length=20000)
+
+
+class Choice(BaseModel):
+    tags: list[str] = Field(default=[], max_length=500)
+    playlists: list[str] = Field(default=[], max_length=500)
+    position: int = 0
+
+
 def create_app(root=None):
     root = (
         Path(
@@ -92,6 +117,7 @@ def create_app(root=None):
     operations = Operations(service)
     editing, importing = Editing(service), Importing(service)
     duplicates = Duplicates(operations)
+    tagging = Tagging(service)
     backups = Backups(service)
     backups.prune()
     app = FastAPI(title="Song Dex", docs_url=None, redoc_url=None)
@@ -195,6 +221,11 @@ def create_app(root=None):
             "capability": rekordbox.capability(root),
             "last_scan": store.setting("last_scan"),
             "relocation_review": store.setting("relocation_review", []),
+            "tag_sessions": tagging.summaries(),
+            "assignments": tagging.assignments("pending"),
+            "assignments_ready": len(tagging.waiting()),
+            "choices": tagging.choices(),
+            **review(),
             "settings": {
                 "rekordbox_db": store.setting(
                     "rekordbox_db", str(rekordbox.DEFAULT_DB)
@@ -205,6 +236,25 @@ def create_app(root=None):
                 "music_folder": store.setting("music_folder", default_music_folder()),
             },
         }
+
+    def review():
+        """What the review screen follows while a scan runs."""
+        return {
+            "scan": Scanning(service).latest(),
+            "suggested": tagging.suggested(),
+            "queued": editing.queued(),
+        }
+
+    @app.get("/api/review")
+    def live_review():
+        with store.connect() as db:
+            jobs = [
+                dict(r)
+                for r in db.execute(
+                    "SELECT id,kind,state,progress,total,message,created_at FROM jobs ORDER BY created_at DESC LIMIT 20"
+                )
+            ]
+        return {"jobs": jobs, "proposals": store.proposals(), **review()}
 
     @app.get("/api/genres")
     def genres():
@@ -303,6 +353,29 @@ def create_app(root=None):
             },
         )
 
+    @app.get("/api/tagging/{session_id}")
+    def tag_session(session_id: str):
+        return tagging.session(session_id)
+
+    @app.post("/api/tagging/{session_id}/tracks/{track_id}")
+    def tag_track(session_id: str, track_id: int, body: Choice):
+        return tagging.choose(
+            session_id, track_id, body.tags, body.playlists, body.position
+        )
+
+    @app.post("/api/tagging/{session_id}/check")
+    def tag_check(session_id: str):
+        tagging.row(session_id)
+        return {"job_id": service.start("tag_check", {"session_id": session_id})}
+
+    @app.post("/api/tagging/{session_id}/finish")
+    def tag_finish(session_id: str):
+        return tagging.finish(session_id)
+
+    @app.post("/api/assignments/write")
+    def write_assignments():
+        return tagging.write()
+
     @app.post("/api/demo")
     def load_demo():
         if not service.lock.acquire(False):
@@ -337,22 +410,40 @@ def create_app(root=None):
             raise ValueError("Exit demo in Settings before importing your library")
         return {"job_id": service.start("scan", {})}
 
-    @app.post("/api/enrich")
-    def enrich(refresh: bool = False, missing: str = ""):
+    def start_lookup(name, kind=None, ids=None):
         if store.setting("demo"):
             raise ValueError("Demo entries do not make provider requests")
-        payload = {"refresh": refresh}
+        chosen, label = scope(store.tracks(), name, kind, ids)
+        return {
+            "job_id": service.start("enrich", {"ids": chosen, "label": label}),
+            "message": f"Scanning {len(chosen)} tracks; results appear as they come in",
+        }
+
+    @app.post("/api/lookup")
+    def lookup(body: Lookup):
+        return start_lookup(body.scope, body.kind, body.ids)
+
+    @app.post("/api/lookup/stop")
+    def stop_lookup():
+        return stop_scan(store)
+
+    @app.post("/api/enrich")
+    def enrich(refresh: bool = False, missing: str = ""):
         if missing == "genre":
-            payload["ids"] = [
-                t["id"]
-                for t in store.tracks()
-                if t["source"] != "demo"
-                and t["state"] != "removed"
-                and not {**t["metadata"], **t["accepted"]}.get("genre")
-            ]
-            if not payload["ids"]:
-                raise ValueError("Every track already has a genre")
-        return {"job_id": service.start("enrich", payload)}
+            return start_lookup("type", "genre")
+        return start_lookup("all" if refresh else "new")
+
+    @app.post("/api/suggestions/approve")
+    def approve_suggestions(body: SuggestedSelection):
+        n = tagging.decide([i.model_dump() for i in body.items], True)
+        return {
+            "approved": n,
+            "message": f"{n} My Tag and playlist choices are waiting for rekordbox",
+        }
+
+    @app.post("/api/suggestions/reject")
+    def reject_suggestions(body: SuggestedSelection):
+        return {"rejected": tagging.decide([i.model_dump() for i in body.items], False)}
 
     @app.post("/api/jobs/{job_id}/resume")
     def resume(job_id: str):

@@ -1,7 +1,8 @@
 """Reviewed, collision-safe local music imports into the main music folder.
 
 Files move by default. One that rekordbox already lists moves too, and the scan
-that ends the import points its rekordbox entry at the new place.
+that ends the import points its rekordbox entry at the new place. Copy keeps the
+originals; index leaves every file where it is and only adds it to the Dex.
 """
 
 from __future__ import annotations
@@ -140,7 +141,7 @@ class Importing:
         }
 
     def preview(self, paths, mode):
-        if mode not in ("copy", "move") or not paths or len(paths) > 200:
+        if mode not in ("copy", "move", "index") or not paths or len(paths) > 200:
             raise ValueError("Choose files or folders and a valid import method")
         root = (
             Path(self.store.setting("music_folder", default_music_folder()))
@@ -159,7 +160,9 @@ class Importing:
             selected = selected.resolve()
             if not selected.exists():
                 raise ValueError(f"Selected location is unavailable: {selected}")
-            if selected.is_dir() and (root == selected or selected in root.parents):
+            if selected.is_dir() and (
+                selected in root.parents or (root == selected and mode != "index")
+            ):
                 raise ValueError(
                     "Select a source outside the destination folder; avoid importing its parent"
                 )
@@ -231,7 +234,8 @@ class Importing:
                     }
                 )
                 continue
-            dest = root / relative
+            # A file already in the music folder stays where it is, however deep.
+            dest = p if mode == "index" or p.is_relative_to(root) else root / relative
             status, reason = "ready", ""
             # A file rekordbox lists from outside the music folder moves with its entry.
             repoint = (
@@ -247,7 +251,9 @@ class Importing:
             elif p == dest:
                 status, reason = (
                     "ready",
-                    "Already in the music folder; index without copying",
+                    "Added where it is"
+                    if mode == "index"
+                    else "Already in the music folder; index without copying",
                 )
             if status == "ready" and p != dest:
                 suffix = 1
@@ -261,7 +267,7 @@ class Importing:
                     reason = (
                         reason + ". " if reason else ""
                     ) + "Name collision; a numbered filename will be used"
-            if (
+            if p != dest and (
                 dest.is_relative_to(root) is False
                 or dest.resolve().is_relative_to(root) is False
             ):
@@ -346,7 +352,9 @@ class Importing:
                         self.persist(iid, "running", plan)
                         self.service.progress(job_id, progress=index + 1)
                         continue
-                if not dest.resolve().is_relative_to(root) or root.resolve() != root:
+                if dest != source and (
+                    not dest.resolve().is_relative_to(root) or root.resolve() != root
+                ):
                     raise ValueError(
                         "Destination folder changed; refusing to follow a link outside the music folder"
                     )

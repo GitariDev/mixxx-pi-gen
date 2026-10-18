@@ -71,3 +71,19 @@ def test_suggestion_can_be_corrected_before_approving(tmp_path):
     assert p["new_value"] in mine["reason"]
     assert not {q["id"] for q in after} & set(siblings)
     assert edit("Too late").status_code == 409
+
+
+def test_review_follows_the_latest_scan(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    state = client.get("/api/state").json()
+    headers = {"x-songdex-token": state["token"]}
+    assert (state["scan"], state["suggested"], state["queued"]) == (None, [], [])
+    live = client.get("/api/review").json()
+    assert set(live) == {"jobs", "proposals", "scan", "suggested", "queued"}
+    # Nothing to scan in an empty Dex, and demo entries are never looked up.
+    response = client.post("/api/lookup", headers=headers, json={"scope": "all"})
+    assert response.status_code == 409 and "No tracks" in response.json()["detail"]
+    client.post("/api/demo", headers=headers)
+    response = client.post("/api/lookup", headers=headers, json={"scope": "new"})
+    assert response.status_code == 409 and "Demo" in response.json()["detail"]
+    assert client.post("/api/lookup/stop", headers=headers).status_code == 409

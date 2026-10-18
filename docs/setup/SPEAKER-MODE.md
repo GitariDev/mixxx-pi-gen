@@ -262,10 +262,38 @@ screen sharp again after Close. The live Speaker session and its librespot
 stream were left running throughout. Screenshots are in
 `deploy/spotify-controls-20261010/`.
 
-Not yet exercised: nothing was installed on the live Pi, so playback through
-go-librespot, the controls against a real Spotify session and a Jam still need
-a hands-on check. An existing Pi needs the pinned `go-librespot` binary, the
-updated `mixpi-spotify.service`, `mixpi-speaker`, `mixpi-speaker-control`,
-`mixpi_ui.py` and Sway config, then a Sway reload and a restart of
-`mixpi-spotify.service`, which interrupts Spotify playback until the phone
-chooses **Mix Pi** again.
+### Live installation
+
+Installed on the Pi on October 10 from commit `d4897a0`: the pinned
+`go-librespot` binary, `mixpi-spotify.service`, `mixpi-speaker`,
+`mixpi-speaker-control`, `mixpi_ui.py` and the Sway rule for the dialog, with a
+Sway reload. The phone then chose **Mix Pi** and played through go-librespot
+into the combined Starlight main + headphone output. On the physical screen the
+dialog opened centred over the blurred Speaker screen, stayed open after a tap
+outside it, and showed the playing track and the phone's volume changes within
+two seconds. A volume command sent from the Pi was accepted by the live session.
+
+**Do not restart `mixpi-spotify.service` on its own.** `mixpi-speaker.target`
+requires it, so systemd extends the restart to the target and, through
+`PartOf=`, to PipeWire, WirePlumber and the Pulse service. The Starlight
+remaps, combined output and timing filters that Speaker mode loads at start
+are lost and the default output falls back to the raw four-channel device. The
+first install attempt did exactly this; its safety check noticed and rolled the
+files back. The second stopped Speaker mode with `mixpi-speaker-control stop`,
+installed, ran `mixpi-speaker-control start` to rebuild the saved outputs, and
+reapplied the output levels recorded before the first attempt (starting Speaker
+mode resets the headphone route to 50%). Outputs, default device, levels and
+`speaker.json` then matched the session as it was before installation.
+
+The first status the dialog showed, before the phone had fully reconnected,
+was a session at 100% Spotify volume with nothing playing; it settled at the
+configured 50% and then followed the phone. Worth a glance at the slider the
+first time Speaker mode starts with a remembered login.
+
+Still to check by hand: tapping **Previous**, **Play/Pause** and **Next**
+during playback, dragging the slider, and a Jam with guests. The user journal
+is not kept on this Pi, so `journalctl --user -u mixpi-spotify` shows nothing.
+Backups: `~/.local/state/mixpi-backups/spotify-controls-20261010-162806/`
+(first attempt, with the reference session) and `…-162921/` (the install).
+The librespot login files remain in `~/.local/state/mixpi-spotify/` beside
+go-librespot's `state.json`. Evidence: `deploy/spotify-controls-20261010/`.

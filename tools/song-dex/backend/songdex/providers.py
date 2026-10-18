@@ -4,10 +4,12 @@ import json
 import re
 import shutil
 import subprocess
+import threading
 import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -126,7 +128,18 @@ def artist_credit(record):
 class Providers:
     def __init__(self, store):
         self.store = store
-        self.last_request = 0.0
+        # Each service is paced on its own, so scans can ask several at once.
+        self.last_request, self.pacing = {}, {}
+        self.pacing_lock = threading.Lock()
+
+    def wait_turn(self, host):
+        """Keep requests to one service at least 1.1 s apart, across threads."""
+        with self.pacing_lock:
+            lock = self.pacing.setdefault(host, threading.Lock())
+        with lock:
+            last = self.last_request.get(host, 0.0)
+            time.sleep(max(0, 1.1 - (time.monotonic() - last)))
+            self.last_request[host] = time.monotonic()
 
     def get(self, url, params, headers=None, keep=timedelta(days=30)):
         key = url + dump(params)
@@ -140,8 +153,8 @@ class Providers:
             < keep
         ):
             return json.loads(row["value"])
-        time.sleep(max(0, 1.1 - (time.monotonic() - self.last_request)))
-        self.last_request = time.monotonic()
+        host = urlsplit(url).hostname or url
+        self.wait_turn(host)
         with httpx.Client(
             timeout=20,
             headers={
@@ -155,7 +168,7 @@ class Providers:
                 if response.status_code not in (429, 503) or pause is None:
                     break
                 time.sleep(pause)
-                self.last_request = time.monotonic()
+                self.last_request[host] = time.monotonic()
             response.raise_for_status()
             data = response.json()
         with self.store.connect() as db:
@@ -200,10 +213,13 @@ class Providers:
             }
         ]
 
-    def enrich(self, track):
+    def named(self, track, propose=False):
+        """The track as its name describes it when it has no artist tag ("Artist - Title")."""
         m = track["metadata"]
         named = None if m.get("artist") else split_name(m.get("title", ""))
-        if named:
+        if not named:
+            return track
+        if propose:
             for field, value in named.items():
                 if field != "album" or not m.get("album"):
                     self.store.propose(
@@ -214,21 +230,39 @@ class Providers:
                         "From the track's name; it has no artist tag",
                         "name",
                     )
-            # Look the track up as the name describes it.
-            track = {**track, "metadata": {**m, **named}}
+        return {**track, "metadata": {**m, **named}}
+
+    def needs_genre(self, track):
+        """No genre yet, and no suggestion for one waiting."""
+        if cosmetic(track["metadata"].get("genre", "")) not in (
+            "",
+            "unknown genre",
+            "other",
+        ):
+            return False
+        with self.store.connect() as db:
+            return not db.execute(
+                "SELECT 1 FROM proposals WHERE track_id=? AND field='genre' AND status='pending'",
+                (track["id"],),
+            ).fetchone()
+
+    def enrich(self, track, genre=True):
+        """Catalog match, then a genre unless `genre` is False (a scan finds it separately)."""
+        # Look the track up as its name describes it.
+        track = self.named(track, propose=True)
         evidence = self.match(track)
-        if cosmetic(m.get("genre", "")) in ("", "unknown genre", "other"):
-            with self.store.connect() as db:
-                found = db.execute(
-                    "SELECT 1 FROM proposals WHERE track_id=? AND field='genre' AND status='pending'",
-                    (track["id"],),
-                ).fetchone()
-            if not found:
-                try:
-                    self.discogs_genre(track) or self.artist_genre(track)
-                except httpx.HTTPError:
-                    pass
+        if genre:
+            self.find_genre(track)
         return evidence
+
+    def find_genre(self, track):
+        """For a track still without one: Discogs' style for its release, else its artist's genre."""
+        if not self.needs_genre(track):
+            return
+        try:
+            self.discogs_genre(track) or self.artist_genre(track)
+        except httpx.HTTPError:
+            pass
 
     def match(self, track):
         m = track["metadata"]

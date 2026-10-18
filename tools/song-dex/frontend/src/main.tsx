@@ -12,6 +12,7 @@ import { Dialog, FileBrowser, ImportMusic, ManualEditor } from "./LibraryTools";
 import { Backups } from "./Backups";
 import { Duplicates } from "./Duplicates";
 import { GenreInput } from "./GenreInput";
+import { Tagging } from "./Tagging";
 import type { DuplicateGroup } from "./Duplicates";
 
 type Meta = Record<string, string | number>;
@@ -101,6 +102,9 @@ type State = {
     };
   }[];
   imports: { id: string; state: string; created_at: string }[];
+  tag_sessions: TagSession[];
+  assignments: { track_id: number; kind: string; target: string }[];
+  assignments_ready: number;
   tracks: Track[];
   proposals: Proposal[];
   jobs: Job[];
@@ -130,6 +134,13 @@ type State = {
     discogs_configured: boolean;
     demo: boolean;
   };
+};
+type TagSession = {
+  id: string;
+  state: string;
+  position: number;
+  total: number;
+  created_at: string;
 };
 type Page =
   "Song Dex" | "Scan & Review" | "Duplicates" | "History" | "Settings";
@@ -183,6 +194,7 @@ const jobNames: Record<string, string> = {
   import_music: "Adding music",
   approve: "Approving suggestions",
   sync_edits: "Syncing saved edits",
+  tag_check: "Checking imported tracks",
 };
 const jobName = (kind: string) => jobNames[kind] ?? "Finding metadata";
 const date = (s: string | null) =>
@@ -338,7 +350,8 @@ function App() {
     [musicFolder, setMusicFolder] = useState("");
   const [importOpen, setImportOpen] = useState(false),
     [receiptId, setReceiptId] = useState<string | undefined>(),
-    [folderOpen, setFolderOpen] = useState(false);
+    [folderOpen, setFolderOpen] = useState(false),
+    [tagging, setTagging] = useState<string | null>(null);
   const [musicFilters, setMusicFilters] = useState<Filters>({
     ...emptyFilters,
   });
@@ -507,6 +520,23 @@ function App() {
       setBusy(false);
       setConfirm(null);
     }
+  };
+  /** A request that leaves the notices and the rest of the screen alone. */
+  const send = async (endpoint: string, body?: unknown) => {
+    const res = await fetch("/api/" + endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Songdex-Token": token.current,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const result = await res.json();
+    if (!res.ok)
+      throw new Error(
+        typeof result.detail === "string" ? result.detail : "Request failed",
+      );
+    return result;
   };
   const pick = (id: number) => {
     setSelected(id);
@@ -1657,6 +1687,72 @@ function App() {
                       Find genres for {withoutGenre} tracks without one
                     </button>
                   </div>
+                  {data.tag_sessions
+                    .filter((t) => t.state !== "checking" || !active)
+                    .map((t) => (
+                      <div className="callout" key={t.id}>
+                        <strong>
+                          Tagging {t.total} imported{" "}
+                          {t.total === 1 ? "track" : "tracks"} · at track{" "}
+                          {Math.min(t.position + 1, t.total)}
+                        </strong>
+                        <p>
+                          {t.state === "checking"
+                            ? "The checks before tagging stopped part-way. Continue to finish them, or tag now."
+                            : `Imported ${date(t.created_at)}. Pick up where you left off.`}
+                        </p>
+                        <div className="button-row">
+                          <button
+                            className="primary"
+                            disabled={busy}
+                            onClick={() => setTagging(t.id)}
+                          >
+                            Continue tagging
+                          </button>
+                          {t.state === "checking" && (
+                            <button
+                              disabled={busy || !!active}
+                              onClick={() =>
+                                action(
+                                  `tagging/${t.id}/check`,
+                                  undefined,
+                                  "Checks started",
+                                )
+                              }
+                            >
+                              Finish the checks
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  {data.assignments.length > 0 && (
+                    <div className="callout">
+                      <strong>
+                        {data.assignments.length} My Tag and playlist{" "}
+                        {data.assignments.length === 1
+                          ? "choice is"
+                          : "choices are"}{" "}
+                        waiting for rekordbox
+                      </strong>
+                      <p>
+                        {data.assignments_ready > 0 &&
+                          `${data.assignments_ready} can be written now; quit rekordbox first. `}
+                        {data.assignments.length > data.assignments_ready &&
+                          `${data.assignments.length - data.assignments_ready} belong to new tracks rekordbox has not imported yet. Import their playlist in rekordbox, quit it and rescan: the scan writes them.`}
+                      </p>
+                      {data.assignments_ready > 0 && (
+                        <button
+                          disabled={
+                            busy || !!active || !data.capability.enabled
+                          }
+                          onClick={() => action("assignments/write")}
+                        >
+                          Write {data.assignments_ready} to rekordbox
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {data.relocation_review.length > 0 && (
                     <div className="callout">
                       <strong>
@@ -2167,14 +2263,24 @@ function App() {
                           <section className="operation" key={i.id}>
                             <h2>Music import · {i.state}</h2>
                             <p>{date(i.created_at)}</p>
-                            <button
-                              onClick={() => {
-                                setReceiptId(i.id);
-                                setImportOpen(true);
-                              }}
-                            >
-                              View import receipt
-                            </button>
+                            <div className="button-row">
+                              <button
+                                onClick={() => {
+                                  setReceiptId(i.id);
+                                  setImportOpen(true);
+                                }}
+                              >
+                                View import receipt
+                              </button>
+                              {data.tag_sessions.some((t) => t.id === i.id) && (
+                                <button
+                                  className="primary"
+                                  onClick={() => setTagging(i.id)}
+                                >
+                                  Continue tagging
+                                </button>
+                              )}
+                            </div>
                           </section>
                         ))}
                       {data.local_writes.filter(restorable).map(writeCard)}
@@ -2481,7 +2587,27 @@ function App() {
           busy={busy || !!active}
           receiptId={receiptId}
           requestError={error}
+          sessions={data.tag_sessions}
+          onTag={(id) => {
+            setImportOpen(false);
+            setTagging(id);
+          }}
           onClose={() => setImportOpen(false)}
+        />
+      )}
+      {data && tagging && (
+        <Tagging
+          sessionId={tagging}
+          tracks={tracks}
+          proposals={proposals}
+          capability={data.capability}
+          busy={busy || !!active}
+          send={send}
+          action={action}
+          onClose={() => {
+            setTagging(null);
+            void reload();
+          }}
         />
       )}
       {folderOpen && (

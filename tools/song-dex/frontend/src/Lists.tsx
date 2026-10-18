@@ -86,6 +86,7 @@ export function ListPicker({
   onCreate,
   searchRef,
   genres = [],
+  only,
 }: {
   choices: ListChoices;
   /** What rekordbox already gives the track: shown ticked, not changeable. */
@@ -102,6 +103,8 @@ export function ListPicker({
   searchRef?: React.Ref<HTMLInputElement>;
   /** The library's genres with counts, suggested as names for new My Tags. */
   genres?: GenreCount[];
+  /** Show just the My Tags or just the playlists. */
+  only?: Kind;
 }) {
   const [search, setSearch] = useState(""),
     [folder, setFolder] = useState("root"),
@@ -145,168 +148,173 @@ export function ListPicker({
 
   return (
     <>
-      <section className="tagging-section">
-        <h4>My Tags</h4>
-        {categories.map((category) => (
-          <div key={category.name} className="tag-category">
-            <span>{category.name}</span>
-            <div className="tag-choices">
-              {choices.tags
-                .filter((t) => (t.category || "My Tags") === category.name)
-                .map((t) => {
-                  const has = held.tags.has(t.id);
-                  return (
-                    <button
-                      type="button"
-                      key={t.id}
-                      className={`tag-choice${t.new ? " is-new" : ""}`}
-                      aria-pressed={has || picked.tags.has(t.id)}
-                      disabled={has || disabled}
-                      title={
-                        has
-                          ? "Already in rekordbox"
-                          : t.new
-                            ? "New; made in rekordbox with the next write"
-                            : undefined
-                      }
-                      onClick={() => onToggle("tags", t.id)}
-                    >
-                      {t.name}
-                    </button>
-                  );
-                })}
-              {category.id && canCreate && (
-                <NewTag
+      {only !== "playlists" && (
+        <section className="tagging-section">
+          <h4>My Tags</h4>
+          {categories.map((category) => (
+            <div key={category.name} className="tag-category">
+              <span>{category.name}</span>
+              <div className="tag-choices">
+                {choices.tags
+                  .filter((t) => (t.category || "My Tags") === category.name)
+                  .map((t) => {
+                    const has = held.tags.has(t.id);
+                    return (
+                      <button
+                        type="button"
+                        key={t.id}
+                        className={`tag-choice${t.new ? " is-new" : ""}`}
+                        aria-pressed={has || picked.tags.has(t.id)}
+                        disabled={has || disabled}
+                        title={
+                          has
+                            ? "Already in rekordbox"
+                            : t.new
+                              ? "New; made in rekordbox with the next write"
+                              : undefined
+                        }
+                        onClick={() => onToggle("tags", t.id)}
+                      >
+                        {t.name}
+                      </button>
+                    );
+                  })}
+                {category.id && canCreate && (
+                  <NewTag
+                    disabled={disabled}
+                    genres={genres}
+                    onCreate={(text) => create("tag", text, category.id)}
+                  />
+                )}
+              </div>
+            </div>
+          ))}
+          {choices.loaded && !choices.creatable && (
+            <p className="fine">
+              Rescan the rekordbox library to make new My Tags and playlists
+              here.
+            </p>
+          )}
+        </section>
+      )}
+      {only !== "tags" && (
+        <section className="tagging-section">
+          <h4>Playlists</h4>
+          <div className="tag-choices">
+            {[...held.playlists].map((id) => (
+              <span key={id} className="badge success">
+                ✓ {name(id)}
+              </span>
+            ))}
+            {[...picked.playlists]
+              .filter((id) => !held.playlists.has(id))
+              .map((id) => (
+                <button
+                  type="button"
+                  key={id}
+                  className="tag-choice"
+                  aria-pressed
                   disabled={disabled}
-                  genres={genres}
-                  onCreate={(text) => create("tag", text, category.id)}
+                  onClick={() => onToggle("playlists", id)}
+                  aria-label={`Remove from ${name(id)}`}
+                >
+                  {name(id)} ×
+                </button>
+              ))}
+          </div>
+          <label className="playlist-search">
+            Find or make a playlist
+            <input
+              ref={searchRef}
+              value={search}
+              placeholder="Type to filter; Enter adds the first match"
+              disabled={disabled}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                if (listed.length) onToggle("playlists", listed[0].id, true);
+                else if (search.trim() && canCreate)
+                  void create("playlist", search.trim(), folder);
+                else return;
+                setSearch("");
+              }}
+            />
+          </label>
+          {search.trim() && !exact && canCreate && (
+            <div className="new-playlist">
+              <span>
+                New playlist <strong>“{search.trim()}”</strong> in
+              </span>
+              <select
+                value={folder}
+                aria-label="Folder for the new playlist"
+                onChange={(e) => setFolder(e.target.value)}
+              >
+                <option value="root">The top level</option>
+                {choices.folders?.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+                <option value="new">+ New folder…</option>
+              </select>
+              {folder === "new" && (
+                <input
+                  className="folder-name"
+                  maxLength={100}
+                  value={folderName}
+                  placeholder="New folder name"
+                  aria-label="Name of the new folder"
+                  onChange={(e) => setFolderName(e.target.value)}
                 />
               )}
-            </div>
-          </div>
-        ))}
-        {choices.loaded && !choices.creatable && (
-          <p className="fine">
-            Rescan the rekordbox library to make new My Tags and playlists here.
-          </p>
-        )}
-      </section>
-      <section className="tagging-section">
-        <h4>Playlists</h4>
-        <div className="tag-choices">
-          {[...held.playlists].map((id) => (
-            <span key={id} className="badge success">
-              ✓ {name(id)}
-            </span>
-          ))}
-          {[...picked.playlists]
-            .filter((id) => !held.playlists.has(id))
-            .map((id) => (
               <button
                 type="button"
-                key={id}
-                className="tag-choice"
-                aria-pressed
-                disabled={disabled}
-                onClick={() => onToggle("playlists", id)}
-                aria-label={`Remove from ${name(id)}`}
+                className="mini"
+                disabled={folder === "new" && !folderName.trim()}
+                onClick={async () => {
+                  const parent =
+                    folder === "new"
+                      ? await onCreate("folder", folderName.trim(), "root")
+                      : folder;
+                  if (!parent) return;
+                  if (folder === "new") {
+                    setFolder(parent);
+                    setFolderName("");
+                  }
+                  if (await create("playlist", search.trim(), parent))
+                    setSearch("");
+                }}
               >
-                {name(id)} ×
+                + Make playlist
               </button>
-            ))}
-        </div>
-        <label className="playlist-search">
-          Find or make a playlist
-          <input
-            ref={searchRef}
-            value={search}
-            placeholder="Type to filter; Enter adds the first match"
-            disabled={disabled}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              e.preventDefault();
-              if (listed.length) onToggle("playlists", listed[0].id, true);
-              else if (search.trim() && canCreate)
-                void create("playlist", search.trim(), folder);
-              else return;
-              setSearch("");
-            }}
-          />
-        </label>
-        {search.trim() && !exact && canCreate && (
-          <div className="new-playlist">
-            <span>
-              New playlist <strong>“{search.trim()}”</strong> in
-            </span>
-            <select
-              value={folder}
-              aria-label="Folder for the new playlist"
-              onChange={(e) => setFolder(e.target.value)}
-            >
-              <option value="root">The top level</option>
-              {choices.folders?.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-              <option value="new">+ New folder…</option>
-            </select>
-            {folder === "new" && (
-              <input
-                className="folder-name"
-                maxLength={100}
-                value={folderName}
-                placeholder="New folder name"
-                aria-label="Name of the new folder"
-                onChange={(e) => setFolderName(e.target.value)}
-              />
-            )}
-            <button
-              type="button"
-              className="mini"
-              disabled={folder === "new" && !folderName.trim()}
-              onClick={async () => {
-                const parent =
-                  folder === "new"
-                    ? await onCreate("folder", folderName.trim(), "root")
-                    : folder;
-                if (!parent) return;
-                if (folder === "new") {
-                  setFolder(parent);
-                  setFolderName("");
-                }
-                if (await create("playlist", search.trim(), parent))
-                  setSearch("");
-              }}
-            >
-              + Make playlist
-            </button>
-          </div>
-        )}
-        <div className="playlist-choices">
-          {listed.map((p) => (
-            <label key={p.id}>
-              <input
-                type="checkbox"
-                checked={picked.playlists.has(p.id)}
-                disabled={disabled}
-                onChange={() => onToggle("playlists", p.id)}
-              />{" "}
-              {p.name}
-              {p.new && <small className="new-mark"> new</small>}
-            </label>
-          ))}
-          {!listed.length && (
-            <p className="muted">No playlists match “{search}”.</p>
+            </div>
           )}
-        </div>
-        <p className="fine">
-          Smart playlists and Song Dex’s own lists are not offered. Choices are
-          only added; remove tags and playlists in rekordbox. New My Tags and
-          playlists are made in rekordbox with the next write.
-        </p>
-      </section>
+          <div className="playlist-choices">
+            {listed.map((p) => (
+              <label key={p.id}>
+                <input
+                  type="checkbox"
+                  checked={picked.playlists.has(p.id)}
+                  disabled={disabled}
+                  onChange={() => onToggle("playlists", p.id)}
+                />{" "}
+                {p.name}
+                {p.new && <small className="new-mark"> new</small>}
+              </label>
+            ))}
+            {!listed.length && (
+              <p className="muted">No playlists match “{search}”.</p>
+            )}
+          </div>
+          <p className="fine">
+            Smart playlists and Song Dex’s own lists are not offered. Choices
+            are only added; remove tags and playlists in rekordbox. New My Tags
+            and playlists are made in rekordbox with the next write.
+          </p>
+        </section>
+      )}
     </>
   );
 }
@@ -402,19 +410,17 @@ export function TrackLists({
   );
 }
 
-/** Make a playlist, in an existing folder or a new one, optionally with the selected track. */
+/** Make a playlist, in an existing folder or a new one, optionally with tracks in it. */
 export function NewPlaylist({
   choices,
-  track,
-  pending,
+  tracks = [],
   send,
   onDone,
   onClose,
 }: {
   choices: ListChoices;
-  track?: { id: number; title: string };
-  /** The selected track's choices not yet written, kept alongside the new one. */
-  pending: { kind: string; target: string }[];
+  /** The open track, or the tracks selected in the list. */
+  tracks?: { id: number; title: string }[];
   send: (endpoint: string, body?: unknown) => Promise<any>;
   onDone: (message: string) => Promise<unknown>;
   onClose: () => void;
@@ -423,7 +429,7 @@ export function NewPlaylist({
     [folder, setFolder] = useState("root"),
     [folderName, setFolderName] = useState(""),
     [inside, setInside] = useState("root"),
-    [withTrack, setWithTrack] = useState(!!track),
+    [withTrack, setWithTrack] = useState(tracks.length > 0),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
   const making = folder === "new";
@@ -447,20 +453,17 @@ export function NewPlaylist({
         name: name.trim(),
         parent,
       });
-      if (track && withTrack)
-        await send(`tracks/${track.id}/lists`, {
-          tags: pending.filter((a) => a.kind === "tag").map((a) => a.target),
-          playlists: [
-            ...pending
-              .filter((a) => a.kind === "playlist")
-              .map((a) => a.target),
-            made.id,
-          ],
+      const adding = withTrack && tracks.length > 0,
+        what = tracks.length === 1 ? "this track" : "these tracks";
+      if (adding)
+        await send("lists/add", {
+          ids: tracks.map((t) => t.id),
+          playlists: [made.id],
         });
       await onDone(
         made.existing
-          ? `“${made.name}” already exists${track && withTrack ? "; the track is added to it with the next write" : ""}.`
-          : `“${made.name}” is made in rekordbox with the next Write to rekordbox${track && withTrack ? ", with this track in it" : ""}.`,
+          ? `“${made.name}” already exists${adding ? `; ${what} ${tracks.length === 1 ? "is" : "are"} added to it with the next write` : ""}.`
+          : `“${made.name}” is made in rekordbox with the next Write to rekordbox${adding ? `, with ${what} in it` : ""}.`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not make the playlist");
@@ -533,14 +536,16 @@ export function NewPlaylist({
             </label>
           </div>
         )}
-        {track && (
+        {tracks.length > 0 && (
           <label className="confirm-option">
             <input
               type="checkbox"
               checked={withTrack}
               onChange={(e) => setWithTrack(e.target.checked)}
             />
-            Add NO. {String(track.id).padStart(4, "0")} “{track.title}”
+            {tracks.length === 1
+              ? `Add NO. ${String(tracks[0].id).padStart(4, "0")} “${tracks[0].title}”`
+              : `Add the ${tracks.length.toLocaleString()} selected tracks`}
           </label>
         )}
         <p className="fine">

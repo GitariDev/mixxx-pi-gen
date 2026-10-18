@@ -66,9 +66,10 @@ def scope(tracks, name, kind=None, ids=None):
     elif name == "type" and kind in KINDS:
         label, test = KINDS[kind]
         chosen = [t for t in usable if test(t, {**t["metadata"], **t["accepted"]})]
-    elif name == "custom" and ids:
+    elif name in ("custom", "selected") and ids:
         wanted = set(ids)
-        chosen, label = [t for t in usable if t["id"] in wanted], "Custom filter"
+        chosen = [t for t in usable if t["id"] in wanted]
+        label = "Custom filter" if name == "custom" else "Selected tracks"
     else:
         raise ValueError("Choose what to scan")
     if not chosen:

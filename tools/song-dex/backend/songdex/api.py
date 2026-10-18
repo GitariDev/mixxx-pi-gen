@@ -24,6 +24,17 @@ from .scanning import stop as stop_scan
 from .service import Service
 from .tagging import Tagging
 
+AUDIO_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".wav": "audio/wav",
+    ".aif": "audio/aiff",
+    ".aiff": "audio/aiff",
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".m4v": "video/mp4",
+}
+
 
 class Selection(BaseModel):
     ids: list[int] = Field(min_length=1, max_length=5000)
@@ -102,6 +113,12 @@ class NewList(BaseModel):
 
 
 class Lists(BaseModel):
+    tags: list[str] = Field(default=[], max_length=500)
+    playlists: list[str] = Field(default=[], max_length=500)
+
+
+class AddLists(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=20000)
     tags: list[str] = Field(default=[], max_length=500)
     playlists: list[str] = Field(default=[], max_length=500)
 
@@ -388,6 +405,10 @@ def create_app(root=None):
     def create_list(body: NewList):
         return tagging.create_list(body.kind, body.name, body.parent)
 
+    @app.post("/api/lists/add")
+    def add_lists(body: AddLists):
+        return tagging.add_to_tracks(body.ids, body.tags, body.playlists)
+
     @app.post("/api/lists/{list_id}/discard")
     def discard_list(list_id: str):
         return tagging.discard_list(list_id)
@@ -593,7 +614,12 @@ def create_app(root=None):
             or Path(track["path"]).suffix.lower() not in audio.PLAYABLE
         ):
             raise HTTPException(404, "Audio unavailable")
-        return FileResponse(track["path"])
+        # Python guesses audio/x-flac and audio/mp4a-latm, which strict players
+        # refuse; nosniff stops them looking past the type.
+        return FileResponse(
+            track["path"],
+            media_type=AUDIO_TYPES.get(Path(track["path"]).suffix.lower()),
+        )
 
     @app.get("/api/tracks/{track_id}/artwork")
     def artwork(track_id: int):

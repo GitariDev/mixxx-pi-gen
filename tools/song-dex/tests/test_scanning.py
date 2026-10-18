@@ -51,6 +51,10 @@ def test_scope_picks_new_all_by_type_and_custom(service, library):
         [library[2]],
         "Custom filter",
     )
+    assert scope(tracks, "selected", ids=library[:2]) == (
+        library[:2],
+        "Selected tracks",
+    )
     with pytest.raises(ValueError, match="No tracks match"):
         scope(tracks, "type", "artist")
     with pytest.raises(ValueError, match="Choose what"):

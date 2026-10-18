@@ -790,6 +790,7 @@ function CustomScan({
         onChange={setFilters}
         onLoadTags={onLoadTags}
         busy={busy}
+        defaultOpen
       />
       <div className="button-row">
         <button onClick={onClose}>Cancel</button>
@@ -979,6 +980,41 @@ export function Review({
   );
   const pickedFields = proposals.filter((p) => chosen.has(p.id)),
     pickedTags = suggested.filter((s) => tagPicks.has(keyOf(s)));
+  // Everything in the list that can be ticked: a value for each field, every tag.
+  const openFields = list.map((id) =>
+      (fieldsOf.get(id) ?? []).filter((p) => !waiting.has(p.id)),
+    ),
+    allTags = list.flatMap((id) => (tagsOf.get(id) ?? []).map(keyOf));
+  const slots = openFields.reduce(
+      (n, fields) => n + new Set(fields.map((p) => p.field)).size,
+      0,
+    ),
+    filled = openFields.reduce(
+      (n, fields) =>
+        n +
+        new Set(fields.filter((p) => chosen.has(p.id)).map((p) => p.field))
+          .size,
+      0,
+    );
+  const pickedCount = pickedFields.length + pickedTags.length,
+    allPicked = filled === slots && allTags.every((key) => tagPicks.has(key));
+  const selectAll = () => {
+    // A field already given a value keeps it; the rest take the likeliest one.
+    const next = new Set(chosen);
+    for (const fields of openFields) {
+      const taken = new Set(
+        fields.filter((p) => next.has(p.id)).map((p) => p.field),
+      );
+      for (const id of onePerField(fields.filter((p) => !taken.has(p.field))))
+        next.add(id);
+    }
+    setChosen(next);
+    setTagPicks(new Set([...tagPicks, ...allTags]));
+  };
+  const clearPicks = () => {
+    setChosen(new Set());
+    setTagPicks(new Set());
+  };
   const pick = (fields: number[], tags: string[], on: boolean) => {
     const next = new Set(chosen);
     for (const id of fields) {
@@ -1175,57 +1211,65 @@ export function Review({
             Show more ({(list.length - limit).toLocaleString()} left)
           </button>
         )}
-        {(pickedFields.length > 0 || pickedTags.length > 0) && (
-          <div className="review-actions">
-            <div>
-              <strong>
-                {plural(pickedFields.length + pickedTags.length, "change")}{" "}
-                selected
-              </strong>
-              <small>
-                Across{" "}
-                {plural(tracksIn([...pickedFields, ...pickedTags]), "track")}
-              </small>
-            </div>
-            <div className="button-row">
-              <button
-                className="quiet"
-                onClick={() => {
-                  setChosen(new Set());
-                  setTagPicks(new Set());
-                }}
-              >
-                Clear
-              </button>
-              <button
-                onClick={async () => {
-                  if (pickedFields.length)
-                    await action(
-                      "proposals/reject",
-                      { ids: pickedFields.map((p) => p.id) },
-                      "Selected suggestions rejected",
-                    );
-                  if (pickedTags.length)
-                    await action("suggestions/reject", {
-                      items: pickedTags.map(strip),
-                    });
-                  setChosen(new Set());
-                  setTagPicks(new Set());
-                }}
-              >
-                Reject selected
-              </button>
-              <button
-                className="primary"
-                disabled={locked}
-                onClick={() => setConfirm("selected")}
-              >
-                Approve selected
-              </button>
-            </div>
-          </div>
-        )}
       </fieldset>
+      {/* Outside the list, so it sticks to the window's bottom from the top of the page. */}
+      {slots + allTags.length > 0 && (
+        <div className="review-actions" aria-label="Selected changes">
+          <div>
+            <strong>
+              {pickedCount
+                ? `${plural(pickedCount, "change")} selected`
+                : "Nothing selected"}
+            </strong>
+            <small>
+              {pickedCount
+                ? `Across ${plural(tracksIn([...pickedFields, ...pickedTags]), "track")}`
+                : "Tick changes above, or select them all"}
+            </small>
+          </div>
+          <div className="button-row">
+            <button
+              className="quiet"
+              disabled={locked || allPicked}
+              onClick={selectAll}
+            >
+              Select all {(slots + allTags.length).toLocaleString()}
+            </button>
+            <button
+              className="quiet"
+              disabled={approving || !pickedCount}
+              onClick={clearPicks}
+            >
+              Deselect all
+            </button>
+            <button
+              disabled={approving || !pickedCount}
+              onClick={async () => {
+                if (pickedFields.length)
+                  await action(
+                    "proposals/reject",
+                    { ids: pickedFields.map((p) => p.id) },
+                    "Selected suggestions rejected",
+                  );
+                if (pickedTags.length)
+                  await action("suggestions/reject", {
+                    items: pickedTags.map(strip),
+                  });
+                clearPicks();
+              }}
+            >
+              Reject selected
+            </button>
+            <button
+              className="primary"
+              disabled={locked || !pickedCount}
+              onClick={() => setConfirm("selected")}
+            >
+              Approve selected
+            </button>
+          </div>
+        </div>
+      )}
       {custom && (
         <CustomScan
           tracks={tracks}

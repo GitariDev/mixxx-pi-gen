@@ -87,3 +87,17 @@ def test_review_follows_the_latest_scan(tmp_path):
     response = client.post("/api/lookup", headers=headers, json={"scope": "new"})
     assert response.status_code == 409 and "Demo" in response.json()["detail"]
     assert client.post("/api/lookup/stop", headers=headers).status_code == 409
+
+
+def test_audio_is_served_with_a_standard_type(tmp_path, audio_file):
+    app = create_app(tmp_path / "dex")
+    client = TestClient(app)
+    headers = {"x-songdex-token": client.get("/api/state").json()["token"]}
+    client.post("/api/demo", headers=headers)
+    for ext, kind in [("flac", "audio/flac"), ("m4a", "audio/mp4")]:
+        path = audio_file(ext)
+        with app.state.store.connect() as db:
+            db.execute("UPDATE tracks SET path=?,available=1 WHERE id=1", (str(path),))
+        response = client.get("/api/tracks/1/audio", headers={"range": "bytes=0-"})
+        assert response.status_code == 206
+        assert response.headers["content-type"] == kind

@@ -11,7 +11,7 @@ const everyNoise = () =>
     .then((d) => d.genres as string[])
     .catch(() => []));
 
-const fold = (s: string) =>
+export const fold = (s: string) =>
   s
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
@@ -24,7 +24,7 @@ const pairs = (s: string) => {
   return found;
 };
 /** Lower is closer: exact, starts with, a word starts with, contains, then similar spelling. */
-function closeness(query: string, name: string) {
+export function closeness(query: string, name: string) {
   if (name === query) return 0;
   if (name.startsWith(query)) return 1;
   if ((" " + name).includes(" " + query)) return 2;

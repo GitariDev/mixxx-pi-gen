@@ -52,7 +52,8 @@ dev` separately, then open <http://127.0.0.1:5178>.
    suggested value added below it with its source, and **Approve**, **Edit** or
    reject on every line. Suggested My Tags and playlists are added lines too; an
    added one waits for **Write to rekordbox** with other tag choices. Tick lines
-   or whole rows and **Approve selected**, or **Approve all without warnings**:
+   or whole rows (the bar at the bottom of the window can **Select all** and
+   **Deselect all**) and **Approve selected**, or **Approve all without warnings**:
    every suggestion that is the only one for its field and fills a blank or comes
    from a high-confidence match (tags and playlists optionally). Approvals made
    while a scan runs are queued and saved by the scan between lookups. Suggestions
@@ -307,16 +308,26 @@ licenses retained under `frontend/public/licenses/`.
 
 ## Filtering and My Tags
 
-Open **Song Dex → Filter music** to combine native My Tags (match all or any),
-multiple genres, keys, formats and playlists, inclusive BPM/year ranges, search
-and the existing file-availability/status filter. Option counts refer to the whole
-collection. Tag status distinguishes confirmed untagged tracks from entries whose
-My Tags have not yet been loaded. Unknown BPM/year values do not match bounded
-ranges. Clear music filters resets these additions; Clear filters in an empty
+Open **Song Dex → Filters** and type into a row: My Tags, playlists, genre,
+artist, album, label, key or format each suggest what is in your library, closest
+spellings and most used first, with track counts. Several values in one row match
+any of them; tracks must match every row filled in. **Tagged?** tells confirmed
+untagged tracks from those whose My Tags have not been loaded. BPM, year and date
+added take ranges with either end open (date added is the day rekordbox added the
+track, with quick picks for the last 7, 30 or 90 days and this year); tracks with
+no value are left out of a range. Active filters stay listed as removable chips
+while the panel is closed. **Clear all** resets them; Clear filters in an empty
 result also clears search and availability/status.
 
-Sort by Dex number, title, artist, album, My Tags, genre, BPM, key, year, duration
-or format, ascending or descending. Numeric fields sort numerically; key/text
+Tick tracks on the left of the list, or every shown one from the list header;
+Shift-click ticks a run. With tracks ticked, the bar under the list counts them
+(and how many the filters hide) and its **Actions** menu adds My Tags or
+playlists to all of them, makes a new playlist with them, or scans them in Scan &
+Review. Added My Tags and playlists wait for **Write to rekordbox** like any
+other choice; tracks that already have one are skipped.
+
+Sort by Dex number, title, artist, album, My Tags, genre, BPM, key, year, duration,
+format or date added, ascending or descending. Numeric fields sort numerically; key/text
 sorting uses natural alphanumeric ordering. Unknown values stay last in both
 directions and ties retain Dex-number order.
 

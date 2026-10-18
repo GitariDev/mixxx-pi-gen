@@ -46,13 +46,30 @@ test("combines ranges, tags, key, genre, format and playlist", () => {
   assert.equal(matchesFilters(t, f), true);
   assert.equal(matchesFilters(t, { ...f, yearMax: "2000" }), false);
 });
-test("multi-tag ANY and ALL and category identity remain distinct", () => {
+test("several values of one field match any of them; fields combine", () => {
   const f = { ...emptyFilters, tags: ["library::a", "library::missing"] };
-  assert.equal(matchesFilters(t, f), false);
-  assert.equal(matchesFilters(t, { ...f, tagMode: "any" }), true);
+  assert.equal(matchesFilters(t, f), true);
   assert.equal(
     matchesFilters(t, { ...f, tags: ["another-library::a"] }),
     false,
+  );
+  assert.equal(
+    matchesFilters(t, { ...f, genres: ["Techno", "House"], keys: ["4A"] }),
+    true,
+  );
+  assert.equal(matchesFilters(t, { ...f, genres: ["Techno"] }), false);
+});
+test("date added ranges use the rekordbox day; unknown days never match", () => {
+  const dated = { ...t, stats: { added: "2024-03-09" } };
+  const f = { ...emptyFilters, addedFrom: "2024-03-01", addedTo: "2024-03-09" };
+  assert.equal(matchesFilters(dated, f), true);
+  assert.equal(matchesFilters(dated, { ...f, addedTo: "2024-03-08" }), false);
+  assert.equal(matchesFilters(t, f), false);
+  assert.deepEqual(
+    [{ ...t, id: 5 }, dated, { ...t, id: 9, stats: { added: "2023-01-01" } }]
+      .sort((a, b) => compareTracks(a, b, "added", "asc"))
+      .map((x) => x.id),
+    [9, 1, 5],
   );
 });
 test("unknown metadata never matches bounded ranges or confirmed untagged", () => {

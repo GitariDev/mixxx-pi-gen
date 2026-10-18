@@ -416,3 +416,35 @@ def test_dropping_a_new_folder_drops_what_is_in_it(service, library):
     kept = tagging.create_list("playlist", "Elsewhere", "root")
     tagging.discard_list(folder["id"])
     assert [n["id"] for n in tagging.new_lists("pending")] == [kept["id"]]
+
+
+def test_selected_tracks_get_tags_and_playlists_added_together(
+    service, library, tmp_path
+):
+    music, write, plans = library
+    write(
+        [
+            row("7", tmp_path / "a.flac", tags=["10"]),
+            row("8", tmp_path / "b.flac", playlists=["101"]),
+        ]
+    )
+    service.scan("listed", {})
+    tagging = Tagging(service)
+    ids = {t["source_id"]: t["id"] for t in service.store.tracks()}
+    tagging.assign_track(ids["8"], ["20"], [])
+    with pytest.raises(ValueError, match="Choose a My Tag"):
+        tagging.add_to_tracks([ids["7"]], [], [])
+    with pytest.raises(ValueError, match="no longer in rekordbox"):
+        tagging.add_to_tracks([ids["7"]], ["999"], [])
+    result = tagging.add_to_tracks([ids["7"], ids["8"], 999], ["10"], ["101"])
+    # Each track keeps what it has and what was waiting; only the rest is added.
+    assert result["added"] == 2
+    assert result["message"].endswith("across 2 tracks")
+    assert {
+        (a["track_id"], a["kind"], a["target"]) for a in tagging.assignments("pending")
+    } == {
+        (ids["7"], "playlist", "101"),
+        (ids["8"], "tag", "20"),
+        (ids["8"], "tag", "10"),
+    }
+    assert tagging.add_to_tracks([ids["7"], ids["8"]], ["10"], ["101"])["added"] == 0

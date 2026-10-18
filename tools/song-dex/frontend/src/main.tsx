@@ -15,6 +15,7 @@ import { GenreInput } from "./GenreInput";
 import { NewPlaylist, TrackLists } from "./Lists";
 import type { ListChoices } from "./Lists";
 import { Review } from "./Review";
+import { AddToLists, SelectionBar } from "./Selection";
 import type { ScanRun, Suggested } from "./Review";
 import { Tagging } from "./Tagging";
 import type { DuplicateGroup } from "./Duplicates";
@@ -266,6 +267,42 @@ function Artwork({ track }: { track: Track }) {
     </div>
   );
 }
+/** The open track's audio, beside its artwork; says why when it cannot play. */
+function Player({ track }: { track: Track }) {
+  const [problem, setProblem] = useState("");
+  if (!track.available)
+    return (
+      <p className="player-note">
+        {track.source === "demo"
+          ? "Audio preview is available after importing your library."
+          : "Offline file: reconnect its drive and Check availability to play it."}
+      </p>
+    );
+  return (
+    <div className="player">
+      <audio
+        controls
+        preload="metadata"
+        src={`/api/tracks/${track.id}/audio`}
+        aria-label={`Play ${track.metadata.title || "this recording"}`}
+        onError={(e) => {
+          const error = e.currentTarget.error;
+          setProblem(
+            error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+              ? "This file could not be opened. It may have moved since the last availability check, or its format is not supported here."
+              : "The file stopped loading. Check that its drive is still connected.",
+          );
+        }}
+        onCanPlay={() => setProblem("")}
+      />
+      {problem && (
+        <p role="alert" className="error-text">
+          {problem}
+        </p>
+      )}
+    </div>
+  );
+}
 function Badge({
   children,
   tone = "neutral",
@@ -323,7 +360,13 @@ function App() {
   const offered = useRef<Set<number>>(new Set());
   const [editingTrack, setEditingTrack] = useState<number | null>(null);
   const [editTab, setEditTab] = useState<"Metadata" | "My Tags">("Metadata"),
-    [newPlaylist, setNewPlaylist] = useState(false);
+    // The tracks a new playlist starts with: the open one, or those ticked.
+    [newPlaylist, setNewPlaylist] = useState<
+      { id: number; title: string }[] | null
+    >(null);
+  const [marked, setMarked] = useState<Set<number>>(new Set()),
+    [bulk, setBulk] = useState<"tags" | "playlists" | null>(null),
+    anchor = useRef<number | null>(null);
   const [historyTab, setHistoryTab] =
     useState<(typeof historyTabs)[number]>("Actions");
   const [stale, setStale] = useState("");
@@ -567,6 +610,29 @@ function App() {
     )
     .filter((t) => matchesFilters(t, musicFilters))
     .sort((a, b) => compareTracks(a, b, sort, direction));
+  const markedTracks = tracks.filter(
+      (t) => marked.has(t.id) && t.state !== "removed",
+    ),
+    shownIds = new Set(visible.map((t) => t.id)),
+    allShown = visible.length > 0 && visible.every((t) => marked.has(t.id)),
+    someShown = visible.some((t) => marked.has(t.id));
+  const markShown = (on: boolean) => {
+    const next = new Set(marked);
+    for (const t of visible) on ? next.add(t.id) : next.delete(t.id);
+    setMarked(next);
+  };
+  /** Tick or untick a track; with Shift, every shown track from the last one ticked. */
+  const mark = (id: number, on: boolean, range: boolean) => {
+    const at = visible.findIndex((t) => t.id === id),
+      from = range ? visible.findIndex((t) => t.id === anchor.current) : -1,
+      [start, end] = from < 0 ? [at, at] : [from, at].sort((a, b) => a - b);
+    const next = new Set(marked);
+    for (const t of visible.slice(start, end + 1))
+      on ? next.add(t.id) : next.delete(t.id);
+    setMarked(next);
+    anchor.current = id;
+  };
+  const choices = data?.choices ?? { tags: [], playlists: [], loaded: false };
   useEffect(() => {
     if (visible.length)
       setSelected((current) =>
@@ -1110,7 +1176,21 @@ function App() {
                     </button>
                     <button
                       disabled={busy || data.settings.demo}
-                      onClick={() => setNewPlaylist(true)}
+                      onClick={() =>
+                        setNewPlaylist(
+                          track && track.source !== "demo"
+                            ? [
+                                {
+                                  id: track.id,
+                                  title: String(
+                                    track.metadata.title ||
+                                      "Untitled recording",
+                                  ),
+                                },
+                              ]
+                            : [],
+                        )
+                      }
                     >
                       + New playlist
                     </button>
@@ -1276,6 +1356,7 @@ function App() {
                               <option value="year">Year</option>
                               <option value="duration">Duration</option>
                               <option value="format">Format</option>
+                              <option value="added">Date added</option>
                             </select>
                           </label>
                         </div>
@@ -1297,63 +1378,97 @@ function App() {
                           </strong>
                         </div>
                         <div className="list-label">
+                          <label className="track-check">
+                            <input
+                              type="checkbox"
+                              aria-label="Select every shown track"
+                              disabled={!visible.length}
+                              checked={allShown}
+                              ref={(el) => {
+                                if (el)
+                                  el.indeterminate = someShown && !allShown;
+                              }}
+                              onChange={() => markShown(!allShown)}
+                            />
+                          </label>
                           <span>NO. / RECORDING</span>
                           <span>BPM / TIME</span>
                         </div>
                         <div className="track-list">
                           {visible.slice(0, limit).map((t) => (
-                            <button
+                            <div
                               key={t.id}
-                              className={`track-row ${selected === t.id ? "selected" : ""}`}
-                              onClick={() => pick(t.id)}
-                              aria-pressed={selected === t.id}
+                              className={`track-item${marked.has(t.id) ? " marked" : ""}`}
                             >
-                              <span className="track-cursor">
-                                {selected === t.id ? "▶" : ""}
-                              </span>
-                              <span className="track-index">{dex(t.id)}</span>
-                              <span className="track-name">
-                                <strong>
-                                  {t.metadata.title || "Untitled recording"}
-                                </strong>
-                                <small>
-                                  {t.metadata.artist || "Unknown artist"}
-                                </small>
-                                <small className="track-facets">
-                                  {[
-                                    t.metadata.key
-                                      ? `Key ${t.metadata.key}`
-                                      : "",
-                                    t.metadata.year
-                                      ? String(t.metadata.year)
-                                      : "",
-                                    ...t.my_tags.map((g) => g.name),
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" · ")}
-                                </small>
-                                {!t.available && t.source !== "demo" && (
-                                  <span className="offline-label">
-                                    ○ Offline file
-                                  </span>
-                                )}
-                                {t.source === "local" && (
-                                  <span className="offline-label">
-                                    New import · local
-                                  </span>
-                                )}
-                              </span>
-                              <span className="track-stats">
-                                <b>{t.metadata.bpm || "—"}</b>
-                                <small>{duration(t.metadata.duration)}</small>
-                              </span>
-                              {proposals.some((p) => p.track_id === t.id) && (
-                                <span
-                                  className="review-dot"
-                                  title="Metadata proposals available"
+                              <label
+                                className="track-check"
+                                title="Select. Shift-click selects every track from the last one."
+                              >
+                                <input
+                                  type="checkbox"
+                                  aria-label={`Select ${t.metadata.title || "Untitled recording"}`}
+                                  checked={marked.has(t.id)}
+                                  onChange={(e) =>
+                                    mark(
+                                      t.id,
+                                      e.target.checked,
+                                      (e.nativeEvent as MouseEvent).shiftKey,
+                                    )
+                                  }
                                 />
-                              )}
-                            </button>
+                              </label>
+                              <button
+                                className={`track-row ${selected === t.id ? "selected" : ""}`}
+                                onClick={() => pick(t.id)}
+                                aria-pressed={selected === t.id}
+                              >
+                                <span className="track-cursor">
+                                  {selected === t.id ? "▶" : ""}
+                                </span>
+                                <span className="track-index">{dex(t.id)}</span>
+                                <span className="track-name">
+                                  <strong>
+                                    {t.metadata.title || "Untitled recording"}
+                                  </strong>
+                                  <small>
+                                    {t.metadata.artist || "Unknown artist"}
+                                  </small>
+                                  <small className="track-facets">
+                                    {[
+                                      t.metadata.key
+                                        ? `Key ${t.metadata.key}`
+                                        : "",
+                                      t.metadata.year
+                                        ? String(t.metadata.year)
+                                        : "",
+                                      ...t.my_tags.map((g) => g.name),
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" · ")}
+                                  </small>
+                                  {!t.available && t.source !== "demo" && (
+                                    <span className="offline-label">
+                                      ○ Offline file
+                                    </span>
+                                  )}
+                                  {t.source === "local" && (
+                                    <span className="offline-label">
+                                      New import · local
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="track-stats">
+                                  <b>{t.metadata.bpm || "—"}</b>
+                                  <small>{duration(t.metadata.duration)}</small>
+                                </span>
+                                {proposals.some((p) => p.track_id === t.id) && (
+                                  <span
+                                    className="review-dot"
+                                    title="Metadata proposals available"
+                                  />
+                                )}
+                              </button>
+                            </div>
                           ))}
                           {visible.length > limit && (
                             <button
@@ -1379,6 +1494,76 @@ function App() {
                             </Empty>
                           )}
                         </div>
+                        {markedTracks.length > 0 && (
+                          <SelectionBar
+                            count={markedTracks.length}
+                            hidden={
+                              markedTracks.filter((t) => !shownIds.has(t.id))
+                                .length
+                            }
+                            shown={visible.length}
+                            canSelectMore={!allShown}
+                            onSelectAll={() => markShown(true)}
+                            onClear={() => setMarked(new Set())}
+                            actions={(() => {
+                              const demo =
+                                  data.settings.demo ||
+                                  markedTracks.some((t) => t.source === "demo"),
+                                lists = demo
+                                  ? "Demo entries have no rekordbox tags"
+                                  : !choices.loaded
+                                    ? "Rescan the rekordbox library first"
+                                    : undefined;
+                              return [
+                                {
+                                  label: "Add My Tags…",
+                                  disabled: !!lists || busy,
+                                  hint: lists,
+                                  onSelect: () => setBulk("tags"),
+                                },
+                                {
+                                  label: "Add to playlist…",
+                                  disabled: !!lists || busy,
+                                  hint: lists,
+                                  onSelect: () => setBulk("playlists"),
+                                },
+                                {
+                                  label: "New playlist with these…",
+                                  disabled: demo || busy,
+                                  hint: demo ? lists : undefined,
+                                  onSelect: () =>
+                                    setNewPlaylist(
+                                      markedTracks.map((t) => ({
+                                        id: t.id,
+                                        title: String(
+                                          t.metadata.title ||
+                                            "Untitled recording",
+                                        ),
+                                      })),
+                                    ),
+                                },
+                                {
+                                  label: "Scan these tracks",
+                                  disabled: demo || busy || !!active,
+                                  hint: demo
+                                    ? "Demo entries make no lookups"
+                                    : active
+                                      ? "Wait for the running job"
+                                      : "Look up metadata, genres, My Tags and playlists",
+                                  onSelect: async () => {
+                                    if (
+                                      await action("lookup", {
+                                        scope: "selected",
+                                        ids: markedTracks.map((t) => t.id),
+                                      })
+                                    )
+                                      setPage("Scan & Review");
+                                  },
+                                },
+                              ];
+                            })()}
+                          />
+                        )}
                         <div className="list-footer">
                           {visible.length} ENTRIES{" "}
                           <span>SELECT A RECORDING TO INSPECT →</span>
@@ -1421,6 +1606,7 @@ function App() {
                                 {track.metadata.album || "Album not identified"}
                               </small>
                             </div>
+                            <Player key={track.id} track={track} />
                           </div>
                           <div
                             className="detail-tabs"
@@ -1528,20 +1714,6 @@ function App() {
                                 ) : (
                                   <p className="muted">
                                     No playlist membership found.
-                                  </p>
-                                )}
-                                {track.available ? (
-                                  <audio
-                                    controls
-                                    preload="none"
-                                    src={`/api/tracks/${track.id}/audio`}
-                                    aria-label="Preview this recording"
-                                  />
-                                ) : (
-                                  <p className="fine">
-                                    {track.source === "demo"
-                                      ? "Audio preview is available after importing your library."
-                                      : "Audio file unavailable. Reconnect the drive and rescan."}
                                   </p>
                                 )}
                                 {track.error && (
@@ -2226,20 +2398,28 @@ function App() {
       )}
       {data && newPlaylist && (
         <NewPlaylist
-          choices={data.choices ?? { tags: [], playlists: [], loaded: false }}
-          track={
-            track && track.source !== "demo"
-              ? {
-                  id: track.id,
-                  title: String(track.metadata.title || "Untitled recording"),
-                }
-              : undefined
-          }
-          pending={assignments.filter((a) => a.track_id === track?.id)}
+          choices={choices}
+          tracks={newPlaylist}
           send={send}
-          onClose={() => setNewPlaylist(false)}
+          onClose={() => setNewPlaylist(null)}
           onDone={async (message) => {
-            setNewPlaylist(false);
+            setNewPlaylist(null);
+            await reload();
+            setNotice(message);
+          }}
+        />
+      )}
+      {data && bulk && (
+        <AddToLists
+          kind={bulk}
+          tracks={markedTracks}
+          choices={choices}
+          genres={libraryGenres}
+          send={send}
+          onChanged={reload}
+          onClose={() => setBulk(null)}
+          onDone={async (message) => {
+            setBulk(null);
             await reload();
             setNotice(message);
           }}

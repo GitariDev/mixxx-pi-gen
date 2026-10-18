@@ -639,6 +639,47 @@ class Tagging:
                     )
         return {"saved": True}
 
+    def add_to_tracks(self, ids, tags, playlists):
+        """Give every listed track the chosen My Tags and playlists, alongside the
+        choices already waiting for it; ones a track already has are skipped."""
+        wanted = {"tag": set(map(str, tags)), "playlist": set(map(str, playlists))}
+        if not any(wanted.values()):
+            raise ValueError("Choose a My Tag or playlist to add")
+        choices = self.choices()
+        known = {
+            "tag": {t["id"] for t in choices["tags"]},
+            "playlist": {p["id"] for p in choices["playlists"]},
+        }
+        if any(wanted[k] - known[k] for k in wanted):
+            raise ValueError(
+                "A My Tag or playlist is no longer in rekordbox. Rescan the library and choose again"
+            )
+        listed = set(ids)
+        tracks = [
+            t
+            for t in self.store.tracks()
+            if t["id"] in listed and t["state"] != "removed"
+        ]
+        if any(t["source"] == "demo" for t in tracks):
+            raise ValueError("Demo entries have no rekordbox tags")
+        added = 0
+        with self.store.connect() as db:
+            for track in tracks:
+                have = held(track)
+                for kind in KINDS:
+                    for target in sorted(wanted[kind] - have[kind]):
+                        added += db.execute(
+                            """INSERT INTO assignments(track_id,kind,target,status,created_at)
+                            VALUES (?,?,?,'pending',?) ON CONFLICT(track_id,kind,target)
+                            DO UPDATE SET status='pending' WHERE assignments.status!='pending'""",
+                            (track["id"], kind, target, now()),
+                        ).rowcount
+        return {
+            "added": added,
+            "message": f"{added} My Tag and playlist {'choice waits' if added == 1 else 'choices wait'} "
+            f"for Write to rekordbox, across {len(tracks)} {'track' if len(tracks) == 1 else 'tracks'}",
+        }
+
     def choose(self, sid, tid, tags, playlists, position):
         """An import's track: keep its choices and where the session is."""
         session = self.row(sid)

@@ -1,100 +1,301 @@
-import { useState } from "react";
-import { activeFilterCount, emptyFilters, tagKey, tagName } from "./catalog";
+import { useId, useMemo, useRef, useState } from "react";
+import {
+  activeFilterCount,
+  addedDay,
+  emptyFilters,
+  tagKey,
+  tagName,
+} from "./catalog";
 import type { CatalogTrack, Filters } from "./catalog";
-function Choices({
-  title,
+import { closeness, fold } from "./GenreInput";
+
+type Option = { id: string; name: string; count: number };
+type ListKey =
+  | "tags"
+  | "genres"
+  | "artists"
+  | "albums"
+  | "labels"
+  | "keys"
+  | "formats"
+  | "playlists";
+
+/** Values to pick as you type: the collection's own, closest and most used first. */
+function ValuePicker({
+  label,
   options,
   value,
   onChange,
+  placeholder,
 }: {
-  title: string;
-  options: { id: string; name: string; count: number }[];
+  label: string;
+  options: Option[];
   value: string[];
   onChange: (v: string[]) => void;
+  placeholder: string;
 }) {
-  const [search, setSearch] = useState("");
+  const id = useId(),
+    input = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState(""),
+    [open, setOpen] = useState(false),
+    [active, setActive] = useState(-1);
+  const names = useMemo(
+    () => new Map(options.map((o) => [o.id, o.name])),
+    [options],
+  );
+  const matches = useMemo(() => {
+    const query = fold(text),
+      left = options.filter((o) => !value.includes(o.id));
+    if (!query) return [...left].sort((a, b) => b.count - a.count).slice(0, 8);
+    const found: (Option & { score: number })[] = [];
+    for (const o of left) {
+      const score = closeness(query, fold(o.name));
+      if (score !== null) found.push({ ...o, score });
+    }
+    return found
+      .sort((a, b) => a.score - b.score || b.count - a.count)
+      .slice(0, 8);
+  }, [options, value, text]);
+  const add = (o: Option) => {
+    onChange([...value, o.id]);
+    setText("");
+    setActive(-1);
+  };
+  const shown = open && (matches.length > 0 || !!text.trim());
   return (
-    <details className="filter-choice">
-      <summary>
-        {title} <span>{value.length ? `${value.length} selected` : "Any"}</span>
-      </summary>
+    <div
+      className="value-picker"
+      onMouseDown={(e) => {
+        // A click on the box (not a chip) types into it.
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          input.current?.focus();
+        }
+      }}
+    >
+      {value.map((v) => (
+        <span className="value-chip" key={v}>
+          {names.get(v) ?? "Not in this collection"}
+          <button
+            type="button"
+            aria-label={`Remove ${names.get(v) ?? v} from ${label}`}
+            onClick={() => onChange(value.filter((x) => x !== v))}
+          >
+            ×
+          </button>
+        </span>
+      ))}
       <input
-        aria-label={`Search ${title}`}
-        placeholder={`Search ${title.toLowerCase()}…`}
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
+        ref={input}
+        role="combobox"
+        aria-label={label}
+        aria-expanded={shown}
+        aria-controls={id}
+        aria-autocomplete="list"
+        aria-activedescendant={active >= 0 ? `${id}-${active}` : undefined}
+        autoComplete="off"
+        placeholder={value.length ? "Add another…" : placeholder}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          setOpen(true);
+          setActive(e.target.value.trim() ? 0 : -1);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => {
+          setOpen(false);
+          setActive(-1);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            setOpen(true);
+            if (matches.length)
+              setActive(
+                (active + (e.key === "ArrowDown" ? 1 : -1) + matches.length) %
+                  matches.length,
+              );
+          } else if (e.key === "Enter" && shown && matches[active]) {
+            e.preventDefault();
+            add(matches[active]);
+          } else if (e.key === "Backspace" && !text && value.length) {
+            onChange(value.slice(0, -1));
+          } else if (e.key === "Escape" && shown) {
+            e.stopPropagation();
+            setOpen(false);
+          }
+        }}
       />
-      <div className="filter-options">
-        {options
-          .filter((o) =>
-            o.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
-          )
-          .map((o) => (
-            <label key={o.id}>
-              <input
-                type="checkbox"
-                checked={value.includes(o.id)}
-                onChange={(e) =>
-                  onChange(
-                    e.target.checked
-                      ? [...value, o.id]
-                      : value.filter((v) => v !== o.id),
-                  )
-                }
-              />
+      {shown && (
+        <ul className="genre-options" role="listbox" id={id}>
+          {matches.map((o, i) => (
+            <li
+              key={o.id}
+              id={`${id}-${i}`}
+              role="option"
+              aria-selected={i === active}
+              className={i === active ? "active" : undefined}
+              // Keep focus in the input so several values can be added in a row.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                add(o);
+              }}
+            >
               <span>{o.name}</span>
-              <small>{o.count}</small>
-            </label>
+              <small>
+                {o.count.toLocaleString()} {o.count === 1 ? "track" : "tracks"}
+              </small>
+            </li>
           ))}
-        {!options.length && (
-          <p className="fine">No values in this collection.</p>
-        )}
-      </div>
-      {value.length > 0 && (
-        <button type="button" onClick={() => onChange([])}>
-          Clear {title.toLowerCase()}
-        </button>
+          {!matches.length && (
+            <li className="no-match" aria-disabled>
+              {options.length
+                ? `No ${label.toLowerCase()} match “${text.trim()}”`
+                : `No ${label.toLowerCase()} in this collection`}
+            </li>
+          )}
+        </ul>
       )}
-    </details>
+    </div>
   );
 }
+
+/** A from–to pair; either end may stay open. */
+function Range({
+  label,
+  from,
+  to,
+  onChange,
+  type = "number",
+  step,
+  hint,
+  list,
+}: {
+  label: string;
+  from: string;
+  to: string;
+  onChange: (from: string, to: string) => void;
+  type?: "number" | "date";
+  step?: string;
+  hint?: [string, string];
+  list?: string;
+}) {
+  return (
+    <div className="range-pair">
+      <input
+        type={type}
+        inputMode={type === "number" ? "decimal" : undefined}
+        min={type === "number" ? "0" : hint?.[0]}
+        max={type === "date" ? hint?.[1] : undefined}
+        step={step}
+        list={list}
+        aria-label={`${label} from`}
+        placeholder={hint ? `From ${hint[0]}` : "From"}
+        value={from}
+        onChange={(e) => onChange(e.target.value, to)}
+      />
+      <span aria-hidden="true">to</span>
+      <input
+        type={type}
+        inputMode={type === "number" ? "decimal" : undefined}
+        min={type === "number" ? "0" : hint?.[0]}
+        max={type === "date" ? hint?.[1] : undefined}
+        step={step}
+        list={list}
+        aria-label={`${label} to`}
+        placeholder={hint ? `To ${hint[1]}` : "To"}
+        value={to}
+        onChange={(e) => onChange(from, e.target.value)}
+      />
+    </div>
+  );
+}
+
+const day = (d: Date) => d.toLocaleDateString("en-CA");
+const daysAgo = (n: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return day(d);
+};
+const presets: [string, () => string][] = [
+  ["Last 7 days", () => daysAgo(7)],
+  ["Last 30 days", () => daysAgo(30)],
+  ["Last 90 days", () => daysAgo(90)],
+  ["This year", () => `${new Date().getFullYear()}-01-01`],
+];
+const tagStates: [string, string][] = [
+  ["all", "Either"],
+  ["tagged", "With My Tags"],
+  ["untagged", "Without My Tags"],
+  ["unknown", "Not loaded yet"],
+];
+
 export function CatalogFilters({
   tracks,
   value,
   onChange,
   onLoadTags,
   busy,
+  defaultOpen = false,
 }: {
   tracks: CatalogTrack[];
   value: Filters;
   onChange: (f: Filters) => void;
   onLoadTags: () => void;
   busy: boolean;
+  defaultOpen?: boolean;
 }) {
-  const options = (field: string) => {
-    const counts = new Map<string, number>();
-    tracks.forEach((t) => {
-      const values =
-        field === "playlists"
-          ? t.playlists.map((p) => p.name)
-          : [String(t.metadata[field] ?? "").trim()];
-      new Set(values.filter(Boolean)).forEach((v) =>
-        counts.set(v, (counts.get(v) || 0) + 1),
-      );
-    });
-    return [...counts]
-      .map(([id, count]) => ({ id, name: id, count }))
-      .sort((a, b) =>
+  const [open, setOpen] = useState(defaultOpen);
+  const uid = useId();
+  const library = useMemo(() => {
+    const counted = (values: (t: CatalogTrack) => [string, string][]) => {
+      const found = new Map<string, Option>();
+      for (const t of tracks)
+        for (const [id, name] of new Map(values(t)))
+          if (id) {
+            const prior = found.get(id);
+            found.set(id, { id, name, count: (prior?.count ?? 0) + 1 });
+          }
+      return [...found.values()].sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { numeric: true }),
       );
-  };
-  const tags = new Map<string, { id: string; name: string; count: number }>();
-  tracks.forEach((t) =>
-    new Map(t.my_tags.map((g) => [tagKey(t, g), g])).forEach((g, id) => {
-      const prior = tags.get(id);
-      tags.set(id, { id, name: tagName(g), count: (prior?.count || 0) + 1 });
-    }),
-  );
+    };
+    const field = (name: string) =>
+      counted((t) => {
+        const v = String(t.metadata[name] ?? "").trim();
+        return [[v, v]];
+      });
+    const numbers = (name: string) =>
+      tracks.map((t) => Number(t.metadata[name])).filter((n) => n > 0);
+    const bpms = numbers("bpm"),
+      years = numbers("year"),
+      days = tracks.map(addedDay).filter(Boolean).sort();
+    return {
+      tags: counted((t) => t.my_tags.map((g) => [tagKey(t, g), tagName(g)])),
+      playlists: counted((t) => t.playlists.map((p) => [p.name, p.name])),
+      genres: field("genre"),
+      artists: field("artist"),
+      albums: field("album"),
+      labels: field("label"),
+      keys: field("key"),
+      formats: field("format"),
+      bpm: bpms.length
+        ? ([Math.floor(Math.min(...bpms)), Math.ceil(Math.max(...bpms))].map(
+            String,
+          ) as [string, string])
+        : undefined,
+      year: years.length
+        ? ([Math.min(...years), Math.max(...years)].map(String) as [
+            string,
+            string,
+          ])
+        : undefined,
+      years: [...new Set(years)].sort((a, b) => b - a),
+      added: days.length
+        ? ([days[0], days[days.length - 1]] as [string, string])
+        : undefined,
+    };
+  }, [tracks]);
   const count = activeFilterCount(value);
   const update = (f: Partial<Filters>) => onChange({ ...value, ...f });
   const invalid =
@@ -103,157 +304,232 @@ export function CatalogFilters({
       Number(value.bpmMin) > Number(value.bpmMax)) ||
     (value.yearMin &&
       value.yearMax &&
-      Number(value.yearMin) > Number(value.yearMax));
+      Number(value.yearMin) > Number(value.yearMax)) ||
+    (value.addedFrom && value.addedTo && value.addedFrom > value.addedTo);
+  const picker = (key: ListKey, label: string, placeholder: string) => (
+    <div className="filter-row">
+      <span className="filter-label">{label}</span>
+      <ValuePicker
+        label={label}
+        options={library[key]}
+        value={value[key]}
+        onChange={(v) => update({ [key]: v })}
+        placeholder={placeholder}
+      />
+    </div>
+  );
+  // What is filtering, readable and removable while the panel is closed.
+  const names = (key: ListKey) =>
+    new Map(library[key].map((o) => [o.id, o.name]));
+  const chips: { key: string; text: string; clear: Partial<Filters> }[] = [];
+  for (const [key, label] of [
+    ["tags", "My Tag"],
+    ["playlists", "Playlist"],
+    ["genres", "Genre"],
+    ["artists", "Artist"],
+    ["albums", "Album"],
+    ["labels", "Label"],
+    ["keys", "Key"],
+    ["formats", "Format"],
+  ] as [ListKey, string][]) {
+    const known = names(key);
+    for (const v of value[key])
+      chips.push({
+        key: key + v,
+        text: `${label}: ${known.get(v) ?? "not in this collection"}`,
+        clear: { [key]: value[key].filter((x) => x !== v) },
+      });
+  }
+  for (const [label, from, to, clear] of [
+    ["BPM", value.bpmMin, value.bpmMax, { bpmMin: "", bpmMax: "" }],
+    ["Year", value.yearMin, value.yearMax, { yearMin: "", yearMax: "" }],
+    ["Added", value.addedFrom, value.addedTo, { addedFrom: "", addedTo: "" }],
+  ] as [string, string, string, Partial<Filters>][])
+    if (from || to)
+      chips.push({
+        key: label,
+        text: `${label}: ${from && to ? `${from} – ${to}` : from ? `from ${from}` : `up to ${to}`}`,
+        clear,
+      });
+  if (value.tagState !== "all")
+    chips.push({
+      key: "state",
+      text: tagStates.find(([v]) => v === value.tagState)?.[1] ?? "",
+      clear: { tagState: "all" },
+    });
   return (
-    <details className="catalog-filters">
-      <summary>
-        Filter music{" "}
-        <span>{count ? `${count} active` : "Tags · BPM · key · year"}</span>
-      </summary>
-      <div className="filter-grid">
-        <Choices
-          title="My Tags"
-          options={[...tags.values()].sort((a, b) =>
-            a.name.localeCompare(b.name),
-          )}
-          value={value.tags}
-          onChange={(tags) => update({ tags })}
-        />
-        <label>
-          Match selected tags
-          <select
-            value={value.tagMode}
-            onChange={(e) =>
-              update({ tagMode: e.target.value as "all" | "any" })
-            }
+    <section className="catalog-filters" aria-label="Filter music">
+      <header>
+        <button
+          type="button"
+          className="filter-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          <span aria-hidden="true">{open ? "▾" : "▸"}</span> Filters
+          {count > 0 && <b>{count}</b>}
+        </button>
+        {!open && !count && (
+          <span className="filter-teaser">
+            My Tags · genre · artist · BPM · date added…
+          </span>
+        )}
+        {count > 0 && (
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => onChange({ ...emptyFilters })}
           >
-            <option value="all">All selected tags</option>
-            <option value="any">Any selected tag</option>
-          </select>
-        </label>
-        <label>
-          Tag status
-          <select
-            value={value.tagState}
-            onChange={(e) => update({ tagState: e.target.value })}
-          >
-            <option value="all">Any tag status</option>
-            <option value="tagged">Has My Tags</option>
-            <option value="untagged">No My Tags (confirmed)</option>
-            <option value="unknown">My Tags not loaded</option>
-          </select>
-        </label>
-        <Choices
-          title="Genres"
-          options={options("genre")}
-          value={value.genres}
-          onChange={(genres) => update({ genres })}
-        />
-        <Choices
-          title="Keys"
-          options={options("key")}
-          value={value.keys}
-          onChange={(keys) => update({ keys })}
-        />
-        <Choices
-          title="Formats"
-          options={options("format")}
-          value={value.formats}
-          onChange={(formats) => update({ formats })}
-        />
-        <Choices
-          title="Playlists"
-          options={options("playlists")}
-          value={value.playlists}
-          onChange={(playlists) => update({ playlists })}
-        />
-        <fieldset className="filter-range">
-          <legend>BPM range</legend>
-          <label>
-            Minimum BPM
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={value.bpmMin}
-              onChange={(e) => update({ bpmMin: e.target.value })}
-            />
-          </label>
-          <label>
-            Maximum BPM
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={value.bpmMax}
-              onChange={(e) => update({ bpmMax: e.target.value })}
-            />
-          </label>
-        </fieldset>
-        <fieldset className="filter-range">
-          <legend>Year range</legend>
-          <label>
-            From year
-            <input
-              type="number"
-              min="1000"
-              max="2999"
-              step="1"
-              value={value.yearMin}
-              onChange={(e) => update({ yearMin: e.target.value })}
-            />
-          </label>
-          <label>
-            To year
-            <input
-              type="number"
-              min="1000"
-              max="2999"
-              step="1"
-              value={value.yearMax}
-              onChange={(e) => update({ yearMax: e.target.value })}
-            />
-          </label>
-        </fieldset>
-      </div>
-      {invalid && (
-        <p role="alert">
-          Minimum must not exceed maximum. Adjust the range to see results.
-        </p>
-      )}
-      <p className="fine">
-        Filters combine. Multiple genres, keys, formats or playlists match any
-        selected value. Blank ranges include unknown values; missing values sort
-        last.
-      </p>
-      {tracks.some(
-        (t) => t.source !== "local" && t.source !== "demo" && !t.my_tags_loaded,
-      ) && (
-        <p className="fine">
-          Some My Tags have not been imported.{" "}
-          <button disabled={busy} onClick={onLoadTags}>
-            Load My Tags from last scan
+            Clear all
           </button>
-        </p>
-      )}
-      {count > 0 && (
+        )}
+      </header>
+      {chips.length > 0 && (
         <div className="filter-active">
-          <strong>Active:</strong>
-          {value.tags.map((id) => (
+          {chips.map((c) => (
             <button
-              key={id}
-              onClick={() =>
-                update({ tags: value.tags.filter((v) => v !== id) })
-              }
+              type="button"
+              key={c.key}
+              aria-label={`Remove filter ${c.text}`}
+              onClick={() => update(c.clear)}
             >
-              {tags.get(id)?.name || "Tag from previous collection"} ×
+              {c.text} <span aria-hidden="true">×</span>
             </button>
           ))}
-          <button onClick={() => onChange({ ...emptyFilters })}>
-            Clear music filters
-          </button>
         </div>
       )}
-    </details>
+      {open && (
+        <div className="filter-body">
+          <p className="filter-hint">
+            Type to pick from what is in your library. Several values in one row
+            match <strong>any</strong> of them; tracks must match{" "}
+            <strong>every</strong> row you fill in.
+          </p>
+          <fieldset>
+            <legend>Tags & playlists</legend>
+            {picker("tags", "My Tags", "Type a My Tag…")}
+            <div className="filter-row">
+              <span className="filter-label" id={`${uid}-state`}>
+                Tagged?
+              </span>
+              <div
+                className="segmented"
+                role="group"
+                aria-labelledby={`${uid}-state`}
+              >
+                {tagStates
+                  .filter(
+                    ([v]) =>
+                      v !== "unknown" ||
+                      value.tagState === v ||
+                      tracks.some((t) => !t.my_tags_loaded),
+                  )
+                  .map(([v, text]) => (
+                    <button
+                      type="button"
+                      key={v}
+                      aria-pressed={value.tagState === v}
+                      onClick={() => update({ tagState: v })}
+                    >
+                      {text}
+                    </button>
+                  ))}
+              </div>
+            </div>
+            {picker("playlists", "Playlists", "Type a playlist…")}
+          </fieldset>
+          <fieldset>
+            <legend>Track details</legend>
+            {picker("genres", "Genre", "Type a genre…")}
+            {picker("artists", "Artist", "Type an artist…")}
+            {picker("albums", "Album", "Type an album…")}
+            {picker("labels", "Label", "Type a label…")}
+            {picker("keys", "Key", "Type a key, e.g. 8A…")}
+            {picker("formats", "Format", "MP3, FLAC…")}
+          </fieldset>
+          <fieldset>
+            <legend>Ranges</legend>
+            <div className="filter-row">
+              <span className="filter-label">BPM</span>
+              <Range
+                label="BPM"
+                step="0.01"
+                hint={library.bpm}
+                from={value.bpmMin}
+                to={value.bpmMax}
+                onChange={(bpmMin, bpmMax) => update({ bpmMin, bpmMax })}
+              />
+            </div>
+            <div className="filter-row">
+              <span className="filter-label">Year</span>
+              <Range
+                label="Year"
+                step="1"
+                hint={library.year}
+                list={uid}
+                from={value.yearMin}
+                to={value.yearMax}
+                onChange={(yearMin, yearMax) => update({ yearMin, yearMax })}
+              />
+              <datalist id={uid}>
+                {library.years.map((y) => (
+                  <option key={y} value={y} />
+                ))}
+              </datalist>
+            </div>
+            <div className="filter-row">
+              <span className="filter-label">Date added</span>
+              <div>
+                <Range
+                  label="Date added"
+                  type="date"
+                  hint={library.added}
+                  from={value.addedFrom}
+                  to={value.addedTo}
+                  onChange={(addedFrom, addedTo) =>
+                    update({ addedFrom, addedTo })
+                  }
+                />
+                <div className="range-presets">
+                  {presets.map(([text, from]) => (
+                    <button
+                      type="button"
+                      key={text}
+                      aria-pressed={
+                        value.addedFrom === from() && !value.addedTo
+                      }
+                      onClick={() => update({ addedFrom: from(), addedTo: "" })}
+                    >
+                      {text}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </fieldset>
+          {invalid && (
+            <p role="alert" className="error-text">
+              A range starts after it ends. Swap the values to see results.
+            </p>
+          )}
+          <p className="fine">
+            An open end includes everything past it; tracks with no value are
+            left out of a range. Date added is the day rekordbox added the
+            track.
+          </p>
+          {tracks.some(
+            (t) =>
+              t.source !== "local" && t.source !== "demo" && !t.my_tags_loaded,
+          ) && (
+            <p className="fine">
+              Some My Tags have not been imported.{" "}
+              <button type="button" disabled={busy} onClick={onLoadTags}>
+                Load My Tags from last scan
+              </button>
+            </p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

@@ -367,3 +367,38 @@ def test_merging_one_version_leaves_the_rest_open(versioned):
     ]
     assert group["tracks"][-2:] == [ids["1"], ids["6"]]
     assert duplicates.store.setting("duplicates_dismissed", []) == []
+
+
+def test_after_merging_copies_the_versions_left_are_one_choice(versioned):
+    duplicates, _, _, ids, _ = versioned
+    duplicates.merge(
+        [
+            {"keep": ids["4"], "remove": [ids["1"], ids["6"]]},
+            {"keep": ids["5"], "remove": [ids["2"]]},
+        ]
+    )
+    (group,) = duplicates.groups()
+    # One entry per version is left, so the group is a single choice across them.
+    assert group["merged"] is False and "versions" not in group
+    open_ids = [i for i in group["tracks"] if i not in group["awaiting_removal"]]
+    assert sorted(open_ids) == sorted([ids["4"], ids["5"], ids["3"]])
+    assert "Different version labels" in group["warnings"]
+    # Squashing on: the radio edit merges too, and the rest is marked okay.
+    duplicates.merge([{"keep": ids["4"], "remove": [ids["3"]], "okay": True}])
+    (group,) = duplicates.groups()
+    assert group["merged"] is True
+    assert set(group["awaiting_removal"]) == {ids["1"], ids["6"], ids["2"], ids["3"]}
+
+
+def test_versions_left_after_merging_copies_can_be_marked_okay(versioned):
+    duplicates, _, _, ids, _ = versioned
+    duplicates.merge(
+        [
+            {"keep": ids["4"], "remove": [ids["1"], ids["6"]]},
+            {"keep": ids["5"], "remove": [ids["2"]]},
+        ]
+    )
+    (group,) = duplicates.groups()
+    duplicates.dismiss([group["tracks"]])
+    (group,) = duplicates.groups()
+    assert group["merged"] is True

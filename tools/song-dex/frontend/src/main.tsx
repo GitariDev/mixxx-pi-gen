@@ -12,6 +12,10 @@ import { Dialog, FileBrowser, ImportMusic, ManualEditor } from "./LibraryTools";
 import { Backups } from "./Backups";
 import { Duplicates } from "./Duplicates";
 import { GenreInput } from "./GenreInput";
+import { NewPlaylist, TrackLists } from "./Lists";
+import type { ListChoices } from "./Lists";
+import { Review } from "./Review";
+import type { ScanRun, Suggested } from "./Review";
 import { Tagging } from "./Tagging";
 import type { DuplicateGroup } from "./Duplicates";
 
@@ -105,6 +109,11 @@ type State = {
   tag_sessions: TagSession[];
   assignments: { track_id: number; kind: string; target: string }[];
   assignments_ready: number;
+  choices: ListChoices;
+  new_lists: { id: string; kind: string; name: string; parent: string }[];
+  scan: ScanRun | null;
+  suggested: Suggested[];
+  queued: number[];
   tracks: Track[];
   proposals: Proposal[];
   jobs: Job[];
@@ -152,17 +161,6 @@ const pages: Page[] = [
   "Settings",
 ];
 const label = (s: string) => s.replaceAll("_", " ");
-/** One suggestion per field, preferring the high-confidence one. */
-const onePerField = (list: Proposal[]) => [
-  ...new Map(
-    [...list]
-      .sort(
-        (a, b) =>
-          Number(a.confidence === "high") - Number(b.confidence === "high"),
-      )
-      .map((p) => [p.field, p.id]),
-  ).values(),
-];
 /** Suggestions that fill a field which is empty; two values for one field are a choice. */
 const blankFills = (tracks: Track[], proposals: Proposal[]) => {
   const held = new Map(tracks.map((t) => [t.id, t])),
@@ -277,41 +275,6 @@ function Badge({
 }) {
   return <span className={`badge ${tone}`}>{children}</span>;
 }
-/** Selects every suggestion of one entry; half-set when only some are selected. */
-function EntryCheckbox({
-  title,
-  ids,
-  chosen,
-  onChange,
-}: {
-  title: string;
-  ids: number[];
-  chosen: Set<number>;
-  onChange: (next: Set<number>) => void;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
-  const picked = ids.filter((id) => chosen.has(id)).length;
-  useEffect(() => {
-    if (ref.current)
-      ref.current.indeterminate = picked > 0 && picked < ids.length;
-  }, [picked, ids.length]);
-  return (
-    <input
-      ref={ref}
-      type="checkbox"
-      aria-label={`Select all suggestions for ${title}`}
-      checked={picked === ids.length}
-      // A click here selects the entry; it should not also open or close the row.
-      onClick={(e) => e.stopPropagation()}
-      onChange={() => {
-        const next = new Set(chosen);
-        for (const id of ids)
-          picked === ids.length ? next.delete(id) : next.add(id);
-        onChange(next);
-      }}
-    />
-  );
-}
 function Empty({
   title,
   children,
@@ -356,13 +319,11 @@ function App() {
     ...emptyFilters,
   });
   const [direction, setDirection] = useState("asc");
-  const [confirm, setConfirm] = useState<"selected" | string | null>(null);
+  const [confirm, setConfirm] = useState<string | null>(null);
   const offered = useRef<Set<number>>(new Set());
-  const [correcting, setCorrecting] = useState<{
-    id: number;
-    value: string;
-  } | null>(null);
   const [editingTrack, setEditingTrack] = useState<number | null>(null);
+  const [editTab, setEditTab] = useState<"Metadata" | "My Tags">("Metadata"),
+    [newPlaylist, setNewPlaylist] = useState(false);
   const [historyTab, setHistoryTab] =
     useState<(typeof historyTabs)[number]>("Actions");
   const [stale, setStale] = useState("");
@@ -541,7 +502,7 @@ function App() {
   const pick = (id: number) => {
     setSelected(id);
     setDetailOpen(true);
-    setTab("Overview");
+    // The tab stays as it was, so tracks can be compared tab by tab.
   };
   const changePage = (p: Page) => {
     setPage(p);
@@ -549,16 +510,25 @@ function App() {
     setNotice("");
     setError("");
   };
-  const toggle = (id: number) =>
-    setChosen((s) => {
-      const n = new Set(s);
-      n.has(id) ? n.delete(id) : n.add(id);
-      return n;
-    });
   const tracks = data?.tracks ?? [],
     proposals = data?.proposals ?? [];
   const active = data?.jobs.find((j) => j.state === "running"),
     track = tracks.find((t) => t.id === selected);
+  // While a scan runs, its results stream in between the full refreshes.
+  useEffect(() => {
+    if (active?.kind !== "enrich" || page !== "Scan & Review") return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch("/api/review");
+        if (!res.ok) return;
+        const live = await res.json();
+        setData((d) => d && { ...d, ...live });
+      } catch {
+        // The full refresh reports a service that stopped answering.
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [active?.id, active?.kind, page]);
   const unavailable = tracks.filter(
     (t) => !t.available && t.source !== "demo" && t.state !== "removed",
   );
@@ -603,28 +573,6 @@ function App() {
         visible.some((t) => t.id === current) ? current : visible[0].id,
       );
   }, [musicFilters, search, filter]);
-  const reviewGroups = new Map<string, Track[]>();
-  tracks
-    .filter((t) => proposals.some((p) => p.track_id === t.id))
-    .forEach((t) => {
-      const k = `${t.metadata.album_artist || t.metadata.artist} · ${t.metadata.album || "Singles / unknown album"}`;
-      reviewGroups.set(k, [...(reviewGroups.get(k) || []), t]);
-    });
-  const selectedFields = proposals.filter((p) => chosen.has(p.id));
-  // Ticks and edits made mid-approval would act on suggestions that are about to go.
-  const approving = busy || active?.kind === "approve";
-  /** Replace a suggested value with the corrected one; it stays in review unless approved here. */
-  const correct = async (p: Proposal, approve: boolean) => {
-    const done = await action(
-      `proposals/${p.id}/edit`,
-      { value: correcting?.value ?? "" },
-      approve ? undefined : "Suggestion corrected and selected",
-    );
-    if (!done?.id) return;
-    setCorrecting(null);
-    if (approve) await action("proposals/approve", { ids: [done.id] });
-    else setChosen((prev) => new Set([...prev, done.id]));
-  };
   const libraryGenres = useMemo(() => {
     const counts = new Map<string, number>();
     for (const t of tracks) {
@@ -636,11 +584,6 @@ function App() {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count);
   }, [tracks]);
-  const fillable = useMemo(
-    () => blankFills(tracks, proposals),
-    [proposals, tracks],
-  );
-  const selectedFills = fillable.filter((p) => chosen.has(p.id)).length;
   // Why saved edits are still waiting: a drive that is away is not something to fix here.
   const waiting = useMemo(() => {
     const held = new Map(tracks.map((t) => [t.id, t])),
@@ -776,6 +719,147 @@ function App() {
       {operationAction(op)}
     </section>
   );
+  const newLists = data?.new_lists ?? [],
+    assignments = data?.assignments ?? [];
+  // Tag and playlist choices, and new My Tags and playlists, waiting for rekordbox.
+  const choicesWaiting = data &&
+    (assignments.length > 0 || newLists.length > 0) && (
+      <div className="callout">
+        <strong>
+          {[
+            assignments.length > 0 &&
+              `${assignments.length} My Tag and playlist ${assignments.length === 1 ? "choice" : "choices"}`,
+            newLists.length > 0 &&
+              `${newLists.length} new My Tags and playlists`,
+          ]
+            .filter(Boolean)
+            .join(" and ")}{" "}
+          waiting for rekordbox
+        </strong>
+        <p>
+          {data.assignments_ready > 0 &&
+            `${data.assignments_ready} can be written now; quit rekordbox first. `}
+          {assignments.length > data.assignments_ready &&
+            `${assignments.length - data.assignments_ready} belong to new tracks rekordbox has not imported yet. Import their playlist in rekordbox, quit it and rescan: the scan writes them.`}
+          {newLists.length > 0 &&
+            " New My Tags and playlists are made in rekordbox with the next write."}
+        </p>
+        {newLists.length > 0 && (
+          <ul className="new-lists">
+            {newLists.map((n) => (
+              <li key={n.id}>
+                <Badge>{n.kind === "tag" ? "My Tag" : "Playlist"}</Badge>
+                {n.name}
+                <button
+                  className="mini quiet"
+                  disabled={busy}
+                  onClick={() =>
+                    action(
+                      `lists/${n.id}/discard`,
+                      undefined,
+                      `“${n.name}” dropped, with the choices made for it`,
+                    )
+                  }
+                >
+                  Drop
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {(data.assignments_ready > 0 || newLists.length > 0) && (
+          <button
+            disabled={busy || !!active || !data.capability.enabled}
+            onClick={() => action("assignments/write")}
+          >
+            Write to rekordbox
+          </button>
+        )}
+        {!data.capability.enabled && (
+          <p className="fine">{data.capability.reason}</p>
+        )}
+      </div>
+    );
+  /** A track's My Tags: what rekordbox has, and adding more; in the entry and in Edit track. */
+  const myTagsPanel = (track: Track) =>
+    data && (
+      <section className="my-tags-panel">
+        <h3>Native rekordbox My Tags</h3>
+        <p className="fine">
+          These are your saved rekordbox tag assignments, grouped by category.
+          They are separate from Genre.
+        </p>
+        {track.my_tags_loaded ? (
+          track.my_tags.length ? (
+            <ul>
+              {track.my_tags.map((g) => (
+                <li key={g.id}>
+                  <strong>{g.category || "Uncategorized"}</strong>
+                  <span>{g.name}</span>
+                  <button
+                    onClick={() => {
+                      setMusicFilters({
+                        ...emptyFilters,
+                        tags: [`${track.source}::${g.id}`],
+                      });
+                      setSearch("");
+                      setFilter("all");
+                      setDetailOpen(false);
+                      setEditingTrack(null);
+                      setPage("Song Dex");
+                    }}
+                  >
+                    Find tracks with this tag
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No My Tags assigned in the last scan.</p>
+          )
+        ) : (
+          <p>My Tags have not been loaded for this entry.</p>
+        )}
+        <button
+          disabled={
+            busy ||
+            !!active ||
+            track.source === "local" ||
+            track.source === "demo"
+          }
+          onClick={() => action("my-tags/load")}
+        >
+          Load My Tags from last scan
+        </button>
+        <h3>Add My Tags and playlists</h3>
+        <p className="fine">
+          Picks are kept in Song Dex and added in rekordbox with the next write;
+          nothing is removed. Loading the last scan reads its saved copy, not
+          newer changes in rekordbox.
+        </p>
+        {track.source === "demo" ? (
+          <p>Demo entries have no rekordbox tags.</p>
+        ) : (
+          <TrackLists
+            key={track.id}
+            track={track}
+            choices={
+              data.choices ?? {
+                tags: [],
+                playlists: [],
+                loaded: false,
+              }
+            }
+            pending={assignments.filter((a) => a.track_id === track.id)}
+            disabled={busy}
+            genres={libraryGenres}
+            send={send}
+            onChanged={reload}
+          />
+        )}
+        {choicesWaiting}
+      </section>
+    );
   const withoutGenre = tracks.filter(
     (t) =>
       t.source !== "demo" &&
@@ -1023,6 +1107,12 @@ function App() {
                       }}
                     >
                       + Add music
+                    </button>
+                    <button
+                      disabled={busy || data.settings.demo}
+                      onClick={() => setNewPlaylist(true)}
+                    >
+                      + New playlist
                     </button>
                     <button
                       className="primary"
@@ -1390,73 +1480,7 @@ function App() {
                             role="tabpanel"
                             aria-label={tab}
                           >
-                            {tab === "My Tags" && (
-                              <section className="my-tags-panel">
-                                <h3>Native rekordbox My Tags</h3>
-                                <p className="fine">
-                                  These are your saved rekordbox tag
-                                  assignments, grouped by category. They are
-                                  separate from Genre.
-                                </p>
-                                {track.my_tags_loaded ? (
-                                  track.my_tags.length ? (
-                                    <ul>
-                                      {track.my_tags.map((g) => (
-                                        <li key={g.id}>
-                                          <strong>
-                                            {g.category || "Uncategorized"}
-                                          </strong>
-                                          <span>{g.name}</span>
-                                          <button
-                                            onClick={() => {
-                                              setMusicFilters({
-                                                ...emptyFilters,
-                                                tags: [
-                                                  `${track.source}::${g.id}`,
-                                                ],
-                                              });
-                                              setSearch("");
-                                              setFilter("all");
-                                              setDetailOpen(false);
-                                            }}
-                                          >
-                                            Find tracks with this tag
-                                          </button>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  ) : (
-                                    <p>No My Tags assigned in the last scan.</p>
-                                  )
-                                ) : (
-                                  <p>
-                                    My Tags have not been loaded for this entry.
-                                  </p>
-                                )}
-                                <button
-                                  disabled={
-                                    busy ||
-                                    !!active ||
-                                    track.source === "local" ||
-                                    track.source === "demo"
-                                  }
-                                  onClick={() => action("my-tags/load")}
-                                >
-                                  Load My Tags from last scan
-                                </button>
-                                <h3>Updating My Tags</h3>
-                                <p>
-                                  Edit assignments and categories in rekordbox,
-                                  then rescan its library here. Native My Tag
-                                  editing and smart suggestions are not
-                                  implemented in Song Dex yet.
-                                </p>
-                                <p className="fine">
-                                  Loading the last scan reads its saved copy; it
-                                  does not fetch newer changes from rekordbox.
-                                </p>
-                              </section>
-                            )}
+                            {tab === "My Tags" && myTagsPanel(track)}
                             {tab === "Overview" && (
                               <>
                                 <div className="stats-grid">
@@ -1625,561 +1649,131 @@ function App() {
                   </>
                 ))}
               {page === "Scan & Review" && (
-                <div className="page-body">
-                  <div className="workflow">
-                    <span>
-                      <b>01</b> Import / rescan
-                    </span>
-                    <span>
-                      <b>02</b> Find evidence
-                    </span>
-                    <span className="current">
-                      <b>03</b> Review changes
-                    </span>
-                    <span>
-                      <b>04</b> Apply & verify
-                    </span>
-                  </div>
-                  <div className="button-row">
-                    <button
-                      disabled={busy || !!active || data.settings.demo}
-                      onClick={() => action("scan", undefined, "Scan started")}
-                    >
-                      Rescan library
-                    </button>
-                    <button
-                      disabled={
-                        busy || !!active || data.settings.demo || !tracks.length
-                      }
-                      onClick={() =>
-                        action("enrich", undefined, "Metadata lookup started")
-                      }
-                    >
-                      Find metadata for new tracks
-                    </button>
-                    <button
-                      className="quiet"
-                      disabled={
-                        busy || !!active || data.settings.demo || !tracks.length
-                      }
-                      onClick={() =>
-                        action(
-                          "enrich?refresh=true",
-                          undefined,
-                          "Provider refresh started",
-                        )
-                      }
-                    >
-                      Refresh all evidence
-                    </button>
-                    <button
-                      disabled={
-                        busy || !!active || data.settings.demo || !withoutGenre
-                      }
-                      onClick={() =>
-                        action(
-                          "enrich?missing=genre",
-                          undefined,
-                          "Genre lookup started; suggestions appear here as it runs",
-                        )
-                      }
-                    >
-                      Find genres for {withoutGenre} tracks without one
-                    </button>
-                  </div>
-                  {data.tag_sessions
-                    .filter((t) => t.state !== "checking" || !active)
-                    .map((t) => (
-                      <div className="callout" key={t.id}>
-                        <strong>
-                          Tagging {t.total} imported{" "}
-                          {t.total === 1 ? "track" : "tracks"} · at track{" "}
-                          {Math.min(t.position + 1, t.total)}
-                        </strong>
-                        <p>
-                          {t.state === "checking"
-                            ? "The checks before tagging stopped part-way. Continue to finish them, or tag now."
-                            : `Imported ${date(t.created_at)}. Pick up where you left off.`}
-                        </p>
-                        <div className="button-row">
-                          <button
-                            className="primary"
-                            disabled={busy}
-                            onClick={() => setTagging(t.id)}
-                          >
-                            Continue tagging
-                          </button>
-                          {t.state === "checking" && (
-                            <button
-                              disabled={busy || !!active}
-                              onClick={() =>
-                                action(
-                                  `tagging/${t.id}/check`,
-                                  undefined,
-                                  "Checks started",
-                                )
-                              }
-                            >
-                              Finish the checks
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  {data.assignments.length > 0 && (
-                    <div className="callout">
-                      <strong>
-                        {data.assignments.length} My Tag and playlist{" "}
-                        {data.assignments.length === 1
-                          ? "choice is"
-                          : "choices are"}{" "}
-                        waiting for rekordbox
-                      </strong>
-                      <p>
-                        {data.assignments_ready > 0 &&
-                          `${data.assignments_ready} can be written now; quit rekordbox first. `}
-                        {data.assignments.length > data.assignments_ready &&
-                          `${data.assignments.length - data.assignments_ready} belong to new tracks rekordbox has not imported yet. Import their playlist in rekordbox, quit it and rescan: the scan writes them.`}
-                      </p>
-                      {data.assignments_ready > 0 && (
-                        <button
-                          disabled={
-                            busy || !!active || !data.capability.enabled
-                          }
-                          onClick={() => action("assignments/write")}
-                        >
-                          Write {data.assignments_ready} to rekordbox
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {data.relocation_review.length > 0 && (
-                    <div className="callout">
-                      <strong>
-                        {data.relocation_review.length} missing{" "}
-                        {data.relocation_review.length === 1
-                          ? "file has"
-                          : "files have"}{" "}
-                        a possible match in your music folder
-                      </strong>
-                      <p>
-                        These were not repointed because the match is not
-                        certain. Relocate them in rekordbox if they are the same
-                        track.
-                      </p>
-                      {data.relocation_review.map((r) => (
-                        <p key={r.source_id} className="file-path">
-                          {r.path} → {r.candidates.join(" or ")} ({r.reason})
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                  {fillable.length > 0 && (
-                    <div className="callout">
-                      <strong>
-                        {fillable.length}{" "}
-                        {fillable.length === 1
-                          ? "suggestion fills"
-                          : "suggestions fill"}{" "}
-                        a blank field
-                      </strong>
-                      <p>
-                        {selectedFills} of them{" "}
-                        {selectedFills === 1 ? "is" : "are"} selected. They are
-                        ticked for you when they first appear; suggestions that
-                        replace a value, or offer two values for one field, are
-                        left for you to tick. Tracks removed from rekordbox, or
-                        changed since a suggestion was made, are dropped from
-                        this list.
-                      </p>
-                      <div className="button-row">
-                        <button
-                          disabled={
-                            approving || selectedFills === fillable.length
-                          }
-                          onClick={() =>
-                            setChosen(
-                              new Set([
-                                ...chosen,
-                                ...fillable.map((p) => p.id),
-                              ]),
-                            )
-                          }
-                        >
-                          Select all {fillable.length}
-                        </button>
-                        <button
-                          className="quiet"
-                          disabled={approving || !chosen.size}
-                          onClick={() => setChosen(new Set())}
-                        >
-                          Clear selection
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {!data.capability.enabled && (
-                    <div className="callout">
-                      <strong>Write compatibility pending</strong>
-                      <p>{data.capability.reason}</p>
-                      <span>
-                        Scanning, matching and review remain available.
-                        Approving a suggestion saves it in Song Dex now and
-                        queues it for rekordbox.
-                      </span>
-                    </div>
-                  )}
-                  {data.edits_waiting > 0 && (
-                    <div className="callout">
-                      <strong>
-                        {data.edits_waiting}{" "}
-                        {data.edits_waiting === 1 ? "track has" : "tracks have"}{" "}
-                        approved edits waiting to reach rekordbox or audio tags
-                      </strong>
-                      <p>
-                        {waiting.ready > 0 &&
-                          `${waiting.ready} can be retried now. `}
-                        {waiting.offlineOnly > 0 &&
-                          `${waiting.offlineOnly} are only waiting for a drive that is offline. `}
-                        Edits wait while rekordbox writes are locked, rekordbox
-                        is open, or a file is offline or in a format without tag
-                        support. Tracks removed from rekordbox are skipped.
-                      </p>
-                      <button
-                        disabled={busy || !!active}
-                        onClick={() =>
-                          action("edits/sync", undefined, "Sync started")
-                        }
-                      >
-                        Sync saved edits now
-                      </button>
-                    </div>
-                  )}
-                  <fieldset className="review-list" disabled={approving}>
-                    {active?.kind === "approve" && (
-                      <p className="review-locked" role="status">
-                        Approval in progress. The list unlocks when it finishes.
-                      </p>
-                    )}
-                    {!proposals.length ? (
-                      <Empty title="Nothing waiting for review">
-                        <p>
-                          Scan your library and look up metadata. Ambiguous or
-                          missing data will leave your existing tags intact.
-                        </p>
-                      </Empty>
-                    ) : (
-                      [...reviewGroups].map(([album, group]) => (
-                        <section className="review-album" key={album}>
-                          <h2>
-                            <Glyph />
-                            {album}
-                            <small>
-                              {group.length}{" "}
-                              {group.length === 1 ? "track" : "tracks"}
-                            </small>
-                          </h2>
-                          {group.map((t) => (
-                            <details className="review-track" key={t.id}>
-                              <summary>
-                                <EntryCheckbox
-                                  title={String(t.metadata.title)}
-                                  ids={proposals
-                                    .filter((p) => p.track_id === t.id)
-                                    .map((p) => p.id)}
-                                  chosen={chosen}
-                                  onChange={setChosen}
-                                />
-                                <span>NO. {dex(t.id)}</span>
-                                <div className="review-card">
-                                  <Artwork track={t} />
-                                  <dl>
-                                    {["title", "artist", "genre", "year"].map(
-                                      (field) => (
-                                        <div key={field}>
-                                          <dt>{label(field)}</dt>
-                                          <dd
-                                            className={
-                                              t.metadata[field]
-                                                ? undefined
-                                                : "missing"
-                                            }
-                                          >
-                                            {t.metadata[field] || "??"}
-                                          </dd>
-                                        </div>
-                                      ),
-                                    )}
-                                  </dl>
-                                </div>
-                                <Badge>
-                                  {[
-                                    ...new Set(
-                                      proposals
-                                        .filter((p) => p.track_id === t.id)
-                                        .map((p) => label(p.field)),
-                                    ),
-                                  ].join(" · ")}
-                                </Badge>
-                              </summary>
-                              <div className="proposal-head">
-                                <span>FIELD</span>
-                                <span>CURRENT</span>
-                                <span>PROPOSED</span>
-                              </div>
-                              {proposals
-                                .filter((p) => p.track_id === t.id)
-                                .map((p) => (
-                                  <div className="proposal" key={p.id}>
-                                    <label>
-                                      <input
-                                        type="checkbox"
-                                        checked={chosen.has(p.id)}
-                                        onChange={() => toggle(p.id)}
-                                      />
-                                      <span>{label(p.field)}</span>
-                                    </label>
-                                    <div className="old-value">
-                                      {p.old_value || "Empty"}
-                                      {t.available === 1 &&
-                                        String(
-                                          t.file_metadata[p.field] || "",
-                                        ) !== p.old_value && (
-                                          <small className="file-tag-difference">
-                                            File tag:{" "}
-                                            {t.file_metadata[p.field] ||
-                                              "Empty"}
-                                          </small>
-                                        )}
-                                    </div>
-                                    <div className="new-value">
-                                      {correcting?.id === p.id ? (
-                                        <form
-                                          className="proposal-edit"
-                                          onSubmit={(e) => {
-                                            e.preventDefault();
-                                            correct(p, false);
-                                          }}
-                                        >
-                                          {p.field === "genre" ? (
-                                            <GenreInput
-                                              library={libraryGenres}
-                                              value={correcting.value}
-                                              onChange={(value) =>
-                                                setCorrecting({
-                                                  id: p.id,
-                                                  value,
-                                                })
-                                              }
-                                            />
-                                          ) : (
-                                            <input
-                                              autoFocus
-                                              maxLength={255}
-                                              aria-label={`Corrected ${label(p.field)}`}
-                                              value={correcting.value}
-                                              onChange={(e) =>
-                                                setCorrecting({
-                                                  id: p.id,
-                                                  value: e.target.value,
-                                                })
-                                              }
-                                            />
-                                          )}
-                                          <p>Suggested: {p.new_value}</p>
-                                          <div className="button-row">
-                                            <button
-                                              type="submit"
-                                              disabled={
-                                                busy || !correcting.value.trim()
-                                              }
-                                            >
-                                              Save
-                                            </button>
-                                            <button
-                                              type="button"
-                                              className="primary"
-                                              disabled={
-                                                busy ||
-                                                !!active ||
-                                                data.settings.demo ||
-                                                !correcting.value.trim()
-                                              }
-                                              onClick={() => correct(p, true)}
-                                            >
-                                              Save and approve
-                                            </button>
-                                            <button
-                                              type="button"
-                                              className="quiet"
-                                              onClick={() =>
-                                                setCorrecting(null)
-                                              }
-                                            >
-                                              Cancel
-                                            </button>
-                                          </div>
-                                        </form>
-                                      ) : (
-                                        <>
-                                          <strong>{p.new_value}</strong>
-                                          <Badge
-                                            tone={
-                                              p.confidence === "high"
-                                                ? "success"
-                                                : "warn"
-                                            }
-                                          >
-                                            {p.confidence === "high"
-                                              ? "High confidence"
-                                              : "Needs review"}
-                                          </Badge>
-                                          <p>{p.reason}</p>
-                                          {p.source.startsWith("https://") ? (
-                                            <a
-                                              href={p.source}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                            >
-                                              {p.source.startsWith(
-                                                "https://www.discogs.com/",
-                                              )
-                                                ? "Data provided by Discogs ↗"
-                                                : "View evidence ↗"}
-                                            </a>
-                                          ) : (
-                                            <small>
-                                              {p.source === "manual"
-                                                ? "Manual correction"
-                                                : p.source === "name"
-                                                  ? "Read from the track name"
-                                                  : "Demo evidence"}
-                                            </small>
-                                          )}
-                                          <div className="button-row approve-field">
-                                            <button
-                                              disabled={
-                                                busy ||
-                                                !!active ||
-                                                data.settings.demo
-                                              }
-                                              onClick={() =>
-                                                action("proposals/approve", {
-                                                  ids: [p.id],
-                                                })
-                                              }
-                                            >
-                                              Approve
-                                            </button>
-                                            <button
-                                              className="quiet"
-                                              disabled={busy}
-                                              onClick={() =>
-                                                setCorrecting({
-                                                  id: p.id,
-                                                  value: p.new_value,
-                                                })
-                                              }
-                                            >
-                                              Edit
-                                            </button>
-                                          </div>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                ))}
-                              <div className="button-row review-track-actions">
+                <Review
+                  tracks={tracks}
+                  proposals={proposals}
+                  suggested={data.suggested ?? []}
+                  queued={data.queued ?? []}
+                  scan={data.scan ?? null}
+                  active={active}
+                  choices={
+                    data.choices ?? { tags: [], playlists: [], loaded: false }
+                  }
+                  chosen={chosen}
+                  setChosen={setChosen}
+                  busy={busy}
+                  demo={data.settings.demo}
+                  genres={libraryGenres}
+                  action={action}
+                  onEditTrack={setEditingTrack}
+                  notices={
+                    <>
+                      {data.tag_sessions
+                        .filter((t) => t.state !== "checking" || !active)
+                        .map((t) => (
+                          <div className="callout" key={t.id}>
+                            <strong>
+                              Tagging {t.total} imported{" "}
+                              {t.total === 1 ? "track" : "tracks"} · at track{" "}
+                              {Math.min(t.position + 1, t.total)}
+                            </strong>
+                            <p>
+                              {t.state === "checking"
+                                ? "The checks before tagging stopped part-way. Continue to finish them, or tag now."
+                                : `Imported ${date(t.created_at)}. Pick up where you left off.`}
+                            </p>
+                            <div className="button-row">
+                              <button
+                                className="primary"
+                                disabled={busy}
+                                onClick={() => setTagging(t.id)}
+                              >
+                                Continue tagging
+                              </button>
+                              {t.state === "checking" && (
                                 <button
-                                  disabled={
-                                    busy || !!active || data.settings.demo
-                                  }
-                                  onClick={() =>
-                                    action("proposals/approve", {
-                                      ids: onePerField(
-                                        proposals.filter(
-                                          (p) => p.track_id === t.id,
-                                        ),
-                                      ),
-                                    })
-                                  }
-                                >
-                                  Approve this track
-                                </button>
-                                <button
-                                  className="quiet"
-                                  disabled={busy}
+                                  disabled={busy || !!active}
                                   onClick={() =>
                                     action(
-                                      "proposals/reject",
-                                      {
-                                        ids: proposals
-                                          .filter((p) => p.track_id === t.id)
-                                          .map((p) => p.id),
-                                      },
-                                      "Suggestions rejected for this track",
+                                      `tagging/${t.id}/check`,
+                                      undefined,
+                                      "Checks started",
                                     )
                                   }
                                 >
-                                  Reject for this track
+                                  Finish the checks
                                 </button>
-                                <button
-                                  className="quiet"
-                                  onClick={() => setEditingTrack(t.id)}
-                                >
-                                  Edit track
-                                </button>
-                              </div>
-                            </details>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      {choicesWaiting}
+                      {data.relocation_review.length > 0 && (
+                        <div className="callout">
+                          <strong>
+                            {data.relocation_review.length} missing{" "}
+                            {data.relocation_review.length === 1
+                              ? "file has"
+                              : "files have"}{" "}
+                            a possible match in your music folder
+                          </strong>
+                          <p>
+                            These were not repointed because the match is not
+                            certain. Relocate them in rekordbox if they are the
+                            same track.
+                          </p>
+                          {data.relocation_review.map((r) => (
+                            <p key={r.source_id} className="file-path">
+                              {r.path} → {r.candidates.join(" or ")} ({r.reason}
+                              )
+                            </p>
                           ))}
-                        </section>
-                      ))
-                    )}
-                    <div className="review-actions">
-                      <div>
-                        <strong>
-                          {selectedFields.length}{" "}
-                          {selectedFields.length === 1 ? "field" : "fields"}{" "}
-                          selected
-                        </strong>
-                        <small>
-                          Across{" "}
-                          {new Set(selectedFields.map((p) => p.track_id)).size}{" "}
-                          {new Set(selectedFields.map((p) => p.track_id))
-                            .size === 1
-                            ? "track"
-                            : "tracks"}
-                        </small>
-                      </div>
-                      <div className="button-row">
-                        <button
-                          disabled={busy || !selectedFields.length}
-                          onClick={() =>
-                            action(
-                              "proposals/reject",
-                              { ids: [...chosen] },
-                              "Selected proposals rejected",
-                            )
-                          }
-                        >
-                          Reject selected
-                        </button>
-                        <button
-                          className="primary"
-                          disabled={
-                            busy ||
-                            !!active ||
-                            !selectedFields.length ||
-                            data.settings.demo
-                          }
-                          onClick={() => setConfirm("selected")}
-                        >
-                          Approve selected
-                        </button>
-                      </div>
-                    </div>
-                  </fieldset>
-                </div>
+                        </div>
+                      )}
+                      {!data.capability.enabled && (
+                        <div className="callout">
+                          <strong>Write compatibility pending</strong>
+                          <p>{data.capability.reason}</p>
+                          <span>
+                            Scanning, matching and review remain available.
+                            Approving a suggestion saves it in Song Dex now and
+                            queues it for rekordbox.
+                          </span>
+                        </div>
+                      )}
+                      {data.edits_waiting > 0 && (
+                        <div className="callout">
+                          <strong>
+                            {data.edits_waiting}{" "}
+                            {data.edits_waiting === 1
+                              ? "track has"
+                              : "tracks have"}{" "}
+                            approved edits waiting to reach rekordbox or audio
+                            tags
+                          </strong>
+                          <p>
+                            {waiting.ready > 0 &&
+                              `${waiting.ready} can be retried now. `}
+                            {waiting.offlineOnly > 0 &&
+                              `${waiting.offlineOnly} are only waiting for a drive that is offline. `}
+                            Edits wait while rekordbox writes are locked,
+                            rekordbox is open, or a file is offline or in a
+                            format without tag support. Tracks removed from
+                            rekordbox are skipped.
+                          </p>
+                          <button
+                            disabled={busy || !!active}
+                            onClick={() =>
+                              action("edits/sync", undefined, "Sync started")
+                            }
+                          >
+                            Sync saved edits now
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  }
+                />
               )}
               {page === "Duplicates" && (
                 <Duplicates
@@ -2600,6 +2194,9 @@ function App() {
           sessionId={tagging}
           tracks={tracks}
           proposals={proposals}
+          queued={data.queued ?? []}
+          genres={libraryGenres}
+          demo={data.settings.demo}
           capability={data.capability}
           busy={busy || !!active}
           send={send}
@@ -2627,6 +2224,27 @@ function App() {
           />
         </Dialog>
       )}
+      {data && newPlaylist && (
+        <NewPlaylist
+          choices={data.choices ?? { tags: [], playlists: [], loaded: false }}
+          track={
+            track && track.source !== "demo"
+              ? {
+                  id: track.id,
+                  title: String(track.metadata.title || "Untitled recording"),
+                }
+              : undefined
+          }
+          pending={assignments.filter((a) => a.track_id === track?.id)}
+          send={send}
+          onClose={() => setNewPlaylist(false)}
+          onDone={async (message) => {
+            setNewPlaylist(false);
+            await reload();
+            setNotice(message);
+          }}
+        />
+      )}
       {editingTrack !== null &&
         (() => {
           const t = tracks.find((t) => t.id === editingTrack);
@@ -2642,16 +2260,37 @@ function App() {
                     {error}
                   </p>
                 )}
-                <ManualEditor
-                  key={t.id}
-                  track={t}
-                  busy={busy || !!active}
-                  request={action}
-                  genres={libraryGenres}
-                  statuses={
-                    data?.manual_edits.filter((e) => e.track_id === t.id) ?? []
-                  }
-                />
+                <div
+                  className="detail-tabs edit-tabs"
+                  role="tablist"
+                  aria-label="Edit track"
+                >
+                  {(["Metadata", "My Tags"] as const).map((name) => (
+                    <button
+                      key={name}
+                      role="tab"
+                      aria-selected={editTab === name}
+                      onClick={() => setEditTab(name)}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+                {editTab === "My Tags" ? (
+                  myTagsPanel(t)
+                ) : (
+                  <ManualEditor
+                    key={t.id}
+                    track={t}
+                    busy={busy || !!active}
+                    request={action}
+                    genres={libraryGenres}
+                    statuses={
+                      data?.manual_edits.filter((e) => e.track_id === t.id) ??
+                      []
+                    }
+                  />
+                )}
               </Dialog>
             )
           );
@@ -2665,21 +2304,11 @@ function App() {
             aria-modal="true"
             aria-labelledby="confirm-title"
           >
-            <h2 id="confirm-title">
-              {confirm === "selected"
-                ? "Approve the selected suggestions?"
-                : "Restore this operation?"}
-            </h2>
+            <h2 id="confirm-title">Restore this operation?</h2>
             <p>
-              {confirm === "selected"
-                ? `${selectedFields.length} fields on ${
-                    new Set(selectedFields.map((p) => p.track_id)).size
-                  } tracks will be saved in Song Dex and written to rekordbox and reachable audio files. ${selectedFills} fill a blank field and ${
-                    selectedFields.length - selectedFills
-                  } replace an existing value. Each write is backed up first.`
-                : confirm.startsWith("local:")
-                  ? "Restore this destination from its backup. Your saved Dex correction remains available for later syncing. Newer changes will block restoration."
-                  : "Restore the backed-up audio files, rekordbox database, and accepted metadata. Newer changes will block restoration."}
+              {confirm.startsWith("local:")
+                ? "Restore this destination from its backup. Your saved Dex correction remains available for later syncing. Newer changes will block restoration."
+                : "Restore the backed-up audio files, rekordbox database, and accepted metadata. Newer changes will block restoration."}
             </p>
             <p>Quit rekordbox and its background agent before continuing.</p>
             <div className="button-row">
@@ -2694,25 +2323,16 @@ function App() {
                 className="primary"
                 disabled={busy}
                 onClick={() =>
-                  confirm === "selected"
-                    ? action("proposals/approve", { ids: [...chosen] }).then(
-                        // A failed approval keeps the ticks for another try.
-                        (done) => done && setChosen(new Set()),
-                      )
-                    : action(
-                        confirm.startsWith("local:")
-                          ? `local-writes/${confirm.slice(6)}/restore`
-                          : `operations/${confirm}/restore`,
-                        undefined,
-                        "Operation restored",
-                      )
+                  action(
+                    confirm.startsWith("local:")
+                      ? `local-writes/${confirm.slice(6)}/restore`
+                      : `operations/${confirm}/restore`,
+                    undefined,
+                    "Operation restored",
+                  )
                 }
               >
-                {busy
-                  ? "Working…"
-                  : confirm === "selected"
-                    ? "Approve"
-                    : "Restore"}
+                {busy ? "Working…" : "Restore"}
               </button>
             </div>
           </section>

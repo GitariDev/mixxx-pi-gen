@@ -87,7 +87,37 @@ CREATE TABLE IF NOT EXISTS scan_items(job_id TEXT NOT NULL, track_id INTEGER NOT
  catalog TEXT NOT NULL DEFAULT 'queued', genre TEXT NOT NULL DEFAULT 'queued', tags TEXT NOT NULL DEFAULT 'queued',
  PRIMARY KEY(job_id,track_id));
 CREATE TABLE IF NOT EXISTS approval_queue(proposal_id INTEGER PRIMARY KEY, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS new_lists(id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL,
+ parent TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', target TEXT, created_at TEXT NOT NULL);
 """
+
+
+def forget_discogs(db):
+    """Discogs' terms: what a track's Discogs release said, and My Tag and playlist
+    suggestions made from it, go once they are six hours old."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+    db.execute(
+        "UPDATE tracks SET descriptors=json_remove(descriptors,'$.discogs') "
+        "WHERE json_extract(descriptors,'$.discogs.fetched_at') < ?",
+        (cutoff,),
+    )
+    for row in db.execute(
+        "SELECT track_id,kind,target,reasons FROM assignments WHERE status='suggested' "
+        "AND created_at < ? AND reasons LIKE '%Discogs%'",
+        (cutoff,),
+    ).fetchall():
+        kept = [r for r in json.loads(row["reasons"]) if "Discogs" not in r]
+        key = (row["track_id"], row["kind"], row["target"])
+        if kept:
+            db.execute(
+                "UPDATE assignments SET reasons=? WHERE track_id=? AND kind=? AND target=?",
+                (dump(kept), *key),
+            )
+        else:
+            db.execute(
+                "DELETE FROM assignments WHERE track_id=? AND kind=? AND target=? AND status='suggested'",
+                key,
+            )
 
 
 class Store:
@@ -115,6 +145,13 @@ class Store:
             }:
                 db.execute(
                     "ALTER TABLE tracks ADD COLUMN stats TEXT NOT NULL DEFAULT '{}'"
+                )
+            # What MusicBrainz and Discogs say about a track beyond its tags.
+            if "descriptors" not in {
+                r["name"] for r in db.execute("PRAGMA table_info(tracks)")
+            }:
+                db.execute(
+                    "ALTER TABLE tracks ADD COLUMN descriptors TEXT NOT NULL DEFAULT '{}'"
                 )
             # Why a scan suggested a My Tag or playlist ('suggested' assignments).
             if "reasons" not in {
@@ -194,6 +231,7 @@ class Store:
             "evidence",
             "my_tags",
             "stats",
+            "descriptors",
         ):
             item[key] = json.loads(item[key])
         return item
@@ -252,6 +290,7 @@ class Store:
                 "DELETE FROM cache WHERE key LIKE 'https://api.discogs.com/%' AND created_at < ?",
                 ((datetime.now(timezone.utc) - timedelta(hours=6)).isoformat(),),
             )
+            forget_discogs(db)
             # A suggestion is for the value it was made against. Once the track has
             # left rekordbox, or that field holds something else, it no longer applies.
             db.execute(
@@ -268,6 +307,14 @@ class Store:
                     "SELECT * FROM proposals WHERE status='pending' ORDER BY track_id,field"
                 )
             ]
+
+    def describe(self, track_id, source, data):
+        """Keep what one source says about a track (genres, styles, label…)."""
+        with self.connect() as db:
+            db.execute(
+                "UPDATE tracks SET descriptors=json_set(descriptors,'$.' || ?,json(?)) WHERE id=?",
+                (source, dump({**data, "fetched_at": now()}), track_id),
+            )
 
     def propose(self, track, field, value, confidence, reason, source):
         if (

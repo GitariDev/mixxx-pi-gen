@@ -30,32 +30,50 @@ dev` separately, then open <http://127.0.0.1:5178>.
 ## Workflow
 
 1. Import/rescan to index the collection, album groupings and playlist membership.
-2. Open **Scan & Review → Find metadata for new tracks**. This is a resumable,
-   rate-limited background lookup; the catalog remains available while it runs.
-3. Expand tracks and review proposed fields and evidence. **Approve** a field or a
-   whole track on the spot, tick fields or whole entries and **Approve selected**,
-   or reject suggestions. Each track's row shows its artwork with its current
-   title, artist, genre and year (`??` where one is missing). **Edit** on a
-   suggestion replaces its value with your correction, which you then approve
-   like any other. **Edit track** opens the full metadata editor for that track. Suggestions that fill a blank field start ticked (one
-   value per field); those that replace a value wait for your tick, and **Approve
-   selected** asks before it runs. Suggestions for tracks that were removed from
-   rekordbox, or whose value changed since the suggestion was made, are dropped
-   from review, and saved edits for removed tracks are not synced.
-   More than five tracks at once are approved by a background job.
-   An approval is saved in the Dex at once and written to audio tags and rekordbox
-   where they are ready; the rest waits for **Sync saved edits now**. Suggestions
+2. Open **Scan & Review → Scan** and choose what to scan: **New tracks**, the
+   **Full library**, a type (**Genre sync**, missing year or album, no artist
+   tag, without My Tags, lookups that failed) or a **Custom filter** built from
+   search, genres, My Tags, playlists, BPM and year. Every scan lists its tracks
+   first, then runs three lookups side by side: catalog matching (AcoustID and
+   MusicBrainz, keeping the recording's community genres and tags and its
+   artist's genres), Discogs (the release's styles, genres, label and year, for
+   every track when a token is set; a blank genre, label or year is suggested
+   from it, and without Discogs a missing genre comes from the main artist) and
+   My Tag and playlist suggestions. Those draw on everything found: a My Tag
+   named like a Discogs style or MusicBrainz genre or tag, and the My Tags and
+   playlists shared by your tracks of that genre, of the same label, or by the
+   same artist. An opened row shows what each source said. A track's genre waits for its catalog match,
+   and its suggestions for its genre; across tracks they overlap. Each row's
+   three squares show how far its lookups are, and the list fills in as results
+   arrive. Scans are resumable and rate limited per service; **Stop** ends one
+   after the current lookups.
+3. Each track is one row: small artwork, title, artist and the fields with
+   suggestions. Open a row for an inline diff: the current value struck out, each
+   suggested value added below it with its source, and **Approve**, **Edit** or
+   reject on every line. Suggested My Tags and playlists are added lines too; an
+   added one waits for **Write to rekordbox** with other tag choices. Tick lines
+   or whole rows and **Approve selected**, or **Approve all without warnings**:
+   every suggestion that is the only one for its field and fills a blank or comes
+   from a high-confidence match (tags and playlists optionally). Approvals made
+   while a scan runs are queued and saved by the scan between lookups. Suggestions
    that only restyle a value (capitalisation, accents, punctuation) are not shown,
-   album artist is not suggested, and years are compared as years (a file's full
-   release date is kept). **Find genres for tracks without one** looks up a
-   community genre for the recording, else for an unambiguous main artist, and
-   prefers a genre the collection already uses. Tracks with no artist tag whose
-   name reads "Artist - Title" get artist and title suggestions from that name.
-   Manual corrections can be saved directly from a track's Metadata tab.
+   album artist is not suggested, and years are compared as years. Suggestions for
+   tracks removed from rekordbox, or whose value changed since, are dropped.
+   Tracks with no artist tag whose name reads "Artist - Title" get artist and
+   title suggestions from that name. **Edit track** opens the full editor.
+   Tagging the tracks of a new import shows the same metadata diff for each
+   track, so it can be settled there without a later scan.
 4. Apply reviewed changes once the installation's compatibility checks are complete.
    File, rekordbox and Dex results are recorded separately in History.
 5. Review duplicate groups in **Duplicates**: merge every group without warnings
-   in one step, then go through the flagged ones. Per group or for a selection of
+   in one step, then go through the flagged ones. Groups of three or more are
+   split into versions (same version label, duration and BPM, or identical files):
+   copies of one version merge into its best entry while different versions, such
+   as a radio edit and an extended mix, stay in the group. The group then shows
+   one choice across the versions that are left: mark it as okay to keep them
+   apart, or tick entries to keep merging. **Merge all without warnings**
+   includes clean version pairs inside larger groups; **Choose across versions**
+   switches a group to a single choice at any time. Per group or for a selection of
    groups, choose the entry to keep (and, with more than two entries, tick the
    ones to merge), merge, or mark the group as okay. Marking as okay with some
    entries ticked merges those and leaves the others, such as remixes and other
@@ -69,6 +87,23 @@ The optional **Explore demo** is explicitly labeled and does not query providers
 or modify any music files. Exit demo in Settings before importing a real library.
 Use `song-dex --data-dir /path/to/another/catalog` to keep separate catalogs.
 
+## Making My Tags and playlists
+
+My Tags and playlists can be given to a track while tagging an import, from
+any track's **My Tags** tab in the library, or from **Edit track** in Scan &
+Review, which has the same tab. All offer **+ New** in each My Tag category
+(suggesting names from your genres and Every Noise at Once's) and, when the
+playlist search finds no match, **Make playlist** in the top level, an existing
+folder or a new one. **+ New playlist** on the Song Dex page makes one directly,
+in any folder or a new folder inside one, optionally with the selected track. A new one can be picked straight away; it is
+made in rekordbox, with every pick waiting for it, by the next **Write to
+rekordbox** (or the rescan that writes an import's choices). One with the same
+name in the same place is reused rather than duplicated. **Drop** in the list of
+waiting changes removes a new one before it is written. Song Dex only adds: it
+makes no My Tag categories and removes nothing. The copied-library probe
+(`songdex.verify`) also makes a My Tag, a folder and a playlist in it on its copy and checks that
+nothing else changed.
+
 ## Genres and Discogs
 
 The Genre field in a track's Metadata tab suggests as you type: genres already
@@ -77,11 +112,13 @@ Every Noise at Once's popularity list (`backend/songdex/genres.txt`). Close
 spellings match ("neo sol" finds Neo Soul); any other text can still be typed.
 
 With a Discogs personal access token, or an application's consumer key and
-secret, saved in Settings, tracks without a genre
-also get a suggestion from the style of a Discogs release carrying that artist
-and track. Only the artist and title are sent. Per Discogs' API terms, responses
-and unapproved suggestions are discarded after six hours, and each suggestion
-links to its Discogs page as "Data provided by Discogs".
+secret, saved in Settings, scans look up a Discogs release carrying each
+track's artist and title. Its styles feed My Tag and playlist suggestions, and a
+blank genre, label or year is suggested from it. Only the artist and title are
+sent. Per Discogs' API terms, responses, what was kept from them, unapproved
+suggestions and My Tag or playlist reasons drawn from them are discarded after
+six hours, and everything shown from Discogs links to its page as "Data provided
+by Discogs".
 
 This application uses Discogs’ API but is not affiliated with, sponsored or
 endorsed by Discogs. ‘Discogs’ is a trademark of Zink Media, LLC.
@@ -289,7 +326,7 @@ catalog from the saved consistent snapshot; subsequent native scans refresh them
 It does not read new changes from the live library. Existing artwork, cues,
 playlists and native tags are not modified by this read operation.
 
-**Native My Tag editing and smart tag suggestions are not implemented yet.**
-Edit assignments/categories in rekordbox, quit it and its companion processes,
-and rescan here. This limitation is separate from the metadata writer's
+Add My Tags and playlists from the same tab (see **Making My Tags and
+playlists**); removing them, and editing categories, is done in rekordbox, after
+which quit it and its companion processes and rescan here. This limitation is separate from the metadata writer's
 compatibility gate. Genre remains an independently editable metadata field.

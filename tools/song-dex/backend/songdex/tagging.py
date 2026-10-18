@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from uuid import uuid4
 
 from . import audio, rekordbox
 from .db import cosmetic, dump, now
@@ -61,11 +62,27 @@ def names_genre(tag, genre):
     return False
 
 
+def described(track):
+    """Genres, styles and tags MusicBrainz and Discogs give the track, each with its source."""
+    d = track.get("descriptors") or {}
+    mb, dg = d.get("musicbrainz") or {}, d.get("discogs") or {}
+    return [
+        *((s, "Discogs style") for s in dg.get("styles", [])),
+        *((g, "Discogs genre") for g in dg.get("genres", [])),
+        *((g, "MusicBrainz genre") for g in mb.get("genres", [])),
+        *((t, "MusicBrainz tag") for t in mb.get("tags", [])),
+        *(
+            (g, f"MusicBrainz genre for {mb.get('artist', 'the artist')}")
+            for g in mb.get("artist_genres", [])
+        ),
+    ]
+
+
 class Library:
-    """The collection grouped by main artist and by genre, for suggesting many tracks."""
+    """The collection grouped by main artist, genre and label, for suggesting many tracks."""
 
     def __init__(self, tracks):
-        self.artists, self.genres = {}, {}
+        self.artists, self.genres, self.labels = {}, {}, {}
         for t in tracks:
             if t["state"] == "removed":
                 continue
@@ -74,12 +91,17 @@ class Library:
                 t
             )
             self.genres.setdefault(cosmetic(m.get("genre", "")), []).append(t)
+            if cosmetic(m.get("label", "")):
+                self.labels.setdefault(cosmetic(m["label"]), []).append(t)
 
     def by_artist(self, artist):
         return self.artists.get(loose(artist), [])
 
     def by_genre(self, genre):
         return self.genres.get(cosmetic(genre), [])
+
+    def by_label(self, label):
+        return self.labels.get(cosmetic(label), [])
 
 
 def suggestions(
@@ -90,6 +112,9 @@ def suggestions(
     `twins` are entries it may duplicate, `genres` adds suggested genre values to
     the track's own, and `pending` holds choices made but not yet written. A
     prebuilt `library` (a Library of `tracks`) saves regrouping for every track.
+    What MusicBrainz and Discogs said about the track counts too: a My Tag named
+    like one of its styles, and what your tracks of that genre or label share.
+    Reasons drawn from Discogs name it, so they can be dropped after six hours.
     """
     library = library or Library(tracks)
     found = {}
@@ -127,6 +152,35 @@ def suggestions(
         same = [o for o in library.by_genre(genre) if o["id"] != track["id"]]
         if same:
             crowd(same, lambda n, g=genre, s=same: f"{n} of your {len(s)} {g} tracks")
+    seen = {cosmetic(g) for g in names}
+    for term, source in described(track):
+        for tag in choices["tags"]:
+            if names_genre(tag["name"], term):
+                add("tag", tag["id"], f"{source} {term}")
+        if cosmetic(term) in seen:
+            continue
+        seen.add(cosmetic(term))
+        same = [o for o in library.by_genre(term) if o["id"] != track["id"]]
+        if same:
+            crowd(
+                same,
+                lambda n, g=term, s=same, why=source: (
+                    f"{n} of your {len(s)} {g} tracks ({why})"
+                ),
+            )
+    discogs = (track.get("descriptors") or {}).get("discogs") or {}
+    labels = [(m.get("label", ""), "")]
+    if cosmetic(discogs.get("label", "")) != cosmetic(m.get("label", "")):
+        labels.append((discogs.get("label", ""), " (Discogs label)"))
+    for label, source in labels:
+        same = [o for o in library.by_label(label) if o["id"] != track["id"]]
+        if cosmetic(label) and same:
+            crowd(
+                same,
+                lambda n, la=label, s=same, why=source: (
+                    f"{n} of your {len(s)} tracks on {la}{why}"
+                ),
+            )
     year = str(m.get("year", ""))[:4]
     if year.isdigit():
         decades = {f"{int(year) // 10 * 10}s", f"{int(year) % 100 // 10}0s"}
@@ -244,6 +298,58 @@ class Tagging:
         return failed
 
     def choices(self):
+        """My Tags and playlists a track can be given: the library's, then new ones
+        waiting to be created (their IDs start with "new-")."""
+        found = self.library_choices()
+        new = self.new_lists("pending")
+        categories = {c["id"]: c["name"] for c in found.get("categories", [])}
+        folders = {f["id"]: f["name"] for f in found.get("folders", [])}
+        made = []
+        # In the order made, so a folder inside a new folder finds its parent's name.
+        for n in new:
+            if n["kind"] == "folder":
+                folders[n["id"]] = " / ".join(
+                    filter(None, [folders.get(n["parent"], ""), n["name"]])
+                )
+                made.append({"id": n["id"], "name": folders[n["id"]], "new": True})
+        return {
+            **found,
+            # Libraries scanned before categories and folders were read cannot take new tags.
+            "creatable": "categories" in found,
+            "categories": found.get("categories", []),
+            "folders": sorted(
+                [*found.get("folders", []), *made], key=lambda f: f["name"].casefold()
+            ),
+            "tags": [
+                *found["tags"],
+                *(
+                    {
+                        "id": n["id"],
+                        "name": n["name"],
+                        "category": categories.get(n["parent"], ""),
+                        "new": True,
+                    }
+                    for n in new
+                    if n["kind"] == "tag"
+                ),
+            ],
+            "playlists": [
+                *found["playlists"],
+                *(
+                    {
+                        "id": n["id"],
+                        "name": " / ".join(
+                            filter(None, [folders.get(n["parent"], ""), n["name"]])
+                        ),
+                        "new": True,
+                    }
+                    for n in new
+                    if n["kind"] == "playlist"
+                ),
+            ],
+        }
+
+    def library_choices(self):
         """My Tags and playlists from the last scan, read from its snapshot if need be."""
         saved = self.store.setting("library_choices")
         if saved is not None:
@@ -297,7 +403,8 @@ class Tagging:
                 db.execute(
                     """INSERT INTO assignments(track_id,kind,target,status,created_at,reasons)
                     VALUES (?,?,?,'suggested',?,?) ON CONFLICT(track_id,kind,target)
-                    DO UPDATE SET reasons=excluded.reasons WHERE assignments.status='suggested'""",
+                    DO UPDATE SET reasons=excluded.reasons,created_at=excluded.created_at
+                    WHERE assignments.status='suggested'""",
                     (tid, s["kind"], str(s["id"]), now(), dump(s["reasons"])),
                 )
 
@@ -399,11 +506,111 @@ class Tagging:
             "tracks": items,
         }
 
-    def choose(self, sid, tid, tags, playlists, position):
+    # -- New My Tags and playlists ---------------------------------------------------
+
+    def new_lists(self, status=None):
+        with self.store.connect() as db:
+            return [
+                dict(r)
+                for r in db.execute(
+                    "SELECT * FROM new_lists"
+                    + (" WHERE status=?" if status else "")
+                    # Parents before what goes in them.
+                    + " ORDER BY created_at,rowid",
+                    (status,) if status else (),
+                )
+            ]
+
+    def create_list(self, kind, name, parent):
+        """A new My Tag (in a category), or playlist or playlist folder (in a
+        folder, or "root"); a folder may itself be new.
+
+        It is made in rekordbox with the next write of tags and playlists; until
+        then it can be chosen like any other. One that exists already is reused.
+        """
+        name = " ".join(str(name).split())
+        if kind not in (*KINDS, "folder") or not name or len(name) > 100:
+            raise ValueError(
+                "Give the new My Tag, playlist or folder a name (up to 100 characters)"
+            )
+        found = self.choices()
+        if not found["loaded"]:
+            raise ValueError("Scan your rekordbox library first")
+        if kind == "tag":
+            category = next((c for c in found["categories"] if c["id"] == parent), None)
+            if category is None:
+                raise ValueError(
+                    "Choose a My Tag category; rescan rekordbox if it is missing"
+                )
+            same = next(
+                (
+                    t
+                    for t in found["tags"]
+                    if t["category"] == category["name"]
+                    and cosmetic(t["name"]) == cosmetic(name)
+                ),
+                None,
+            )
+            full = name
+        else:
+            folder = next((f for f in found["folders"] if f["id"] == parent), None)
+            if parent != "root" and folder is None:
+                raise ValueError(
+                    "Choose a playlist folder; rescan rekordbox if it is missing"
+                )
+            full = " / ".join(filter(None, [folder and folder["name"], name]))
+            same = next(
+                (
+                    p
+                    for p in found["playlists" if kind == "playlist" else "folders"]
+                    if cosmetic(p["name"]) == cosmetic(full)
+                ),
+                None,
+            )
+        if same:
+            return {"id": same["id"], "name": same["name"], "existing": True}
+        lid = f"new-{uuid4().hex[:12]}"
+        with self.store.connect() as db:
+            db.execute(
+                "INSERT INTO new_lists(id,kind,name,parent,created_at) VALUES (?,?,?,?,?)",
+                (lid, kind, name, parent, now()),
+            )
+        what = {"tag": "My Tag", "playlist": "playlist", "folder": "playlist folder"}
+        self.store.log(
+            "tags and playlists",
+            f"New {what[kind]} “{full}” waits to be created in rekordbox",
+        )
+        return {"id": lid, "name": full, "existing": False}
+
+    def discard_list(self, lid):
+        """Drop a new My Tag, playlist or folder not yet created, with the choices
+        made for it; a new folder takes the new playlists and folders in it along."""
+        with self.store.connect() as db:
+            gone, dropping = 0, [lid]
+            while dropping:
+                lid = dropping.pop()
+                gone += db.execute(
+                    "DELETE FROM new_lists WHERE id=? AND status='pending'", (lid,)
+                ).rowcount
+                db.execute(
+                    "DELETE FROM assignments WHERE target=? AND status IN ('pending','suggested')",
+                    (lid,),
+                )
+                dropping += [
+                    r[0]
+                    for r in db.execute(
+                        "SELECT id FROM new_lists WHERE parent=? AND status='pending'",
+                        (lid,),
+                    )
+                ]
+        if not gone:
+            raise ValueError("That My Tag or playlist is already in rekordbox")
+        return {"discarded": True}
+
+    def assign_track(self, tid, tags, playlists):
         """Keep the track's chosen tags and playlists; ones it already has are dropped."""
-        session = self.row(sid)
-        if tid not in session["tracks"]:
-            raise ValueError("That track is not part of this tagging session")
+        if self.store.track(tid)["source"] == "demo":
+            raise ValueError("Demo entries have no rekordbox tags")
         choices = self.choices()
         wanted = {"tag": set(map(str, tags)), "playlist": set(map(str, playlists))}
         known = {
@@ -430,6 +637,15 @@ class Tagging:
                         DO UPDATE SET status='pending' WHERE assignments.status!='pending'""",
                         (tid, kind, target, now()),
                     )
+        return {"saved": True}
+
+    def choose(self, sid, tid, tags, playlists, position):
+        """An import's track: keep its choices and where the session is."""
+        session = self.row(sid)
+        if tid not in session["tracks"]:
+            raise ValueError("That track is not part of this tagging session")
+        self.assign_track(tid, tags, playlists)
+        with self.store.connect() as db:
             db.execute(
                 "UPDATE tag_sessions SET position=? WHERE id=?",
                 (max(0, min(int(position), len(session["tracks"]) - 1)), sid),
@@ -487,9 +703,10 @@ class Tagging:
         return result
 
     def _write(self):
-        """Write every pending assignment rekordbox can take; the caller holds the lock."""
-        rows = self.waiting()
-        if not rows:
+        """Create new My Tags and playlists and write every pending assignment
+        rekordbox can take; the caller holds the lock."""
+        rows, creating = self.waiting(), self.new_lists("pending")
+        if not rows and not creating:
             return None
         plan = {}
         for r in rows:
@@ -497,29 +714,94 @@ class Tagging:
                 KINDS[r["kind"]]
             ].append(r["target"])
         tags = sum(r["kind"] == "tag" for r in rows)
-        detail = (
-            f"Added {tags} My Tags and {len(rows) - tags} playlist places "
-            f"to {len(plan)} tracks"
+        made = Counter(n["kind"] for n in creating)
+        detail = "; ".join(
+            filter(
+                None,
+                [
+                    creating
+                    and "Created "
+                    + ", ".join(
+                        f"{made[kind]} {name}{'' if made[kind] == 1 else 's'}"
+                        for kind, name in (
+                            ("tag", "My Tag"),
+                            ("playlist", "playlist"),
+                            ("folder", "playlist folder"),
+                        )
+                        if made[kind]
+                    ),
+                    rows
+                    and f"Added {tags} My Tags and {len(rows) - tags} playlist places "
+                    f"to {len(plan)} tracks",
+                ],
+            )
         )
+        create = [{k: n[k] for k in ("id", "kind", "name", "parent")} for n in creating]
         result = Operations(self.service).change_library(
             "tags and playlists",
             detail,
             list(plan),
-            lambda staged: rekordbox.assign(staged, plan),
+            lambda staged: rekordbox.assign(staged, plan, create),
         )
         if result["manifest"]["library_status"] != "complete":
             return result
+        ids = result["manifest"]["result"]["created"]
+        # Their names, with category and folder, before they stop being new.
+        listed = self.choices()
         with self.store.connect() as db:
+            for given, real in ids.items():
+                db.execute(
+                    "UPDATE new_lists SET status='created',target=? WHERE id=?",
+                    (real, given),
+                )
+                # Choices made for the new list now name its rekordbox ID.
+                for a in db.execute(
+                    "SELECT * FROM assignments WHERE target=?", (given,)
+                ).fetchall():
+                    db.execute(
+                        "DELETE FROM assignments WHERE track_id=? AND kind=? AND target=?",
+                        (a["track_id"], a["kind"], given),
+                    )
+                    db.execute(
+                        "INSERT OR IGNORE INTO assignments(track_id,kind,target,status,created_at,reasons) "
+                        "VALUES (?,?,?,?,?,?)",
+                        (
+                            a["track_id"],
+                            a["kind"],
+                            real,
+                            a["status"],
+                            a["created_at"],
+                            a["reasons"],
+                        ),
+                    )
             for r in rows:
                 db.execute(
                     "UPDATE assignments SET status='saved' WHERE track_id=? AND kind=? AND target=? AND status='pending'",
-                    (r["track_id"], r["kind"], r["target"]),
+                    (r["track_id"], r["kind"], ids.get(r["target"], r["target"])),
                 )
             for tid in {r["track_id"] for r in rows}:
                 db.execute(
                     "INSERT INTO history(track_id,kind,detail,created_at) VALUES (?,?,?,?)",
                     (tid, "tags and playlists", "Written to rekordbox", now()),
                 )
+        if ids:
+            # Offered by their rekordbox IDs until the next scan reads them back.
+            saved = self.library_choices()
+            for key in ("tags", "playlists", "folders"):
+                saved.setdefault(key, [])
+                have = {x["id"] for x in saved[key]}
+                for item in listed[key]:
+                    real = ids.get(item["id"])
+                    if real and real not in have:
+                        saved[key].append(
+                            {
+                                **{k: v for k, v in item.items() if k != "new"},
+                                "id": real,
+                            }
+                        )
+            self.store.set_setting(
+                "library_choices", {k: v for k, v in saved.items() if k != "loaded"}
+            )
         return {**result, "message": f"{detail} in rekordbox."}
 
     def after_scan(self):

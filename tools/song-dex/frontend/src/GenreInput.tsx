@@ -42,10 +42,24 @@ export function GenreInput({
   value,
   onChange,
   library,
+  placeholder = "Type to search genres",
+  label,
+  autoFocus,
+  maxLength = 255,
+  onEnter,
+  onEscape,
 }: {
   value: string;
   onChange: (value: string) => void;
   library: GenreCount[];
+  placeholder?: string;
+  label?: string;
+  autoFocus?: boolean;
+  maxLength?: number;
+  /** Enter when no suggestion is highlighted, such as to save the typed value. */
+  onEnter?: () => void;
+  /** Escape when the suggestions are already closed. */
+  onEscape?: () => void;
 }) {
   const id = useId();
   const [names, setNames] = useState<string[]>([]),
@@ -100,8 +114,10 @@ export function GenreInput({
         aria-autocomplete="list"
         aria-activedescendant={active >= 0 ? `${id}-${active}` : undefined}
         autoComplete="off"
-        maxLength={255}
-        placeholder="Type to search genres"
+        autoFocus={autoFocus}
+        aria-label={label}
+        maxLength={maxLength}
+        placeholder={placeholder}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
@@ -126,9 +142,16 @@ export function GenreInput({
           } else if (e.key === "Enter" && shown && active >= 0) {
             e.preventDefault();
             choose(options[active].name);
+          } else if (e.key === "Enter" && onEnter) {
+            e.preventDefault();
+            setOpen(false);
+            onEnter();
           } else if (e.key === "Escape" && shown) {
             e.stopPropagation();
             setOpen(false);
+          } else if (e.key === "Escape" && onEscape) {
+            e.stopPropagation();
+            onEscape();
           }
         }}
       />

@@ -2,8 +2,10 @@
 
 A scan lists its tracks first, then three workers run at once, each over the
 whole list and each recording its own state per track, so the review fills in
-as they go: catalog matching (AcoustID and MusicBrainz), a genre (Discogs, else
-the main artist's), and My Tag and playlist suggestions. For one track the genre
+as they go: catalog matching (AcoustID and MusicBrainz, keeping the recording's
+community genres and tags), Discogs (the release's styles, label and year; else
+the main artist's genre for a track without one), and My Tag and playlist
+suggestions, which draw on all of that. For one track the genre
 waits for its catalog match and the suggestions wait for its genre, as each uses
 what the one before found; across tracks they overlap.
 
@@ -20,9 +22,12 @@ from .db import cosmetic
 from .duplicates import Duplicates
 from .editing import Editing
 from .operations import Operations
+from .providers import discogs_auth
 from .tagging import Library, Tagging, suggestions
 
 SOURCES = ("catalog", "genre", "tags")
+# For one track, each lookup waits for the one it builds on.
+AFTER = {"genre": "catalog", "tags": "genre"}
 FINISHED = {"done", "failed", "skipped"}
 
 
@@ -175,13 +180,17 @@ class Scanning:
                 return
             if self.states[tid][source] in FINISHED:
                 continue
+            if source in AFTER:
+                self.wait_for(tid, AFTER[source])
+                # Stopped while waiting: this track is left to resume.
+                if stop.is_set():
+                    return
             self.mark(tid, source, "running")
             try:
                 state = step(tid)
             except Exception:
                 state = "failed"
-            # Stopped while waiting on another worker: this track is left to resume.
-            self.mark(tid, source, "queued" if state is None else state)
+            self.mark(tid, source, state)
 
     # -- The three lookups -----------------------------------------------------------
 
@@ -197,22 +206,17 @@ class Scanning:
         return "failed" if self.service.enrich_track(tid, genre=False) else "done"
 
     def genre(self, tid):
-        self.wait_for(tid, "catalog")
-        if stopping[self.job_id].is_set():
-            return None
         track = self.track(tid)
         if not track:
             return "skipped"
         track = self.providers.named(track)
-        if not self.providers.needs_genre(track):
+        # Discogs describes every track; without it only a missing genre is looked for.
+        if not discogs_auth(self.store) and not self.providers.needs_genre(track):
             return "skipped"
         self.providers.find_genre(track)
         return "done"
 
     def tags(self, tid):
-        self.wait_for(tid, "genre")
-        if stopping[self.job_id].is_set():
-            return None
         track = self.track(tid)
         if not track:
             return "skipped"

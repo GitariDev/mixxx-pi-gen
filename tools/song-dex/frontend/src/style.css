@@ -2586,3 +2586,32 @@ button.tag-choice kbd {
     gap: 4px;
   }
 }
+/* Side by side, the list and the entry share one height that fits the window:
+   the list fills it, and the entry keeps its size from tab to tab, scrolling
+   inside the tab instead. */
+@media (min-width: 1100px) {
+  .list-pane,
+  .detail-pane {
+    height: clamp(560px, calc(100vh - 48px), 1200px);
+  }
+  .list-pane {
+    overflow-y: auto;
+  }
+  .track-list {
+    flex: 1;
+    min-height: 220px;
+    max-height: none;
+  }
+  .detail-pane {
+    display: flex;
+    flex-direction: column;
+    align-self: stretch;
+  }
+  .detail-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-color: var(--border) var(--surface);
+    scrollbar-width: thin;
+  }
+}

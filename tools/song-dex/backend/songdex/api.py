@@ -95,6 +95,17 @@ class SuggestedSelection(BaseModel):
     items: list[Suggested] = Field(min_length=1, max_length=20000)
 
 
+class NewList(BaseModel):
+    kind: str
+    name: str = Field(min_length=1, max_length=100)
+    parent: str = Field(min_length=1, max_length=64)
+
+
+class Lists(BaseModel):
+    tags: list[str] = Field(default=[], max_length=500)
+    playlists: list[str] = Field(default=[], max_length=500)
+
+
 class Choice(BaseModel):
     tags: list[str] = Field(default=[], max_length=500)
     playlists: list[str] = Field(default=[], max_length=500)
@@ -224,6 +235,7 @@ def create_app(root=None):
             "tag_sessions": tagging.summaries(),
             "assignments": tagging.assignments("pending"),
             "assignments_ready": len(tagging.waiting()),
+            "new_lists": tagging.new_lists("pending"),
             "choices": tagging.choices(),
             **review(),
             "settings": {
@@ -371,6 +383,18 @@ def create_app(root=None):
     @app.post("/api/tagging/{session_id}/finish")
     def tag_finish(session_id: str):
         return tagging.finish(session_id)
+
+    @app.post("/api/lists")
+    def create_list(body: NewList):
+        return tagging.create_list(body.kind, body.name, body.parent)
+
+    @app.post("/api/lists/{list_id}/discard")
+    def discard_list(list_id: str):
+        return tagging.discard_list(list_id)
+
+    @app.post("/api/tracks/{track_id}/lists")
+    def track_lists(track_id: int, body: Lists):
+        return tagging.assign_track(track_id, body.tags, body.playlists)
 
     @app.post("/api/assignments/write")
     def write_assignments():

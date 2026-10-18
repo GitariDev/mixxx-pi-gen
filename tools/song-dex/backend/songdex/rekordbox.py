@@ -148,8 +148,9 @@ def playlist_namer(db):
 def read_choices(path, own_folder=None):
     """The My Tags and normal playlists a track can be given.
 
-    Categories, folders and smart playlists are left out, as are the playlists
-    inside `own_folder` (Song Dex's own lists).
+    Smart playlists are left out, as are the playlists inside `own_folder`
+    (Song Dex's own lists). Categories and folders are listed apart, as the
+    places new My Tags and playlists can go.
     """
     from pyrekordbox.db6 import tables
 
@@ -183,6 +184,19 @@ def read_choices(path, own_folder=None):
                     {"id": str(p.ID), "name": full_name(p.ID)}
                     for p in playlists
                     if p.Attribute == 0 and (own is None or p.ParentID != own)
+                ),
+                key=lambda p: p["name"].casefold(),
+            ),
+            # Where new My Tags and playlists can go.
+            "categories": [
+                {"id": str(c.ID), "name": c.Name or "My Tags"}
+                for c in sorted(categories.values(), key=lambda c: c.Seq or 0)
+            ],
+            "folders": sorted(
+                (
+                    {"id": str(p.ID), "name": full_name(p.ID)}
+                    for p in playlists
+                    if p.Attribute == 1 and p.ID != own and p.ParentID != own
                 ),
                 key=lambda p: p["name"].casefold(),
             ),
@@ -556,12 +570,83 @@ def merge_entries(path, merges, own_folder=None):
     return moved
 
 
-def assign(path, plan):
+def create_lists(db, create):
+    """Make new My Tags, playlists and folders: create = [{"id", "kind", "name", "parent"}].
+
+    A My Tag goes last in its category, made the way rekordbox makes its own; a
+    playlist or folder goes last in its folder ("root" for the top level), which
+    may be one made earlier in the list. One with that
+    name already there is used instead. Returns {given id: rekordbox ID} and the
+    playlists to register in masterPlaylists6.xml.
+    """
+    from datetime import datetime
+
+    from pyrekordbox.db6 import tables
+
+    ids, registered = {}, []
+    for item in create:
+        name = item["name"].strip()
+        if item["kind"] == "tag":
+            rows = list(db.query(tables.DjmdMyTag))
+            category = next(
+                (t for t in rows if str(t.ID) == item["parent"] and t.Attribute == 1),
+                None,
+            )
+            if category is None:
+                raise ValueError(
+                    "A My Tag category was removed in rekordbox. Rescan and create the tag again"
+                )
+            siblings = [t for t in rows if str(t.ParentID) == item["parent"]]
+            same = next((t for t in siblings if t.Name == name), None)
+            if same is not None:
+                ids[item["id"]] = str(same.ID)
+                continue
+            stamp = datetime.now()
+            tag = tables.DjmdMyTag.create(
+                ID=str(db.generate_unused_id(tables.DjmdMyTag, is_28_bit=False)),
+                Seq=max((t.Seq or 0 for t in siblings), default=0) + 1,
+                Name="New tag",
+                Attribute=0,
+                ParentID=item["parent"],
+                UUID=str(uuid4()),
+                created_at=stamp,
+                updated_at=stamp,
+            )
+            db.add(tag)
+            # Named after adding, as pyrekordbox does for playlists, so the change is counted.
+            tag.Name = name
+            ids[item["id"]] = str(tag.ID)
+        elif item["kind"] in ("playlist", "folder"):
+            # The folder may be one made just before.
+            parent_id = ids.get(item["parent"], item["parent"])
+            parent = None
+            if parent_id != "root":
+                parent = db.get_playlist(ID=parent_id)
+                if parent is None or parent.Attribute != 1:
+                    raise ValueError(
+                        "A playlist folder was removed in rekordbox. Rescan and create the playlist again"
+                    )
+            attribute = 0 if item["kind"] == "playlist" else 1
+            same = db.get_playlist(Name=name, ParentID=parent_id).first()
+            if same is not None and same.Attribute == attribute:
+                ids[item["id"]] = str(same.ID)
+                continue
+            make = db.create_playlist if attribute == 0 else db.create_playlist_folder
+            playlist = make(name, parent=parent)
+            registered.append((playlist.ID, playlist.ParentID, playlist.Attribute))
+            ids[item["id"]] = str(playlist.ID)
+        else:
+            raise ValueError("Only My Tags, playlists and folders can be created")
+    return ids, registered
+
+
+def assign(path, plan, create=()):
     """Give entries My Tags and playlist places: plan = {content id: {"tags", "playlists"}}.
 
     Only adds. A new place goes at the end of its playlist, and a tag row is made
     the way rekordbox makes its own (no track number). Assignments an entry
-    already has are left as they are.
+    already has are left as they are. `create` lists new My Tags and playlists
+    (see create_lists) made first; the plan may name them by their given IDs.
     """
     from datetime import datetime
 
@@ -569,15 +654,19 @@ def assign(path, plan):
 
     require_stopped()
     added, expected = {"my_tags": 0, "playlists": 0}, set()
+    xml = Path(path).parent / "masterPlaylists6.xml"
     with database(path) as db:
         require_writable(db)
+        ids, registered = create_lists(db, create)
+        if registered and not xml.is_file():
+            raise ValueError("masterPlaylists6.xml is missing beside the library")
         tags = {str(t.ID): t for t in db.query(tables.DjmdMyTag)}
         for content_id, wanted in plan.items():
             content_id = str(content_id)
             if db.get_content(ID=content_id) is None:
                 raise ValueError("rekordbox entry no longer exists")
             held = {str(r.MyTagID) for r in db.get_my_tag_songs(ContentID=content_id)}
-            for tag_id in map(str, wanted.get("tags", [])):
+            for tag_id in (ids.get(str(t), str(t)) for t in wanted.get("tags", [])):
                 if tag_id not in tags or tags[tag_id].Attribute != 0:
                     raise ValueError(
                         "A My Tag was removed in rekordbox. Rescan and choose again"
@@ -604,7 +693,9 @@ def assign(path, plan):
                     ContentID=content_id
                 )
             }
-            for playlist_id in map(str, wanted.get("playlists", [])):
+            for playlist_id in (
+                ids.get(str(p), str(p)) for p in wanted.get("playlists", [])
+            ):
                 playlist = db.get_playlist(ID=playlist_id)
                 if playlist is None or playlist.Attribute != 0:
                     raise ValueError(
@@ -617,6 +708,8 @@ def assign(path, plan):
                 listed.add(playlist_id)
                 added["playlists"] += 1
         db.commit()
+    if registered:
+        register_playlists(xml, registered)
     with database(path) as db:
         actual = {
             ("playlists", str(r.ContentID), str(r.PlaylistID))
@@ -625,9 +718,15 @@ def assign(path, plan):
             ("my_tags", str(r.ContentID), str(r.MyTagID))
             for r in db.query(tables.DjmdSongMyTag)
         }
-        if not expected <= actual:
+        names = {str(t.ID): t.Name for t in db.query(tables.DjmdMyTag)} | {
+            str(p.ID): p.Name for p in db.get_playlist()
+        }
+        made = {item["id"]: item["name"].strip() for item in create}
+        if not expected <= actual or any(
+            names.get(real) != made[given] for given, real in ids.items()
+        ):
             raise ValueError("rekordbox verification failed")
-    return added
+    return {**added, "created": ids}
 
 
 def relocate(path, moves):

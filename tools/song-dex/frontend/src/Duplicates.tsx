@@ -131,12 +131,11 @@ export function Duplicates({
           ? []
           : v.tracks.filter((id) => id !== v.keep),
     }));
-  /** The merges a group asks for; versions merge copies and mark the rest as okay. */
+  /** The merges a group asks for. Versions merge their copies and the group stays
+   * open, to compare what is left across versions. */
   const mergesFor = (g: DuplicateGroup): Merge[] =>
     versionsOf(g)
-      ? splitFor(g)
-          .filter((c) => c.remove.length)
-          .map((c) => ({ ...c, okay: true }))
+      ? splitFor(g).filter((c) => c.remove.length)
       : [choiceFor(g)].filter((c) => c.remove.length);
   const open = groups.filter((g) => !g.merged),
     merged = groups.filter((g) => g.merged),
@@ -552,6 +551,13 @@ export function Duplicates({
               </p>
             ))}
             {g.note && <p className="duplicate-note">{g.note}</p>}
+            {!g.merged && !found && g.awaiting_removal.length > 0 && (
+              <p className="duplicate-note">
+                Copies merged. Compare the versions that are left: mark the
+                group as okay to keep them apart, or tick entries to keep
+                merging.
+              </p>
+            )}
             {!g.merged && (
               <div className="button-row duplicate-actions">
                 {found ? (
@@ -562,7 +568,7 @@ export function Duplicates({
                     }
                   >
                     {ticked
-                      ? `Merge ${plural(ticked, "copy")}, keep the ${found.length} versions apart`
+                      ? `Merge ${plural(ticked, "copy")}, then compare the ${found.length} versions`
                       : "Tick copies to merge"}
                   </button>
                 ) : (
@@ -696,11 +702,22 @@ export function Duplicates({
                     setPending(null);
                     // A stale group stops here, before anything is written.
                     if (untouched.length && !(await dismiss(untouched))) return;
-                    await action(
+                    // Groups whose copies were merged by version.
+                    const byVersion = groups
+                      .filter(
+                        (g) =>
+                          versionsOf(g) &&
+                          merges.some((m) => groupOf.get(m.keep) === keyOf(g)),
+                      )
+                      .map(keyOf);
+                    const done = await action(
                       "duplicates/merge",
                       { merges },
                       "Merged. In rekordbox, open Song Dex / Duplicates to remove, remove those entries from the collection, then rescan.",
                     );
+                    // They go on in one choice across the versions that are left.
+                    if (done && byVersion.length)
+                      setAcross(new Set([...across, ...byVersion]));
                     setChoices({});
                     setSplit({});
                     setPicked(new Set());

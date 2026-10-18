@@ -1,16 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { GenreCount } from "./GenreInput";
 import { Dialog } from "./LibraryTools";
+import { ListPicker } from "./Lists";
+import type { ListChoices } from "./Lists";
+import { TrackDiff } from "./Review";
+import type { Proposal, ReviewTrack } from "./Review";
 
-type Entry = {
-  id: number;
-  source: string;
-  path: string;
-  available: number;
-  error: string | null;
-  metadata: Record<string, string | number>;
-  playlists: { name: string; id?: string }[];
-  my_tags: { id: string; name: string }[];
-};
+type Entry = ReviewTrack;
 type Lists = { tags: string[]; playlists: string[] };
 type Suggestion = { kind: "tag" | "playlist"; id: string; reasons: string[] };
 type Item = {
@@ -26,11 +22,7 @@ type Session = {
   id: string;
   state: string;
   position: number;
-  choices: {
-    tags: { id: string; name: string; category: string }[];
-    playlists: { id: string; name: string }[];
-    loaded: boolean;
-  };
+  choices: ListChoices;
   tracks: Item[];
 };
 type Picked = { tags: Set<string>; playlists: Set<string> };
@@ -48,6 +40,9 @@ export function Tagging({
   sessionId,
   tracks,
   proposals,
+  queued,
+  genres,
+  demo,
   capability,
   busy,
   send,
@@ -56,7 +51,10 @@ export function Tagging({
 }: {
   sessionId: string;
   tracks: Entry[];
-  proposals: { track_id: number; field: string; new_value: string }[];
+  proposals: Proposal[];
+  queued: number[];
+  genres: GenreCount[];
+  demo: boolean;
   capability: { enabled: boolean; reason: string };
   busy: boolean;
   send: (endpoint: string, body?: unknown) => Promise<any>;
@@ -70,7 +68,6 @@ export function Tagging({
   const [session, setSession] = useState<Session | null>(null),
     [index, setIndex] = useState(0),
     [picked, setPicked] = useState<Record<number, Picked>>({}),
-    [search, setSearch] = useState(""),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
     [summary, setSummary] = useState(false);
@@ -79,6 +76,7 @@ export function Tagging({
   const player = useRef<HTMLAudioElement>(null),
     searchRef = useRef<HTMLInputElement>(null);
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
+  const waiting = useMemo(() => new Set(queued), [queued]);
 
   const load = async (first = false) => {
     try {
@@ -153,6 +151,23 @@ export function Tagging({
     });
   };
 
+  /** Make a new My Tag or playlist; the session reloads so it can be picked. */
+  const createList = async (
+    kind: "tag" | "playlist" | "folder",
+    name: string,
+    parent: string,
+  ) => {
+    setError("");
+    try {
+      const made = await send("lists", { kind, name, parent });
+      await load();
+      return made.id as string;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not make it");
+      return null;
+    }
+  };
+
   /** Keep the current track's choices, then move to `to` (or the summary past the end). */
   const go = async (to: number) => {
     if (!session || saving) return false;
@@ -174,7 +189,6 @@ export function Tagging({
       // Choices for this track feed the suggestions for the ones after it.
       void load();
     }
-    setSearch("");
     if (to >= items.length) setSummary(true);
     else setIndex(Math.max(0, to));
     return true;
@@ -341,15 +355,6 @@ export function Tagging({
   const m = track?.metadata ?? {};
   const twins = item.duplicates.map((id) => byId.get(id)).filter(Boolean);
   const metadataWaiting = proposals.filter((p) => p.track_id === item.id);
-  const categories = [
-    ...new Set(choices.tags.map((t) => t.category || "My Tags")),
-  ];
-  const query = search.trim().toLocaleLowerCase();
-  const listed = choices.playlists.filter(
-    (p) =>
-      (!query || p.name.toLocaleLowerCase().includes(query)) &&
-      !held.playlists.has(p.id),
-  );
   const facts = [m.album, m.genre, m.year, m.bpm && `${m.bpm} BPM`, m.key]
     .filter(Boolean)
     .join(" · ");
@@ -393,9 +398,8 @@ export function Tagging({
               <span className="badge success">✓ Metadata & genre checked</span>
             )}
             {metadataWaiting.length > 0 && (
-              <span className="badge">
-                {plural(metadataWaiting.length, "metadata suggestion")} in Scan
-                & Review
+              <span className="badge warn">
+                {plural(metadataWaiting.length, "metadata suggestion")} below
               </span>
             )}
             {twins.length ? (
@@ -454,6 +458,19 @@ export function Tagging({
           Start past the intro
         </label>
       </div>
+      {metadataWaiting.length > 0 && track && (
+        <section className="tagging-section tagging-metadata">
+          <h4>Metadata</h4>
+          <TrackDiff
+            track={track}
+            proposals={metadataWaiting}
+            queued={waiting}
+            locked={busy || demo}
+            genres={genres}
+            act={action}
+          />
+        </section>
+      )}
       {twins.length > 0 && (
         <div className="callout">
           <strong>Possible duplicate</strong>
@@ -508,89 +525,16 @@ export function Tagging({
           </div>
         </section>
       )}
-      <section className="tagging-section">
-        <h4>My Tags</h4>
-        {categories.map((category) => (
-          <div key={category} className="tag-category">
-            <span>{category}</span>
-            <div className="tag-choices">
-              {choices.tags
-                .filter((t) => (t.category || "My Tags") === category)
-                .map((t) => {
-                  const has = held.tags.has(t.id);
-                  return (
-                    <button
-                      key={t.id}
-                      className="tag-choice"
-                      aria-pressed={has || mine.tags.has(t.id)}
-                      disabled={has}
-                      title={has ? "Already in rekordbox" : undefined}
-                      onClick={() => toggle("tags", t.id)}
-                    >
-                      {t.name}
-                    </button>
-                  );
-                })}
-            </div>
-          </div>
-        ))}
-      </section>
-      <section className="tagging-section">
-        <h4>Playlists</h4>
-        <div className="tag-choices">
-          {[...held.playlists].map((id) => (
-            <span key={id} className="badge success">
-              ✓ {playlistName.get(id) ?? "Playlist"}
-            </span>
-          ))}
-          {[...mine.playlists].map((id) => (
-            <button
-              key={id}
-              className="tag-choice"
-              aria-pressed
-              onClick={() => toggle("playlists", id)}
-              aria-label={`Remove from ${playlistName.get(id)}`}
-            >
-              {playlistName.get(id)} ×
-            </button>
-          ))}
-        </div>
-        <label className="playlist-search">
-          Find a playlist
-          <input
-            ref={searchRef}
-            value={search}
-            placeholder="Type to filter (F)"
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && listed.length) {
-                e.preventDefault();
-                toggle("playlists", listed[0].id, true);
-                setSearch("");
-              }
-            }}
-          />
-        </label>
-        <div className="playlist-choices">
-          {listed.map((p) => (
-            <label key={p.id}>
-              <input
-                type="checkbox"
-                checked={mine.playlists.has(p.id)}
-                onChange={() => toggle("playlists", p.id)}
-              />{" "}
-              {p.name}
-            </label>
-          ))}
-          {!listed.length && (
-            <p className="muted">No playlists match “{search}”.</p>
-          )}
-        </div>
-        <p className="fine">
-          Smart playlists and Song Dex’s own lists are not offered. Choices are
-          only added; remove tags and playlists in rekordbox.
-        </p>
-      </section>
+      <ListPicker
+        key={item.id}
+        genres={genres}
+        choices={choices}
+        held={held}
+        picked={mine}
+        onToggle={toggle}
+        onCreate={createList}
+        searchRef={searchRef}
+      />
       {error && (
         <p role="alert" className="error-text">
           {error}

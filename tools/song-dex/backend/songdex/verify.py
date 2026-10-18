@@ -113,6 +113,86 @@ def probe_playlists(dbpath, before, ids):
     }
 
 
+def probe_lists(dbpath, before, ids):
+    """Create a My Tag, and a playlist inside a new folder, on the copy, giving one entry both."""
+    xml = dbpath.parent / "masterPlaylists6.xml"
+    xml_before = xml.read_text(encoding="utf-8").splitlines()
+    category = next((r for r in before["djmdMyTag"] if r["Attribute"] == 1), None)
+    if category is None:
+        return {"list_creation": "skipped: the library has no My Tag category"}
+    create = [
+        {
+            "id": "tag",
+            "kind": "tag",
+            "name": "Song Dex probe tag",
+            "parent": str(category["ID"]),
+        },
+        {
+            "id": "folder",
+            "kind": "folder",
+            "name": "Song Dex probe folder",
+            "parent": "root",
+        },
+        {
+            "id": "list",
+            "kind": "playlist",
+            "name": "Song Dex probe list",
+            "parent": "folder",
+        },
+    ]
+    result = rekordbox.assign(
+        dbpath, {ids[0]: {"tags": ["tag"], "playlists": ["list"]}}, create
+    )
+    made = result["created"]
+    after = tables_snapshot(dbpath)
+    for name, count in (("djmdMyTag", 1), ("djmdPlaylist", 2)):
+        old_ids = {str(r["ID"]) for r in before[name]}
+        assert [r for r in after[name] if str(r["ID"]) in old_ids] == before[name], (
+            f"Existing {name} row changed"
+        )
+        added = [r for r in after[name] if str(r["ID"]) not in old_ids]
+        assert len(added) == count, f"Expected {count} new {name} rows"
+    lists = {str(r["ID"]): r for r in after["djmdPlaylist"]}
+    folder, playlist = lists[made["folder"]], lists[made["list"]]
+    assert (folder["Attribute"], folder["ParentID"]) == (1, "root"), (
+        "New folder is not a top-level folder"
+    )
+    assert (playlist["Attribute"], str(playlist["ParentID"])) == (
+        0,
+        made["folder"],
+    ), "New playlist is not inside the new folder"
+    tag = next(r for r in after["djmdMyTag"] if str(r["ID"]) == made["tag"])
+    siblings = [
+        r["Seq"] or 0 for r in before["djmdMyTag"] if r["ParentID"] == category["ID"]
+    ]
+    assert (tag["Attribute"], str(tag["ParentID"]), tag["Seq"]) == (
+        0,
+        str(category["ID"]),
+        max(siblings, default=0) + 1,
+    ), "New My Tag is not shaped like rekordbox's own"
+    for name in ("djmdSongMyTag", "djmdSongPlaylist"):
+        assert all(r in after[name] for r in before[name]), (
+            f"Existing {name} row changed"
+        )
+        assert len(after[name]) == len(before[name]) + 1, f"Expected one new {name} row"
+    for name, old_rows in before.items():
+        if name not in (
+            "djmdMyTag",
+            "djmdPlaylist",
+            "djmdSongMyTag",
+            "djmdSongPlaylist",
+            "agentRegistry",
+        ):
+            assert old_rows == after[name], f"{name} changed unexpectedly"
+    xml_after = xml.read_text(encoding="utf-8").splitlines()
+    assert all(line in xml_after for line in xml_before), "Playlist XML line changed"
+    assert len(xml_after) - len(xml_before) == 2, "Playlist XML registration mismatch"
+    return {
+        "list_creation": True,
+        "lists_update_count_consistent": update_count_consistent(after),
+    }
+
+
 def verify(source, output):
     source, output = source.resolve(), output.resolve()
     if output == source.parent or source.is_relative_to(output):
@@ -182,9 +262,17 @@ def verify(source, output):
         else:
             assert old_rows == new_rows, f"{name} changed unexpectedly"
     playlists = probe_playlists(dbpath, after, [r["source_id"] for r in rows[:4]])
+    # From the copy as it was, so only this probe's rows are new.
+    shutil.copy2(output / "original/master.db", dbpath)
+    shutil.copy2(output / "original/masterPlaylists6.xml", dbpath.parent)
+    lists = probe_lists(dbpath, before, [r["source_id"] for r in rows[:1]])
+    shutil.copy2(output / "original/masterPlaylists6.xml", dbpath.parent)
     if update_count_consistent(before):
         assert update_count_consistent(after), "Update counter out of step"
         assert playlists.pop("update_count_consistent"), "Update counter out of step"
+        assert lists.pop("lists_update_count_consistent", True), (
+            "Update counter out of step"
+        )
     # Restore the copied library and compare exact bytes, leaving the source untouched.
     shutil.copy2(output / "original/master.db", dbpath)
     assert audio.digest(dbpath) == original_hash
@@ -200,6 +288,7 @@ def verify(source, output):
         "source_unchanged": True,
         "protected_tables": len(before),
         **playlists,
+        **lists,
         "note": "SQL reopen and restore verified. Actual rekordbox UI restart and per-format readback still required before enabling live writes.",
     }
     (output / "report.json").write_text(json.dumps(report, indent=2))

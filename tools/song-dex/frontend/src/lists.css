@@ -1,0 +1,96 @@
+/* Picking and making My Tags and playlists. */
+button.tag-choice.new-choice {
+  border-style: dashed;
+  color: var(--accent);
+}
+button.tag-choice.is-new:not([aria-pressed="true"]) {
+  border-style: dashed;
+}
+.new-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.new-tag input {
+  min-height: 32px;
+  width: 160px;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+.new-playlist {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--accent);
+  background: #dfe8d3;
+  font-size: 14px;
+}
+.new-playlist select {
+  min-height: 28px;
+  font-size: 13px;
+}
+.new-mark {
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.library-lists {
+  margin-top: 16px;
+}
+.library-lists .callout {
+  margin: 12px 0 0;
+}
+.new-lists {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.new-lists li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  padding: 2px 0;
+}
+.new-tag .genre-picker {
+  width: 220px;
+}
+.new-tag .genre-picker input {
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+.new-playlist .folder-name {
+  min-height: 28px;
+  width: 180px;
+  font-size: 13px;
+  padding: 2px 8px;
+}
+.new-playlist-form {
+  display: grid;
+  gap: 12px;
+}
+.new-playlist-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+.new-playlist-form label.confirm-option {
+  display: flex;
+}
+.new-folder {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--accent);
+  background: #dfe8d3;
+}
+.edit-tabs {
+  margin: -4px 0 12px;
+}

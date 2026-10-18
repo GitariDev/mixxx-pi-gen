@@ -114,19 +114,23 @@ def library(service, tmp_path, monkeypatch):
         shutil.copy2(xml, destination / xml.name)
         return audio.digest(src)
 
-    def assign(path, plan):
-        plans.append(plan)
+    def assign(path, plan, create=()):
+        # New lists get rekordbox IDs "9000", "9001"…
+        made = {c["id"]: str(9000 + i) for i, c in enumerate(create)}
+        plans.append({**plan, **({"created": list(create)} if create else {})})
         rows = json.loads(path.read_text())
         for r in rows:
             wanted = plan.get(r["source_id"], {})
             r["my_tags"] += [
-                {"id": t, "name": t, "category": ""} for t in wanted.get("tags", [])
+                {"id": made.get(t, t), "name": t, "category": ""}
+                for t in wanted.get("tags", [])
             ]
             r["playlists"] += [
-                {"name": p, "id": p, "position": 9} for p in wanted.get("playlists", [])
+                {"name": p, "id": made.get(p, p), "position": 9}
+                for p in wanted.get("playlists", [])
             ]
         path.write_text(json.dumps(rows))
-        return {"my_tags": 1, "playlists": 1}
+        return {"my_tags": 1, "playlists": 1, "created": made}
 
     def relocate(path, moves):
         rows = json.loads(path.read_text())
@@ -285,3 +289,130 @@ def test_interrupted_checks_resume_where_they_stopped(
     service.lock.release()
     assert looked_up == [ids[1]]
     assert tagging.row(sid)["state"] == "ready"
+
+
+def with_places(service):
+    """The scanned choices, plus the categories and folders new ones can go in."""
+    service.store.set_setting(
+        "library_choices",
+        {
+            **CHOICES,
+            "categories": [{"id": "1", "name": "Genre"}],
+            "folders": [{"id": "500", "name": "Crates"}],
+        },
+    )
+
+
+def test_new_tags_and_playlists_are_made_with_the_choices_for_them(
+    service, library, audio_file, tmp_path
+):
+    music, write, plans = library
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    old = Path(shutil.move(audio_file(), downloads / "listed.flac"))
+    write([row("7", old)])
+    service.scan("listed", {})
+    with_places(service)
+    tagging = Tagging(service)
+    tag = tagging.create_list("tag", " Amapiano ", "1")
+    playlist = tagging.create_list("playlist", "Sunday", "500")
+    assert (tag["name"], playlist["name"]) == ("Amapiano", "Crates / Sunday")
+    # Asking again, in any case, gives the same one; existing ones are reused too.
+    assert tagging.create_list("tag", "amapiano", "1")["id"] == tag["id"]
+    assert tagging.create_list("playlist", "neo afro", "500") == {
+        "id": "100",
+        "name": "Crates / Neo Afro",
+        "existing": True,
+    }
+    with pytest.raises(ValueError, match="category"):
+        tagging.create_list("tag", "Gqom", "99")
+    choices = tagging.choices()
+    assert {"id": tag["id"], "name": "Amapiano", "category": "Genre", "new": True} in (
+        choices["tags"]
+    )
+    (tid,) = [t["id"] for t in service.store.tracks() if t["source_id"] == "7"]
+    tagging.assign_track(tid, [tag["id"]], [playlist["id"], "101"])
+    result = tagging.write()
+    assert result["message"] == (
+        "Created 1 My Tag, 1 playlist; Added 1 My Tags and 2 playlist places "
+        "to 1 tracks in rekordbox."
+    )
+    assert [c["name"] for c in plans[-1].pop("created")] == ["Amapiano", "Sunday"]
+    assert plans[-1] == {
+        "7": {"tags": [tag["id"]], "playlists": sorted([playlist["id"], "101"])}
+    }
+    # From now on they are known by their rekordbox IDs.
+    assert tagging.new_lists("pending") == []
+    assert {(a["kind"], a["target"]) for a in tagging.assignments("saved")} == {
+        ("tag", "9000"),
+        ("playlist", "9001"),
+        ("playlist", "101"),
+    }
+    after = tagging.choices()
+    assert {"id": "9000", "name": "Amapiano", "category": "Genre"} in after["tags"]
+    assert {"id": "9001", "name": "Crates / Sunday"} in after["playlists"]
+
+
+def test_a_new_list_on_its_own_is_made_and_can_be_dropped_first(service, library):
+    music, write, plans = library
+    with_places(service)
+    tagging = Tagging(service)
+    keep = tagging.create_list("playlist", "Warm-up B", "root")
+    drop = tagging.create_list("tag", "Typo", "1")
+    tagging.discard_list(drop["id"])
+    with pytest.raises(ValueError, match="already in rekordbox"):
+        tagging.discard_list(drop["id"])
+    result = tagging.write()
+    assert result["message"] == "Created 1 playlist in rekordbox."
+    assert plans[-1] == {
+        "created": [
+            {
+                "id": keep["id"],
+                "kind": "playlist",
+                "name": "Warm-up B",
+                "parent": "root",
+            }
+        ]
+    }
+
+
+def test_a_playlist_can_go_in_a_new_folder_made_with_it(service, library):
+    music, write, plans = library
+    with_places(service)
+    tagging = Tagging(service)
+    outer = tagging.create_list("folder", "Gigs", "500")
+    inner = tagging.create_list("folder", "2026", outer["id"])
+    playlist = tagging.create_list("playlist", "Opening", inner["id"])
+    assert (outer["name"], inner["name"], playlist["name"]) == (
+        "Crates / Gigs",
+        "Crates / Gigs / 2026",
+        "Crates / Gigs / 2026 / Opening",
+    )
+    assert {"id": inner["id"], "name": "Crates / Gigs / 2026", "new": True} in (
+        tagging.choices()["folders"]
+    )
+    # Asking for the folder again gives the same one.
+    assert tagging.create_list("folder", "gigs", "500")["id"] == outer["id"]
+    result = tagging.write()
+    assert result["message"] == ("Created 1 playlist, 2 playlist folders in rekordbox.")
+    # Made in order, so each parent exists before what goes in it.
+    assert [(c["kind"], c["parent"]) for c in plans[-1]["created"]] == [
+        ("folder", "500"),
+        ("folder", outer["id"]),
+        ("playlist", inner["id"]),
+    ]
+    assert {f["name"] for f in tagging.choices()["folders"]} >= {
+        "Crates / Gigs",
+        "Crates / Gigs / 2026",
+    }
+
+
+def test_dropping_a_new_folder_drops_what_is_in_it(service, library):
+    music, write, plans = library
+    with_places(service)
+    tagging = Tagging(service)
+    folder = tagging.create_list("folder", "Gigs", "root")
+    tagging.create_list("playlist", "Opening", folder["id"])
+    kept = tagging.create_list("playlist", "Elsewhere", "root")
+    tagging.discard_list(folder["id"])
+    assert [n["id"] for n in tagging.new_lists("pending")] == [kept["id"]]

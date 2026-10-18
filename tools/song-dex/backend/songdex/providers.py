@@ -256,11 +256,11 @@ class Providers:
         return evidence
 
     def find_genre(self, track):
-        """For a track still without one: Discogs' style for its release, else its artist's genre."""
-        if not self.needs_genre(track):
-            return
+        """Discogs' view of the track's release, then its artist's genre if it still has none."""
         try:
-            self.discogs_genre(track) or self.artist_genre(track)
+            found = self.discogs(track)
+            if not found and self.needs_genre(track):
+                self.artist_genre(track)
         except httpx.HTTPError:
             pass
 
@@ -410,9 +410,43 @@ class Providers:
                     "Label from candidate release",
                     release_source,
                 )
-        if cosmetic(m.get("genre", "")) in ("", "unknown genre", "other"):
-            self.suggest_genre(track, candidate, source)
+        credit = candidate.get("artist-credit") or [{}]
+        main = credit[0].get("name") or credit[0].get("artist", {}).get("name", "")
+        # What the recording is like is only as good as the artist match.
+        if main and loose(main) in loose(m.get("artist", "")):
+            detail = self.get(
+                f"https://musicbrainz.org/ws/2/recording/{candidate['id']}",
+                {"fmt": "json", "inc": "genres+tags+artist-credits"},
+            )
+            self.describe_recording(track, detail, main, source)
+            if cosmetic(m.get("genre", "")) in ("", "unknown genre", "other"):
+                self.suggest_genre(track, detail, main, source)
         return evidence
+
+    def describe_recording(self, track, detail, main, source):
+        """Keep the recording's community genres and tags, and its artist's genres."""
+
+        def names(items, least=1):
+            ranked = sorted(items or [], key=lambda g: -g.get("count", 0))
+            return [
+                genre_name(g["name"])
+                for g in ranked
+                if g.get("count", 0) >= least and g.get("name")
+            ][:6]
+
+        artists = detail.get("artist-credit") or [{}]
+        self.store.describe(
+            track["id"],
+            "musicbrainz",
+            {
+                "genres": names(detail.get("genres")),
+                # Tags are free text; ones only a single person gave are left out.
+                "tags": names(detail.get("tags"), 2),
+                "artist": main,
+                "artist_genres": names(artists[0].get("artist", {}).get("genres")),
+                "url": source,
+            },
+        )
 
     def library_genres(self):
         """The collection's own spelling for each genre, most used first."""
@@ -427,8 +461,8 @@ class Providers:
             self._genres_at = time.monotonic()
         return self._genres
 
-    def discogs_genre(self, track):
-        """Style or genre of a Discogs release carrying this artist and track, when a token is set.
+    def discogs_release(self, track):
+        """A Discogs release carrying this artist and track, when a token is set.
 
         Discogs' terms: responses are kept at most six hours, and every use of the
         data is shown with a "Data provided by Discogs" link to its page.
@@ -438,7 +472,7 @@ class Providers:
         artist = main_artist(m.get("artist", ""))
         title = re.sub(r"\([^)]*\)|\[[^]]*\]", " ", m.get("title", "")).strip()
         if not auth or not artist or not title:
-            return False
+            return None
         results = self.get(
             "https://api.discogs.com/database/search",
             {"type": "release", "artist": artist, "track": title, "per_page": 5},
@@ -449,22 +483,62 @@ class Providers:
             # Result titles read "Artist - Release".
             if loose(artist) not in loose(result.get("title", "").split(" - ")[0]):
                 continue
+            if result.get("uri") and (result.get("style") or result.get("genre")):
+                return result
+        return None
+
+    def discogs(self, track):
+        """Keep what the track's Discogs release says, and fill a blank genre, label or year from it."""
+        result = self.discogs_release(track)
+        if not result:
+            return False
+        m, page = track["metadata"], DISCOGS_PAGE + result["uri"]
+        release = result.get("title", "")
+        labels = [
+            name
+            for name in result.get("label") or []
+            if cosmetic(name) not in ("not on label", "")
+        ]
+        self.store.describe(
+            track["id"],
+            "discogs",
+            {
+                "styles": result.get("style") or [],
+                "genres": result.get("genre") or [],
+                "label": labels[0] if labels else "",
+                "year": str(result.get("year") or ""),
+                "country": result.get("country") or "",
+                "release": release,
+                "url": page,
+            },
+        )
+        if self.needs_genre(track):
             known = self.library_genres()
             names = [*(result.get("style") or []), *(result.get("genre") or [])]
             familiar = [n for n in names if cosmetic(n) in known]
-            if not names or not result.get("uri"):
-                continue
             name = (familiar or names)[0]
             self.store.propose(
                 track,
                 "genre",
                 known.get(cosmetic(name), name),
                 "review",
-                f"Style of the release “{result.get('title', '')}”; this track may differ",
-                DISCOGS_PAGE + result["uri"],
+                f"Style of the release “{release}”; this track may differ",
+                page,
             )
-            return True
-        return False
+        for field, value in (
+            ("label", labels[0] if labels else ""),
+            ("year", str(result.get("year") or "")),
+        ):
+            if value and value != "0" and not str(m.get(field, "")).strip():
+                self.store.propose(
+                    track,
+                    field,
+                    value,
+                    "review",
+                    f"From the release “{release}”; check the edition",
+                    page,
+                )
+        return True
 
     def artist_genre(self, track):
         """Fallback when no recording matched: the genre of an unambiguous artist."""
@@ -502,18 +576,8 @@ class Providers:
                 "https://musicbrainz.org/artist/" + same[0]["id"],
             )
 
-    def suggest_genre(self, track, candidate, source):
+    def suggest_genre(self, track, detail, main, source):
         """Fill an empty genre from the recording's community genre, else its main artist's."""
-        m = track["metadata"]
-        credit = candidate.get("artist-credit") or [{}]
-        main = credit[0].get("name") or credit[0].get("artist", {}).get("name", "")
-        # A genre borrowed from an artist is only as good as the artist match.
-        if not main or loose(main) not in loose(m.get("artist", "")):
-            return
-        detail = self.get(
-            f"https://musicbrainz.org/ws/2/recording/{candidate['id']}",
-            {"fmt": "json", "inc": "genres+artist-credits"},
-        )
         artists = detail.get("artist-credit") or [{}]
         for genres, reason in (
             (detail.get("genres"), "Community genre for this recording"),

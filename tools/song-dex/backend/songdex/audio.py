@@ -91,6 +91,28 @@ def digest(path):
     return h.hexdigest()
 
 
+def container(path):
+    """Where the audio starts and its real type, for files named for another.
+
+    Some downloads are MP4/AAC saved as .mp3, and rekordbox's key analysis can
+    put an ID3 tag in front of one; browsers then refuse it as MPEG audio.
+    Returns (offset, media type) for MP4 content, or (0, None) for anything else.
+    """
+    with open(path, "rb") as f:
+        head = f.read(10)
+        offset = 0
+        if len(head) == 10 and head[:3] == b"ID3":
+            size = 0
+            for byte in head[6:10]:
+                size = (size << 7) | (byte & 0x7F)
+            offset = 10 + size + (10 if head[5] & 0x10 else 0)
+        f.seek(offset)
+        box = f.read(8)
+    if box[4:8] == b"ftyp":
+        return offset, "audio/mp4"
+    return 0, None
+
+
 def open_audio(path):
     audio = mutagen.File(path)
     if audio is None:

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GenreCount } from "./GenreInput";
-import { Dialog } from "./LibraryTools";
+import { Dialog, ManualEditor } from "./LibraryTools";
+import type { EditableTrack, Status } from "./LibraryTools";
 import { ListPicker } from "./Lists";
 import type { ListChoices } from "./Lists";
 import { TrackDiff } from "./Review";
 import type { Proposal, ReviewTrack } from "./Review";
 
-type Entry = ReviewTrack;
+type Entry = ReviewTrack & EditableTrack;
 type Lists = { tags: string[]; playlists: string[] };
 type Suggestion = { kind: "tag" | "playlist"; id: string; reasons: string[] };
 type Item = {
@@ -45,6 +46,8 @@ export function Tagging({
   demo,
   capability,
   busy,
+  lookingUp,
+  manualEdits,
   send,
   action,
   onClose,
@@ -57,6 +60,9 @@ export function Tagging({
   demo: boolean;
   capability: { enabled: boolean; reason: string };
   busy: boolean;
+  /** A metadata lookup (scan) is running. */
+  lookingUp: boolean;
+  manualEdits: Status[];
   send: (endpoint: string, body?: unknown) => Promise<any>;
   action: (
     endpoint: string,
@@ -70,7 +76,8 @@ export function Tagging({
     [picked, setPicked] = useState<Record<number, Picked>>({}),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
-    [summary, setSummary] = useState(false);
+    [summary, setSummary] = useState(false),
+    [editing, setEditing] = useState(false);
   const [autoplay, setAutoplay] = useState(() => stored("songdex-autoplay")),
     [skipIntro, setSkipIntro] = useState(() => stored("songdex-skip-intro"));
   const player = useRef<HTMLAudioElement>(null),
@@ -109,6 +116,12 @@ export function Tagging({
   useEffect(() => {
     void load(true);
   }, [sessionId]);
+  // A lookup started here brings new My Tag and playlist suggestions when it ends.
+  const wasLookingUp = useRef(lookingUp);
+  useEffect(() => {
+    if (wasLookingUp.current && !lookingUp) void load();
+    wasLookingUp.current = lookingUp;
+  }, [lookingUp]);
 
   const items = session?.tracks ?? [];
   const item = items[index];
@@ -417,7 +430,7 @@ export function Tagging({
       </section>
       {track?.available ? (
         <audio
-          key={item.id}
+          key={`audio-${item.id}`}
           ref={player}
           controls
           preload="metadata"
@@ -458,17 +471,61 @@ export function Tagging({
           Start past the intro
         </label>
       </div>
-      {metadataWaiting.length > 0 && track && (
+      {track && (
         <section className="tagging-section tagging-metadata">
-          <h4>Metadata</h4>
-          <TrackDiff
-            track={track}
-            proposals={metadataWaiting}
-            queued={waiting}
-            locked={busy || demo}
-            genres={genres}
-            act={action}
-          />
+          <div className="tagging-heading">
+            <h4>Metadata</h4>
+            <div className="button-row">
+              <button
+                className="quiet"
+                disabled={busy || demo}
+                title="Look up metadata, genres, My Tags and playlists for this track again"
+                onClick={() =>
+                  void action(
+                    "lookup",
+                    { scope: "selected", ids: [track.id] },
+                    "Looking this track up again",
+                  )
+                }
+              >
+                {lookingUp ? "Looking up…" : "Look up again"}
+              </button>
+              <button
+                className="quiet"
+                aria-expanded={editing}
+                onClick={() => setEditing((v) => !v)}
+              >
+                {editing ? "Done editing" : "Edit metadata"}
+              </button>
+            </div>
+          </div>
+          {metadataWaiting.length > 0 && (
+            <TrackDiff
+              track={track}
+              proposals={metadataWaiting}
+              queued={waiting}
+              locked={busy || demo}
+              genres={genres}
+              act={action}
+            />
+          )}
+          {metadataWaiting.length === 0 && !editing && (
+            <p className="fine">
+              {lookingUp
+                ? "Looking up suggestions for this track…"
+                : "No metadata suggestions. Edit the fields yourself or look the track up again."}
+            </p>
+          )}
+          {editing && (
+            <ManualEditor
+              key={`editor-${track.id}`}
+              track={track}
+              busy={busy}
+              request={action}
+              genres={genres}
+              statuses={manualEdits.filter((e) => e.track_id === track.id)}
+            />
+          )}
         </section>
       )}
       {twins.length > 0 && (
@@ -526,7 +583,7 @@ export function Tagging({
         </section>
       )}
       <ListPicker
-        key={item.id}
+        key={`picker-${item.id}`}
         genres={genres}
         choices={choices}
         held={held}

@@ -293,6 +293,96 @@ small,
 .rail-toggle:hover:not(:disabled) {
   background: #343b40;
 }
+.nav-group {
+  position: relative;
+}
+.nav-group > .nav {
+  padding-right: 36px;
+}
+.nav-fold {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  min-height: 32px;
+  width: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: #bfc8c0;
+  font-size: 12px;
+}
+.nav-fold:hover:not(:disabled) {
+  background: #4a5a58;
+}
+.shelf {
+  margin: -3px 0 10px 18px;
+  padding: 4px 0 4px 6px;
+  border-left: 1px solid #4a5650;
+  max-height: 45vh;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.shelf ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.shelf-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.shelf-row button {
+  min-height: 26px;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: #bfc8c0;
+  font-size: 12px;
+  font-weight: 400;
+}
+.shelf-row button:hover:not(:disabled) {
+  background: #343b40;
+}
+.shelf-caret,
+.shelf-mark {
+  flex: none;
+  width: 18px;
+  padding: 0;
+  text-align: center;
+  color: #8f9b92;
+  font-size: 11px;
+}
+.shelf-name {
+  flex: 1;
+  min-width: 0;
+  justify-content: space-between;
+  padding: 2px 6px 2px 2px;
+  text-align: left;
+}
+.shelf-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shelf-name small {
+  flex: none;
+  font-size: 10px;
+  color: #8f9b92;
+  font-variant-numeric: tabular-nums;
+}
+.shelf-row.active .shelf-name {
+  color: var(--screen);
+  background: #394a49;
+  box-shadow: inset 2px 0 #a5c1ad;
+}
+.shelf-note {
+  margin: 4px 0;
+  padding-left: 4px;
+  color: #8f9b92;
+  font-size: 11px;
+}
 @media (min-width: 721px) {
   .workspace.rail-collapsed {
     grid-template-columns: 68px minmax(0, 1fr);
@@ -1638,6 +1728,49 @@ form label select {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+.backup-choice {
+  border: 0;
+  border-top: 1px solid #c5cabb;
+  margin: 12px 0 0;
+  padding: 8px 0 0;
+  min-width: 0;
+}
+.backup-choice legend {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 8px 0 0;
+}
+.backup-choice label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+.backup-choice label.disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.backup-choice input {
+  margin-top: 4px;
+}
+.backup-choice label > div {
+  flex: 1;
+  min-width: 0;
+}
+.backup-choice strong {
+  font-weight: 500;
+}
+.backup-choice label p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
 .history-node {
   width: 8px;
   height: 8px;
@@ -1851,8 +1984,13 @@ form label select {
   }
   .rail-caption,
   .rail-bottom,
-  .rail-toggle {
+  .rail-toggle,
+  .nav-fold,
+  .shelf {
     display: none;
+  }
+  .nav-group {
+    display: contents;
   }
   .nav {
     flex-direction: column;
@@ -2152,18 +2290,81 @@ form label select {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-.availability-strip {
-  margin: 0 24px 20px;
-  padding: 16px;
-  border: 2px solid var(--border);
-  background: var(--surface);
+.availability-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  margin: -6px 0 12px;
 }
-.availability-strip small {
-  flex-basis: 100%;
+.availability-toggle {
+  display: inline-flex;
+}
+.availability-toggle button,
+.availability-check {
+  min-height: 28px;
+  padding: 2px 10px;
+  font-size: 12px;
+  gap: 4px;
+  border-bottom-width: 1px;
+}
+.availability-toggle button + button {
+  margin-left: -1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.availability-toggle button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.availability-toggle button b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.availability-toggle button.on {
+  background: var(--accent);
+  border-color: #124e49;
+  color: var(--screen);
+  position: relative;
+}
+.availability-check {
+  margin-left: auto;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.shelf-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 2px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--surface);
+  font-size: 12px;
+}
+.shelf-banner > div {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.shelf-banner small {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.shelf-banner strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.shelf-banner .error-text {
+  margin: 0;
+}
+.shelf-banner button {
+  min-height: 28px;
+  padding: 0 8px;
+  border-bottom-width: 1px;
 }
 .offline-label {
   display: block;
@@ -2367,10 +2568,6 @@ form label select {
     padding: 16px;
     max-height: calc(100dvh - 16px);
   }
-  .availability-strip {
-    margin: 0 12px 16px;
-  }
-  .availability-strip .button-row,
   .library-actions {
     width: 100%;
     justify-content: flex-start;

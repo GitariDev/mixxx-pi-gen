@@ -63,7 +63,8 @@ dev` separately, then open <http://127.0.0.1:5178>.
    Tracks with no artist tag whose name reads "Artist - Title" get artist and
    title suggestions from that name. **Edit track** opens the full editor.
    Tagging the tracks of a new import shows the same metadata diff for each
-   track, so it can be settled there without a later scan.
+   track, with **Edit metadata** (the full editor) and **Look up again** (a scan
+   of that track alone), so it can be settled there without a later scan.
 4. Apply reviewed changes once the installation's compatibility checks are complete.
    File, rekordbox and Dex results are recorded separately in History.
 5. Review duplicate groups in **Duplicates**: merge every group without warnings
@@ -124,6 +125,16 @@ by Discogs".
 This application uses Discogs’ API but is not affiliated with, sponsored or
 endorsed by Discogs. ‘Discogs’ is a trademark of Zink Media, LLC.
 
+## Playlists in the library
+
+Under **Song Dex** in the menu are rekordbox's folders, playlists and smart
+playlists, as of the last scan. Pick one to see only its tracks, in playlist
+order for a normal playlist; a folder shows every track in its playlists, and
+**All tracks** goes back to the whole library. Its tracks can be opened, edited,
+tagged and scanned like any others. A smart playlist shows its rules and the
+tracks they matched in the scan's copy of the library; Song Dex does not change
+playlists, so edit them, and their rules, in rekordbox and rescan.
+
 ## Manual editing, offline music and new imports
 
 Open a track's **Metadata** tab, edit one or more fields, then **Save metadata**.
@@ -134,9 +145,11 @@ rekordbox status. Direct database changes remain queued while the compatibility
 gate is closed; a Dex save is never presented as a successful rekordbox update.
 WAV and other unsupported formats still accept Dex corrections.
 
-**Offline files** and **Available files** filter the catalog independently of
-metadata conflicts. **Check availability** refreshes saved paths without opening
-rekordbox's database or calling providers. Offline files retain their known metadata
+**Online** and **Offline** above the track list show only the files that are, or
+are not, at their saved location; click the lit one again to show every file.
+They combine with the other filters and count within the open playlist.
+**↻ Check** refreshes saved paths without opening rekordbox's database or
+calling providers. Offline files retain their known metadata
 and playlist membership. After reconnecting a drive, check availability, review any
 external changes and click **Sync saved edits** in the track's Metadata tab.
 External conflicting values require an explicit new save; rescans retain your
@@ -276,6 +289,18 @@ write, at the end of each job and at startup). Backups of offline files are kept
 against free disk space, and deletes the ones you select; a backup needed to
 recover an unfinished write cannot be deleted. A write is refused when the disk
 has no room for its backup.
+
+**Back up to external drive** (in History → Backups) copies the library to a
+connected drive. Choose the drive and what to copy: the **rekordbox database**
+(master.db and the playlist file), the **rekordbox folder** (adds waveforms, beat
+grids, artwork and rekordbox's own backups) or the **whole library** (adds every
+music file in the collection), optionally with the Song Dex catalog. Quit
+rekordbox first. Each backup is a dated folder under `Song Dex Backups` on the
+drive with a `README.txt` on restoring and a `backup.json` listing every track's
+original path. Music is mirrored once per drive under `Song Dex Backups/Music` by
+full path, so later backups copy only new or changed files; offline files and
+files already on that drive are skipped. Nothing on the drive is deleted, and a
+backup is refused when the drive has no room for it.
 
 Applying stages and verifies the changes before replacing originals. A durable
 journal handles the fact that audio files, rekordbox and the Dex are separate

@@ -89,6 +89,12 @@ class Service:
                         message=f"{left} tracks still have an edit waiting; open one to see why",
                     )
                     return
+            elif job["kind"] == "external_backup":
+                from .external import ExternalBackup
+
+                state, message = ExternalBackup(self).run(job_id, payload)
+                self.progress(job_id, state=state, message=message)
+                return
             elif job["kind"] == "availability":
                 tracks = [t for t in self.store.tracks() if t["source"] != "demo"]
                 self.progress(job_id, total=len(tracks))
@@ -217,6 +223,14 @@ class Service:
             self.store.set_setting(
                 "library_choices",
                 rekordbox.read_choices(destination / "master.db", FOLDER),
+            )
+        except Exception:
+            pass
+        try:
+            # The playlist tree the library view browses.
+            self.store.set_setting(
+                "library_playlists",
+                rekordbox.read_playlists(destination / "master.db"),
             )
         except Exception:
             pass

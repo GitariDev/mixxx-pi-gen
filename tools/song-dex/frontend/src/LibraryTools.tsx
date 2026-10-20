@@ -7,12 +7,21 @@ type Request = (
   body?: unknown,
   success?: string,
 ) => Promise<any>;
-type Status = {
+export type Status = {
   track_id: number;
   field: string;
   value: string;
   file_status: string;
   library_status: string;
+};
+export type EditableTrack = {
+  id: number;
+  metadata: Record<string, string | number>;
+  file_metadata: Record<string, string | number>;
+  observed_metadata: Record<string, string | number>;
+  revision: string;
+  available: number;
+  source: string;
 };
 const fields = [
   "title",
@@ -34,15 +43,7 @@ export function ManualEditor({
   genres,
 }: {
   genres: GenreCount[];
-  track: {
-    id: number;
-    metadata: Record<string, string | number>;
-    file_metadata: Record<string, string | number>;
-    observed_metadata: Record<string, string | number>;
-    revision: string;
-    available: number;
-    source: string;
-  };
+  track: EditableTrack;
   statuses: Status[];
   busy: boolean;
   request: Request;
@@ -292,9 +293,7 @@ export function FileBrowser({
     [path, setPath] = useState(initialPath),
     [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [entryView, setEntryView] = useState<"files" | "folders">(
-    onFolder ? "folders" : "files",
-  );
+  const [entryView, setEntryView] = useState<"files" | "folders">("folders");
   const [entrySearch, setEntrySearch] = useState("");
   const open = async (p: string) => {
     setLoading(true);
@@ -304,9 +303,10 @@ export function FileBrowser({
       setListing(result);
       setPath(result.path);
       setEntrySearch("");
+      // Folders first; a folder with only audio files opens on its files.
       setEntryView(
         onFolder ||
-          !result.entries.some((e: Listing["entries"][number]) => !e.folder)
+          result.entries.some((e: Listing["entries"][number]) => e.folder)
           ? "folders"
           : "files",
       );
@@ -375,6 +375,16 @@ export function FileBrowser({
         >
           <button
             type="button"
+            aria-pressed={entryView === "folders"}
+            onClick={() => {
+              setEntryView("folders");
+              setEntrySearch("");
+            }}
+          >
+            Folders ({listing?.entries.filter((e) => e.folder).length ?? 0})
+          </button>
+          <button
+            type="button"
             aria-pressed={entryView === "files"}
             onClick={() => {
               setEntryView("files");
@@ -383,16 +393,6 @@ export function FileBrowser({
           >
             Audio files ({listing?.entries.filter((e) => !e.folder).length ?? 0}
             )
-          </button>
-          <button
-            type="button"
-            aria-pressed={entryView === "folders"}
-            onClick={() => {
-              setEntryView("folders");
-              setEntrySearch("");
-            }}
-          >
-            Folders ({listing?.entries.filter((e) => e.folder).length ?? 0})
           </button>
         </div>
       )}
@@ -482,7 +482,7 @@ export function FileBrowser({
       </div>
       {!onFolder && (
         <p className="fine">
-          Switch between Audio files and Folders to select both in one import.
+          Switch between Folders and Audio files to select both in one import.
           Selections stay checked across views. Folder imports include
           subfolders. Symbolic links and hidden files are excluded.
         </p>

@@ -241,6 +241,203 @@ def read_collection(path):
         ]
 
 
+# Smart playlist property → how to read it from a DjmdContent row.
+SMART_TEXT = {
+    "artist": "ArtistName",
+    "album": "AlbumName",
+    "albumArtist": "AlbumArtistName",
+    "originalArtist": "OrgArtistName",
+    "producer": "ComposerName",
+    "comments": "Commnt",
+    "fileName": "FileNameL",
+    "genre": "GenreName",
+    "key": "KeyName",
+    "label": "LabelName",
+    "mixName": "Subtitle",
+    "remixedBy": "RemixerName",
+    "name": "Title",
+    "grouping": "ColorID",
+}
+SMART_NUMBER = {
+    "bpm": lambda c: (c.BPM or 0) / 100,
+    "counter": lambda c: c.DJPlayCount or 0,
+    "rating": lambda c: c.Rating or 0,
+    "duration": lambda c: c.Length or 0,
+    "year": lambda c: c.ReleaseYear or 0,
+}
+SMART_DATE = {
+    "stockDate": lambda c: str(c.StockDate or "")[:10],
+    "dateCreated": lambda c: str(c.created_at or "")[:10],
+    "dateReleased": lambda c: str(c.ReleaseDate or "")[:10],
+}
+SMART_LABELS = {
+    "albumArtist": "Album artist",
+    "originalArtist": "Original artist",
+    "fileName": "File name",
+    "mixName": "Mix name",
+    "remixedBy": "Remixer",
+    "name": "Title",
+    "grouping": "Colour",
+    "counter": "Play count",
+    "stockDate": "Date added",
+    "dateCreated": "Date created",
+    "dateReleased": "Release date",
+    "myTag": "My Tag",
+    "bpm": "BPM",
+}
+SMART_OPERATORS = {
+    1: "is",
+    2: "is not",
+    3: "is greater than",
+    4: "is less than",
+    5: "is between",
+    6: "is in the last",
+    7: "is not in the last",
+    8: "contains",
+    9: "does not contain",
+    10: "starts with",
+    11: "ends with",
+}
+
+
+def smart_matcher(rule, today=None):
+    """A test of one smart playlist rule against (content row, its My Tag IDs)."""
+    from datetime import date
+
+    from dateutil.relativedelta import relativedelta
+
+    prop, op = rule["property"], int(rule["operator"])
+    left, right = rule["left"], rule.get("right", "")
+    if prop == "myTag":
+        if op not in (8, 9):
+            raise ValueError(f"Unsupported My Tag rule {op}")
+        return lambda c, tags: (left in tags) == (op == 8)
+    if prop in SMART_TEXT:
+        column = SMART_TEXT[prop]
+        want = str(left).casefold()
+        tests = {
+            1: lambda v: v == want,
+            2: lambda v: v != want,
+            8: lambda v: want in v,
+            9: lambda v: want not in v,
+            10: lambda v: v.startswith(want),
+            11: lambda v: v.endswith(want),
+        }
+        test = tests[op]
+        return lambda c, tags: test(str(getattr(c, column) or "").casefold())
+    if prop in SMART_NUMBER:
+        read, low = SMART_NUMBER[prop], float(left)
+        high = float(right) if right != "" else low
+        # rekordbox shows BPM to two places; "is 120" takes 120.00 to 120.99.
+        exact = (
+            (lambda v: int(v) == low)
+            if prop == "bpm" and low.is_integer()
+            else (lambda v: v == low)
+        )
+        tests = {
+            1: exact,
+            2: lambda v: not exact(v),
+            3: lambda v: v > low,
+            4: lambda v: v < low,
+            5: lambda v: low <= v <= high,
+        }
+        test = tests[op]
+        return lambda c, tags: test(read(c))
+    if prop in SMART_DATE:
+        read, today = SMART_DATE[prop], today or date.today()
+        if op in (6, 7):
+            units = {
+                "day": "days",
+                "week": "weeks",
+                "month": "months",
+                "year": "years",
+            }
+            since = str(
+                today - relativedelta(**{units[rule.get("unit") or "day"]: int(left)})
+            )
+            return lambda c, tags: bool(read(c)) and ((read(c) >= since) == (op == 6))
+        tests = {
+            1: lambda v: v == left,
+            2: lambda v: v != left,
+            3: lambda v: v > left,
+            4: lambda v: v < left,
+            5: lambda v: left <= v <= (right or left),
+        }
+        test = tests[op]
+        return lambda c, tags: bool(read(c)) and test(read(c))
+    raise ValueError(f"Unsupported smart playlist property {prop}")
+
+
+def describe_rule(rule, tag_names):
+    prop = rule["property"]
+    name = SMART_LABELS.get(prop, prop[:1].upper() + prop[1:])
+    value = (
+        tag_names.get(rule["left"], "a removed My Tag")
+        if prop == "myTag"
+        else rule["left"]
+    )
+    op = int(rule["operator"])
+    if op == 5:
+        value = f"{value} and {rule.get('right', '')}"
+    elif op in (6, 7):
+        value = f"{value} {rule.get('unit') or 'day'}s"
+    elif value == "":
+        value = "blank"
+    return f"{name} {SMART_OPERATORS.get(op, '?')} {value}"
+
+
+def read_playlists(path):
+    """rekordbox's playlist tree: folders, playlists and smart playlists, each with
+    its parent and place. Smart playlists also carry their rules, in words, and the
+    content IDs those rules match in this copy of the library.
+    """
+    from pyrekordbox.db6 import tables
+
+    with database(path) as db:
+        tags = {}
+        for link in db.query(tables.DjmdSongMyTag):
+            tags.setdefault(str(link.ContentID), set()).add(str(link.MyTagID))
+        tag_names = {
+            str(t.ID): t.Name or "Unnamed tag" for t in db.query(tables.DjmdMyTag)
+        }
+        contents = None
+        nodes = []
+        for p in db.get_playlist():
+            kind = {0: "playlist", 1: "folder", 4: "smart"}.get(p.Attribute)
+            if kind is None:
+                continue
+            node = {
+                "id": str(p.ID),
+                "name": p.Name or "Untitled",
+                "parent": str(p.ParentID or "root"),
+                "kind": kind,
+                "seq": int(p.Seq or 0),
+            }
+            if kind == "smart":
+                try:
+                    parsed = read_smart_list(p.SmartList or "")
+                    tests = [smart_matcher(r) for r in parsed["rules"]]
+                    combine = all if parsed["match"] == "all" else any
+                    if contents is None:
+                        contents = list(db.get_content())
+                    node["rules"] = [
+                        describe_rule(r, tag_names) for r in parsed["rules"]
+                    ]
+                    node["match"] = parsed["match"]
+                    node["tracks"] = [
+                        str(c.ID)
+                        for c in contents
+                        if tests
+                        and combine(t(c, tags.get(str(c.ID), ())) for t in tests)
+                    ]
+                except Exception as exc:
+                    node["tracks"] = []
+                    node["error"] = f"Song Dex cannot read these rules: {exc}"
+            nodes.append(node)
+        nodes.sort(key=lambda n: (n["parent"], n["seq"], n["name"].casefold()))
+        return {"nodes": nodes}
+
+
 def set_metadata(db, content, changes):
     from pyrekordbox.db6 import tables
 

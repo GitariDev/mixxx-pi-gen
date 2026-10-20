@@ -349,9 +349,9 @@ class Tagging:
             ],
         }
 
-    def library_choices(self):
-        """My Tags and playlists from the last scan, read from its snapshot if need be."""
-        saved = self.store.setting("library_choices")
+    def from_scan(self, key, read):
+        """A setting the last scan keeps, read from its snapshot if need be."""
+        saved = self.store.setting(key)
         if saved is not None:
             return {**saved, "loaded": True}
         with self.store.connect() as db:
@@ -365,12 +365,42 @@ class Tagging:
             and audio.digest(copy) == self.store.setting("library_hash")
         ):
             try:
-                saved = rekordbox.read_choices(copy, FOLDER)
-                self.store.set_setting("library_choices", saved)
+                saved = read(copy)
+                self.store.set_setting(key, saved)
                 return {**saved, "loaded": True}
             except Exception:
                 pass
-        return {"tags": [], "playlists": [], "loaded": False}
+        return None
+
+    def library_choices(self):
+        """My Tags and playlists from the last scan, read from its snapshot if need be."""
+        return self.from_scan(
+            "library_choices", lambda copy: rekordbox.read_choices(copy, FOLDER)
+        ) or {"tags": [], "playlists": [], "loaded": False}
+
+    def library_playlists(self):
+        """rekordbox's folders, playlists and smart playlists as of the last scan,
+        with each smart playlist's tracks given by their Dex IDs."""
+        found = self.from_scan("library_playlists", rekordbox.read_playlists)
+        if found is None:
+            return {"nodes": [], "loaded": False}
+        with self.store.connect() as db:
+            dex = {
+                r["source_id"]: r["id"]
+                for r in db.execute(
+                    "SELECT id,source_id FROM tracks WHERE source=? AND state!='removed'",
+                    (self.store.setting("last_scan_source"),),
+                )
+            }
+        return {
+            "loaded": True,
+            "nodes": [
+                {**n, "tracks": [dex[c] for c in n["tracks"] if c in dex]}
+                if "tracks" in n
+                else n
+                for n in found["nodes"]
+            ],
+        }
 
     def assignments(self, status=None):
         with self.store.connect() as db:

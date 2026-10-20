@@ -101,3 +101,26 @@ def test_audio_is_served_with_a_standard_type(tmp_path, audio_file):
         response = client.get("/api/tracks/1/audio", headers={"range": "bytes=0-"})
         assert response.status_code == 206
         assert response.headers["content-type"] == kind
+
+
+def test_mp4_named_mp3_is_served_past_a_leading_id3_tag(tmp_path, audio_file):
+    # rekordbox's key analysis puts an ID3 tag in front of AAC files named .mp3.
+    app = create_app(tmp_path / "dex")
+    client = TestClient(app)
+    headers = {"x-songdex-token": client.get("/api/state").json()["token"]}
+    client.post("/api/demo", headers=headers)
+    body = audio_file("m4a").read_bytes()
+    tag = b"ID3\x04\x00\x00\x00\x00\x00\x14" + bytes(20)
+    for name, data in [("plain.mp3", body), ("tagged.mp3", tag + body)]:
+        path = tmp_path / name
+        path.write_bytes(data)
+        with app.state.store.connect() as db:
+            db.execute("UPDATE tracks SET path=?,available=1 WHERE id=1", (str(path),))
+        whole = client.get("/api/tracks/1/audio")
+        assert whole.headers["content-type"] == "audio/mp4"
+        assert whole.content == body
+        part = client.get("/api/tracks/1/audio", headers={"range": "bytes=4-11"})
+        assert part.status_code == 206 and part.content == body[4:12]
+        assert part.headers["content-range"] == f"bytes 4-11/{len(body)}"
+        tail = client.get("/api/tracks/1/audio", headers={"range": "bytes=-4"})
+        assert tail.content == body[-4:]

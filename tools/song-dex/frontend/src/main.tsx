@@ -14,6 +14,9 @@ import { Duplicates } from "./Duplicates";
 import { GenreInput } from "./GenreInput";
 import { NewPlaylist, TrackLists } from "./Lists";
 import type { ListChoices } from "./Lists";
+import { ShelfTree } from "./Playlists";
+import { shelfMembers, shelfPath } from "./shelf";
+import type { Shelf } from "./shelf";
 import { Review } from "./Review";
 import { AddToLists, SelectionBar } from "./Selection";
 import type { ScanRun, Suggested } from "./Review";
@@ -127,6 +130,7 @@ type State = {
   }[];
   operations: Operation[];
   edits_waiting: number;
+  restart_needed?: boolean;
   duplicates: DuplicateGroup[];
   duplicates_dismissed: number;
   capability: { enabled: boolean; version: string; reason: string };
@@ -194,6 +198,7 @@ const jobNames: Record<string, string> = {
   approve: "Approving suggestions",
   sync_edits: "Syncing saved edits",
   tag_check: "Checking imported tracks",
+  external_backup: "Backing up to external drive",
 };
 const jobName = (kind: string) => jobNames[kind] ?? "Finding metadata";
 const date = (s: string | null) =>
@@ -334,6 +339,10 @@ function App() {
     [selected, setSelected] = useState<number | null>(null);
   const [search, setSearch] = useState(""),
     [filter, setFilter] = useState("all"),
+    [online, setOnline] = useState<"online" | "offline" | null>(null),
+    // The rekordbox folder, playlist or smart playlist the library shows.
+    [shelfId, setShelfId] = useState<string | null>(null),
+    [shelf, setShelf] = useState<Shelf>({ nodes: [], loaded: false }),
     [sort, setSort] = useState("dex"),
     [limit, setLimit] = useState(100),
     [tab, setTab] = useState("Overview"),
@@ -373,10 +382,13 @@ function App() {
   const [railCollapsed, setRailCollapsed] = useState(
     () => localStorage.getItem("songdex-rail") === "1",
   );
+  const [shelfHidden, setShelfHidden] = useState(
+    () => localStorage.getItem("songdex-shelf-hidden") === "1",
+  );
   const modalRef = useRef<HTMLElement>(null);
   useEffect(
     () => setLimit(100),
-    [search, filter, sort, musicFilters, direction],
+    [search, filter, online, shelfId, sort, musicFilters, direction],
   );
   useEffect(() => {
     if (!confirm) return;
@@ -450,6 +462,20 @@ function App() {
       (prev) => new Set([...prev, ...fresh].filter((id) => live.has(id))),
     );
   };
+  // The playlist tree changes only with a scan.
+  useEffect(() => {
+    if (!data) return;
+    fetch("/api/playlists")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((tree: Shelf | null) => {
+        if (!tree) return;
+        setShelf(tree);
+        setShelfId((id) => (tree.nodes.some((n) => n.id === id) ? id : null));
+      })
+      .catch(() => {
+        // The state refresh reports a service that stopped answering.
+      });
+  }, [data?.last_scan, data?.settings.demo, data === null]);
   useEffect(() => {
     reload().catch((e) => setError(e.message));
     // A failed refresh leaves a stale screen, so say so until one succeeds again.
@@ -585,7 +611,37 @@ function App() {
     },
     {},
   );
+  const shelfOrder = useMemo(
+    () => (shelfId ? shelfMembers(shelfId, shelf.nodes, tracks) : null),
+    [shelfId, shelf.nodes, tracks],
+  );
+  const shelfNode = shelf.nodes.find((n) => n.id === shelfId);
+  const showShelf = (id: string | null) => {
+    const node = shelf.nodes.find((n) => n.id === id);
+    setShelfId(id);
+    // A playlist opens in its own order; leaving one goes back to Dex order.
+    if (node?.kind === "playlist") setSort("playlist");
+    changePage("Song Dex");
+  };
+  // Playlist order only means something while a playlist is shown.
+  useEffect(() => {
+    if (sort === "playlist" && shelfNode?.kind !== "playlist") setSort("dex");
+  }, [sort, shelfNode?.kind]);
+  const isOffline = (t: Track) =>
+      !t.available && t.source !== "demo" && t.state !== "removed",
+    isOnline = (t: Track) => !!t.available && t.state !== "removed";
+  // Online and offline counts for what the playlist (or the library) holds.
+  const shelved = shelfOrder
+      ? tracks.filter((t) => shelfOrder.has(t.id))
+      : tracks,
+    onlineCount = shelved.filter(isOnline).length,
+    offlineCount = shelved.filter(isOffline).length;
   const visible = tracks
+    .filter(
+      (t) =>
+        (!shelfOrder || shelfOrder.has(t.id)) &&
+        (online === null || (online === "online" ? isOnline(t) : isOffline(t))),
+    )
     .filter(
       (t) =>
         `${t.metadata.title} ${t.metadata.artist} ${t.metadata.album} ${t.metadata.genre}`
@@ -609,7 +665,12 @@ function App() {
                   : t.state === filter)),
     )
     .filter((t) => matchesFilters(t, musicFilters))
-    .sort((a, b) => compareTracks(a, b, sort, direction));
+    .sort((a, b) =>
+      sort === "playlist" && shelfOrder
+        ? ((shelfOrder.get(a.id) ?? 0) - (shelfOrder.get(b.id) ?? 0)) *
+          (direction === "asc" ? 1 : -1)
+        : compareTracks(a, b, sort === "playlist" ? "dex" : sort, direction),
+    );
   const markedTracks = tracks.filter(
       (t) => marked.has(t.id) && t.state !== "removed",
     ),
@@ -638,7 +699,7 @@ function App() {
       setSelected((current) =>
         visible.some((t) => t.id === current) ? current : visible[0].id,
       );
-  }, [musicFilters, search, filter]);
+  }, [musicFilters, search, filter, online, shelfId]);
   const libraryGenres = useMemo(() => {
     const counts = new Map<string, number>();
     for (const t of tracks) {
@@ -870,6 +931,8 @@ function App() {
                       });
                       setSearch("");
                       setFilter("all");
+                      setOnline(null);
+                      setShelfId(null);
                       setDetailOpen(false);
                       setEditingTrack(null);
                       setPage("Song Dex");
@@ -974,30 +1037,65 @@ function App() {
             {railCollapsed ? "»" : "«"}
           </button>
           <div className="rail-caption">COLLECTION SYSTEM</div>
-          {pages.map((p, i) => (
-            <button
-              key={p}
-              className={page === p ? "nav active" : "nav"}
-              onClick={() => changePage(p)}
-              aria-current={page === p ? "page" : undefined}
-              title={railCollapsed ? p : undefined}
-            >
-              <Glyph
-                kind={["disc", "scan", "duplicates", "history", "settings"][i]}
-              />
-              <span>{p}</span>
-              {p === "Scan & Review" && proposals.length > 0 && (
-                <b aria-label={`${proposals.length} fields to review`}>
-                  {proposals.length}
-                </b>
-              )}
-              {p === "Duplicates" && openDuplicates > 0 && (
-                <b aria-label={`${openDuplicates} duplicate groups`}>
-                  {openDuplicates}
-                </b>
-              )}
-            </button>
-          ))}
+          {pages.map((p, i) => {
+            const button = (
+              <button
+                key={p}
+                className={page === p ? "nav active" : "nav"}
+                onClick={() => changePage(p)}
+                aria-current={page === p ? "page" : undefined}
+                title={railCollapsed ? p : undefined}
+              >
+                <Glyph
+                  kind={
+                    ["disc", "scan", "duplicates", "history", "settings"][i]
+                  }
+                />
+                <span>{p}</span>
+                {p === "Scan & Review" && proposals.length > 0 && (
+                  <b aria-label={`${proposals.length} fields to review`}>
+                    {proposals.length}
+                  </b>
+                )}
+                {p === "Duplicates" && openDuplicates > 0 && (
+                  <b aria-label={`${openDuplicates} duplicate groups`}>
+                    {openDuplicates}
+                  </b>
+                )}
+              </button>
+            );
+            if (p !== "Song Dex" || railCollapsed || !tracks.length)
+              return button;
+            return (
+              <div key={p} className="nav-group">
+                {button}
+                <button
+                  className="nav-fold"
+                  aria-expanded={!shelfHidden}
+                  aria-controls="shelf"
+                  aria-label={shelfHidden ? "Show playlists" : "Hide playlists"}
+                  title={shelfHidden ? "Show playlists" : "Hide playlists"}
+                  onClick={() => {
+                    localStorage.setItem(
+                      "songdex-shelf-hidden",
+                      shelfHidden ? "" : "1",
+                    );
+                    setShelfHidden(!shelfHidden);
+                  }}
+                >
+                  {shelfHidden ? "▸" : "▾"}
+                </button>
+                {!shelfHidden && (
+                  <ShelfTree
+                    shelf={shelf}
+                    tracks={tracks}
+                    selected={page === "Song Dex" ? shelfId : undefined}
+                    onSelect={showShelf}
+                  />
+                )}
+              </div>
+            );
+          })}
           <div className="rail-bottom">
             <div className="mini-disc">
               <Glyph />
@@ -1042,6 +1140,16 @@ function App() {
             <div className="message error" role="alert">
               <strong>Not updating</strong>
               <span>{stale}</span>
+            </div>
+          )}
+          {data?.restart_needed && (
+            <div className="message error" role="alert">
+              <strong>Restart Song Dex</strong>
+              <span>
+                Its code changed after it started, so some actions on this page
+                can fail. Stop it in its terminal (Ctrl+C) and run
+                .venv/bin/song-dex again.
+              </span>
             </div>
           )}
           {(unresolved > 0 || stopped.length > 0) && (
@@ -1207,41 +1315,6 @@ function App() {
                   </div>
                 )}
               </div>
-              {page === "Song Dex" && tracks.length > 0 && (
-                <div className="availability-strip">
-                  <span>
-                    <strong>
-                      {tracks
-                        .filter((t) => !!t.available)
-                        .length.toLocaleString()}
-                    </strong>{" "}
-                    files available ·{" "}
-                    <strong>{unavailable.length.toLocaleString()}</strong>{" "}
-                    offline
-                  </span>
-                  <div className="button-row">
-                    <button onClick={() => setFilter("unavailable")}>
-                      Show offline tracks
-                    </button>
-                    <button
-                      disabled={busy || !!active}
-                      onClick={() =>
-                        action(
-                          "availability",
-                          undefined,
-                          "Checking saved file locations",
-                        )
-                      }
-                    >
-                      Check availability
-                    </button>
-                  </div>
-                  <small>
-                    Offline tracks stay editable. The Dex remembers their
-                    metadata and playlists.
-                  </small>
-                </div>
-              )}
               {page === "Song Dex" &&
                 (tracks.length === 0 ? (
                   <div className="onboarding">
@@ -1322,14 +1395,101 @@ function App() {
                           >
                             <option value="all">All tracks</option>
                             <option value="review">Needs review</option>
-                            <option value="unavailable">Offline files</option>
-                            <option value="available">Available files</option>
                             <option value="pending_sync">
                               Saved edits awaiting sync
                             </option>
                             <option value="conflict">Conflicts</option>
                           </select>
                         </div>
+                        <div className="availability-row">
+                          <div
+                            className="availability-toggle"
+                            role="group"
+                            aria-label="Show online or offline files"
+                          >
+                            {(
+                              [
+                                ["online", "●", "Online", onlineCount],
+                                ["offline", "○", "Offline", offlineCount],
+                              ] as const
+                            ).map(([value, mark, name, count]) => (
+                              <button
+                                key={value}
+                                className={online === value ? "on" : ""}
+                                aria-pressed={online === value}
+                                title={
+                                  online === value
+                                    ? "Show every file again"
+                                    : `Show only ${name.toLowerCase()} files`
+                                }
+                                onClick={() =>
+                                  setOnline(online === value ? null : value)
+                                }
+                              >
+                                <span aria-hidden="true">{mark}</span> {name}{" "}
+                                <b>{count.toLocaleString()}</b>
+                              </button>
+                            ))}
+                          </div>
+                          <button
+                            className="availability-check"
+                            disabled={busy || !!active}
+                            title="Check availability: look for each file at its saved location again"
+                            onClick={() =>
+                              action(
+                                "availability",
+                                undefined,
+                                "Checking saved file locations",
+                              )
+                            }
+                          >
+                            ↻ Check
+                          </button>
+                        </div>
+                        {shelfNode && (
+                          <div className="shelf-banner">
+                            <div>
+                              <small>
+                                {
+                                  {
+                                    folder: "PLAYLIST FOLDER",
+                                    playlist: "PLAYLIST",
+                                    smart: "SMART PLAYLIST",
+                                  }[shelfNode.kind]
+                                }
+                              </small>
+                              <strong>
+                                {shelfPath(shelfNode.id, shelf.nodes)}
+                              </strong>
+                              {shelfNode.kind === "smart" &&
+                                (shelfNode.error ? (
+                                  <span className="error-text">
+                                    {shelfNode.error}
+                                  </span>
+                                ) : (
+                                  <span>
+                                    {(shelfNode.rules ?? []).join(
+                                      shelfNode.match === "any"
+                                        ? " · or "
+                                        : " · and ",
+                                    )}
+                                    . Matches as of the last scan; change the
+                                    rules in rekordbox.
+                                  </span>
+                                ))}
+                              {shelfNode.kind === "folder" && (
+                                <span>Every track in its playlists.</span>
+                              )}
+                            </div>
+                            <button
+                              aria-label="Show all tracks"
+                              title="Show all tracks"
+                              onClick={() => showShelf(null)}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        )}
                         <CatalogFilters
                           tracks={tracks}
                           value={musicFilters}
@@ -1345,6 +1505,9 @@ function App() {
                               value={sort}
                               onChange={(e) => setSort(e.target.value)}
                             >
+                              {shelfNode?.kind === "playlist" && (
+                                <option value="playlist">Playlist order</option>
+                              )}
                               <option value="dex">Dex number</option>
                               <option value="title">Title</option>
                               <option value="artist">Artist</option>
@@ -1374,7 +1537,7 @@ function App() {
                           </label>
                           <strong>
                             {visible.length.toLocaleString()} /{" "}
-                            {tracks.length.toLocaleString()} tracks
+                            {shelved.length.toLocaleString()} tracks
                           </strong>
                         </div>
                         <div className="list-label">
@@ -1486,6 +1649,7 @@ function App() {
                                 onClick={() => {
                                   setSearch("");
                                   setFilter("all");
+                                  setOnline(null);
                                   setMusicFilters({ ...emptyFilters });
                                 }}
                               >
@@ -2371,6 +2535,8 @@ function App() {
           demo={data.settings.demo}
           capability={data.capability}
           busy={busy || !!active}
+          lookingUp={active?.kind === "enrich"}
+          manualEdits={data.manual_edits}
           send={send}
           action={action}
           onClose={() => {

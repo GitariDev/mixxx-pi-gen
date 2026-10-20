@@ -6,7 +6,12 @@ import secrets
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -16,6 +21,7 @@ from .backups import Backups
 from .db import Store, unchanged
 from .duplicates import Duplicates
 from .editing import Editing, revision
+from .external import ExternalBackup
 from .importing import Importing, default_music_folder, new_to_rekordbox
 from .operations import Operations
 from .providers import discogs_auth, genre_name
@@ -34,6 +40,47 @@ AUDIO_TYPES = {
     ".mp4": "audio/mp4",
     ".m4v": "video/mp4",
 }
+
+
+def ranged(path, offset, media_type, request):
+    """Serve a file from `offset` on, honouring a single byte range."""
+    total = os.path.getsize(path) - offset
+    start, end, status = 0, total - 1, 200
+    spec = request.headers.get("range", "")
+    if spec.startswith("bytes="):
+        first, _, last = spec[6:].split(",")[0].strip().partition("-")
+        try:
+            if first:
+                start = int(first)
+                end = min(int(last), total - 1) if last else total - 1
+            else:
+                start = max(0, total - int(last))
+        except ValueError:
+            start, end = 0, total - 1
+        else:
+            if start > end:
+                return Response(
+                    status_code=416, headers={"content-range": f"bytes */{total}"}
+                )
+            status = 206
+
+    def chunks():
+        with open(path, "rb") as f:
+            f.seek(offset + start)
+            left = end - start + 1
+            while left > 0:
+                block = f.read(min(65536, left))
+                if not block:
+                    break
+                left -= len(block)
+                yield block
+
+    headers = {"accept-ranges": "bytes", "content-length": str(end - start + 1)}
+    if status == 206:
+        headers["content-range"] = f"bytes {start}-{end}/{total}"
+    return StreamingResponse(
+        chunks(), status_code=status, media_type=media_type, headers=headers
+    )
 
 
 class Selection(BaseModel):
@@ -79,6 +126,12 @@ class Groups(BaseModel):
 
 class BackupSelection(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=5000)
+
+
+class ExternalTarget(BaseModel):
+    drive: str = Field(min_length=1, max_length=1000)
+    scope: str
+    catalog: bool = True
 
 
 class Browse(BaseModel):
@@ -148,6 +201,13 @@ def create_app(root=None):
     tagging = Tagging(service)
     backups = Backups(service)
     backups.prune()
+    package = Path(__file__).parent
+
+    def code_changed_at():
+        return max(f.stat().st_mtime for f in package.glob("*.py"))
+
+    # Code edited after start runs only after a restart; the page says so.
+    started_code = code_changed_at()
     app = FastAPI(title="Song Dex", docs_url=None, redoc_url=None)
     app.state.store, app.state.service = store, service
     token = secrets.token_urlsafe(32)
@@ -254,6 +314,7 @@ def create_app(root=None):
             "assignments_ready": len(tagging.waiting()),
             "new_lists": tagging.new_lists("pending"),
             "choices": tagging.choices(),
+            "restart_needed": code_changed_at() > started_code,
             **review(),
             "settings": {
                 "rekordbox_db": store.setting(
@@ -284,6 +345,10 @@ def create_app(root=None):
                 )
             ]
         return {"jobs": jobs, "proposals": store.proposals(), **review()}
+
+    @app.get("/api/playlists")
+    def playlists():
+        return tagging.library_playlists()
 
     @app.get("/api/genres")
     def genres():
@@ -602,24 +667,39 @@ def create_app(root=None):
     def delete_backups(body: BackupSelection):
         return backups.delete(body.ids)
 
+    @app.get("/api/backups/external")
+    def external_backup_overview():
+        return ExternalBackup(service).overview()
+
+    @app.post("/api/backups/external")
+    def external_backup(body: ExternalTarget):
+        if store.setting("demo"):
+            raise ValueError("Exit the demo before backing up your library")
+        return ExternalBackup(service).start(body.drive, body.scope, body.catalog)
+
     @app.post("/api/operations/{opid}/restore")
     def restore(opid: str):
         return operations.restore(opid)
 
     @app.get("/api/tracks/{track_id}/audio")
-    def stream(track_id: int):
+    def stream(track_id: int, request: Request):
         track = store.track(track_id)
         if (
             not track["available"]
             or Path(track["path"]).suffix.lower() not in audio.PLAYABLE
         ):
             raise HTTPException(404, "Audio unavailable")
+        try:
+            offset, actual = audio.container(track["path"])
+        except OSError:
+            raise HTTPException(404, "Audio unavailable")
         # Python guesses audio/x-flac and audio/mp4a-latm, which strict players
-        # refuse; nosniff stops them looking past the type.
-        return FileResponse(
-            track["path"],
-            media_type=AUDIO_TYPES.get(Path(track["path"]).suffix.lower()),
-        )
+        # refuse; nosniff stops them looking past the type. MP4 audio named .mp3
+        # is sent as what it is.
+        media_type = actual or AUDIO_TYPES.get(Path(track["path"]).suffix.lower())
+        if offset:
+            return ranged(track["path"], offset, media_type, request)
+        return FileResponse(track["path"], media_type=media_type)
 
     @app.get("/api/tracks/{track_id}/artwork")
     def artwork(track_id: int):
@@ -631,6 +711,17 @@ def create_app(root=None):
         if not art or art[1] not in ("image/jpeg", "image/png"):
             raise HTTPException(404, "No embedded artwork")
         return Response(art[0], media_type=art[1])
+
+    @app.api_route(
+        "/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"]
+    )
+    def unknown(rest: str):
+        # Otherwise the UI mount answers "405 Method Not Allowed".
+        raise HTTPException(
+            404,
+            "This Song Dex service does not know that request. Restart Song Dex "
+            "so it runs the same version as this page.",
+        )
 
     dist = Path(__file__).resolve().parents[2] / "frontend/dist"
     if dist.exists():

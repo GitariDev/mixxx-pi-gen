@@ -30,6 +30,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-media-hotplug.patch",
             "mixxx-readahead.patch",
             "mixxx-removable-ram-cache.patch",
+            "mixxx-sidebar-sources.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -77,10 +78,10 @@ class PinnedMixxxPatchTests(unittest.TestCase):
                     git("apply", "--check", patch)
                     git("apply", patch)
             git("diff", "--check")
-            # Both new patches must also be usable independently of each other.
+            # Each performance/UI patch also applies independently.
             for name in reversed(names):
                 git("apply", "--reverse", str(PATCH_DIR / name))
-            for name in names[-2:]:
+            for name in names[2:]:
                 with self.subTest(independent_patch=name):
                     git("apply", "--check", str(PATCH_DIR / name))
 

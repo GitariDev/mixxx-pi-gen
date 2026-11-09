@@ -1,0 +1,305 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+index 3a17c06..37a611c 100644
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -1,10 +1,14 @@
+ #include "library/library.h"
+ 
++#include <algorithm>
++
+ #include <QApplication>
+ #include <QDir>
+ #include <QMessageBox>
++#include <QMenu>
+ 
+ #include "control/controlobject.h"
++#include "control/controlpushbutton.h"
+ #include "controllers/keyboard/keyboardeventfilter.h"
+ #include "library/analysis/analysisfeature.h"
+ #include "library/autodj/autodjfeature.h"
+@@ -167,45 +171,37 @@ Library::Library(
+             this,
+             &Library::onTrackAnalyzerProgress);
+ 
+-    // iTunes and Rhythmbox should be last until we no longer have an obnoxious
+-    // messagebox popup when you select them. (This forces you to reach for your
+-    // mouse or keyboard if you're using MIDI control and you scroll through them...)
+-    if (RhythmboxFeature::isSupported() &&
+-            m_pConfig->getValue(
+-                    ConfigKey(kConfigGroup, "ShowRhythmboxLibrary"), true)) {
+-        addFeature(new RhythmboxFeature(this, m_pConfig));
+-    }
+-    if (m_pConfig->getValue(
+-                ConfigKey(kConfigGroup, "ShowBansheeLibrary"), true)) {
+-        BansheeFeature::prepareDbPath(m_pConfig);
+-        if (BansheeFeature::isSupported()) {
+-            addFeature(new BansheeFeature(this, m_pConfig));
++    // Keep disabled external sources cheap at startup, but retain factories so
++    // the touch menu can enable them immediately without restarting Mixxx.
++    if (RhythmboxFeature::isSupported()) {
++        addOptionalSidebarSource("RhythmboxFeature", tr("Rhythmbox"),
++                "ShowRhythmboxLibrary", [this] { return new RhythmboxFeature(this, m_pConfig); });
++    }
++    BansheeFeature::prepareDbPath(m_pConfig);
++    if (BansheeFeature::isSupported()) {
++        addOptionalSidebarSource("BansheeFeature", tr("Banshee"),
++                "ShowBansheeLibrary", [this] { return new BansheeFeature(this, m_pConfig); });
++    }
++    if (ITunesFeature::isSupported()) {
++        addOptionalSidebarSource("ITunesFeature", tr("iTunes"),
++                "ShowITunesLibrary", [this] { return new ITunesFeature(this, m_pConfig); });
++    }
++    if (TraktorFeature::isSupported()) {
++        addOptionalSidebarSource("TraktorFeature", tr("Traktor"),
++                "ShowTraktorLibrary", [this] { return new TraktorFeature(this, m_pConfig); });
++    }
++    addOptionalSidebarSource("RekordboxFeature", tr("Rekordbox"),
++            "ShowRekordboxLibrary", [this] { return new RekordboxFeature(this, m_pConfig); });
++    addOptionalSidebarSource("SeratoFeature", tr("Serato"),
++            "ShowSeratoLibrary", [this] { return new SeratoFeature(this, m_pConfig); });
++
++    m_pShowSidebarSourcesMenu.reset(new ControlPushButton(
++            ConfigKey("[Library]", "show_sidebar_sources_menu")));
++    m_pShowSidebarSourcesMenu->connectValueChangeRequest(this, [this](double value) {
++        if (value > 0) {
++            showSidebarSourcesMenu();
+         }
+-    }
+-    if (ITunesFeature::isSupported() &&
+-            m_pConfig->getValue(
+-                    ConfigKey(kConfigGroup, "ShowITunesLibrary"), true)) {
+-        addFeature(new ITunesFeature(this, m_pConfig));
+-    }
+-    if (TraktorFeature::isSupported() &&
+-            m_pConfig->getValue(
+-                    ConfigKey(kConfigGroup, "ShowTraktorLibrary"), true)) {
+-        addFeature(new TraktorFeature(this, m_pConfig));
+-    }
+-
+-    // TODO(XXX) Rekordbox feature added persistently as the only way to enable it to
+-    // dynamically appear/disappear when correctly prepared removable devices
+-    // are mounted/unmounted would be to have some form of timed thread to check
+-    // periodically. Not ideal performance wise.
+-    if (m_pConfig->getValue(
+-                ConfigKey(kConfigGroup, "ShowRekordboxLibrary"), true)) {
+-        addFeature(new RekordboxFeature(this, m_pConfig));
+-    }
+-
+-    if (m_pConfig->getValue(
+-                ConfigKey(kConfigGroup, "ShowSeratoLibrary"), true)) {
+-        addFeature(new SeratoFeature(this, m_pConfig));
+-    }
++    });
+ 
+     for (const auto& externalTrackCollection : m_pTrackCollectionManager->externalCollections()) {
+         auto* feature = externalTrackCollection->newLibraryFeature(this, m_pConfig);
+@@ -329,14 +325,21 @@ void Library::bindSearchboxWidget(WSearchLineEdit* pSearchboxWidget) {
+ }
+ 
+ void Library::bindSidebarWidget(WLibrarySidebar* pSidebarWidget) {
++    m_pSidebarWidget = pSidebarWidget;
+     m_pLibraryControl->bindSidebarWidget(pSidebarWidget);
+ 
+     // Setup the sources view
+     pSidebarWidget->setModel(m_pSidebarModel);
++    connect(m_pSidebarModel, &QAbstractItemModel::modelReset,
++            pSidebarWidget, [this] { applySidebarSourceVisibility(); });
++    connect(m_pSidebarModel, &QAbstractItemModel::layoutChanged,
++            pSidebarWidget, [this] { applySidebarSourceVisibility(); });
+     connect(m_pSidebarModel,
+             &SidebarModel::selectIndex,
+             pSidebarWidget,
+             &WLibrarySidebar::selectIndex);
++    connect(m_pSidebarModel, &SidebarModel::selectIndex,
++            pSidebarWidget, [this] { applySidebarSourceVisibility(); });
+     connect(pSidebarWidget,
+             &WLibrarySidebar::pressed,
+             m_pSidebarModel,
+@@ -378,11 +381,13 @@ void Library::bindSidebarWidget(WLibrarySidebar* pSidebarWidget) {
+     for (const auto& feature : std::as_const(m_features)) {
+         feature->bindSidebarWidget(pSidebarWidget);
+     }
++    applySidebarSourceVisibility();
+ }
+ 
+ void Library::bindLibraryWidget(
+         WLibrary* pLibraryWidget, KeyboardEventFilter* pKeyboard) {
+     m_pLibraryWidget = pLibraryWidget;
++    m_pSidebarKeyboard = pKeyboard;
+     WTrackTableView* pTrackTableView = new WTrackTableView(m_pLibraryWidget,
+             m_pConfig,
+             this,
+@@ -470,6 +475,15 @@ void Library::addFeature(LibraryFeature* feature) {
+     VERIFY_OR_DEBUG_ASSERT(feature) {
+         return;
+     }
++    const QString id = QString::fromLatin1(feature->metaObject()->className());
++    auto source = std::find_if(m_sidebarSources.begin(), m_sidebarSources.end(),
++            [&id](const SidebarSource& item) { return item.id == id; });
++    if (source == m_sidebarSources.end()) {
++        m_sidebarSources.push_back({id, feature->title().toString(),
++                ConfigKey(kConfigGroup, "SidebarSource" + id), feature, {}});
++    } else {
++        source->feature = feature;
++    }
+     m_features.push_back(feature);
+     m_pSidebarModel->addLibraryFeature(feature);
+     connect(feature,
+@@ -518,6 +532,97 @@ void Library::addFeature(LibraryFeature* feature) {
+             &Library::restoreModelState);
+ }
+ 
++void Library::addOptionalSidebarSource(const QString& id,
++        const QString& title,
++        const QString& preference,
++        std::function<LibraryFeature*()> create) {
++    const ConfigKey key(kConfigGroup, preference);
++    m_sidebarSources.push_back({id, title, key, nullptr, create});
++    if (m_pConfig->getValue(key, true)) {
++        addFeature(create());
++    }
++}
++
++void Library::applySidebarSourceVisibility() {
++    if (!m_pSidebarWidget) {
++        return;
++    }
++    QModelIndex firstVisible;
++    for (const auto& source : std::as_const(m_sidebarSources)) {
++        const int row = m_features.indexOf(source.feature);
++        if (row < 0) {
++            continue;
++        }
++        const bool visible = m_pConfig->getValue(source.preference, true);
++        m_pSidebarWidget->setRowHidden(row, QModelIndex(), !visible);
++        if (visible && !firstVisible.isValid()) {
++            firstVisible = m_pSidebarModel->index(row, 0);
++        }
++    }
++    // Recover from hand-edited settings which hide every source.
++    if (!firstVisible.isValid() && !m_sidebarSources.isEmpty()) {
++        m_pConfig->setValue(m_sidebarSources.first().preference, true);
++        applySidebarSourceVisibility();
++        return;
++    }
++    const auto defaultIndex = m_pSidebarModel->getDefaultSelection();
++    if (firstVisible.isValid() && defaultIndex.isValid() &&
++            m_pSidebarWidget->isRowHidden(defaultIndex.row(), QModelIndex())) {
++        m_pSidebarModel->setDefaultSelection(firstVisible.row());
++    }
++    // Never leave keyboard/controller navigation pointing at a hidden source.
++    QModelIndex selected = m_pSidebarWidget->currentIndex();
++    while (selected.parent().isValid()) {
++        selected = selected.parent();
++    }
++    if (selected.isValid() &&
++            m_pSidebarWidget->isRowHidden(selected.row(), QModelIndex()) &&
++            firstVisible.isValid()) {
++        m_pSidebarWidget->selectIndex(firstVisible);
++        m_pSidebarModel->clicked(firstVisible);
++    }
++}
++
++void Library::showSidebarSourcesMenu() {
++    if (!m_pSidebarWidget || !m_pLibraryWidget) {
++        return;
++    }
++    auto* menu = new QMenu(tr("Sources"), m_pSidebarWidget);
++    menu->setAttribute(Qt::WA_DeleteOnClose);
++    int visibleCount = 0;
++    for (const auto& source : std::as_const(m_sidebarSources)) {
++        if (m_pConfig->getValue(source.preference, true)) {
++            ++visibleCount;
++        }
++    }
++    for (int i = 0; i < m_sidebarSources.size(); ++i) {
++        const auto& source = m_sidebarSources[i];
++        auto* action = menu->addAction(source.title);
++        action->setCheckable(true);
++        const bool visible = m_pConfig->getValue(source.preference, true);
++        action->setChecked(visible);
++        // Keep one source available; the menu itself remains reachable even
++        // when the sidebar has been hidden with the Show/Hide button.
++        action->setEnabled(!visible || visibleCount > 1);
++        connect(action, &QAction::triggered, this, [this, i](bool enabled) {
++            // Copy the factory before addFeature, which may grow the list.
++            const auto source = m_sidebarSources.at(i);
++            m_pConfig->setValue(source.preference, enabled);
++            if (enabled && !source.feature && source.create) {
++                auto* feature = source.create();
++                addFeature(feature);
++                feature->bindLibraryWidget(m_pLibraryWidget, m_pSidebarKeyboard);
++                feature->bindSidebarWidget(m_pSidebarWidget);
++                emit setTrackTableFont(m_trackTableFont);
++                emit setTrackTableRowHeight(m_iTrackTableRowHeight);
++                emit setSelectedClick(m_editMetadataSelectedClick);
++            }
++            applySidebarSourceVisibility();
++        });
++    }
++    menu->popup(m_pLibraryWidget->mapToGlobal(QPoint(0, 0)));
++}
++
+ void Library::onPlayerManagerTrackAnalyzerProgress(
+         TrackId /*trackId*/, AnalyzerProgress /*analyzerProgress*/) {
+     if (m_pAnalysisFeature) {
+diff --git a/src/library/library.h b/src/library/library.h
+index 0c9523b..87114e8 100644
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -1,5 +1,7 @@
+ #pragma once
+ 
++#include <functional>
++
+ #include <QFont>
+ #include <QList>
+ #include <QObject>
+@@ -18,6 +20,7 @@
+ class AnalysisFeature;
+ class BrowseFeature;
+ class ControlObject;
++class ControlPushButton;
+ class CrateFeature;
+ class LibraryControl;
+ class LibraryFeature;
+@@ -155,6 +158,24 @@ class Library: public QObject {
+       void onPlayerManagerTrackAnalyzerIdle();
+ 
+   private:
++    struct SidebarSource {
++        QString id;
++        QString title;
++        ConfigKey preference;
++        LibraryFeature* feature;
++        std::function<LibraryFeature*()> create;
++    };
++    void addOptionalSidebarSource(const QString& id,
++            const QString& title,
++            const QString& preference,
++            std::function<LibraryFeature*()> create);
++    void applySidebarSourceVisibility();
++    void showSidebarSourcesMenu();
++    QList<SidebarSource> m_sidebarSources;
++    QPointer<WLibrarySidebar> m_pSidebarWidget;
++    QPointer<KeyboardEventFilter> m_pSidebarKeyboard;
++    QScopedPointer<ControlPushButton> m_pShowSidebarSourcesMenu;
++
+     const UserSettingsPointer m_pConfig;
+ 
+     // The Mixxx database connection pool
+diff --git a/src/library/sidebarmodel.cpp b/src/library/sidebarmodel.cpp
+index 3914c7f..ab7a2ad 100644
+--- a/src/library/sidebarmodel.cpp
++++ b/src/library/sidebarmodel.cpp
+@@ -32,7 +32,10 @@ SidebarModel::SidebarModel(
+ }
+ 
+ void SidebarModel::addLibraryFeature(LibraryFeature* pFeature) {
++    const int row = m_sFeatures.size();
++    beginInsertRows(QModelIndex(), row, row);
+     m_sFeatures.push_back(pFeature);
++    endInsertRows();
+     connect(pFeature,
+             &LibraryFeature::featureIsLoading,
+             this,

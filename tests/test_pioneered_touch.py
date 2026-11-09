@@ -162,6 +162,23 @@ UnrelatedValue preserve this exactly
         self.assertIn("height: 26px;", styles)
         self.assertIn("#Unrelated { color: red; }", styles)
 
+    def test_sources_menu_remains_reachable_beside_sidebar_toggle(self):
+        PATCH.apply(self.skin)
+        PATCH.apply(self.skin)
+        root = ET.parse(self.skin / "library.xml")
+        buttons = root.findall(".//PushButton")
+        sources = [button for button in buttons
+                   if button.findtext("ObjectName") == "LibrarySourcesButton"]
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0].findtext("Connection/ConfigKey"),
+                         "[Library],show_sidebar_sources_menu")
+        self.assertEqual(sources[0].findtext("Connection/EmitOnDownPress"), "true")
+        self.assertEqual(sources[0].findtext("LeftClickIsPushButton"), "true")
+        self.assertEqual(sources[0].findtext("NumberStates"), "1")
+        parent = next(node for node in root.iter() if sources[0] in list(node))
+        self.assertTrue(any(node.findtext("ObjectName") == "SidebarButton"
+                            for node in parent.findall("PushButton")))
+
     def test_changed_upstream_layout_fails_before_writing(self):
         path = self.skin / "library.xml"
         path.write_text(path.read_text().replace("SidebarButton", "NewSidebar"))

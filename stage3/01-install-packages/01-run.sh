@@ -6,6 +6,7 @@ MIXXX_PATCHES=(
     mixxx-media-hotplug.patch
     mixxx-readahead.patch
     mixxx-removable-ram-cache.patch
+    mixxx-sidebar-sources.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

@@ -23,6 +23,26 @@ image build is the next packaging validation. Native Sources/full target UI,
 eject interlock, appliance stripping and the same-card preservation gate remain.
 See [same-card checkpoint](../setup/SAME-CARD-UPGRADE.md).
 
+## Next build changes (2026-11-09)
+
+- Runtime cleanup removes Firefox, Syncthing and qpwgraph, repairs portal
+  backend selection, preserves private config modes and removes `preempt=full`.
+  LightDM/Xorg and Nautilus remain pending tested replacements.
+- A new pinned-source patch adds `[Library],show_sidebar_sources_menu` and a
+  Sources button beside Actions/Show in Pioneered. Top-level source visibility
+  updates live and persists by stable feature identity. External sources use
+  their existing Show…Library preferences, skip construction when disabled at
+  startup, and can be constructed and bound when enabled from the menu.
+- Hiding the selected source moves selection to a visible source. The last
+  visible source cannot be unchecked; manually hiding everything recovers the
+  first source. Lazy feature insertion now emits model row notifications.
+- Host suite: 151 tests, 125 passed and 26 skipped, including pinned-source patch
+  application and repeated skin patching. ARM compilation and touch acceptance
+  of the new Sources menu are pending. Right-hand folder navigation, drag
+  ordering, settings-page integration and guarded eject remain unfinished.
+- The user deferred endurance testing until the new build. The running Pi trial
+  remains unchanged while image work continues.
+
 ## Recovery status (2026-11-08)
 
 The failed conversation was recovered into the main workspace. The two original

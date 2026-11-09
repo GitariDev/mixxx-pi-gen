@@ -34,6 +34,17 @@ BUTTON = """              <!-- MixxxPi touch actions BEGIN -->
                   <EmitOnDownPress>true</EmitOnDownPress>
                 </Connection>
               </PushButton>
+              <PushButton>
+                <ObjectName>LibrarySourcesButton</ObjectName>
+                <Size>96p,40p</Size>
+                <NumberStates>1</NumberStates>
+                <LeftClickIsPushButton>true</LeftClickIsPushButton>
+                <State><Number>0</Number><Text>Sources</Text></State>
+                <Connection>
+                  <ConfigKey>[Library],show_sidebar_sources_menu</ConfigKey>
+                  <EmitOnDownPress>true</EmitOnDownPress>
+                </Connection>
+              </PushButton>
               <!-- MixxxPi touch actions END -->
 """
 

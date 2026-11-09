@@ -57,20 +57,41 @@ if [ "${1:-}" = --mixxx-package ]; then
     exit 0
 fi
 
-## Build Mixxx in the image rootfs.
-mkdir -p "${BASE_DIR}/.ccache/" "${ROOTFS_DIR}/ccache" "${ROOTFS_DIR}/opt/mixxx-patches"
-mount --bind "${BASE_DIR}/.ccache" "${ROOTFS_DIR}/ccache"
+# Compile in a disposable copy. Build dependencies and the unowned CMake
+# installation must never enter the runtime image.
+build_root=$(mktemp -d "${STAGE_WORK_DIR}/mixxx-build.XXXXXX")
+cleanup_build() {
+    unmount "$build_root"
+}
+trap cleanup_build EXIT
+rsync -aHAXx --exclude '/dev/*' --exclude '/proc/*' --exclude '/sys/*' \
+    --exclude '/run/*' --exclude '/tmp/*' --exclude '/ccache/*' \
+    --exclude '/var/cache/apt/archives/*' "${ROOTFS_DIR}/" "$build_root/"
+mkdir -p "${BASE_DIR}/.ccache/" "$build_root/ccache" "$build_root/opt/mixxx-patches"
+mount --bind "${BASE_DIR}/.ccache" "$build_root/ccache"
 for patch in "${MIXXX_PATCHES[@]}"; do
-    install -m 644 "files/$patch" "${ROOTFS_DIR}/opt/mixxx-patches/$patch"
+    install -m 644 "files/$patch" "$build_root/opt/mixxx-patches/$patch"
 done
-install -m 644 01-run.sh "${ROOTFS_DIR}/opt/mixpi-build-mixxx.sh"
-on_chroot << EOF
+install -m 644 01-run.sh "$build_root/opt/mixpi-build-mixxx.sh"
+ROOTFS_DIR="$build_root" on_chroot << EOF
     export MIXXX_REF="${MIXXX_REF}"
     export MIXXX_COMMIT="${MIXXX_COMMIT}"
     bash /opt/mixpi-build-mixxx.sh --mixxx-package /opt/mixxx-patches /code /ccache
 EOF
 
-unmount "${ROOTFS_DIR}/ccache"
-mkdir -p "$DEPLOY_DIR"
-cp "${ROOTFS_DIR}"/code/build/*.deb "$DEPLOY_DIR/"
-rm -rf "${ROOTFS_DIR}/code/"
+mkdir -p "$DEPLOY_DIR" "${ROOTFS_DIR}/opt/mixxx-package" "${ROOTFS_DIR}/opt/mixxx-patches"
+cp "$build_root"/code/build/*.deb "$DEPLOY_DIR/"
+cp "$build_root"/code/build/*.deb "${ROOTFS_DIR}/opt/mixxx-package/"
+cp "$build_root"/opt/mixxx.version "$build_root"/opt/mixxx.tag "${ROOTFS_DIR}/opt/"
+cp "$build_root"/opt/mixxx-patches/*.patch "${ROOTFS_DIR}/opt/mixxx-patches/"
+# apt installs the package's runtime dependencies and gives dpkg ownership of
+# /usr/bin/mixxx. /opt is used because on_chroot mounts a fresh tmpfs on /tmp.
+on_chroot <<'EOF'
+    apt-get update
+    apt-get install -y --no-install-recommends /opt/mixxx-package/*.deb
+    dpkg-query -S /usr/bin/mixxx
+    rm -rf /opt/mixxx-package
+EOF
+cleanup_build
+trap - EXIT
+rm -rf "$build_root"

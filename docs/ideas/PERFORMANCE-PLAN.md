@@ -7,6 +7,22 @@ with mock-ups is the artifact
 [Mix Pi Performance Plan](https://claude.ai/artifact/BxEN6L5tA7rFMSX7BTusDV)
 (private to the owner).
 
+## Performance trial accepted (2026-11-09)
+
+The arm64 package at `ccbf91b` compiled successfully and runs extracted on the
+Pi with a separate profile. The user confirmed stable selected tabs and working
+Browse → Actions, then passed the master/headphone/controller/loops/FX smoke
+test and reported noticeably better performance. Both internal-export tracks
+loaded into RAM; V3D renders the waveforms. Audio remains at 44.1 kHz / 1024
+frames. Post-test: 48.2°C, no throttle flags, no swap use. This is subjective
+playback acceptance plus startup evidence, not a controlled performance
+benchmark or endurance test. Original installation and profile remain intact.
+
+The package workflow also passed at image-isolation commit `249da45`. A full
+image build is the next packaging validation. Native Sources/full target UI,
+eject interlock, appliance stripping and the same-card preservation gate remain.
+See [same-card checkpoint](../setup/SAME-CARD-UPGRADE.md).
+
 ## Recovery status (2026-11-08)
 
 The failed conversation was recovered into the main workspace. The two original

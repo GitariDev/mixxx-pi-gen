@@ -21,15 +21,13 @@ pipewire-audio
 pavucontrol pulseaudio-utils libspa-0.2-bluetooth wtype
 swh-plugins
 gstreamer1.0-pipewire
-qpwgraph
 libxcb-cursor0
 udevil udiskie
 sway-notification-center
 libayatana-appindicator3-1
 libnotify4
-firefox
-syncthing
 network-manager-gnome
 nautilus
 python3-pip
 libqt6sql6-sqlite qt6-svg-plugins
+xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr

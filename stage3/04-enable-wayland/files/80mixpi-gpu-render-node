@@ -1,0 +1,5 @@
+# vc4's display node has no render node. Give Sway the Pi 4's v3d renderer
+# explicitly, while allowing boards without it to use wlroots' default.
+if [ -e /dev/dri/renderD128 ]; then
+    export WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128
+fi

@@ -1,0 +1,2 @@
+# No user-supplied units, paths or commands reach the root helper.
+pi ALL=(root) NOPASSWD: /usr/local/sbin/mixpi-maintenance pause, /usr/local/sbin/mixpi-maintenance restore

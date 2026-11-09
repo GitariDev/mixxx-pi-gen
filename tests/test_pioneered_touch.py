@@ -83,6 +83,10 @@ class PioneeredTouchTests(unittest.TestCase):
         self.skin = self.path / "Pioneered"
         self.skin.mkdir()
         (self.skin / "skin.xml").write_text("<skin><manifest/></skin>\n")
+        (self.skin / "effect.xml").write_text(
+            "<Template>\n" + PATCH.EFFECT_TOGGLE_ORIGINAL + "\n</Template>\n")
+        (self.skin / "deck.xml").write_text(
+            "<Template>\n" + PATCH.TRACK_NUMBER_ORIGINAL + "\n</Template>\n")
         (self.skin / "library.xml").write_text("""<Template>
   <WidgetGroup><Children>
     <SearchBox><ObjectName>SearchBox</ObjectName></SearchBox>
@@ -116,7 +120,8 @@ UnrelatedValue preserve this exactly
 
     def test_repeat_apply_retains_first_originals_and_unrelated_settings(self):
         originals = {path: path.read_text() for path in (
-            self.skin / "style.qss", self.skin / "library.xml", self.config)}
+            self.skin / "style.qss", self.skin / "library.xml",
+            self.skin / "effect.xml", self.skin / "deck.xml", self.config)}
         PATCH.apply(self.skin, self.config)
         first = {path: path.read_text() for path in originals}
         PATCH.apply(self.skin, self.config)
@@ -170,13 +175,47 @@ UnrelatedValue preserve this exactly
         self.assertIn("RowHeight 34\n", result)
         self.assertEqual(PATCH.patch_config(result), result)
 
+    def test_effect_toggle_routes_master_without_changing_depth(self):
+        PATCH.apply(self.skin)
+        root = ET.parse(self.skin / "effect.xml")
+        button = root.find(".//PushButton")
+        keys = ["".join(key.itertext()) for key in button.findall("Connection/ConfigKey")]
+        self.assertEqual(keys, ["[EffectRack_EffectUnit_Effect],enabled",
+                                "[EffectRack_EffectUnit],group_[Master]_enable"])
+        self.assertNotIn(",meta", (self.skin / "effect.xml").read_text())
+        connections = button.findall("Connection")
+        self.assertEqual(connections[0].findtext("ConnectValueToWidget"), "true")
+        self.assertEqual(connections[1].findtext("ConnectValueToWidget"), "false")
+
+    def test_track_number_uses_mixxx_property_and_registered_tooltip(self):
+        PATCH.apply(self.skin)
+        label = ET.parse(self.skin / "deck.xml").find(".//TrackProperty")
+        self.assertEqual(label.findtext("Property"), "trackNumber")
+        self.assertEqual(label.findtext("TooltipId"), "track_title")
+
+    def test_changed_upstream_effect_or_deck_fails_before_writing(self):
+        for name, old, new in (("effect.xml", "group_[Master]", "group_[Channel1]"),
+                               ("effect.xml", "],meta", "],super1"),
+                               ("deck.xml", "<Elide>right", "<Elide>left")):
+            with self.subTest(name=name, old=old):
+                path = self.skin / name
+                original = path.read_text()
+                path.write_text(original.replace(old, new))
+                before = {p: p.read_bytes() for p in self.skin.iterdir()}
+                with self.assertRaisesRegex(ValueError, "pinned Pioneered"):
+                    PATCH.apply(self.skin, self.config)
+                self.assertEqual(before, {p: p.read_bytes() for p in self.skin.iterdir()})
+                self.assertFalse((self.skin / ".mixpi-touch-original").exists())
+                path.write_text(original)
+
     @unittest.skipUnless(os.environ.get("PIONEERED_TEST_SKIN"), "pinned upstream checkout optional")
     def test_pinned_upstream_skin(self):
         skin = self.path / "upstream"
         shutil.copytree(os.environ["PIONEERED_TEST_SKIN"], skin,
                         ignore=shutil.ignore_patterns(".git", ".mixpi-touch-original"))
         PATCH.apply(skin, self.config)
-        first = {name: (skin / name).read_bytes() for name in ("library.xml", "style.qss")}
+        first = {name: (skin / name).read_bytes() for name in
+                 ("library.xml", "style.qss", "effect.xml", "deck.xml")}
         PATCH.apply(skin, self.config)
         self.assertEqual(first, {name: (skin / name).read_bytes() for name in first})
         for path in skin.rglob("*.xml"):
@@ -184,6 +223,12 @@ UnrelatedValue preserve this exactly
         actions = [button for button in ET.parse(skin / "library.xml").findall(".//PushButton")
                    if button.findtext("ObjectName") == "LibraryActionsButton"]
         self.assertEqual(len(actions), 1)
+        toggle = next(button for button in ET.parse(skin / "effect.xml").findall(".//PushButton")
+                      if button.findtext("ObjectName") == "EffectToggle")
+        self.assertEqual(len(toggle.findall("Connection")), 2)
+        self.assertNotIn(",meta", "".join(toggle.itertext()))
+        # The depth meter keeps its read-only meta connection.
+        self.assertIn(",meta", "".join(ET.parse(skin / "effect.xml").find(".//VuMeter").itertext()))
 
 
 if __name__ == "__main__":

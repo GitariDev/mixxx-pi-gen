@@ -1,0 +1,142 @@
+diff --git a/src/engine/cachingreader/cachingreader.cpp b/src/engine/cachingreader/cachingreader.cpp
+index 45a83cf..bf664b9 100644
+--- a/src/engine/cachingreader/cachingreader.cpp
++++ b/src/engine/cachingreader/cachingreader.cpp
+@@ -146,11 +146,16 @@ CachingReaderChunkForOwner* CachingReader::allocateChunk(SINT chunkIndex) {
+     return pChunk;
+ }
+ 
+-CachingReaderChunkForOwner* CachingReader::allocateChunkExpireLRU(SINT chunkIndex) {
++CachingReaderChunkForOwner* CachingReader::allocateChunkExpireLRU(
++        SINT chunkIndex, const mixxx::IndexRange& protectedChunks) {
+     auto* pChunk = allocateChunk(chunkIndex);
+     if (!pChunk) {
+-        if (m_lruCachingReaderChunk) {
+-            freeChunk(m_lruCachingReaderChunk);
++        auto* victim = m_lruCachingReaderChunk;
++        while (victim && protectedChunks.contains(victim->getIndex())) {
++            victim = victim->previousInList();
++        }
++        if (victim) {
++            freeChunk(victim);
+             pChunk = allocateChunk(chunkIndex);
+         } else {
+             kLogger.warning() << "No cached LRU chunk available for freeing";
+@@ -525,6 +530,11 @@ void CachingReader::hintAndMaybeWake(const HintVector& hintList) {
+     // any are not, then wake.
+     bool shouldWake = false;
+ 
++    // CurrentPosition is first in EngineBuffer's list. Protect its entire
++    // range from subsequent cue/loop/slip hints, even with many hotcues or
++    // outstanding reads from an earlier position. Pending chunks are already
++    // outside the LRU list and cannot be evicted.
++    mixxx::IndexRange protectedChunks;
+     for (const auto& hint: hintList) {
+         SINT hintFrame = hint.frame;
+         SINT hintFrameCount = hint.frameCount;
+@@ -558,11 +568,19 @@ void CachingReader::hintAndMaybeWake(const HintVector& hintList) {
+ 
+         const int firstChunkIndex = CachingReaderChunk::indexForFrame(readableFrameIndexRange.start());
+         const int lastChunkIndex = CachingReaderChunk::indexForFrame(readableFrameIndexRange.end() - 1);
+-        for (int chunkIndex = firstChunkIndex; chunkIndex <= lastChunkIndex; ++chunkIndex) {
++        if (hint.type == Hint::Type::CurrentPosition) {
++            protectedChunks = mixxx::IndexRange::between(firstChunkIndex, lastChunkIndex + 1);
++        }
++        const int step = hint.reverse ? -1 : 1;
++        const int first = hint.reverse ? lastChunkIndex : firstChunkIndex;
++        const int last = hint.reverse ? firstChunkIndex : lastChunkIndex;
++        for (int chunkIndex = first;
++                hint.reverse ? chunkIndex >= last : chunkIndex <= last;
++                chunkIndex += step) {
+             CachingReaderChunkForOwner* pChunk = lookupChunk(chunkIndex);
+             if (!pChunk) {
+                 shouldWake = true;
+-                pChunk = allocateChunkExpireLRU(chunkIndex);
++                pChunk = allocateChunkExpireLRU(chunkIndex, protectedChunks);
+                 if (!pChunk) {
+                     kLogger.warning()
+                             << "Failed to allocate chunk"
+diff --git a/src/engine/cachingreader/cachingreader.h b/src/engine/cachingreader/cachingreader.h
+index 6d18841..4d252f9 100644
+--- a/src/engine/cachingreader/cachingreader.h
++++ b/src/engine/cachingreader/cachingreader.h
+@@ -39,6 +39,8 @@ typedef struct Hint {
+     // Currently unused -- but in the future could be used to prioritize certain
+     // hints over others.
+     Type type;
++    // Read nearest-to-playhead chunks first in either playback direction.
++    bool reverse = false;
+ 
+     // for the default frame count in forward direction
+     static constexpr SINT kFrameCountForward = 0;
+@@ -156,7 +158,8 @@ class CachingReader : public QObject {
+     CachingReaderChunkForOwner* allocateChunk(SINT chunkIndex);
+ 
+     // Gets a chunk from the free list, frees the LRU CachingReaderChunk if none available.
+-    CachingReaderChunkForOwner* allocateChunkExpireLRU(SINT chunkIndex);
++    CachingReaderChunkForOwner* allocateChunkExpireLRU(SINT chunkIndex,
++            const mixxx::IndexRange& protectedChunks = mixxx::IndexRange());
+ 
+     enum State {
+         STATE_IDLE,
+diff --git a/src/engine/cachingreader/cachingreaderchunk.h b/src/engine/cachingreader/cachingreaderchunk.h
+index c8c04e0..ffae24f 100644
+--- a/src/engine/cachingreader/cachingreaderchunk.h
++++ b/src/engine/cachingreader/cachingreaderchunk.h
+@@ -132,6 +132,10 @@ public:
+         m_state = READY;
+     }
+ 
++    CachingReaderChunkForOwner* previousInList() const {
++        return m_pPrev;
++    }
++
+     // Inserts a chunk into the double-linked list before the
+     // given chunk and adjusts the head/tail pointers. The
+     // chunk is inserted at the tail of the list if
+diff --git a/src/engine/readaheadmanager.cpp b/src/engine/readaheadmanager.cpp
+index 6cfe574..6a7697d 100644
+--- a/src/engine/readaheadmanager.cpp
++++ b/src/engine/readaheadmanager.cpp
+@@ -1,11 +1,24 @@
+ #include "engine/readaheadmanager.h"
+ 
++#include <QtGlobal>
++
+ #include "engine/cachingreader/cachingreader.h"
+ #include "engine/controls/loopingcontrol.h"
+ #include "engine/controls/ratecontrol.h"
+ #include "util/defs.h"
+ #include "util/sample.h"
+ 
++namespace {
++
++// Initialized before the audio callback: no getenv/parsing or static guard there.
++const int kReadAheadChunks = [] {
++    bool ok = false;
++    const int chunks = qEnvironmentVariableIntValue("MIXPI_READAHEAD_CHUNKS", &ok);
++    return ok ? qBound(2, chunks, 24) : 8;
++}();
++
++} // namespace
++
+ ReadAheadManager::ReadAheadManager()
+         : m_pLoopingControl(nullptr),
+           m_pRateControl(nullptr),
+@@ -224,9 +237,13 @@ void ReadAheadManager::hintReader(double dRate, gsl::not_null<HintVector*> pHint
+     bool in_reverse = dRate < 0;
+     Hint current_position;
+ 
+-    // SoundTouch can read up to 2 chunks ahead. Always keep 2 chunks ahead in
+-    // cache.
+-    SINT frameCountToCache = 2 * CachingReaderChunk::kFrames;
++    // SoundTouch needs at least 2 chunks. Default: 1.49 s at 44.1 kHz.
++    // At the cap, an unaligned range touches 25 of 80 cache chunks.
++    // FIFO rounds the requested 80/4 entries up to 32, leaving at least
++    // 7 request slots and 55 cache slots outside this window.
++    // This is a source-frame horizon: faster playback shortens its duration.
++    const SINT frameCountToCache = kReadAheadChunks * CachingReaderChunk::kFrames;
++    current_position.reverse = in_reverse;
+     current_position.frameCount = frameCountToCache;
+ 
+     // this called after the precious chunk was consumed

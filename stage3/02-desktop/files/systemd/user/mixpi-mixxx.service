@@ -1,0 +1,12 @@
+[Unit]
+Description=Mix Pi Mixxx DJ session
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+ExecStartPre=/usr/bin/sudo -n /usr/local/sbin/mixpi-maintenance pause
+ExecStart=/usr/bin/mixxx
+# Runs after normal exit, a crash, or a failed/interrupted ExecStartPre.
+ExecStopPost=/usr/bin/sudo -n /usr/local/sbin/mixpi-maintenance restore
+# Let an already-running apt/dpkg job finish without a startup deadline.
+TimeoutStartSec=infinity

@@ -1,0 +1,94 @@
+name: Mixxx arm64 package
+
+on:
+  push:
+    branches: [feat/pi-performance-target]
+    paths:
+      - '.github/workflows/mixxx-deb.yml'
+      - 'stage3/01-install-packages/**'
+      - 'source-versions'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mixxx-deb-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check scripts and patch compatibility
+        run: python3 -m unittest discover -s tests -v
+      - name: Prepare build directories
+        run: mkdir -p .ccache deploy
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
+        with:
+          path: .ccache
+          key: mixpi-deb-trixie-arm64-${{ github.run_id }}
+          restore-keys: mixpi-deb-trixie-arm64-
+      - name: Build package in Debian trixie arm64
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          docker run --rm --platform linux/arm64 \
+            -e DEBIAN_FRONTEND=noninteractive \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$GITHUB_WORKSPACE/.ccache:/ccache" \
+            debian:trixie bash -euc '
+              test "$(dpkg --print-architecture)" = arm64
+              # Upstream needs fonts-ubuntu from non-free and uses sudo.
+              sed -i "s/^Components: main$/Components: main contrib non-free non-free-firmware/" /etc/apt/sources.list.d/debian.sources
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates git sudo
+              . /workspace/source-versions
+              bash /workspace/stage3/01-install-packages/01-run.sh \
+                --mixxx-package /workspace/stage3/01-install-packages/files /code /ccache
+              cp /code/build/*.deb /workspace/deploy/
+              cp /opt/mixxx.version /opt/mixxx.tag /workspace/deploy/
+            ' 2>&1 | tee mixxx-deb-build.log
+      - name: Restore output ownership
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" .ccache deploy
+      - uses: actions/cache/save@v4
+        if: always() && steps.build.outcome != 'skipped' && steps.compiler-cache.outputs.cache-hit != 'true'
+        with:
+          path: .ccache
+          key: mixpi-deb-trixie-arm64-${{ github.run_id }}
+      - name: Check package architecture and record checksums
+        run: |
+          for package in deploy/*.deb; do
+            test "$(dpkg-deb -f "$package" Architecture)" = arm64
+          done
+          git rev-parse HEAD > deploy/image-recipe.version
+          bash stage3/01-install-packages/01-run.sh --mixxx-print-patches > deploy/patches.txt
+          sha256sum stage3/01-install-packages/files/*.patch > deploy/PATCH-SHA256SUMS
+          cd deploy
+          sha256sum *.deb > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mixxx-trixie-arm64-deb
+          compression-level: 0
+          path: |
+            deploy/*.deb
+            deploy/*.version
+            deploy/*.tag
+            deploy/SHA256SUMS
+            deploy/patches.txt
+            deploy/PATCH-SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mixxx-deb-build-log
+          path: mixxx-deb-build.log
+          if-no-files-found: ignore
+          retention-days: 14

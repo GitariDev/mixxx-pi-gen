@@ -1,4 +1,6 @@
 install -m 644 files/lightdm.ini ${ROOTFS_DIR}/etc/lightdm/lightdm.conf
+install -d "${ROOTFS_DIR}/etc/X11/Xsession.d"
+install -m 644 files/80mixpi-gpu-render-node "${ROOTFS_DIR}/etc/X11/Xsession.d/"
 
 # Make sure pi owns its config files
 on_chroot << EOF

@@ -1,0 +1,120 @@
+#!/usr/bin/python3 -I
+"""Pause only scheduled maintenance during the supervised Mixxx session.
+
+The root-only snapshot lives in /run: a reboot resets timer runtime state too.
+Write it before stopping anything so ExecStopPost can recover partial starts.
+Never stop a maintenance service or hold package locks during the DJ set.
+"""
+import fcntl
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+
+TIMERS = (
+    "apt-daily.timer", "apt-daily-upgrade.timer", "man-db.timer",
+    "dpkg-db-backup.timer", "logrotate.timer", "fstrim.timer",
+    "e2scrub_all.timer", "rpi-zram-writeback.timer",
+    "systemd-tmpfiles-clean.timer",
+)
+STATE = Path("/run/mixpi-maintenance")
+PACKAGE_LOCKS = (
+    "/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock",
+    "/var/cache/apt/archives/lock", "/var/lib/apt/lists/lock",
+)
+
+
+def systemctl(*args):
+    return subprocess.run(["/usr/bin/systemctl", *args], check=True,
+                          capture_output=True, text=True,
+                          env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"})
+
+
+def active(timer):
+    # show also handles units absent from a particular image (LoadState=not-found).
+    return systemctl("show", "--property=ActiveState", "--value", timer).stdout.strip() in {
+        "active", "activating", "reloading"}
+
+
+def packages_busy():
+    for unit in ("apt-daily.service", "apt-daily-upgrade.service"):
+        if active(unit):
+            return True
+    # Include manually launched package jobs, including their unlocked phases.
+    for process in Path("/proc").glob("[0-9]*/comm"):
+        try:
+            if process.read_text().strip() in {"apt", "apt-get", "dpkg", "unattended-upgr"}:
+                return True
+        except FileNotFoundError:
+            pass  # A process can exit between glob and read.
+    for name in PACKAGE_LOCKS:
+        try:
+            with open(name, "r+") as lock:
+                try:
+                    fcntl.lockf(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+        except FileNotFoundError:
+            pass
+    return False
+
+
+def restore(state=STATE):
+    snapshot = state / "timers.json"
+    if not snapshot.exists():
+        return
+    timers = json.loads(snapshot.read_text())
+    if not isinstance(timers, list) or any(timer not in TIMERS for timer in timers):
+        raise ValueError("Invalid maintenance timer snapshot")
+    # Retain the snapshot if any start fails; repeating restore is safe.
+    errors = []
+    for timer in timers:
+        try:
+            systemctl("start", timer)
+        except subprocess.CalledProcessError as error:
+            errors.append(str(error))
+    if errors:
+        raise RuntimeError("Could not restore maintenance timers: " + "; ".join(errors))
+    snapshot.unlink()
+
+
+def pause(state=STATE):
+    snapshot = state / "timers.json"
+    if not snapshot.exists():
+        timers = [timer for timer in TIMERS if active(timer)]
+        temporary = state / "timers.json.tmp"
+        temporary.write_text(json.dumps(timers) + "\n")
+        temporary.replace(snapshot)
+    else:
+        # Do not overwrite the original snapshot on a repeated request.
+        timers = json.loads(snapshot.read_text())
+        if not isinstance(timers, list) or any(timer not in TIMERS for timer in timers):
+            raise ValueError("Invalid maintenance timer snapshot")
+    for timer in timers:
+        systemctl("stop", timer)
+    # Stopping a timer never stops an already-triggered service. Wait for any
+    # package work to finish before opening Mixxx; manual jobs remain allowed.
+    while packages_busy():
+        time.sleep(1)
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in {"pause", "restore"}:
+        sys.exit("Usage: mixpi-maintenance pause|restore")
+    if os.geteuid() != 0:
+        sys.exit("mixpi-maintenance must run as root")
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    # Serialize pause/restore, including interruption recovery by ExecStopPost.
+    with (STATE / "lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if sys.argv[1] == "pause":
+            pause()
+        else:
+            restore()
+
+
+if __name__ == "__main__":
+    main()

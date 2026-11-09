@@ -1,0 +1,468 @@
+diff --git a/src/analyzer/analyzerthread.cpp b/src/analyzer/analyzerthread.cpp
+index a81f884..f43a642 100644
+--- a/src/analyzer/analyzerthread.cpp
++++ b/src/analyzer/analyzerthread.cpp
+@@ -129,7 +129,8 @@ void AnalyzerThread::doRun() {
+ 
+         // Get the audio
+         const mixxx::AudioSourcePointer audioSource =
+-                SoundSourceProxy(m_currentTrack->getTrack()).openAudioSource(openParams);
++                SoundSourceProxy(m_currentTrack->getTrack(), SoundSourceProxy::RamCacheMode::Existing)
++                        .openAudioSource(openParams);
+         if (!audioSource) {
+             kLogger.warning()
+                     << "Failed to open file for analyzing:"
+diff --git a/src/engine/cachingreader/cachingreaderworker.cpp b/src/engine/cachingreader/cachingreaderworker.cpp
+index e21ee8e..55ff790 100644
+--- a/src/engine/cachingreader/cachingreaderworker.cpp
++++ b/src/engine/cachingreader/cachingreaderworker.cpp
+@@ -137,6 +137,11 @@ void CachingReaderWorker::run() {
+             Event::start(m_tag);
+         }
+     }
++    // Release decoder handles and cache leases on this worker at shutdown.
++    if (m_pAudioSource) {
++        m_pAudioSource->close();
++        m_pAudioSource.reset();
++    }
+ }
+ 
+ void CachingReaderWorker::discardAllPendingRequests() {
+@@ -190,7 +195,8 @@ void CachingReaderWorker::loadTrack(const TrackPointer& pTrack) {
+ 
+     mixxx::AudioSource::OpenParams config;
+     config.setChannelCount(CachingReaderChunk::kChannels);
+-    m_pAudioSource = SoundSourceProxy(pTrack).openAudioSource(config);
++    m_pAudioSource = SoundSourceProxy(pTrack, SoundSourceProxy::RamCacheMode::Create)
++                             .openAudioSource(config);
+     if (!m_pAudioSource) {
+         kLogger.warning()
+                 << m_group
+diff --git a/src/sources/audiosourcetrackproxy.h b/src/sources/audiosourcetrackproxy.h
+index dca3f58..60fcb10 100644
+--- a/src/sources/audiosourcetrackproxy.h
++++ b/src/sources/audiosourcetrackproxy.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "sources/audiosourceproxy.h"
++#include "sources/removabletrackcache.h"
+ #include "track/track_decl.h"
+ 
+ namespace mixxx {
+@@ -8,11 +9,16 @@ namespace mixxx {
+ class TrackPointerHolder {
+   public:
+     explicit TrackPointerHolder(
+-            TrackPointer&& pTrack)
+-            : m_pTrack(std::move(pTrack)) {
++            TrackPointer&& pTrack,
++            RemovableTrackCache::Lease ramCache)
++            : m_ramCache(std::move(ramCache)),
++              m_pTrack(std::move(pTrack)) {
+     }
+ 
+   private:
++    // AudioSourceProxy is destroyed before this holder, closing decoders
++    // before the last lease unlinks the RAM file (also at shutdown).
++    RemovableTrackCache::Lease m_ramCache;
+     TrackPointer m_pTrack;
+ };
+ 
+@@ -30,16 +36,19 @@ class AudioSourceTrackProxy : private TrackPointerHolder,
+   public:
+     static AudioSourcePointer create(
+             TrackPointer pTrack,
+-            AudioSourcePointer pAudioSource) {
++            AudioSourcePointer pAudioSource,
++            RemovableTrackCache::Lease ramCache = {}) {
+         return std::make_shared<AudioSourceTrackProxy>(
+                 std::move(pTrack),
+-                std::move(pAudioSource));
++                std::move(pAudioSource),
++                std::move(ramCache));
+     }
+ 
+     AudioSourceTrackProxy(
+             TrackPointer pTrack,
+-            AudioSourcePointer pAudioSource)
+-            : TrackPointerHolder(std::move(pTrack)),
++            AudioSourcePointer pAudioSource,
++            RemovableTrackCache::Lease ramCache = {})
++            : TrackPointerHolder(std::move(pTrack), std::move(ramCache)),
+               AudioSourceProxy(std::move(pAudioSource)) {
+     }
+ };
+diff --git a/src/sources/soundsourceproxy.cpp b/src/sources/soundsourceproxy.cpp
+index d39eec7..cd40c5e 100644
+--- a/src/sources/soundsourceproxy.cpp
++++ b/src/sources/soundsourceproxy.cpp
+@@ -184,6 +184,7 @@ QList<QMimeType> mimeTypesForFileType(const QString& fileType) {
+ 
+ // static
+ bool SoundSourceProxy::registerProviders() {
++    mixxx::RemovableTrackCache::initialize();
+     // Initialize built-in file types.
+     // Fallback providers should be registered before specialized
+     // providers to ensure that they are only after the specialized
+@@ -419,9 +420,14 @@ SoundSourceProxy::SoundSourceProxy(
+     initSoundSourceWithProvider(std::move(pProvider));
+ }
+ 
+-SoundSourceProxy::SoundSourceProxy(TrackPointer pTrack)
++SoundSourceProxy::SoundSourceProxy(TrackPointer pTrack, RamCacheMode cacheMode)
+         : m_pTrack(std::move(pTrack)),
+-          m_url(m_pTrack ? m_pTrack->getFileInfo().toQUrl() : QUrl()),
++          m_ramCache(m_pTrack && cacheMode != RamCacheMode::Original
++                          ? mixxx::RemovableTrackCache::acquire(m_pTrack->getLocation(),
++                                    cacheMode == RamCacheMode::Create)
++                          : mixxx::RemovableTrackCache::Lease()),
++          m_url(m_ramCache ? QUrl::fromLocalFile(m_ramCache->path)
++                          : (m_pTrack ? m_pTrack->getFileInfo().toQUrl() : QUrl())),
+           m_providerRegistrations(allProviderRegistrationsForUrl(m_url)) {
+     findProviderAndInitSoundSource();
+ }
+@@ -936,10 +942,14 @@ mixxx::AudioSourcePointer SoundSourceProxy::openAudioSource(
+         return nullptr;
+     }
+     if (!openSoundSource(params)) {
++        if (m_ramCache) {
++            kLogger.warning() << "MixPi RAM cache decoder failed; retrying original";
++            return SoundSourceProxy(m_pTrack).openAudioSource(params);
++        }
+         return nullptr;
+     }
+     // Overwrite metadata with actual audio properties
+     m_pTrack->updateStreamInfoFromSource(
+             m_pSoundSource->getStreamInfo());
+-    return mixxx::AudioSourceTrackProxy::create(m_pTrack, m_pSoundSource);
++    return mixxx::AudioSourceTrackProxy::create(m_pTrack, m_pSoundSource, m_ramCache);
+ }
+diff --git a/src/sources/soundsourceproxy.h b/src/sources/soundsourceproxy.h
+index 6b6b387..cb7e5b8 100644
+--- a/src/sources/soundsourceproxy.h
++++ b/src/sources/soundsourceproxy.h
+@@ -5,6 +5,7 @@
+ #include <QMimeType>
+ 
+ #include "sources/soundsourceproviderregistry.h"
++#include "sources/removabletrackcache.h"
+ #include "track/track_decl.h"
+ 
+ namespace mixxx {
+@@ -62,7 +63,9 @@ class SoundSourceProxy {
+     static mixxx::SoundSourceProviderPointer getPrimaryProviderForFileType(
+             const QString& fileType);
+ 
+-    explicit SoundSourceProxy(TrackPointer pTrack);
++    enum class RamCacheMode { Original, Existing, Create };
++    explicit SoundSourceProxy(TrackPointer pTrack,
++            RamCacheMode cacheMode = RamCacheMode::Original);
+ 
+     // Only needed for testing all available providers explicitly
+     SoundSourceProxy(
+@@ -216,6 +219,7 @@ class SoundSourceProxy {
+             const mixxx::AudioSource::OpenParams& params = mixxx::AudioSource::OpenParams());
+ 
+     const TrackPointer m_pTrack;
++    const mixxx::RemovableTrackCache::Lease m_ramCache;
+ 
+     const QUrl m_url;
+ 
+diff --git a/src/sources/removabletrackcache.h b/src/sources/removabletrackcache.h
+new file mode 100644
+index 0000000..8dd8d46
+--- /dev/null
++++ b/src/sources/removabletrackcache.h
+@@ -0,0 +1,291 @@
++#pragma once
++
++#include <QDir>
++#include <QElapsedTimer>
++#include <QFile>
++#include <QFileInfo>
++#include <QLockFile>
++#include <QStorageInfo>
++#include <QTemporaryFile>
++#include <QUrl>
++#include <QtDebug>
++
++#include <memory>
++#include <mutex>
++#include <string>
++#include <unordered_map>
++
++#ifdef Q_OS_LINUX
++#include <sys/stat.h>
++#include <sys/vfs.h>
++#include <unistd.h>
++#endif
++
++namespace mixxx {
++
++// File bytes, not decoded audio. Only reader/analyzer workers call acquire().
++// Header-only so this optional Pi patch needs no build-system changes.
++class RemovableTrackCache {
++  public:
++    struct Entry {
++        QString path;
++        qint64 size;
++        bool hasCorrection = false;
++#ifdef Q_OS_LINUX
++        struct stat identity {};
++        struct stat correctionIdentity {};
++#endif
++        ~Entry() {
++            QFile::remove(path);
++            if (hasCorrection) {
++                QFile::remove(path + QLatin1Char('c'));
++            }
++        }
++    };
++    using Lease = std::shared_ptr<const Entry>;
++
++    static void initialize() {
++        // Called by registerProviders() before any worker can open a source.
++        (void)instance();
++    }
++
++    static Lease acquire(const QString& original, bool create) {
++#ifdef Q_OS_LINUX
++        return instance().acquireImpl(original, create);
++#else
++        Q_UNUSED(original);
++        Q_UNUSED(create);
++        return {};
++#endif
++    }
++
++  private:
++    static RemovableTrackCache& instance() {
++        static RemovableTrackCache cache;
++        return cache;
++    }
++
++#ifdef Q_OS_LINUX
++    static constexpr qint64 kMiB = 1024 * 1024;
++    const QString m_directory = QStringLiteral("/dev/shm/mixpi-track-cache");
++    QLockFile m_lock{m_directory + QStringLiteral("/cache.lock")};
++    std::mutex m_mutex;
++    std::unordered_map<std::string, std::weak_ptr<const Entry>> m_entries;
++    bool m_ready = false;
++
++    // Fail closed if procfs is unavailable. Keep at least 512 MiB or 1/8
++    // of physical RAM available, whichever is larger, including during copy.
++    static bool hasMemory(qint64 bytes) {
++        QFile meminfo(QStringLiteral("/proc/meminfo"));
++        if (!meminfo.open(QIODevice::ReadOnly)) {
++            return false;
++        }
++        qint64 available = -1;
++        qint64 total = 0;
++        // procfs reports size zero: do not use QFile::atEnd() before reading.
++        const auto lines = meminfo.readAll().split('\n');
++        for (const auto& line : lines) {
++            if (line.startsWith("MemAvailable:")) {
++                available = line.mid(13).simplified().split(' ').value(0).toLongLong() * 1024;
++            } else if (line.startsWith("MemTotal:")) {
++                total = line.mid(9).simplified().split(' ').value(0).toLongLong() * 1024;
++            }
++        }
++        return available >= bytes + qMax(512 * kMiB, total / 8);
++    }
++
++    static qint64 maxBytes() {
++        static const qint64 limit = [] {
++            bool ok = false;
++            const qint64 mb = qEnvironmentVariable("MIXPI_RAM_CACHE_MAX_MB")
++                                      .toLongLong(&ok);
++            // Zero disables copies. Bound multiplication and pathological input.
++            return (ok ? qBound<qint64>(0, mb, 16384) : 1024) * kMiB;
++        }();
++        return limit;
++    }
++
++    static bool matchesPrefix(const QString& original) {
++        // Colon-separated absolute directories; empty explicitly disables.
++        static const auto prefixes = qEnvironmentVariable(
++                "MIXPI_RAM_CACHE_PREFIXES", QStringLiteral("/media/"))
++                                             .split(':', Qt::SkipEmptyParts);
++        for (const auto& prefix : prefixes) {
++            if (!QDir::isAbsolutePath(prefix)) {
++                continue;
++            }
++            auto directory = QDir::cleanPath(prefix);
++            if (!directory.endsWith(QLatin1Char('/'))) {
++                directory += QLatin1Char('/');
++            }
++            if (original.startsWith(directory)) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    RemovableTrackCache() {
++        const auto native = QFile::encodeName(m_directory);
++        // Refuse a shared, foreign-owned or symlink directory. Never follow it
++        // while deleting stale files. A second live Mixxx process falls back.
++        ::mkdir(native.constData(), 0700);
++        struct stat info {};
++        struct statfs fs {};
++        if (::lstat(native.constData(), &info) != 0 || !S_ISDIR(info.st_mode) ||
++                info.st_uid != ::geteuid() || (info.st_mode & 0777) != 0700 ||
++                ::statfs(native.constData(), &fs) != 0 || fs.f_type != 0x01021994 ||
++                !m_lock.tryLock(0)) { // Linux TMPFS_MAGIC
++            qWarning() << "MixPi RAM cache unavailable; using original files";
++            return;
++        }
++        const QDir dir(m_directory);
++        for (const auto& name : dir.entryList({QStringLiteral("track-*")}, QDir::Files)) {
++            QFile::remove(dir.filePath(name));
++        }
++        m_ready = true;
++    }
++
++    static bool sameFile(const struct stat& a, const struct stat& b) {
++        return a.st_dev == b.st_dev && a.st_ino == b.st_ino &&
++                a.st_size == b.st_size &&
++                a.st_mtim.tv_sec == b.st_mtim.tv_sec &&
++                a.st_mtim.tv_nsec == b.st_mtim.tv_nsec &&
++                a.st_ctim.tv_sec == b.st_ctim.tv_sec &&
++                a.st_ctim.tv_nsec == b.st_ctim.tv_nsec;
++    }
++
++    static bool copyFile(const QString& original,
++            const struct stat& identity,
++            QTemporaryFile* copy) {
++        QFile source(original);
++        if (!source.open(QIODevice::ReadOnly) || !copy->open()) {
++            return false;
++        }
++        struct stat opened {};
++        if (::fstat(source.handle(), &opened) != 0 || !sameFile(identity, opened)) {
++            return false;
++        }
++        QByteArray buffer;
++        buffer.resize(static_cast<int>(kMiB));
++        qint64 remaining = identity.st_size;
++        while (remaining > 0) {
++            if (!hasMemory(kMiB)) {
++                return false;
++            }
++            const qint64 count = source.read(buffer.data(), qMin(remaining, kMiB));
++            if (count <= 0 || copy->write(buffer.constData(), count) != count) {
++                return false;
++            }
++            remaining -= count;
++        }
++        struct stat after {};
++        struct stat stillOpen {};
++        const auto native = QFile::encodeName(original);
++        if (!copy->flush() || ::fstat(source.handle(), &stillOpen) != 0 ||
++                ::stat(native.constData(), &after) != 0 ||
++                !sameFile(identity, after) || !sameFile(identity, stillOpen)) {
++            return false;
++        }
++        copy->close();
++        return true;
++    }
++
++    Lease acquireImpl(const QString& original, bool create) {
++        if (!m_ready || !matchesPrefix(original) || maxBytes() == 0) {
++            return {};
++        }
++        // Serialize reservations and copies across all players. This mutex is
++        // never taken by the GUI/audio thread. Only publish complete files.
++        const std::lock_guard<std::mutex> guard(m_mutex);
++        const QFileInfo sourceInfo(original);
++        struct stat identity {};
++        const auto native = QFile::encodeName(original);
++        const bool exists = ::stat(native.constData(), &identity) == 0;
++        // WavPack hybrid tracks use a companion .wvc file. Preserve it rather
++        // than silently falling back to lossy decoding from just the .wv.
++        struct stat correctionIdentity {};
++        const QString correction = original + QLatin1Char('c');
++        const auto nativeCorrection = QFile::encodeName(correction);
++        const bool hasCorrection = sourceInfo.suffix().compare(
++                                           QStringLiteral("wv"), Qt::CaseInsensitive) == 0 &&
++                ::stat(nativeCorrection.constData(), &correctionIdentity) == 0;
++        const auto key = original.toStdString();
++        auto found = m_entries.find(key);
++        if (found != m_entries.end()) {
++            auto entry = found->second.lock();
++            if (entry && (!exists || (sameFile(entry->identity, identity) &&
++                                            entry->hasCorrection == hasCorrection &&
++                                            (!hasCorrection || sameFile(entry->correctionIdentity,
++                                                                       correctionIdentity))))) {
++                return entry;
++            }
++        }
++        // Remove expired weak keys so browsing/loading many tracks is bounded.
++        for (auto it = m_entries.begin(); it != m_entries.end();) {
++            if (it->second.expired()) {
++                it = m_entries.erase(it);
++            } else {
++                ++it;
++            }
++        }
++        if (!create) {
++            return {};
++        }
++        const qint64 size = identity.st_size;
++        const qint64 correctionSize = hasCorrection ? correctionIdentity.st_size : 0;
++        // Validate sizes before summing them, keeping the total bounded.
++        if (size <= 0 || size > maxBytes() || correctionSize < 0 ||
++                correctionSize > maxBytes() - size ||
++                (hasCorrection && !S_ISREG(correctionIdentity.st_mode))) {
++            qInfo() << "MixPi RAM cache skipped (size/companion file)" << original;
++            return {};
++        }
++        const qint64 totalSize = size + correctionSize;
++        qint64 used = 0;
++        for (const auto& file : QDir(m_directory).entryInfoList(
++                     {QStringLiteral("track-*")}, QDir::Files)) {
++            used += file.size();
++        }
++        const QStorageInfo storage(m_directory);
++        if (!exists || !S_ISREG(identity.st_mode) ||
++                totalSize > maxBytes() - used ||
++                !hasMemory(totalSize + kMiB) || !storage.isValid() ||
++                storage.bytesAvailable() < totalSize + kMiB) {
++            qInfo() << "MixPi RAM cache skipped (size/budget/memory/tmpfs space)" << original;
++            return {};
++        }
++        QElapsedTimer timer;
++        timer.start();
++        QTemporaryFile copy(m_directory + QStringLiteral("/track-XXXXXX.") + sourceInfo.suffix());
++        QTemporaryFile correctionCopy(m_directory + QStringLiteral("/track-XXXXXX.wvc"));
++        if (!copyFile(original, identity, &copy) ||
++                (hasCorrection && (!copyFile(correction, correctionIdentity, &correctionCopy) ||
++                                          !correctionCopy.rename(copy.fileName() + QLatin1Char('c'))))) {
++            qWarning() << "MixPi RAM cache copy failed; using original" << original;
++            return {};
++        }
++        // The main file must still be the same after copying its companion.
++        struct stat after {};
++        if (::stat(native.constData(), &after) != 0 || !sameFile(identity, after)) {
++            return {};
++        }
++        auto entry = std::make_shared<Entry>();
++        entry->path = copy.fileName();
++        entry->size = totalSize;
++        entry->identity = identity;
++        entry->hasCorrection = hasCorrection;
++        entry->correctionIdentity = correctionIdentity;
++        copy.setAutoRemove(false);
++        correctionCopy.setAutoRemove(false);
++        m_entries[key] = entry;
++        qInfo() << "MixPi RAM cache ready" << original << totalSize << "bytes in"
++                << timer.elapsed() << "ms";
++        return entry;
++    }
++#else
++    RemovableTrackCache() = default;
++#endif
++};
++
++} // namespace mixxx

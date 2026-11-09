@@ -38,6 +38,66 @@ BUTTON = """              <!-- MixxxPi touch actions BEGIN -->
 """
 
 
+# Exact blocks from Pioneered b1b61860d0ee06e4460df599b1d39619fbc1db1e.
+# Match both original and our output, so repeats work but upstream drift fails.
+EFFECT_TOGGLE_ORIGINAL = '''      <PushButton>
+        <ObjectName>EffectToggle</ObjectName>
+        <Size>0me,30max</Size>
+        <NumberStates>2</NumberStates>
+        <State>
+          <Number>0</Number>
+          <Text>Off</Text>
+        </State>
+        <State>
+          <Number>1</Number>
+          <Text>Active</Text>
+        </State>
+        <Connection>
+          <ConfigKey>[EffectRack<Variable name="rack"/>_EffectUnit<Variable name="unit"/>_Effect<Variable name="effect"/>],enabled</ConfigKey>
+          <ConnectValueToWidget>true</ConnectValueToWidget>
+        </Connection>
+        <Connection>
+          <ConfigKey>EffectRack<Variable name="rack"/>_EffectUnit<Variable name="unit"/>],group_[Master]_enable</ConfigKey>
+          <ConnectValueToWidget>false</ConnectValueToWidget>
+        </Connection>
+        <Connection>
+          <ConfigKey>[EffectRack<Variable name="rack"/>_EffectUnit<Variable name="unit"/>_Effect<Variable name="effect"/>],meta</ConfigKey>
+          <ConnectValueToWidget>false</ConnectValueToWidget>
+        </Connection>
+      </PushButton>'''
+EFFECT_TOGGLE_FIXED = EFFECT_TOGGLE_ORIGINAL.replace(
+    "<ConfigKey>EffectRack", "<ConfigKey>[EffectRack").replace(
+    '''        <Connection>
+          <ConfigKey>[EffectRack<Variable name="rack"/>_EffectUnit<Variable name="unit"/>_Effect<Variable name="effect"/>],meta</ConfigKey>
+          <ConnectValueToWidget>false</ConnectValueToWidget>
+        </Connection>
+''', "")
+TRACK_NUMBER_ORIGINAL = '''                          <TrackProperty>
+                            <ObjectName>TrackNumber</ObjectName>
+                            <Size>0me,0me</Size>
+                            <TooltipId>track_number</TooltipId>
+                            <Property>track_number</Property>
+                            <Channel><Variable name="channel"/></Channel>
+                            <Elide>right</Elide>
+                          </TrackProperty>'''
+# Mixxx 2.5.6 has no track-number tooltip. Use its registered metadata-label
+# tooltip (including the track-properties/menu gestures), not an unknown ID.
+TRACK_NUMBER_FIXED = TRACK_NUMBER_ORIGINAL.replace(
+    "<Property>track_number</Property>", "<Property>trackNumber</Property>").replace(
+    "<TooltipId>track_number</TooltipId>", "<TooltipId>track_title</TooltipId>")
+
+
+def patch_exact_xml(source, original, fixed, description):
+    if source.count(original) == 1 and fixed not in source:
+        result = source.replace(original, fixed)
+    elif source.count(fixed) == 1 and original not in source:
+        result = source
+    else:
+        raise ValueError(f"Expected the pinned Pioneered {description}")
+    ET.fromstring(result)
+    return result
+
+
 def remove_managed(text, begin, end):
     if text.count(begin) != text.count(end) or text.count(begin) > 1:
         raise ValueError(f"Malformed managed block: {begin}")
@@ -101,6 +161,12 @@ def apply(skin, config=None):
     outputs = {
         skin / "library.xml": patch_library((skin / "library.xml").read_text()),
         skin / "style.qss": patch_styles((skin / "style.qss").read_text()),
+        skin / "effect.xml": patch_exact_xml(
+            (skin / "effect.xml").read_text(), EFFECT_TOGGLE_ORIGINAL,
+            EFFECT_TOGGLE_FIXED, "Beat FX toggle"),
+        skin / "deck.xml": patch_exact_xml(
+            (skin / "deck.xml").read_text(), TRACK_NUMBER_ORIGINAL,
+            TRACK_NUMBER_FIXED, "track-number label"),
     }
     ET.parse(skin / "skin.xml")
     if config:

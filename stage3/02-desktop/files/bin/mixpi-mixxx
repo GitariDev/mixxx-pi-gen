@@ -19,6 +19,6 @@ else
     swaymsg 'workspace "1:Mixxx"'
     if ! pgrep -u "$(id -u)" -x mixxx >/dev/null; then
         mixpi-touch-defaults
-        swaymsg 'exec /usr/bin/mixxx'
+        swaymsg 'exec /usr/local/bin/mixpi-mixxx-start'
     fi
 fi

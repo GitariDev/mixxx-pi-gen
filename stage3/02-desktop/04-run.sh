@@ -11,6 +11,9 @@ install -d "${ROOTFS_DIR}/usr/local/sbin" "${ROOTFS_DIR}/etc/ssh/sshd_config.d"
 install -m 755 files/ssh/mixpi-import-ssh-key "${ROOTFS_DIR}/usr/local/sbin/"
 install -m 644 files/ssh/20-mixpi-key-only.conf "${ROOTFS_DIR}/etc/ssh/sshd_config.d/"
 install -m 644 files/ssh/mixpi-ssh-key.service "${ROOTFS_DIR}/etc/systemd/system/"
+install -m 755 files/sbin/mixpi-maintenance "${ROOTFS_DIR}/usr/local/sbin/"
+install -d "${ROOTFS_DIR}/etc/sudoers.d"
+install -m 440 files/sudoers/020_mixpi-maintenance "${ROOTFS_DIR}/etc/sudoers.d/"
 
 # These are directories on the existing SD root filesystem. rpi-resize keeps
 # expanding rootfs into the card's free space; no live repartitioning is needed.

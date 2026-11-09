@@ -2,5 +2,5 @@
 
 if ! pgrep -x "mixxx" > /dev/null
 then
-    swaymsg exec "/usr/bin/mixxx"
+    /usr/local/bin/mixpi-mixxx
 fi

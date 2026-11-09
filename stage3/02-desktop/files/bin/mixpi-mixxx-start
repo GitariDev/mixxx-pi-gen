@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+
+# Called by Sway so the service inherits this session, even on first login
+# before dbus-update-activation-environment has finished.
+for variable in WAYLAND_DISPLAY DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP XDG_SESSION_TYPE WLR_RENDER_DRM_DEVICE; do
+    if [ "${!variable+x}" ]; then
+        systemctl --user import-environment "$variable"
+    fi
+done
+# A fixed service name makes concurrent launch requests harmless.
+exec systemctl --user start mixpi-mixxx.service

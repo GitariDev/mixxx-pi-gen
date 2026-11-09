@@ -36,6 +36,9 @@ if [ "${1:-}" = --mixxx-package ]; then
     # The pinned upstream setup script references this under nounset.
     export FONTS_UBUNTU_AVAILABLE=false
     tools/debian_buildenv.sh setup
+    if [ -n "${MIXXX_CACHE_SMOKE_SCRIPT:-}" ]; then
+        bash "$MIXXX_CACHE_SMOKE_SCRIPT"
+    fi
     git rev-parse HEAD > /opt/mixxx.version
     git describe --tags --always > /opt/mixxx.tag
     ccache -M 10G

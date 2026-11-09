@@ -277,7 +277,7 @@ index 0000000..8dd8d46
 +            const qint64 mb = qEnvironmentVariable("MIXPI_RAM_CACHE_MAX_MB")
 +                                      .toLongLong(&ok);
 +            // Zero disables copies. Bound multiplication and pathological input.
-+            return (ok ? qBound<qint64>(0, mb, 16384) : 1024) * kMiB;
++            return (ok ? qBound(qint64(0), mb, qint64(16384)) : 1024) * kMiB;
 +        }();
 +        return limit;
 +    }

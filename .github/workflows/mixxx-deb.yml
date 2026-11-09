@@ -7,6 +7,7 @@ on:
       - '.github/workflows/mixxx-deb.yml'
       - 'stage3/01-install-packages/**'
       - 'source-versions'
+      - 'tools/performance/**'
   workflow_dispatch:
 
 permissions:
@@ -39,6 +40,7 @@ jobs:
           set -o pipefail
           docker run --rm --platform linux/arm64 \
             -e DEBIAN_FRONTEND=noninteractive \
+            -e MIXXX_CACHE_SMOKE_SCRIPT=/workspace/tools/performance/test-ram-cache.sh \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$GITHUB_WORKSPACE/.ccache:/ccache" \
             debian:trixie bash -euc '

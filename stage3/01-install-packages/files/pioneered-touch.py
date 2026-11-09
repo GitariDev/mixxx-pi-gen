@@ -105,6 +105,21 @@ def remove_managed(text, begin, end):
                   "", text, flags=re.DOTALL)
 
 
+def patch_tab(source):
+    # WidgetStack page triggers are toggles by default. A tab must always send
+    # 1 on press, and never 0 on release, including when it is already selected.
+    original = '''    <NumberStates>2</NumberStates>
+    <State>'''
+    fixed = original.replace('<State>',
+            '<LeftClickIsPushButton>true</LeftClickIsPushButton>\n    <State>')
+    source = patch_exact_xml(source, original, fixed, "tab button states")
+    original = '''      <ConfigKey>[Tab],<Variable name="config_key"/></ConfigKey>
+    </Connection>'''
+    fixed = original.replace('    </Connection>',
+            '      <EmitOnDownPress>true</EmitOnDownPress>\n    </Connection>')
+    return patch_exact_xml(source, original, fixed, "tab press connection")
+
+
 def patch_library(source):
     source = remove_managed(source, BUTTON_BEGIN, BUTTON_END)
     root = ET.fromstring(source)
@@ -159,6 +174,7 @@ def patch_config(source):
 def apply(skin, config=None):
     # Validate every input and construct every output before changing any file.
     outputs = {
+        skin / "tab.xml": patch_tab((skin / "tab.xml").read_text()),
         skin / "library.xml": patch_library((skin / "library.xml").read_text()),
         skin / "style.qss": patch_styles((skin / "style.qss").read_text()),
         skin / "effect.xml": patch_exact_xml(

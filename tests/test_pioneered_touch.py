@@ -83,6 +83,16 @@ class PioneeredTouchTests(unittest.TestCase):
         self.skin = self.path / "Pioneered"
         self.skin.mkdir()
         (self.skin / "skin.xml").write_text("<skin><manifest/></skin>\n")
+        (self.skin / "tab.xml").write_text('''<Template>
+  <PushButton>
+    <NumberStates>2</NumberStates>
+    <State><Number>0</Number><Text>Tab</Text></State>
+    <State><Number>1</Number><Text>Tab</Text></State>
+    <Connection>
+      <ConfigKey>[Tab],<Variable name="config_key"/></ConfigKey>
+    </Connection>
+  </PushButton>
+</Template>''')
         (self.skin / "effect.xml").write_text(
             "<Template>\n" + PATCH.EFFECT_TOGGLE_ORIGINAL + "\n</Template>\n")
         (self.skin / "deck.xml").write_text(
@@ -121,7 +131,8 @@ UnrelatedValue preserve this exactly
     def test_repeat_apply_retains_first_originals_and_unrelated_settings(self):
         originals = {path: path.read_text() for path in (
             self.skin / "style.qss", self.skin / "library.xml",
-            self.skin / "effect.xml", self.skin / "deck.xml", self.config)}
+            self.skin / "effect.xml", self.skin / "deck.xml",
+            self.skin / "tab.xml", self.config)}
         PATCH.apply(self.skin, self.config)
         first = {path: path.read_text() for path in originals}
         PATCH.apply(self.skin, self.config)
@@ -215,7 +226,7 @@ UnrelatedValue preserve this exactly
                         ignore=shutil.ignore_patterns(".git", ".mixpi-touch-original"))
         PATCH.apply(skin, self.config)
         first = {name: (skin / name).read_bytes() for name in
-                 ("library.xml", "style.qss", "effect.xml", "deck.xml")}
+                 ("library.xml", "style.qss", "effect.xml", "deck.xml", "tab.xml")}
         PATCH.apply(skin, self.config)
         self.assertEqual(first, {name: (skin / name).read_bytes() for name in first})
         for path in skin.rglob("*.xml"):

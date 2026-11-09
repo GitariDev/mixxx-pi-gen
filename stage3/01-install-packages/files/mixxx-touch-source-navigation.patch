@@ -1,0 +1,324 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+index 37a611c..b4162dd 100644
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -195,6 +195,11 @@ Library::Library(
+     addOptionalSidebarSource("SeratoFeature", tr("Serato"),
+             "ShowSeratoLibrary", [this] { return new SeratoFeature(this, m_pConfig); });
+ 
++    // Register before skin parsing: a Back button may precede LibrarySidebar.
++    // Skin reloads must reuse these controls rather than create duplicate owners.
++    m_pSidebarBack.reset(new ControlPushButton(ConfigKey("[Library]", "sidebar_back")));
++    m_pSidebarCanGoBack.reset(new ControlObject(ConfigKey("[Library]", "sidebar_can_go_back")));
++
+     m_pShowSidebarSourcesMenu.reset(new ControlPushButton(
+             ConfigKey("[Library]", "show_sidebar_sources_menu")));
+     m_pShowSidebarSourcesMenu->connectValueChangeRequest(this, [this](double value) {
+@@ -570,6 +575,13 @@ void Library::applySidebarSourceVisibility() {
+             m_pSidebarWidget->isRowHidden(defaultIndex.row(), QModelIndex())) {
+         m_pSidebarModel->setDefaultSelection(firstVisible.row());
+     }
++    QModelIndex folder = m_pSidebarWidget->rootIndex();
++    while (folder.parent().isValid()) {
++        folder = folder.parent();
++    }
++    if (folder.isValid() && m_pSidebarWidget->isRowHidden(folder.row(), QModelIndex())) {
++        m_pSidebarWidget->returnToSourceRoot();
++    }
+     // Never leave keyboard/controller navigation pointing at a hidden source.
+     QModelIndex selected = m_pSidebarWidget->currentIndex();
+     while (selected.parent().isValid()) {
+diff --git a/src/library/library.h b/src/library/library.h
+index 87114e8..123594f 100644
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -175,6 +175,8 @@ class Library: public QObject {
+     QPointer<WLibrarySidebar> m_pSidebarWidget;
+     QPointer<KeyboardEventFilter> m_pSidebarKeyboard;
+     QScopedPointer<ControlPushButton> m_pShowSidebarSourcesMenu;
++    QScopedPointer<ControlPushButton> m_pSidebarBack;
++    QScopedPointer<ControlObject> m_pSidebarCanGoBack;
+ 
+     const UserSettingsPointer m_pConfig;
+ 
+diff --git a/src/skin/legacy/legacyskinparser.cpp b/src/skin/legacy/legacyskinparser.cpp
+index 4b35bcb..dc65253 100644
+--- a/src/skin/legacy/legacyskinparser.cpp
++++ b/src/skin/legacy/legacyskinparser.cpp
+@@ -1607,6 +1607,9 @@ QWidget* LegacySkinParser::parseLibrarySidebar(const QDomElement& node) {
+     pLibrarySidebar->installEventFilter(m_pKeyboard);
+     pLibrarySidebar->installEventFilter(m_pControllerManager->getControllerLearningEventFilter());
+     m_pLibrary->bindSidebarWidget(pLibrarySidebar);
++    if (m_pContext->selectString(node, "TouchNavigation") == "true") {
++        pLibrarySidebar->enableTouchNavigation();
++    }
+     commonWidgetSetup(node, pLibrarySidebar, false);
+     return pLibrarySidebar;
+ }
+diff --git a/src/widget/touchsourcenavigation.h b/src/widget/touchsourcenavigation.h
+new file mode 100644
+index 0000000..1aa08cf
+--- /dev/null
++++ b/src/widget/touchsourcenavigation.h
+@@ -0,0 +1,110 @@
++#pragma once
++
++#include <functional>
++
++#include <QAbstractItemModel>
++#include <QPersistentModelIndex>
++#include <QTreeView>
++
++// Flat, one-level-at-a-time navigation over the existing library tree. The
++// model still owns imports, track selection and removable-device discovery.
++// No cached raw TreeItem pointers survive a model reset or device removal.
++class TouchSourceNavigation final : public QObject {
++  public:
++    explicit TouchSourceNavigation(QTreeView* view)
++            : QObject(view), m_view(view) {
++        view->setRootIsDecorated(false);
++        view->setItemsExpandable(false);
++        view->setExpandsOnDoubleClick(false);
++        view->setIndentation(0);
++        connect(view, &QTreeView::clicked, this,
++                [this](const QModelIndex& index) { enter(index); });
++        auto* model = view->model();
++        connect(model, &QAbstractItemModel::rowsInserted, this,
++                [this] { enterPending(); });
++        connect(model, &QAbstractItemModel::rowsRemoved, this,
++                [this] {
++                    if (!m_root.isValid()) {
++                        home();
++                    }
++                });
++        connect(model, &QAbstractItemModel::modelAboutToBeReset, this,
++                [this] { home(); });
++    }
++
++    // Installed by WLibrarySidebar: uses the same lazy-population path as the
++    // old disclosure arrow. Keep this separate from track/playlist activation.
++    std::function<void(const QModelIndex&)> requestChildren;
++    std::function<void(bool)> changed;
++
++    bool canGoBack() const {
++        return m_root.isValid();
++    }
++
++    void enter(const QModelIndex& index) {
++        m_pending = QPersistentModelIndex();
++        if (!index.isValid() || index.model() != m_view->model() ||
++                index.parent() != m_view->rootIndex() ||
++                m_view->isRowHidden(index.row(), index.parent())) {
++            return;
++        }
++        m_pending = index;
++        if (requestChildren) {
++            requestChildren(index);
++        }
++        enterPending();
++    }
++
++    void back() {
++        m_pending = QPersistentModelIndex();
++        if (!m_root.isValid()) {
++            home();
++            return;
++        }
++        const QPersistentModelIndex previous = m_root;
++        setRoot(previous.parent());
++        // Highlight the folder we just left without reactivating its track
++        // model. Back and Show/Hide preserve the current playlist and search.
++        m_view->selectionModel()->setCurrentIndex(previous,
++                QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
++        m_view->scrollTo(previous);
++    }
++
++    void home() {
++        m_pending = QPersistentModelIndex();
++        setRoot(QModelIndex());
++    }
++
++    void reveal(const QModelIndex& index) {
++        if (index.isValid() && index.model() == m_view->model() &&
++                index != m_view->rootIndex() && index.parent() != m_view->rootIndex()) {
++            m_pending = QPersistentModelIndex();
++            setRoot(index.parent());
++        }
++    }
++
++  private:
++    void setRoot(const QModelIndex& index) {
++        m_root = index;
++        m_view->setRootIndex(index);
++        if (changed) {
++            changed(canGoBack());
++        }
++    }
++
++    void enterPending() {
++        if (!m_pending.isValid() || m_pending.parent() != m_view->rootIndex() ||
++                m_view->isRowHidden(m_pending.row(), m_pending.parent()) ||
++                m_view->model()->rowCount(m_pending) == 0) {
++            return;
++        }
++        const QPersistentModelIndex next = m_pending;
++        m_pending = QPersistentModelIndex();
++        setRoot(next);
++        m_view->collapseAll();
++    }
++
++    QTreeView* const m_view;
++    QPersistentModelIndex m_root;
++    QPersistentModelIndex m_pending;
++};
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index aa67785..1765266 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -4,7 +4,9 @@
+ #include <QUrl>
+ #include <QtDebug>
+ 
++#include "control/controlobject.h"
+ #include "library/sidebarmodel.h"
++#include "widget/touchsourcenavigation.h"
+ #include "moc_wlibrarysidebar.cpp"
+ #include "util/defs.h"
+ #include "util/dnd.h"
+@@ -30,6 +32,36 @@ WLibrarySidebar::WLibrarySidebar(QWidget* parent)
+     header()->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+ }
+ 
++void WLibrarySidebar::enableTouchNavigation() {
++    if (m_touchNavigation || !model()) {
++        return;
++    }
++    auto* sourceBack = ControlObject::getControl(ConfigKey("[Library]", "sidebar_back"));
++    m_sourceCanGoBack = ControlObject::getControl(ConfigKey("[Library]", "sidebar_can_go_back"));
++    VERIFY_OR_DEBUG_ASSERT(sourceBack && m_sourceCanGoBack) {
++        return;
++    }
++    m_sourceCanGoBack->set(0);
++    m_touchNavigation = new TouchSourceNavigation(this);
++    m_touchNavigation->requestChildren = [this](const QModelIndex& index) {
++        emit expanded(index);
++    };
++    m_touchNavigation->changed = [this](bool canGoBack) {
++        m_sourceCanGoBack->set(canGoBack ? 1 : 0);
++    };
++    sourceBack->connectValueChangeRequest(this, [this](double value) {
++        if (value > 0) {
++            m_touchNavigation->back();
++        }
++    });
++}
++
++void WLibrarySidebar::returnToSourceRoot() {
++    if (m_touchNavigation) {
++        m_touchNavigation->home();
++    }
++}
++
+ void WLibrarySidebar::contextMenuEvent(QContextMenuEvent *event) {
+     //if (event->state() & Qt::RightButton) { //Dis shiz don werk on windowze
+     QModelIndex clickedIndex = indexAt(event->pos());
+@@ -181,6 +213,9 @@ void WLibrarySidebar::toggleSelectedItem() {
+     if (index.isValid()) {
+         // Activate the item so its content shows in the main library.
+         emit clicked(index);
++        if (m_touchNavigation) {
++            return;
++        }
+         // Expand or collapse the item as necessary.
+         setExpanded(index, !isExpanded(index));
+     }
+@@ -274,6 +309,10 @@ void WLibrarySidebar::keyPressEvent(QKeyEvent* event) {
+         return;
+     }
+     case Qt::Key_Right: {
++        if (m_touchNavigation && !(event->modifiers() & Qt::ControlModifier)) {
++            toggleSelectedItem();
++            return;
++        }
+         if (event->modifiers() & Qt::ControlModifier) {
+             emit setLibraryFocus(FocusWidget::TracksTable);
+         } else {
+@@ -282,6 +321,10 @@ void WLibrarySidebar::keyPressEvent(QKeyEvent* event) {
+         return;
+     }
+     case Qt::Key_Left: {
++        if (m_touchNavigation) {
++            m_touchNavigation->back();
++            return;
++        }
+         // If an expanded item is selected let QTreeView collapse it
+         QModelIndex selIndex = selectedIndex();
+         if (!selIndex.isValid()) {
+@@ -353,12 +396,15 @@ void WLibrarySidebar::selectIndex(const QModelIndex& index) {
+     if (!index.isValid()) {
+         return;
+     }
++    if (m_touchNavigation) {
++        m_touchNavigation->reveal(index);
++    }
+     auto* pModel = new QItemSelectionModel(model());
+     pModel->select(index, QItemSelectionModel::Select);
+     if (selectionModel()) {
+         selectionModel()->deleteLater();
+     }
+-    if (index.parent().isValid()) {
++    if (!m_touchNavigation && index.parent().isValid()) {
+         expand(index.parent());
+     }
+     setSelectionModel(pModel);
+@@ -378,6 +424,9 @@ void WLibrarySidebar::selectChildIndex(const QModelIndex& index, bool selectItem
+         return;
+     }
+ 
++    if (m_touchNavigation) {
++        m_touchNavigation->reveal(translated);
++    }
+     if (selectItem) {
+         auto* pModel = new QItemSelectionModel(sidebarModel);
+         pModel->select(translated, QItemSelectionModel::Select);
+@@ -389,7 +438,7 @@ void WLibrarySidebar::selectChildIndex(const QModelIndex& index, bool selectItem
+     }
+ 
+     QModelIndex parentIndex = translated.parent();
+-    while (parentIndex.isValid()) {
++    while (!m_touchNavigation && parentIndex.isValid()) {
+         expand(parentIndex);
+         parentIndex = parentIndex.parent();
+     }
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index 4fa356e..999c712 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -7,6 +7,8 @@
+ #include "library/library_decl.h"
+ #include "widget/wbasewidget.h"
+ 
++class ControlObject;
++class TouchSourceNavigation;
+ class LibraryFeature;
+ class QPoint;
+ 
+@@ -15,6 +17,9 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+   public:
+     explicit WLibrarySidebar(QWidget* parent = nullptr);
+ 
++    void enableTouchNavigation();
++    void returnToSourceRoot();
++
+     void contextMenuEvent(QContextMenuEvent * event) override;
+     void dragMoveEvent(QDragMoveEvent * event) override;
+     void dragEnterEvent(QDragEnterEvent * event) override;
+@@ -46,6 +51,8 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     void focusSelectedIndex();
+     QModelIndex selectedIndex();
+ 
++    TouchSourceNavigation* m_touchNavigation = nullptr;
++    ControlObject* m_sourceCanGoBack = nullptr;
+     QBasicTimer m_expandTimer;
+     QModelIndex m_hoverIndex;
+ };

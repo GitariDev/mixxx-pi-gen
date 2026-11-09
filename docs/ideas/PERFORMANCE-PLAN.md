@@ -18,8 +18,10 @@ frames. Post-test: 48.2°C, no throttle flags, no swap use. This is subjective
 playback acceptance plus startup evidence, not a controlled performance
 benchmark or endurance test. Original installation and profile remain intact.
 
-The package workflow also passed at image-isolation commit `249da45`. A full
-image build is the next packaging validation. Native Sources/full target UI,
+The package workflow passed at image-isolation commit `249da45`; its full
+image build `42590130970` also passed. Sources-menu package `42592257666`
+passed at `3d50f7b`. These are build results; neither new artifact has been
+accepted on the Pi. Native Sources/full target UI,
 eject interlock, appliance stripping and the same-card preservation gate remain.
 See [same-card checkpoint](../setup/SAME-CARD-UPGRADE.md).
 
@@ -36,10 +38,19 @@ See [same-card checkpoint](../setup/SAME-CARD-UPGRADE.md).
 - Hiding the selected source moves selection to a visible source. The last
   visible source cannot be unchecked; manually hiding everything recovers the
   first source. Lazy feature insertion now emits model row notifications.
-- Host suite: 151 tests, 125 passed and 26 skipped, including pinned-source patch
-  application and repeated skin patching. ARM compilation and touch acceptance
-  of the new Sources menu are pending. Right-hand folder navigation, drag
-  ordering, settings-page integration and guarded eject remain unfinished.
+- Opt-in native touch navigation now shows one source/folder level at a time.
+  Full-row taps enter folders, Back returns one level without activating another
+  track model, and Show/Hide preserves navigation. Persistent model indexes
+  handle lazy imports, resets and removal of the active device. Pioneered keeps
+  the track table visible beside a 260 px right-hand pane with 48 px rows/Back.
+  This first layout does not yet extend over the right deck title strip.
+- The actual Qt navigation helper passed an offscreen smoke run on the Pi,
+  independently of the running Mixxx session. The same check is wired into the
+  ARM package build. Host suite: 152 tests, 126 passed and 26 skipped, including
+  the ordered pinned-source patch stack and repeatable pinned-skin patching.
+  Full navigation-package compilation and touch acceptance are pending.
+- Sources-menu touch acceptance, exact target geometry, drag ordering,
+  settings-page integration and guarded eject remain unfinished.
 - The user deferred endurance testing until the new build. The running Pi trial
   remains unchanged while image work continues.
 

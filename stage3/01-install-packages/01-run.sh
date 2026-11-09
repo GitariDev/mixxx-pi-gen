@@ -7,6 +7,7 @@ MIXXX_PATCHES=(
     mixxx-readahead.patch
     mixxx-removable-ram-cache.patch
     mixxx-sidebar-sources.patch
+    mixxx-touch-source-navigation.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF
@@ -39,6 +40,9 @@ if [ "${1:-}" = --mixxx-package ]; then
     tools/debian_buildenv.sh setup
     if [ -n "${MIXXX_CACHE_SMOKE_SCRIPT:-}" ]; then
         bash "$MIXXX_CACHE_SMOKE_SCRIPT"
+    fi
+    if [ -n "${MIXXX_TOUCH_SMOKE_SCRIPT:-}" ]; then
+        bash "$MIXXX_TOUCH_SMOKE_SCRIPT"
     fi
     git rev-parse HEAD > /opt/mixxx.version
     git describe --tags --always > /opt/mixxx.tag

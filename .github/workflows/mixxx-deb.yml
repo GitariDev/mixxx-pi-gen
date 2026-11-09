@@ -40,6 +40,7 @@ jobs:
           set -o pipefail
           docker run --rm --platform linux/arm64 \
             -e DEBIAN_FRONTEND=noninteractive \
+            -e MIXXX_TOUCH_SMOKE_SCRIPT=/workspace/tools/performance/test-source-navigation.sh \
             -e MIXXX_CACHE_SMOKE_SCRIPT=/workspace/tools/performance/test-ram-cache.sh \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$GITHUB_WORKSPACE/.ccache:/ccache" \

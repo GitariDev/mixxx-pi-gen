@@ -97,16 +97,8 @@ class PioneeredTouchTests(unittest.TestCase):
             "<Template>\n" + PATCH.EFFECT_TOGGLE_ORIGINAL + "\n</Template>\n")
         (self.skin / "deck.xml").write_text(
             "<Template>\n" + PATCH.TRACK_NUMBER_ORIGINAL + "\n</Template>\n")
-        (self.skin / "library.xml").write_text("""<Template>
-  <WidgetGroup><Children>
-    <SearchBox><ObjectName>SearchBox</ObjectName></SearchBox>
-    <PushButton>
-      <ObjectName>SidebarButton</ObjectName>
-    </PushButton>
-    <Library><ObjectName>Library</ObjectName></Library>
-  </Children></WidgetGroup>
-</Template>
-""")
+        shutil.copyfile(ROOT / "tests/fixtures/pioneered-library.xml",
+                        self.skin / "library.xml")
         (self.skin / "style.qss").write_text("""/* custom upstream style */
 #LibraryWrapper QScrollBar:horizontal {
   height: 0;
@@ -178,6 +170,30 @@ UnrelatedValue preserve this exactly
         parent = next(node for node in root.iter() if sources[0] in list(node))
         self.assertTrue(any(node.findtext("ObjectName") == "SidebarButton"
                             for node in parent.findall("PushButton")))
+
+    def test_touch_navigation_keeps_tracks_visible_and_back_in_pane(self):
+        PATCH.apply(self.skin)
+        root = ET.parse(self.skin / "library.xml")
+        sidebar = root.find(".//LibrarySidebar")
+        self.assertEqual(sidebar.findtext("TouchNavigation"), "true")
+        groups = root.findall(".//WidgetGroup")
+        pane = next(g for g in groups if g.findtext("ObjectName") == "SidebarWrapper")
+        self.assertEqual(pane.findtext("Size"), "260p,0me")
+        self.assertEqual(pane.findtext("Layout"), "vertical")
+        back = pane.find("Children/PushButton")
+        self.assertEqual(back.findtext("ObjectName"), "LibraryBackButton")
+        self.assertEqual(back.findtext("Size"), "0me,48p")
+        connections = back.findall("Connection")
+        self.assertEqual(connections[0].findtext("ConfigKey"), "[Library],sidebar_back")
+        self.assertEqual(connections[1].findtext("BindProperty"), "enabled")
+        self.assertEqual(connections[1].findtext("ConfigKey"),
+                         "[Library],sidebar_can_go_back")
+        table = next(g for g in groups if g.find("Children/Library") is not None)
+        self.assertEqual(table.findall("Connection"), [])
+        self.assertEqual(pane.findtext("Connection/BindProperty"), "visible")
+        toolbar = next(g for g in groups if g.findtext("ObjectName") == "SidebarContainer")
+        self.assertEqual(list(toolbar.find("Children"))[-1].findtext("ObjectName"),
+                         "SidebarButton")
 
     def test_changed_upstream_layout_fails_before_writing(self):
         path = self.skin / "library.xml"

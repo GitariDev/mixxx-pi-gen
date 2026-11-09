@@ -15,7 +15,7 @@
 }
 
 #LibraryWrapper WLibrarySidebar::item {
-    min-height: 36px;
+    min-height: 48px;
     padding: 0px 6px;
 }
 
@@ -50,7 +50,7 @@
     background-color: #17191f;
 }
 
-#LibraryActionsButton, #SidebarButton {
+#LibraryActionsButton, #LibrarySourcesButton, #LibraryBackButton, #SidebarButton {
     background-color: #112f5c;
     border: 2px solid #b5bac5;
     border-radius: 4px;
@@ -62,4 +62,10 @@
 #LibraryActionsButton[value="1"] {
     background-color: #285a88;
     border-color: #68baff;
+}
+
+#LibraryBackButton:disabled {
+    color: #848b98;
+    background-color: #17191f;
+    border-color: #454b57;
 }

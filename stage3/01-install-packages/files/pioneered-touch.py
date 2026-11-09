@@ -131,6 +131,41 @@ def patch_tab(source):
     return patch_exact_xml(source, original, fixed, "tab press connection")
 
 
+
+TABLE_VISIBILITY_ORIGINAL = """                <Connection>
+                  <ConfigKey>[Sidebar],sidebar_visible</ConfigKey>
+                  <BindProperty>visible</BindProperty>
+                  <Transform><Not/></Transform>
+                </Connection>"""
+TABLE_VISIBILITY_FIXED = "<!-- MixxxPi: keep tracks visible beside the source pane. -->"
+SIDEBAR_ORIGINAL = """                <ObjectName>SidebarWrapper</ObjectName>
+                <Layout>horizontal</Layout>
+                <Children>
+                  <LibrarySidebar>
+                    <ObjectName>LibrarySidebar</ObjectName>"""
+SIDEBAR_FIXED = """                <ObjectName>SidebarWrapper</ObjectName>
+                <Layout>vertical</Layout>
+                <Size>260p,0me</Size>
+                <Children>
+                  <PushButton>
+                    <ObjectName>LibraryBackButton</ObjectName>
+                    <Size>0me,48p</Size>
+                    <NumberStates>1</NumberStates>
+                    <LeftClickIsPushButton>true</LeftClickIsPushButton>
+                    <State><Number>0</Number><Text>Back</Text></State>
+                    <Connection>
+                      <ConfigKey>[Library],sidebar_back</ConfigKey>
+                      <EmitOnDownPress>true</EmitOnDownPress>
+                    </Connection>
+                    <Connection>
+                      <ConfigKey>[Library],sidebar_can_go_back</ConfigKey>
+                      <BindProperty>enabled</BindProperty>
+                    </Connection>
+                  </PushButton>
+                  <LibrarySidebar>
+                    <TouchNavigation>true</TouchNavigation>
+                    <ObjectName>LibrarySidebar</ObjectName>"""
+
 def patch_library(source):
     source = remove_managed(source, BUTTON_BEGIN, BUTTON_END)
     root = ET.fromstring(source)
@@ -140,8 +175,10 @@ def patch_library(source):
     if len(anchor.findall(source)) != 1:
         raise ValueError("Expected one Pioneered Show/Hide sidebar button")
     result = anchor.sub(lambda match: BUTTON + match.group(0), source)
-    ET.fromstring(result)
-    return result
+    result = patch_exact_xml(result, TABLE_VISIBILITY_ORIGINAL,
+                             TABLE_VISIBILITY_FIXED, "track-table visibility")
+    return patch_exact_xml(result, SIDEBAR_ORIGINAL, SIDEBAR_FIXED,
+                           "touch source pane")
 
 
 def patch_styles(source):

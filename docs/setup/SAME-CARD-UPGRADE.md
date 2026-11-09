@@ -24,13 +24,19 @@ ARM build `42580935705` exposed another recovered error: `IndexRange` uses
 `42581855459` passed at `ccbf91b`. The downloaded arm64 package checksum,
 Mixxx source revision and all four patch hashes match. Its extracted binary
 on the Pi resolves all shared libraries; an apt simulation resolves its
-dependencies without upgrades or removals. Runtime/audio acceptance remains
-pending. The package is staged at `/home/pi/mixpi-package-trial-20261109/`
+dependencies without upgrades or removals. The user subsequently accepted
+its short runtime/audio smoke test, as recorded below. The package is staged at `/home/pi/mixpi-package-trial-20261109/`
 and has not replaced the installed binary.
 Host checks with the pinned skin fixture and image-stage isolation tests:
 148 tests, 122 passed, 26 skipped. Image isolation commit
-`249da45` was pushed after that package build succeeded; it needs a full image
-build before acceptance.
+`249da45` was pushed after that package build succeeded. Its full image build
+`42590130970` passed; it predates runtime cleanup and native Sources/navigation
+and is not the final flash candidate. Sources package `42592257666` at
+`3d50f7b` passed compilation. The next package adds native folder navigation
+and Back, a right-hand pane beside the track table, and real Qt navigation
+smoke checks. Host validation: 152 tests, 126 passed, 26 skipped. Navigation
+compilation and live touch checks remain pending. No further Pi session
+restart or card write has taken place.
 
 The maintenance helper passed live pause/restore and systemd normal/failing
 process checks, restoring every timer's initial state. Its temporary state

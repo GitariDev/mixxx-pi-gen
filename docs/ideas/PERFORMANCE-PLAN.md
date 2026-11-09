@@ -48,7 +48,12 @@ See [same-card checkpoint](../setup/SAME-CARD-UPGRADE.md).
   independently of the running Mixxx session. The same check is wired into the
   ARM package build. Host suite: 152 tests, 126 passed and 26 skipped, including
   the ordered pinned-source patch stack and repeatable pinned-skin patching.
-  Full navigation-package compilation and touch acceptance are pending.
+  Navigation package `42594754742` at `96ea682` passed ARM compilation and
+  the CI Qt smoke check. Its package checksum, six patch hashes and source
+  pins were verified on the Mac; its package/skin checksums and runtime library
+  resolution were verified on the Pi. It is staged separately at
+  `/home/pi/mixpi-candidate-96ea682/`; live touch acceptance is pending.
+  Full image `42594756523` is building from the same recipe.
 - Sources-menu touch acceptance, exact target geometry, drag ordering,
   settings-page integration and guarded eject remain unfinished.
 - The user deferred endurance testing until the new build. The running Pi trial

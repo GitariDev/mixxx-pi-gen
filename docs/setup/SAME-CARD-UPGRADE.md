@@ -35,8 +35,12 @@ and is not the final flash candidate. Sources package `42592257666` at
 `3d50f7b` passed compilation. The next package adds native folder navigation
 and Back, a right-hand pane beside the track table, and real Qt navigation
 smoke checks. Host validation: 152 tests, 126 passed, 26 skipped. Navigation
-compilation and live touch checks remain pending. No further Pi session
-restart or card write has taken place.
+package `42594754742` at `96ea682` has now passed ARM compilation and the CI
+Qt smoke check. The downloaded package and six patch hashes match; the Pi
+copy and matching skin verify, and all runtime libraries resolve. The candidate
+is extracted at `/home/pi/mixpi-candidate-96ea682/` without starting it.
+Full image `42594756523` is building from that same recipe. Live touch checks
+remain pending. No further Pi session restart or card write has taken place.
 
 The maintenance helper passed live pause/restore and systemd normal/failing
 process checks, restoring every timer's initial state. Its temporary state

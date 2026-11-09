@@ -14,7 +14,7 @@ index 45a83cf..bf664b9 100644
 -        if (m_lruCachingReaderChunk) {
 -            freeChunk(m_lruCachingReaderChunk);
 +        auto* victim = m_lruCachingReaderChunk;
-+        while (victim && protectedChunks.contains(victim->getIndex())) {
++        while (victim && protectedChunks.containsIndex(victim->getIndex())) {
 +            victim = victim->previousInList();
 +        }
 +        if (victim) {

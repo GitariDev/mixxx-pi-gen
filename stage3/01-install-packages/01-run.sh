@@ -21,6 +21,7 @@ MIXXX_PATCHES=(
     mixxx-import-cancellation.patch
     mixxx-transfer-reporting.patch
     mixxx-transfer-display.patch
+    mixxx-quiet-scan.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

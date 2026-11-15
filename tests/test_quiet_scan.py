@@ -1,0 +1,56 @@
+import importlib.util
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+
+from native.library_interface_runner import qt_available
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    'library_interface_runner', ROOT / 'tests/native/library_interface_runner.py')
+RUNNER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(RUNNER)
+PATCH = RUNNER.PATCH_DIR / 'mixxx-quiet-scan.patch'
+
+
+class QuietScanPatchTests(unittest.TestCase):
+    def test_patch_is_last_and_only_changes_the_scanner_dialog(self):
+        names = subprocess.check_output(
+            ['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
+             '--mixxx-print-patches'], text=True).split()
+        self.assertEqual(names[-1], 'mixxx-quiet-scan.patch')
+        self.assertEqual(len(names), 20)
+        # The scan itself (LibraryScanner, tasks, DAO) is left untouched.
+        self.assertEqual(re.findall(r'^diff --git a/(\S+) b/\S+$', PATCH.read_text(), re.MULTILINE),
+                         ['src/library/scanner/libraryscannerdlg.cpp',
+                          'src/library/scanner/libraryscannerdlg.h'])
+
+    def test_full_stack_applies_and_reverses_on_pinned_source(self):
+        with tempfile.TemporaryDirectory(prefix='mixpi-quiet-scan-stack-') as temporary:
+            target = Path(temporary)
+            names, baseline = RUNNER.reconstruct(target)
+            self.assertIn('mixxx-quiet-scan.patch', names)
+            self.assertIn('kStripHeight = 44',
+                          (target / 'src/library/scanner/libraryscannerdlg.h').read_text())
+            for name in reversed(names):
+                for options in (['--check'], []):
+                    subprocess.run(['git', 'apply', '--reverse', *options,
+                                    str(RUNNER.PATCH_DIR / name)], cwd=target, check=True)
+            restored = {str(path.relative_to(target)): path.read_bytes()
+                        for path in target.rglob('*') if path.is_file()}
+            self.assertEqual(baseline, restored)
+
+    @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+    def test_native_compact_nonmodal_strip_and_cancel(self):
+        result = subprocess.run([sys.executable, '-B',
+                                 str(ROOT / 'tests/native/library_scanner_strip_runner.py')],
+                                cwd=ROOT, capture_output=True, text=True, timeout=240)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('LIBRARY_SCANNER_STRIP_OK height=44', result.stdout)
+
+
+if __name__ == '__main__':
+    unittest.main()

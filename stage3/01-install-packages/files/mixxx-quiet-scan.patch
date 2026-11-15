@@ -1,0 +1,272 @@
+diff --git a/src/library/scanner/libraryscannerdlg.cpp b/src/library/scanner/libraryscannerdlg.cpp
+--- a/src/library/scanner/libraryscannerdlg.cpp
++++ b/src/library/scanner/libraryscannerdlg.cpp
+@@ -1,51 +1,170 @@
+ #include "library/scanner/libraryscannerdlg.h"
+ 
++#include <QApplication>
++#include <QEvent>
++#include <QHBoxLayout>
+ #include <QLabel>
++#include <QMainWindow>
++#include <QPainter>
++#include <QProgressBar>
+ #include <QPushButton>
+-#include <QVBoxLayout>
+ #include <QtDebug>
+ 
+-#include "defs_urls.h"
+ #include "moc_libraryscannerdlg.cpp"
+ 
++namespace {
++
++// One line only: long paths are elided in the middle instead of wrapping.
++class ScannerStatusLabel : public QLabel {
++  public:
++    using QLabel::QLabel;
++
++  protected:
++    void paintEvent(QPaintEvent* pEvent) override {
++        Q_UNUSED(pEvent);
++        QPainter painter(this);
++        const QRect area = contentsRect();
++        painter.drawText(area,
++                Qt::AlignLeft | Qt::AlignVCenter,
++                fontMetrics().elidedText(text(), Qt::ElideMiddle, area.width()));
++    }
++};
++
++QWidget* scannerStripHost() {
++    QWidget* pHidden = nullptr;
++    const auto widgets = QApplication::topLevelWidgets();
++    for (QWidget* pWidget : widgets) {
++        if (!qobject_cast<QMainWindow*>(pWidget)) {
++            continue;
++        }
++        if (pWidget->isVisible()) {
++            return pWidget;
++        }
++        if (!pHidden) {
++            pHidden = pWidget;
++        }
++    }
++    return pHidden;
++}
++
++} // namespace
++
+ LibraryScannerDlg::LibraryScannerDlg(QWidget* parent, Qt::WindowFlags f)
+         : QWidget(parent, f),
+           m_bCancelled(false) {
+-    setWindowIcon(QIcon(MIXXX_ICON_PATH));
+-
+-    QVBoxLayout* pLayout = new QVBoxLayout(this);
+-
+     setWindowTitle(tr("Library Scanner"));
+-    QLabel* pLabel = new QLabel(tr("It's taking Mixxx a minute to scan your music library, please wait..."),this);
+-    pLayout->addWidget(pLabel);
+ 
+-    QPushButton* pCancel = new QPushButton(tr("Cancel"), this);
++    // Without a main window the strip falls back to a small frameless window
++    // that still never takes focus.
++    m_pStrip = new QWidget(nullptr,
++            Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus);
++    m_pStrip->setObjectName("LibraryScannerStrip");
++    m_pStrip->setAttribute(Qt::WA_ShowWithoutActivating);
++    m_pStrip->setAttribute(Qt::WA_StyledBackground);
++    m_pStrip->setFocusPolicy(Qt::NoFocus);
++    m_pStrip->setFixedHeight(kStripHeight);
++    m_pStrip->setStyleSheet(
++            "#LibraryScannerStrip { background-color: #17191f;"
++            " border-top: 2px solid #68baff; }"
++            "#LibraryScannerStrip QLabel { color: #ffffff; font-size: 15px; }"
++            "#LibraryScannerStrip QProgressBar { background-color: #2a2f3a;"
++            " border: 0px; border-radius: 3px; }"
++            "#LibraryScannerStrip QProgressBar::chunk { background-color: #68baff; }"
++            "#LibraryScannerStrip QPushButton { background-color: #112f5c;"
++            " border: 2px solid #b5bac5; border-radius: 4px; color: #ffffff;"
++            " font-size: 15px; font-weight: bold; padding: 0px 10px; }"
++            "#LibraryScannerStrip QPushButton:pressed { background-color: #68baff; }");
++
++    QHBoxLayout* pLayout = new QHBoxLayout(m_pStrip);
++    pLayout->setContentsMargins(10, 4, 6, 4);
++    pLayout->setSpacing(10);
++
++    QLabel* pCurrent = new ScannerStatusLabel(tr("Scanning music library..."), m_pStrip);
++    pCurrent->setObjectName("LibraryScannerStatus");
++    pCurrent->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
++    connect(this, &LibraryScannerDlg::progress, pCurrent, &QLabel::setText);
++    pLayout->addWidget(pCurrent, 1);
++
++    // The scan does not know its total in advance, so show activity only.
++    QProgressBar* pProgress = new QProgressBar(m_pStrip);
++    pProgress->setObjectName("LibraryScannerProgress");
++    pProgress->setRange(0, 0);
++    pProgress->setTextVisible(false);
++    pProgress->setFixedSize(96, 10);
++    pLayout->addWidget(pProgress);
++
++    QPushButton* pCancel = new QPushButton(tr("Cancel"), m_pStrip);
++    pCancel->setObjectName("LibraryScannerCancel");
++    pCancel->setFocusPolicy(Qt::NoFocus);
++    pCancel->setFixedSize(96, 36);
+     connect(pCancel,
+             &QPushButton::clicked,
+             this,
+             &LibraryScannerDlg::slotCancel);
+     pLayout->addWidget(pCancel);
+-
+-    QLabel* pCurrent = new QLabel(this);
+-    pCurrent->setAlignment(Qt::AlignTop);
+-    pCurrent->setMaximumWidth(600);
+-    pCurrent->setFixedHeight(this->fontMetrics().height());
+-    pCurrent->setWordWrap(true);
+-    connect(this, &LibraryScannerDlg::progress, pCurrent, &QLabel::setText);
+-    pLayout->addWidget(pCurrent);
+-    setLayout(pLayout);
+ }
+ 
+ LibraryScannerDlg::~LibraryScannerDlg() {
++    // The main window may already have deleted the strip with its children.
++    delete m_pStrip.data();
++}
++
++bool LibraryScannerDlg::eventFilter(QObject* pObject, QEvent* pEvent) {
++    if (m_pStrip && pObject == m_pStrip->parentWidget() &&
++            pEvent->type() == QEvent::Resize) {
++        placeStrip();
++    }
++    return QWidget::eventFilter(pObject, pEvent);
++}
++
++bool LibraryScannerDlg::stripShown() const {
++    return m_pStrip && !m_pStrip->isHidden();
++}
++
++void LibraryScannerDlg::showStrip() {
++    if (!m_pStrip) {
++        return;
++    }
++    QWidget* pHost = scannerStripHost();
++    if (pHost && m_pStrip->parentWidget() != pHost) {
++        if (m_pStrip->parentWidget()) {
++            m_pStrip->parentWidget()->removeEventFilter(this);
++        }
++        // A child widget: no separate window, no modality, no activation.
++        m_pStrip->setParent(pHost, Qt::Widget);
++        pHost->installEventFilter(this);
++    }
++    placeStrip();
++    m_pStrip->raise();
++    m_pStrip->show();
++}
++
++void LibraryScannerDlg::hideStrip() {
++    if (m_pStrip) {
++        m_pStrip->hide();
++    }
++}
++
++void LibraryScannerDlg::placeStrip() {
++    QWidget* pHost = m_pStrip->parentWidget();
++    if (pHost) {
++        m_pStrip->setGeometry(0,
++                pHost->height() - kStripHeight,
++                pHost->width(),
++                kStripHeight);
++    } else {
++        m_pStrip->resize(480, kStripHeight);
++    }
+ }
+ 
+ void LibraryScannerDlg::slotUpdate(const QString& path) {
+     //qDebug() << "LibraryScannerDlg slotUpdate" << m_timer.elapsed().formatMillisWithUnit() << path;
+-    if (!m_bCancelled && m_timer.elapsed() > mixxx::Duration::fromSeconds(2)) {
+-       setVisible(true);
++    if (!m_bCancelled && !stripShown() &&
++            m_timer.elapsed() > mixxx::Duration::fromSeconds(2)) {
++        showStrip();
+     }
+ 
+-    if (isVisible()) {
++    if (stripShown()) {
+         QString status = tr("Scanning: ") + path;
+         emit progress(status);
+     }
+@@ -53,11 +172,12 @@ void LibraryScannerDlg::slotUpdate(const QString& path) {
+ 
+ void LibraryScannerDlg::slotUpdateCover(const QString& path) {
+     //qDebug() << "LibraryScannerDlg slotUpdate" << m_timer.elapsed() << path;
+-    if (!m_bCancelled && m_timer.elapsed() > mixxx::Duration::fromSeconds(2)) {
+-       setVisible(true);
++    if (!m_bCancelled && !stripShown() &&
++            m_timer.elapsed() > mixxx::Duration::fromSeconds(2)) {
++        showStrip();
+     }
+ 
+-    if (isVisible()) {
++    if (stripShown()) {
+         QString status = QString("%1: %2").arg(tr("Scanning cover art (safe to cancel)"), path);
+         emit progress(status);
+     }
+@@ -67,7 +187,7 @@ void LibraryScannerDlg::slotCancel() {
+     qDebug() << "Cancelling library scan...";
+     m_bCancelled = true;
+     emit scanCancelled();
+-    hide();
++    hideStrip();
+ }
+ 
+ void LibraryScannerDlg::slotScanStarted() {
+@@ -77,8 +197,8 @@ void LibraryScannerDlg::slotScanStarted() {
+ 
+ void LibraryScannerDlg::slotScanFinished() {
+     // Raise this flag to prevent any latent slotUpdates() from showing the
+-    // dialog again.
++    // strip again.
+     m_bCancelled = true;
+ 
+-    hide();
++    hideStrip();
+ }
+diff --git a/src/library/scanner/libraryscannerdlg.h b/src/library/scanner/libraryscannerdlg.h
+--- a/src/library/scanner/libraryscannerdlg.h
++++ b/src/library/scanner/libraryscannerdlg.h
+@@ -1,14 +1,20 @@
+ #pragma once
+ 
++#include <QPointer>
+ #include <QWidget>
+ 
+ #include "util/performancetimer.h"
+ 
++class QLabel;
+ class QString;
+ 
++// MixPi: the visible part is a compact, non-modal strip along the bottom of
++// the main window. This widget itself is never shown; it owns the strip.
+ class LibraryScannerDlg : public QWidget {
+     Q_OBJECT
+   public:
++    static constexpr int kStripHeight = 44;
++
+     LibraryScannerDlg(QWidget* parent = NULL, Qt::WindowFlags f = Qt::Dialog);
+     virtual ~LibraryScannerDlg();
+ 
+@@ -23,7 +29,16 @@ class LibraryScannerDlg : public QWidget {
+     void scanCancelled();
+     void progress(const QString&);
+ 
++  protected:
++    bool eventFilter(QObject* pObject, QEvent* pEvent) override;
++
+   private:
++    bool stripShown() const;
++    void showStrip();
++    void hideStrip();
++    void placeStrip();
++
+     PerformanceTimer m_timer;
+     bool m_bCancelled;
++    QPointer<QWidget> m_pStrip;
+ };

@@ -53,45 +53,46 @@ class PackageRecipeTests(unittest.TestCase):
             self.assertTrue((PATCH_DIR / name).is_file(), name)
 
 
+# Patches that need earlier patches of the stack (direct prerequisites; the
+# check expands them). Every other patch must apply to pristine upstream on
+# its own, and every listed patch must actually need its prerequisites.
+PREREQUISITES = {
+    "mixxx-touch-source-navigation.patch": ["mixxx-sidebar-sources.patch"],
+    "mixxx-performance-settings.patch": ["mixxx-readahead.patch"],
+    "mixxx-media-selection.patch": ["mixxx-media-hotplug.patch", "mixxx-removable-ram-cache.patch",
+                                    "mixxx-sidebar-sources.patch"],
+    "mixxx-library-interface.patch": ["mixxx-media-selection.patch",
+                                      "mixxx-touch-source-navigation.patch"],
+    "mixxx-recording-lifecycle.patch": ["mixxx-media-selection.patch"],
+    "mixxx-media-continuation.patch": ["mixxx-library-interface.patch"],
+    "mixxx-analysis-safety.patch": ["mixxx-media-hotplug.patch"],
+    "mixxx-media-activity.patch": ["mixxx-media-continuation.patch"],
+    "mixxx-import-cancellation.patch": ["mixxx-media-continuation.patch"],
+    "mixxx-transfer-reporting.patch": ["mixxx-media-selection.patch"],
+    "mixxx-transfer-display.patch": ["mixxx-media-activity.patch"],
+}
+
+
+def prerequisites(name, names):
+    needed, pending = set(), list(PREREQUISITES.get(name, []))
+    while pending:
+        prerequisite = pending.pop()
+        if prerequisite not in needed:
+            needed.add(prerequisite)
+            pending.extend(PREREQUISITES.get(prerequisite, []))
+    return [candidate for candidate in names if candidate in needed]
+
+
 @unittest.skipUnless(shutil.which("git"), "git required")
 class PinnedMixxxPatchTests(unittest.TestCase):
-    def check_local_patch_stack(self, reference):
-        commit = re.search(r'MIXXX_COMMIT:-([0-9a-f]{40})', (ROOT / 'source-versions').read_text())[1]
-        files = set(subprocess.check_output(['git', '-C', str(reference), 'ls-tree', '-r',
-                                            '--name-only', commit], text=True).splitlines())
-        names = patch_names()
-        touched = set()
-        for name in names:
-            touched.update(re.findall(r'^diff --git a/(\S+) b/\S+$',
-                                      (PATCH_DIR / name).read_text(), re.MULTILINE))
-        with tempfile.TemporaryDirectory(prefix='mixpi-patch-fixture-') as directory:
-            target = Path(directory)
-            baseline = {}
-            for name in sorted(touched & files):
-                data = subprocess.check_output(['git', '-C', str(reference), 'show', f'{commit}:{name}'])
-                path = target / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(data)
-                baseline[name] = data
-            for name in names:
-                for options in (['--check'], []):
-                    result = subprocess.run(['git', 'apply', *options, str(PATCH_DIR / name)],
-                                            cwd=target, capture_output=True, text=True)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-            for name in reversed(names):
-                for options in (['--check'], []):
-                    result = subprocess.run(['git', 'apply', '--reverse', *options, str(PATCH_DIR / name)],
-                                            cwd=target, capture_output=True, text=True)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-            restored = {str(path.relative_to(target)): path.read_bytes()
-                        for path in target.rglob('*') if path.is_file()}
-            self.assertEqual(restored, baseline)
+    def pinned_reference(self, directory):
+        """MIXXX_TEST_SOURCE, or a fresh clone of the pinned tag.
 
-    def test_patch_stack_applies_to_pinned_source(self):
-        reference = os.environ.get('MIXXX_TEST_SOURCE')
+        Both paths then run the same checks on the same pinned commit.
+        """
+        reference = os.environ.get("MIXXX_TEST_SOURCE")
         if reference:
-            self.check_local_patch_stack(Path(reference))
-            return
+            return Path(reference)
         try:
             probe = subprocess.run(
                 ["git", "ls-remote", UPSTREAM, "HEAD"],
@@ -101,54 +102,95 @@ class PinnedMixxxPatchTests(unittest.TestCase):
             self.skipTest("upstream network probe timed out")
         if probe.returncode:
             self.skipTest("upstream unavailable (offline): " + probe.stderr.strip())
+        ref = re.search(r'MIXXX_REF:-([^}]+)', (ROOT / "source-versions").read_text())[1]
+        source = directory / "mixxx"
+        clone = subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", ref, UPSTREAM, str(source)],
+            capture_output=True, text=True, timeout=180,
+        )
+        self.assertEqual(clone.returncode, 0, clone.stderr)
+        commit = re.search(r'MIXXX_COMMIT:-([0-9a-f]{40})', (ROOT / "source-versions").read_text())[1]
+        head = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(head.stdout.strip(), commit, head.stderr)
+        return source
 
-        versions = (ROOT / "source-versions").read_text()
-        ref = re.search(r'MIXXX_REF:-([^}]+)', versions)[1]
-        commit = re.search(r'MIXXX_COMMIT:-([0-9a-f]{40})', versions)[1]
-        with tempfile.TemporaryDirectory(prefix="mixpi-patches-") as directory:
-            source = Path(directory) / "mixxx"
-            clone = subprocess.run(
-                ["git", "clone", "--depth", "1", "--branch", ref, UPSTREAM, str(source)],
-                capture_output=True, text=True, timeout=180,
-            )
-            self.assertEqual(clone.returncode, 0, clone.stderr)
+    def check_patch_stack(self, reference):
+        commit = re.search(r'MIXXX_COMMIT:-([0-9a-f]{40})', (ROOT / 'source-versions').read_text())[1]
+        self.assertEqual(subprocess.run(['git', '-C', str(reference), 'cat-file', '-e', commit + '^{commit}'],
+                                        capture_output=True).returncode, 0, 'pinned commit missing')
+        files = set(subprocess.check_output(['git', '-C', str(reference), 'ls-tree', '-r',
+                                            '--name-only', commit], text=True).splitlines())
+        names = patch_names()
+        for name, needed in PREREQUISITES.items():
+            self.assertIn(name, names)
+            for prerequisite in needed:
+                self.assertLess(names.index(prerequisite), names.index(name), name)
+        touched = set()
+        for name in names:
+            touched.update(re.findall(r'^diff --git a/(\S+) b/\S+$',
+                                      (PATCH_DIR / name).read_text(), re.MULTILINE))
+        baseline = {name: subprocess.check_output(['git', '-C', str(reference), 'show', f'{commit}:{name}'])
+                    for name in sorted(touched & files)}
 
-            def git(*args):
-                result = subprocess.run(
-                    ["git", "-C", str(source), *args],
-                    capture_output=True, text=True, timeout=30,
-                )
-                self.assertEqual(result.returncode, 0,
-                                 f"git {' '.join(args)}\n{result.stdout}{result.stderr}")
-                return result.stdout.strip()
+        def fixture(directory):
+            target = Path(directory)
+            for name, data in baseline.items():
+                path = target / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            return target
 
-            self.assertEqual(git("rev-parse", "HEAD"), commit)
-            names = patch_names()
+        def apply(target, name, *options):
+            return subprocess.run(['git', 'apply', *options, str(PATCH_DIR / name)],
+                                  cwd=target, capture_output=True, text=True)
+
+        def require(target, name, *options):
+            result = apply(target, name, *options)
+            self.assertEqual(result.returncode, 0, f'{name} {options}\n{result.stderr}')
+
+        # Full stack in order, whitespace, then full reversal to pinned bytes.
+        with tempfile.TemporaryDirectory(prefix='mixpi-patch-fixture-') as directory:
+            target = fixture(directory)
+            subprocess.run(['git', 'init', '-q'], cwd=target, check=True)
+            subprocess.run(['git', 'add', '-A'], cwd=target, check=True)
             for name in names:
-                patch = str(PATCH_DIR / name)
                 with self.subTest(patch=name):
-                    git("apply", "--check", patch)
-                    git("apply", patch)
-            git("diff", "--check")
-            # Verify full reversal, then independent patches and explicit prerequisites.
+                    require(target, name, '--check')
+                    require(target, name)
+            check = subprocess.run(['git', 'diff', '--check'], cwd=target, capture_output=True, text=True)
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
             for name in reversed(names):
-                git("apply", "--reverse", str(PATCH_DIR / name))
-            for name in names[2:]:
-                if name in {"mixxx-media-selection.patch", "mixxx-library-interface.patch",
-                            "mixxx-recording-lifecycle.patch", "mixxx-import-cancellation.patch",
-                            "mixxx-transfer-reporting.patch", "mixxx-transfer-display.patch"}:
-                    continue
-                if name == "mixxx-touch-source-navigation.patch":
-                    git("apply", str(PATCH_DIR / "mixxx-sidebar-sources.patch"))
-                if name == "mixxx-performance-settings.patch":
-                    git("apply", str(PATCH_DIR / "mixxx-readahead.patch"))
-                with self.subTest(independent_patch=name):
-                    git("apply", "--check", str(PATCH_DIR / name))
-            for name in ("mixxx-readahead.patch", "mixxx-sidebar-sources.patch"):
-                git("apply", "--reverse", str(PATCH_DIR / name))
+                require(target, name, '--reverse', '--check')
+                require(target, name, '--reverse')
+            restored = {str(path.relative_to(target)): path.read_bytes()
+                        for path in target.rglob('*')
+                        if path.is_file() and '.git' not in path.relative_to(target).parts}
+            self.assertEqual(restored, baseline)
+
+        # Each patch alone, or on exactly its declared prerequisites.
+        for name in names:
+            needed = prerequisites(name, names)
+            with self.subTest(independent_patch=name), \
+                    tempfile.TemporaryDirectory(prefix='mixpi-patch-alone-') as directory:
+                target = fixture(directory)
+                if needed:
+                    self.assertNotEqual(apply(target, name, '--check').returncode, 0,
+                                        f'{name} no longer needs {needed}')
+                for prerequisite in needed:
+                    require(target, prerequisite)
+                require(target, name, '--check')
+
+        # The GCC 14 build fix stays optional.
+        with tempfile.TemporaryDirectory(prefix='mixpi-patch-optional-') as directory:
+            target = fixture(directory)
             for name in names[1:]:
-                git("apply", "--check", str(PATCH_DIR / name))
-                git("apply", str(PATCH_DIR / name))
+                require(target, name, '--check')
+                require(target, name)
+
+    def test_patch_stack_applies_to_pinned_source(self):
+        with tempfile.TemporaryDirectory(prefix="mixpi-patches-") as directory:
+            self.check_patch_stack(self.pinned_reference(Path(directory)))
 
 
 if __name__ == "__main__":

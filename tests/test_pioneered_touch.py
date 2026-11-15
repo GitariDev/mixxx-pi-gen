@@ -37,7 +37,8 @@ class TouchDefaultsTests(unittest.TestCase):
         DEFAULTS["seed"](self.config)
         self.assertEqual(set(line for line in self.config.read_text().splitlines() if line), {
             "[Library]", "RowHeight 34", "Font Sans Serif,-1,17,5,50,0,0,0,0,0",
-            "[Config]", "ResizableSkin Pioneered", "MixPiBootstrapLibrary 1"})
+            "[Config]", "ResizableSkin Pioneered", "hide_menubar 1", "show_menubar_hint 0",
+            "MixPiBootstrapLibrary 1"})
         self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
 
     def test_saved_choices_and_unrelated_settings_are_preserved(self):

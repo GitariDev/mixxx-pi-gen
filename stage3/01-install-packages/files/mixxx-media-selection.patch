@@ -1,0 +1,4211 @@
+diff --git a/src/analyzer/analyzerthread.cpp b/src/analyzer/analyzerthread.cpp
+--- a/src/analyzer/analyzerthread.cpp
++++ b/src/analyzer/analyzerthread.cpp
+@@ -129,7 +129,8 @@
+ 
+         // Get the audio
+         const mixxx::AudioSourcePointer audioSource =
+-                SoundSourceProxy(m_currentTrack->getTrack(), SoundSourceProxy::RamCacheMode::Existing)
++                SoundSourceProxy(m_currentTrack->getTrack(), SoundSourceProxy::RamCacheMode::Existing,
++                        m_currentTrack->mediaUse)
+                         .openAudioSource(openParams);
+         if (!audioSource) {
+             kLogger.warning()
+@@ -187,10 +188,16 @@
+ }
+ 
+ bool AnalyzerThread::submitNextTrack(const AnalyzerTrack& nextTrack) {
++    auto admittedTrack = nextTrack;
++    admittedTrack.mediaUse = mixxx::media::acquirePath(nextTrack.getTrack()->getLocation().toStdString(),
++            mixxx::media::Producer::Analysis, nextTrack.mediaUse);
++    if (!admittedTrack.mediaUse) {
++        return false;
++    }
+     kLogger.debug()
+             << "Enqueueing next track"
+             << nextTrack.getTrack()->getId();
+-    if (m_nextTrack.try_emplace(std::move(nextTrack))) {
++    if (m_nextTrack.try_emplace(std::move(admittedTrack))) {
+         // Ensure that the submitted track gets processed eventually
+         // by waking the worker thread up after adding a new task to
+         // its back queue! Otherwise the thread might not notice if
+diff --git a/src/analyzer/analyzertrack.h b/src/analyzer/analyzertrack.h
+--- a/src/analyzer/analyzertrack.h
++++ b/src/analyzer/analyzertrack.h
+@@ -3,6 +3,7 @@
+ #include <optional>
+ 
+ #include "track/track_decl.h"
++#include "library/media/mediause.h"
+ 
+ /// A scheduled not-null track with additional options for analysis.
+ class AnalyzerTrack {
+@@ -19,6 +20,7 @@
+ 
+     /// Fetches the additional options.
+     const Options& getOptions() const;
++    mixxx::media::Lease mediaUse;
+ 
+   private:
+     /// The (not-null) track to be analyzed.
+diff --git a/src/analyzer/trackanalysisscheduler.cpp b/src/analyzer/trackanalysisscheduler.cpp
+--- a/src/analyzer/trackanalysisscheduler.cpp
++++ b/src/analyzer/trackanalysisscheduler.cpp
+@@ -4,6 +4,7 @@
+ #include "analyzer/analyzertrack.h"
+ #include "moc_trackanalysisscheduler.cpp"
+ #include "track/trackid.h"
++#include "track/track.h"
+ #include "util/logger.h"
+ 
+ namespace {
+@@ -243,7 +244,21 @@
+                 << track.getTrackId();
+         return false;
+     }
+-    m_queuedTracks.push_back(track);
++    const auto handoffUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Analysis);
++    if (!handoffUse) {
++        return false;
++    }
++    auto trackPointer = m_pEnvironment->loadTrackById(track.getTrackId());
++    if (!trackPointer) {
++        return false;
++    }
++    AnalyzerTrack admittedTrack(trackPointer, track.getOptions());
++    admittedTrack.mediaUse = mixxx::media::acquirePath(
++            trackPointer->getLocation().toStdString(), mixxx::media::Producer::Analysis);
++    if (!admittedTrack.mediaUse) {
++        return false;
++    }
++    m_queuedTracks.push_back(std::move(admittedTrack));
+     // Don't wake up the suspended thread now to avoid race conditions
+     // if multiple threads are added in a row by calling this function
+     // multiple times. The caller is responsible to finish the scheduling
+@@ -278,14 +293,12 @@
+ bool TrackAnalysisScheduler::submitNextTrack(Worker* worker) {
+     DEBUG_ASSERT(worker);
+     while (!m_queuedTracks.empty()) {
+-        AnalyzerScheduledTrack nextScheduledTrack = m_queuedTracks.front();
+-        TrackId nextTrackId = nextScheduledTrack.getTrackId();
++        AnalyzerTrack nextTrack = m_queuedTracks.front();
++        TrackId nextTrackId = nextTrack.getTrack()->getId();
+         DEBUG_ASSERT(nextTrackId.isValid());
+         if (nextTrackId.isValid()) {
+-            TrackPointer nextTrackPtr =
+-                    m_pEnvironment->loadTrackById(nextTrackId);
+-            if (nextTrackPtr) {
+-                AnalyzerTrack nextTrack(nextTrackPtr, nextScheduledTrack.getOptions());
++            if (mixxx::media::acquirePath(nextTrack.getTrack()->getLocation().toStdString(),
++                        mixxx::media::Producer::Analysis, nextTrack.mediaUse)) {
+                 if (m_pendingTrackIds.insert(nextTrackId).second) {
+                     if (worker->submitNextTrack(std::move(nextTrack))) {
+                         m_queuedTracks.pop_front();
+@@ -295,6 +308,12 @@
+                         // The worker may already have been assigned new tasks
+                         // in the mean time, nothing to worry about.
+                         m_pendingTrackIds.erase(nextTrackId);
++                        if (!mixxx::media::acquirePath(nextTrack.getTrack()->getLocation().toStdString(),
++                                    mixxx::media::Producer::Analysis, nextTrack.mediaUse)) {
++                            m_queuedTracks.pop_front();
++                            ++m_dequeuedTracksCount;
++                            continue;
++                        }
+                         kLogger.debug()
+                                 << "Failed to submit next track - worker thread"
+                                 << worker->thread()->id()
+diff --git a/src/analyzer/trackanalysisscheduler.h b/src/analyzer/trackanalysisscheduler.h
+--- a/src/analyzer/trackanalysisscheduler.h
++++ b/src/analyzer/trackanalysisscheduler.h
+@@ -151,7 +151,7 @@
+ 
+     std::vector<Worker> m_workers;
+ 
+-    std::deque<AnalyzerScheduledTrack> m_queuedTracks;
++    std::deque<AnalyzerTrack> m_queuedTracks;
+ 
+     // Tracks that have already been submitted to workers
+     // and not yet reported back as finished.
+diff --git a/src/engine/cachingreader/cachingreaderworker.cpp b/src/engine/cachingreader/cachingreaderworker.cpp
+--- a/src/engine/cachingreader/cachingreaderworker.cpp
++++ b/src/engine/cachingreader/cachingreaderworker.cpp
+@@ -93,9 +93,12 @@
+ 
+ // WARNING: Always called from a different thread (GUI)
+ void CachingReaderWorker::newTrack(TrackPointer pTrack) {
++    auto mediaUse = pTrack ? mixxx::media::acquirePath(pTrack->getLocation().toStdString(),
++                                    mixxx::media::Producer::Load) : mixxx::media::Lease{};
+     {
+         const auto locker = lockMutex(&m_newTrackMutex);
+         m_pNewTrack = pTrack;
++        m_pendingMediaUse = std::move(mediaUse);
+         m_newTrackAvailable.storeRelease(1);
+     }
+     workReady();
+@@ -114,15 +117,17 @@
+         CachingReaderChunkReadRequest request;
+         if (m_newTrackAvailable.loadAcquire()) {
+             TrackPointer pLoadTrack;
++            mixxx::media::Lease mediaUse;
+             { // locking scope
+                 const auto locker = lockMutex(&m_newTrackMutex);
+                 pLoadTrack = m_pNewTrack;
++                mediaUse = std::move(m_pendingMediaUse);
+                 m_pNewTrack.reset();
+                 m_newTrackAvailable.storeRelease(0);
+             } // implicitly unlocks the mutex
+             if (pLoadTrack) {
+                 // in this case the engine is still running with the old track
+-                loadTrack(pLoadTrack);
++                loadTrack(pLoadTrack, std::move(mediaUse));
+             } else {
+                 // here, the engine is already stopped
+                 unloadTrack();
+@@ -173,12 +178,19 @@
+     m_pReaderStatusFIFO->writeBlocking(&update, 1);
+ }
+ 
+-void CachingReaderWorker::loadTrack(const TrackPointer& pTrack) {
++void CachingReaderWorker::loadTrack(const TrackPointer& pTrack, mixxx::media::Lease mediaUse) {
+     // This emit is directly connected and returns synchronized
+     // after the engine has been stopped.
+     emit trackLoading();
+ 
+     closeAudioSource();
++
++    if (!mediaUse) {
++        const auto update = ReaderStatusUpdate::trackUnloaded();
++        m_pReaderStatusFIFO->writeBlocking(&update, 1);
++        emit trackLoadFailed(pTrack, tr("Media is draining; load rejected."));
++        return;
++    }
+ 
+     if (!pTrack->getFileInfo().checkFileExists()) {
+         kLogger.warning()
+@@ -195,7 +207,7 @@
+ 
+     mixxx::AudioSource::OpenParams config;
+     config.setChannelCount(CachingReaderChunk::kChannels);
+-    m_pAudioSource = SoundSourceProxy(pTrack, SoundSourceProxy::RamCacheMode::Create)
++    m_pAudioSource = SoundSourceProxy(pTrack, SoundSourceProxy::RamCacheMode::Create, std::move(mediaUse))
+                              .openAudioSource(config);
+     if (!m_pAudioSource) {
+         kLogger.warning()
+diff --git a/src/engine/cachingreader/cachingreaderworker.h b/src/engine/cachingreader/cachingreaderworker.h
+--- a/src/engine/cachingreader/cachingreaderworker.h
++++ b/src/engine/cachingreader/cachingreaderworker.h
+@@ -7,6 +7,7 @@
+ #include "audio/types.h"
+ #include "engine/cachingreader/cachingreaderchunk.h"
+ #include "engine/engineworker.h"
++#include "library/media/mediause.h"
+ #include "sources/audiosource.h"
+ #include "track/track_decl.h"
+ 
+@@ -131,6 +132,7 @@
+     QMutex m_newTrackMutex;
+     QAtomicInt m_newTrackAvailable;
+     TrackPointer m_pNewTrack;
++    mixxx::media::Lease m_pendingMediaUse;
+ 
+     void discardAllPendingRequests();
+ 
+@@ -143,7 +145,7 @@
+     void unloadTrack();
+ 
+     /// Internal method to load a track. Emits trackLoaded when finished.
+-    void loadTrack(const TrackPointer& pTrack);
++    void loadTrack(const TrackPointer& pTrack, mixxx::media::Lease mediaUse);
+ 
+     ReaderStatusUpdate processReadRequest(
+             const CachingReaderChunkReadRequest& request);
+diff --git a/src/engine/sidechain/enginerecord.cpp b/src/engine/sidechain/enginerecord.cpp
+--- a/src/engine/sidechain/enginerecord.cpp
++++ b/src/engine/sidechain/enginerecord.cpp
+@@ -109,6 +109,15 @@
+ 
+ void EngineRecord::process(const CSAMPLE* pBuffer, const int iBufferSize) {
+     const auto recordingStatus = static_cast<int>(m_pRecReady->get());
++    if ((recordingStatus == RECORD_READY || recordingStatus == RECORD_SPLIT_CONTINUE) && !m_recordingMediaUse) {
++        m_recordingMediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Recording);
++        if (!m_recordingMediaUse) {
++            m_pRecReady->set(RECORD_OFF);
++            emit isRecording(false, true);
++            return;
++        }
++    }
++    const auto processingUse = m_recordingMediaUse;
+     static const QString tag("EngineRecord recording");
+ 
+     if (recordingStatus == RECORD_OFF) {
+@@ -195,6 +204,11 @@
+         }
+     }
+ 
++    if (m_pRecReady->get() == RECORD_OFF && !fileOpen() && m_cueFile.handle() == -1) {
++        m_pEncoder.reset();
++        m_recordingMediaUse.reset();
++    }
++
+     // Checking again from m_pRecReady since its status might have changed
+     // in the previous "if" blocks.
+     if (m_pRecReady->get() == RECORD_ON) {
+@@ -301,6 +315,12 @@
+ }
+ 
+ bool EngineRecord::openFile() {
++    if (!m_recordingMediaUse) {
++        m_recordingMediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Recording);
++        if (!m_recordingMediaUse) {
++            return false;
++        }
++    }
+     // We can use a QFile to write compressed audio.
+     if (m_pEncoder) {
+         m_file.setFileName(m_fileName);
+@@ -374,10 +394,16 @@
+         }
+         m_file.close();
+     }
++    if (m_cueFile.handle() == -1) {
++        m_recordingMediaUse.reset();
++    }
+ }
+ 
+ void EngineRecord::closeCueFile() {
+     if (m_cueFile.handle() != -1) {
+         m_cueFile.close();
+     }
+-}
++    if (!fileOpen()) {
++        m_recordingMediaUse.reset();
++    }
++}
+diff --git a/src/engine/sidechain/enginerecord.h b/src/engine/sidechain/enginerecord.h
+--- a/src/engine/sidechain/enginerecord.h
++++ b/src/engine/sidechain/enginerecord.h
+@@ -10,6 +10,7 @@
+ #include "engine/sidechain/sidechainworker.h"
+ #include "preferences/usersettings.h"
+ #include "track/track_decl.h"
++#include "library/media/mediauseregistry.h"
+ 
+ class ControlProxy;
+ 
+@@ -61,6 +62,7 @@
+     void writeCueLine();
+ 
+     UserSettingsPointer m_pConfig;
++    mixxx::media::Lease m_recordingMediaUse;
+     EncoderPointer m_pEncoder;
+     QString m_encoding;
+     QString m_fileName;
+diff --git a/src/library/browse/browsefeature.cpp b/src/library/browse/browsefeature.cpp
+--- a/src/library/browse/browsefeature.cpp
++++ b/src/library/browse/browsefeature.cpp
+@@ -250,6 +250,24 @@
+     saveQuickLinks();
+ }
+ 
++void BrowseFeature::refreshMediaLifecycle() {
++#if defined(__LINUX__)
++    m_pSidebarModel->deferDirectoryProbes();
++    for (int row = 0; row < m_pSidebarModel->rowCount(); ++row) {
++        const QModelIndex parent = m_pSidebarModel->index(row, 0);
++        if (m_pSidebarModel->data(parent, TreeItemModel::kDataRole).toString() == QUICK_LINK_NODE) {
++            for (int link = 0; link < m_pSidebarModel->rowCount(parent); ++link) {
++                const QModelIndex quickLink = m_pSidebarModel->index(link, 0, parent);
++                m_pSidebarModel->removeRows(0, m_pSidebarModel->rowCount(quickLink), quickLink);
++            }
++        } else {
++            m_pSidebarModel->removeRows(0, m_pSidebarModel->rowCount(parent), parent);
++        }
++    }
++    m_pSidebarModel->triggerRepaint();
++#endif
++}
++
+ void BrowseFeature::slotRefreshDirectoryTree() {
+     if (!m_lastRightClickedIndex.isValid()) {
+         return;
+@@ -277,6 +295,31 @@
+ void BrowseFeature::bindSidebarWidget(WLibrarySidebar* pSidebarWidget) {
+     // store the sidebar widget pointer for later use in onRightClickChild
+     m_pSidebarWidget = pSidebarWidget;
++}
++
++QString BrowseFeature::openRemovableDirectory(const QString& path) {
++    if (!QFileInfo(path).isDir() || !QFileInfo(path).isReadable()) {
++        return tr("Selected volume is no longer readable.");
++    }
++    auto* root = m_pSidebarModel->getRootItem();
++    QModelIndex index;
++    for (int row = 0; row < root->childRows(); ++row) {
++        if (root->child(row)->getData().toString() == path) {
++            index = m_pSidebarModel->index(row, 0);
++            break;
++        }
++    }
++    if (!index.isValid()) {
++        std::vector<std::unique_ptr<TreeItem>> items;
++        items.push_back(std::make_unique<TreeItem>(path, QVariant(path)));
++        const int row = root->childRows();
++        m_pSidebarModel->insertTreeItemRows(std::move(items), row);
++        index = m_pSidebarModel->index(row, 0);
++    }
++    emit featureSelect(this, index);
++    onLazyChildExpandation(index);
++    activateChild(index);
++    return {};
+ }
+ 
+ void BrowseFeature::activate() {
+@@ -470,6 +513,8 @@
+         folders = createRemovableDevices();
+     } else {
+         folders = getChildDirectoryItems(path);
++        m_pSidebarModel->rememberChildDirectories(path, !folders.empty());
++        m_pSidebarModel->triggerRepaint(idx);
+     }
+ 
+     if (!folders.empty()) {
+diff --git a/src/library/browse/browsefeature.h b/src/library/browse/browsefeature.h
+--- a/src/library/browse/browsefeature.h
++++ b/src/library/browse/browsefeature.h
+@@ -38,6 +38,8 @@
+     TreeItemModel* sidebarModel() const override;
+ 
+     void releaseBrowseThread();
++    void refreshMediaLifecycle();
++    QString openRemovableDirectory(const QString& path);
+ 
+   public slots:
+     void slotAddQuickLink();
+diff --git a/src/library/browse/browsethread.cpp b/src/library/browse/browsethread.cpp
+--- a/src/library/browse/browsethread.cpp
++++ b/src/library/browse/browsethread.cpp
+@@ -39,9 +39,11 @@
+ 
+ BrowseThread::~BrowseThread() {
+     qDebug() << "Wait to finish browser background thread";
++    m_path_mutex.lock();
+     m_bStopThread = true;
+     //wake up thread since it might wait for user input
+     m_locationUpdated.wakeAll();
++    m_path_mutex.unlock();
+     //Wait until thread terminated
+     //terminate();
+     wait();
+@@ -64,7 +66,12 @@
+ }
+ 
+ void BrowseThread::executePopulation(mixxx::FileAccess path, BrowseTableModel* client) {
++    auto mediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Browser);
++    if (!mediaUse) {
++        return;
++    }
+     m_path_mutex.lock();
++    m_pendingMediaUse = std::move(mediaUse);
+     m_path = std::move(path);
+     m_model_observer = client;
+     m_path_mutex.unlock();
+@@ -73,11 +80,13 @@
+ 
+ void BrowseThread::run() {
+     QThread::currentThread()->setObjectName("BrowseThread");
+-    m_mutex.lock();
++    m_path_mutex.lock();
+ 
+     while (!m_bStopThread) {
+         //Wait until the user has selected a folder
+-        m_locationUpdated.wait(&m_mutex);
++        while (!m_pendingMediaUse && !m_bStopThread) {
++            m_locationUpdated.wait(&m_path_mutex);
++        }
+         Trace trace("BrowseThread");
+ 
+         //Terminate thread if Mixxx closes
+@@ -85,9 +94,12 @@
+             break;
+         }
+         // Populate the model
++        m_path_mutex.unlock();
+         populateModel();
+-    }
+-    m_mutex.unlock();
++        m_path_mutex.lock();
++    }
++    m_pendingMediaUse.reset();
++    m_path_mutex.unlock();
+ }
+ 
+ namespace {
+@@ -114,9 +126,14 @@
+ 
+ void BrowseThread::populateModel() {
+     m_path_mutex.lock();
++    auto mediaUse = std::move(m_pendingMediaUse);
+     auto thisPath = m_path;
+     BrowseTableModel* thisModelObserver = m_model_observer;
+     m_path_mutex.unlock();
++
++    if (!mediaUse) {
++        return;
++    }
+ 
+     if (!thisPath.info().hasLocation()) {
+         // Abort if the location is inaccessible or does not exist
+diff --git a/src/library/browse/browsethread.h b/src/library/browse/browsethread.h
+--- a/src/library/browse/browsethread.h
++++ b/src/library/browse/browsethread.h
+@@ -12,6 +12,8 @@
+ #include <QWeakPointer>
+ 
+ #include "util/fileaccess.h"
++#include "library/media/mediauseregistry.h"
++#include <atomic>
+ 
+ // This class is a singleton and represents a thread
+ // that is used to read ID3 metadata
+@@ -43,12 +45,12 @@
+ 
+     void populateModel();
+ 
+-    QMutex m_mutex;
+     QWaitCondition m_locationUpdated;
+-    volatile bool m_bStopThread;
++    std::atomic<bool> m_bStopThread;
+ 
+     // You must hold m_path_mutex to touch m_path or m_model_observer
+     QMutex m_path_mutex;
++    mixxx::media::Lease m_pendingMediaUse;
+     mixxx::FileAccess m_path;
+     BrowseTableModel* m_model_observer;
+ 
+diff --git a/src/library/coverartcache.cpp b/src/library/coverartcache.cpp
+--- a/src/library/coverartcache.cpp
++++ b/src/library/coverartcache.cpp
+@@ -3,6 +3,7 @@
+ #include <QFutureWatcher>
+ #include <QPixmapCache>
+ #include <QtConcurrentRun>
++#include "library/media/mediauseregistry.h"
+ #include <QtDebug>
+ 
+ #include "moc_coverartcache.cpp"
+@@ -152,6 +153,11 @@
+     }
+ 
+     const mixxx::cache_key_t requestedCacheKey = coverInfo.cacheKey();
++    auto mediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        emit coverFound(pRequester, coverInfo, QPixmap());
++        return;
++    }
+     // keep a list of cache keys for which a future is currently running
+     // to avoid loading the same picture again while we are loading it.
+     // This fixes also https://github.com/mixxxdj/mixxx/issues/11131 on
+@@ -171,10 +177,10 @@
+     // The watcher will be deleted in coverLoaded()
+     QFutureWatcher<FutureResult>* watcher = new QFutureWatcher<FutureResult>(this);
+     QFuture<FutureResult> future = QtConcurrent::run(
+-            &CoverArtCache::loadCover,
+-            pTrack,
+-            coverInfo,
+-            desiredWidth);
++            [pTrack, coverInfo, desiredWidth, mediaUse = std::move(mediaUse)]() mutable {
++                auto workUse = std::move(mediaUse);
++                return CoverArtCache::loadCover(pTrack, coverInfo, desiredWidth);
++            });
+     connect(watcher,
+             &QFutureWatcher<FutureResult>::finished,
+             this,
+diff --git a/src/library/export/trackexportworker.cpp b/src/library/export/trackexportworker.cpp
+--- a/src/library/export/trackexportworker.cpp
++++ b/src/library/export/trackexportworker.cpp
+@@ -74,6 +74,12 @@
+ }  // namespace
+ 
+ void TrackExportWorker::run() {
++    auto mediaUse = std::move(m_mediaUse);
++    if (!mediaUse) {
++        m_errorMessage = tr("Media is draining; export rejected.");
++        emit canceled();
++        return;
++    }
+     int i = 0;
+     QMap<QString, mixxx::FileInfo> copy_list = createCopylist(m_tracks);
+     for (auto it = copy_list.constBegin(); it != copy_list.constEnd(); ++it) {
+diff --git a/src/library/export/trackexportworker.h b/src/library/export/trackexportworker.h
+--- a/src/library/export/trackexportworker.h
++++ b/src/library/export/trackexportworker.h
+@@ -5,6 +5,7 @@
+ #include <future>
+ 
+ #include "track/track_decl.h"
++#include "library/media/mediauseregistry.h"
+ 
+ namespace mixxx {
+ class FileInfo;
+@@ -36,7 +37,8 @@
+     // Constructor does not validate the destination directory.  Calling classes
+     // should do that.
+     TrackExportWorker(const QString& destDir, const TrackPointerList& tracks)
+-            : m_destDir(destDir), m_tracks(tracks) {
++            : m_mediaUse(mixxx::media::acquireUnknown(mixxx::media::Producer::Copy)),
++              m_destDir(destDir), m_tracks(tracks) {
+     }
+     virtual ~TrackExportWorker() { };
+ 
+@@ -79,6 +81,7 @@
+     OverwriteAnswer makeOverwriteRequest(const QString& filename);
+ 
+     QAtomicInt m_bStop = false;
++    mixxx::media::Lease m_mediaUse;
+     QString m_errorMessage;
+ 
+     OverwriteMode m_overwriteMode = OverwriteMode::ASK;
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -1,4 +1,6 @@
+ #include "library/library.h"
++#include "library/media/mediause.h"
++#include "track/track.h"
+ 
+ #include <algorithm>
+ 
+@@ -23,6 +25,7 @@
+ #include "library/librarycontrol.h"
+ #include "library/libraryfeature.h"
+ #include "library/mixxxlibraryfeature.h"
++#include "library/mixpimedia.h"
+ #include "library/recording/recordingfeature.h"
+ #include "library/rekordbox/rekordboxfeature.h"
+ #include "library/rhythmbox/rhythmboxfeature.h"
+@@ -207,6 +210,16 @@
+             showSidebarSourcesMenu();
+         }
+     });
++    new MixpiMedia(this, [this]() -> QWidget* { return m_pLibraryWidget; },
++            [this](const QJsonObject& volume) { return openRemovableSource(volume); },
++            [this] {
++                m_pBrowseFeature->refreshMediaLifecycle();
++                for (const auto& source : m_sidebarSources) {
++                    if (source.id == QStringLiteral("RekordboxFeature") && source.feature) {
++                        static_cast<RekordboxFeature*>(source.feature)->refreshRemovableSources();
++                    }
++                }
++            });
+ 
+     for (const auto& externalTrackCollection : m_pTrackCollectionManager->externalCollections()) {
+         auto* feature = externalTrackCollection->newLibraryFeature(this, m_pConfig);
+@@ -595,6 +608,57 @@
+     }
+ }
+ 
++QString Library::openRemovableSource(const QJsonObject& volume) {
++    if (!m_pLibraryWidget || !m_pSidebarWidget) {
++        return tr("Library is not ready; no source was opened.");
++    }
++    const auto mount = volume.value("mount").toObject();
++    const QString path = mount.value("path").toString();
++    const auto observed = MixpiMedia::inspectSelected(volume);
++    if (observed.revision.empty()) {
++        return tr("Selected device or database path cannot be verified; choose again.");
++    }
++    const bool rekordbox = !observed.database.empty();
++    const QString sourceId = rekordbox ? QStringLiteral("RekordboxFeature") : QStringLiteral("BrowseFeature");
++    auto source = std::find_if(m_sidebarSources.begin(), m_sidebarSources.end(),
++            [&sourceId](const SidebarSource& item) { return item.id == sourceId; });
++    if (source == m_sidebarSources.end()) {
++        return tr("Native source is unavailable.");
++    }
++    const auto selectedSource = *source;
++    auto* feature = selectedSource.feature;
++    if (!feature && selectedSource.create) {
++        feature = selectedSource.create();
++        addFeature(feature);
++        feature->bindLibraryWidget(m_pLibraryWidget, m_pSidebarKeyboard);
++        feature->bindSidebarWidget(m_pSidebarWidget);
++        emit setTrackTableFont(m_trackTableFont);
++        emit setTrackTableRowHeight(m_iTrackTableRowHeight);
++    }
++    if (!feature) {
++        return tr("Native source could not be initialized.");
++    }
++    m_pConfig->setValue(selectedSource.preference, true);
++    applySidebarSourceVisibility();
++    QString error;
++    const auto current = MixpiMedia::inspectSelected(volume);
++    if (current.revision.empty() || current.revision != observed.revision || current.database != observed.database) {
++        return tr("Selected device changed during source setup; choose again.");
++    }
++    if (rekordbox) {
++        const QString revision = QString::fromStdString(current.revision);
++        error = static_cast<RekordboxFeature*>(feature)->openRemovableDevice(path, revision);
++    } else {
++        error = m_pBrowseFeature->openRemovableDirectory(path);
++    }
++    if (error.isEmpty()) {
++        ControlObject::set(ConfigKey("[MixPi]", "sample_load"), 0);
++        ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
++        ControlObject::set(ConfigKey("[Tab]", "library"), 1);
++    }
++    return error;
++}
++
+ void Library::showSidebarSourcesMenu() {
+     if (!m_pSidebarWidget || !m_pLibraryWidget) {
+         return;
+@@ -669,9 +733,15 @@
+ }
+ 
+ void Library::slotLoadLocationToPlayer(const QString& location, const QString& group, bool play) {
++    const auto mediaUse = mixxx::media::acquirePath(location.toStdString(), mixxx::media::Producer::Load);
++    if (!mediaUse) {
++        return;
++    }
++    const mixxx::media::PathUseScope mediaScope(location.toStdString(), mediaUse);
+     auto trackRef = TrackRef::fromFilePath(location);
+     TrackPointer pTrack = m_pTrackCollectionManager->getOrAddTrack(trackRef);
+-    if (pTrack) {
++    if (pTrack && mixxx::media::acquirePath(pTrack->getLocation().toStdString(), mixxx::media::Producer::Load, mediaUse)) {
++        const mixxx::media::PathUseScope resolvedScope(pTrack->getLocation().toStdString(), mediaUse);
+         emit loadTrackToPlayer(pTrack, group, play);
+     }
+ }
+diff --git a/src/library/library.h b/src/library/library.h
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -36,6 +36,7 @@
+ class WLibrarySidebar;
+ class WLibrary;
+ class QAbstractItemModel;
++class QJsonObject;
+ 
+ #ifdef __ENGINEPRIME__
+ namespace mixxx {
+@@ -171,6 +172,7 @@
+             std::function<LibraryFeature*()> create);
+     void applySidebarSourceVisibility();
+     void showSidebarSourcesMenu();
++    QString openRemovableSource(const QJsonObject& volume);
+     QList<SidebarSource> m_sidebarSources;
+     QPointer<WLibrarySidebar> m_pSidebarWidget;
+     QPointer<KeyboardEventFilter> m_pSidebarKeyboard;
+diff --git a/src/library/media/mediause.h b/src/library/media/mediause.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/media/mediause.h
+@@ -0,0 +1,58 @@
++#pragma once
++
++#include "library/media/mediauseregistry.h"
++#include "library/rekordbox/sourceidentity.h"
++
++namespace mixxx::media {
++
++inline Binding observePath(const std::string& path) {
++#ifdef __linux__
++    if (path.empty() || path.front() != '/' || std::filesystem::path(path).lexically_normal() != path) {
++        return {};
++    }
++    std::ifstream mounts("/proc/self/mountinfo");
++    const auto mount = rekordbox::containingMount(path, mounts);
++    auto descriptor = std::make_shared<rekordbox::SourceDescriptor>(
++            ::open(path.c_str(), O_PATH | O_CLOEXEC));
++    struct stat status {};
++    if (::fstat(descriptor->value, &status) != 0 ||
++            (!S_ISDIR(status.st_mode) && !S_ISREG(status.st_mode)) ||
++            !rekordbox::descriptorOnMount(descriptor->value, mount, S_ISDIR(status.st_mode))) {
++        return {};
++    }
++    const auto generation = rekordbox::physicalGeneration(mount.device);
++    std::error_code error;
++    if (generation.sysfs.empty() || generation.sysfs.find("/virtual/") != std::string::npos ||
++            !std::filesystem::is_empty(generation.sysfs + "/slaves", error) || error ||
++            !std::filesystem::is_empty(generation.sysfs + "/holders", error) || error) {
++        return {};
++    }
++    const auto key = rekordbox::generationRevision(generation);
++    const auto source = rekordbox::sourceRevision(mount, generation);
++    if (key.empty() || source.empty() ||
++            key != rekordbox::generationRevision(rekordbox::physicalGeneration(mount.device))) {
++        return {};
++    }
++    return {key, source, std::move(descriptor)};
++#else
++    (void)path;
++    return {};
++#endif
++}
++
++inline Lease acquirePath(const std::string& path, Producer producer, Lease inherited = {}) {
++    if (!inherited) {
++        inherited = PathUseScope::inherited(path);
++    }
++    auto binding = observePath(path);
++    if (inherited) {
++        return inherited->matches(binding) ? inherited : Lease{};
++    }
++    auto lease = registry().acquire(binding, producer);
++    if (lease && !lease->matches(observePath(path))) {
++        return {};
++    }
++    return lease;
++}
++
++}
+diff --git a/src/library/media/mediauseregistry.h b/src/library/media/mediauseregistry.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/media/mediauseregistry.h
+@@ -0,0 +1,228 @@
++#pragma once
++
++#include <array>
++#include <cstdint>
++#include <map>
++#include <memory>
++#include <mutex>
++#include <string>
++#include <utility>
++
++namespace mixxx::media {
++
++enum class Producer { Load, Decoder, Analysis, Import, Discovery, Browser, Metadata, Recording, Copy, Count };
++using Counts = std::array<std::size_t, static_cast<std::size_t>(Producer::Count)>;
++
++struct Binding {
++    std::string generation;
++    std::string source;
++    std::shared_ptr<void> descriptor;
++};
++
++class MediaUseRegistry {
++    struct Entry {
++        Counts users{};
++        bool draining = false;
++        std::uint64_t epoch = 0;
++        bool retired = false;
++    };
++    struct State {
++        std::mutex mutex;
++        std::map<std::string, Entry> entries;
++        Counts unknown{};
++    };
++
++  public:
++    class Ownership {
++      public:
++        Ownership(const Ownership&) = delete;
++        Ownership& operator=(const Ownership&) = delete;
++        ~Ownership() {
++            if (!m_counted) {
++                return;
++            }
++            m_binding.descriptor.reset();
++            std::lock_guard<std::mutex> lock(m_state->mutex);
++            auto& counts = m_binding.generation.empty() ? m_state->unknown :
++                    m_state->entries.at(m_binding.generation).users;
++            --counts[static_cast<std::size_t>(m_producer)];
++        }
++        bool matches(const Binding& binding) const {
++            return m_binding.generation == binding.generation && m_binding.source == binding.source;
++        }
++      private:
++        friend class MediaUseRegistry;
++        Ownership(std::shared_ptr<State> state, Binding binding, Producer producer)
++                : m_state(std::move(state)), m_binding(std::move(binding)), m_producer(producer) {}
++        std::shared_ptr<State> m_state;
++        Binding m_binding;
++        Producer m_producer;
++        bool m_counted = false;
++    };
++    using Lease = std::shared_ptr<const Ownership>;
++
++    struct Snapshot {
++        bool draining = false;
++        Counts users{};
++        Counts unknown{};
++        bool locallyIdle() const {
++            if (!draining) {
++                return false;
++            }
++            for (std::size_t index = 0; index < users.size(); ++index) {
++                if (users[index] || unknown[index]) {
++                    return false;
++                }
++            }
++            return true;
++        }
++    };
++
++    class Drain {
++      public:
++        Drain() = default;
++        Drain(const Drain&) = delete;
++        Drain& operator=(const Drain&) = delete;
++        Drain(Drain&& other) noexcept
++                : m_state(std::move(other.m_state)), m_generation(std::move(other.m_generation)),
++                  m_epoch(other.m_epoch) {}
++        ~Drain() { cancel(); }
++        explicit operator bool() const { return bool(m_state); }
++        Snapshot snapshot() const {
++            if (!m_state) {
++                return {};
++            }
++            std::lock_guard<std::mutex> lock(m_state->mutex);
++            const auto& entry = m_state->entries.at(m_generation);
++            return {entry.draining && entry.epoch == m_epoch, entry.users, m_state->unknown};
++        }
++        void cancel() {
++            if (!m_state) {
++                return;
++            }
++            auto state = std::move(m_state);
++            std::lock_guard<std::mutex> lock(state->mutex);
++            auto& entry = state->entries.at(m_generation);
++            if (entry.epoch == m_epoch) {
++                entry.draining = false;
++            }
++        }
++        bool retire() {
++            if (!m_state) return false;
++            auto state = m_state;
++            std::lock_guard<std::mutex> lock(state->mutex);
++            auto& entry = state->entries.at(m_generation);
++            if (!entry.draining || entry.epoch != m_epoch) return false;
++            for (std::size_t index = 0; index < entry.users.size(); ++index) {
++                if (entry.users[index] || state->unknown[index]) return false;
++            }
++            entry.retired = true;
++            entry.draining = false;
++            m_state.reset();
++            return true;
++        }
++      private:
++        friend class MediaUseRegistry;
++        Drain(std::shared_ptr<State> state, std::string generation, std::uint64_t epoch)
++                : m_state(std::move(state)), m_generation(std::move(generation)), m_epoch(epoch) {}
++        std::shared_ptr<State> m_state;
++        std::string m_generation;
++        std::uint64_t m_epoch = 0;
++    };
++
++    Lease acquire(Binding binding, Producer producer) {
++        if (producer == Producer::Count || binding.generation.empty() != binding.source.empty()) {
++            return {};
++        }
++        auto result = std::shared_ptr<Ownership>(new Ownership(m_state, std::move(binding), producer));
++        const auto& generation = result->m_binding.generation;
++        std::lock_guard<std::mutex> lock(m_state->mutex);
++        if (generation.empty()) {
++            for (const auto& item : m_state->entries) {
++                if (item.second.draining) {
++                    return {};
++                }
++            }
++        } else if (m_state->entries[generation].draining || m_state->entries[generation].retired) {
++            return {};
++        }
++        auto& counts = generation.empty() ? m_state->unknown : m_state->entries[generation].users;
++        ++counts[static_cast<std::size_t>(producer)];
++        result->m_counted = true;
++        return result;
++    }
++
++    Drain beginDrain(const std::string& generation) {
++        if (generation.empty()) {
++            return {};
++        }
++        std::lock_guard<std::mutex> lock(m_state->mutex);
++        auto& entry = m_state->entries[generation];
++        if (entry.draining || entry.retired) {
++            return {};
++        }
++        entry.draining = true;
++        return Drain(m_state, generation, ++entry.epoch);
++    }
++
++  private:
++    std::shared_ptr<State> m_state = std::make_shared<State>();
++};
++
++using Lease = MediaUseRegistry::Lease;
++
++class PathUseScope final {
++  public:
++    PathUseScope(std::string path, Lease lease)
++            : m_path(std::move(path)), m_lease(std::move(lease)), m_previous(s_current) {
++        s_current = this;
++    }
++    ~PathUseScope() { s_current = m_previous; }
++    PathUseScope(const PathUseScope&) = delete;
++    PathUseScope& operator=(const PathUseScope&) = delete;
++    static Lease inherited(const std::string& path) {
++        for (auto* scope = s_current; scope; scope = scope->m_previous) {
++            if (scope->m_path == path) {
++                return scope->m_lease;
++            }
++        }
++        return {};
++    }
++  private:
++    const std::string m_path;
++    const Lease m_lease;
++    PathUseScope* const m_previous;
++    static inline thread_local PathUseScope* s_current = nullptr;
++};
++
++inline MediaUseRegistry& registry() {
++    static MediaUseRegistry instance;
++    return instance;
++}
++
++inline Lease acquireUnknown(Producer producer) {
++    return registry().acquire({}, producer);
++}
++
++class UnknownUseScope final {
++  public:
++    explicit UnknownUseScope(Producer producer)
++            : UnknownUseScope(s_current && s_current->m_lease
++                              ? s_current->m_lease : acquireUnknown(producer)) {}
++    explicit UnknownUseScope(Lease lease)
++            : m_lease(std::move(lease)), m_previous(s_current) {
++        s_current = this;
++    }
++    ~UnknownUseScope() { s_current = m_previous; }
++    UnknownUseScope(const UnknownUseScope&) = delete;
++    UnknownUseScope& operator=(const UnknownUseScope&) = delete;
++    explicit operator bool() const { return bool(m_lease); }
++    Lease lease() const { return m_lease; }
++
++  private:
++    const Lease m_lease;
++    UnknownUseScope* const m_previous;
++    static inline thread_local UnknownUseScope* s_current = nullptr;
++};
++
++}
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/mixpimedia.h
+@@ -0,0 +1,329 @@
++#pragma once
++
++#include <functional>
++#include <memory>
++#include <fstream>
++#include <sstream>
++
++#include <QDialog>
++#include <QFileInfo>
++#include <QFile>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QHBoxLayout>
++#include <QLabel>
++#include <QListWidget>
++#include <QMessageBox>
++#include <QPointer>
++#include <QProcess>
++#include <QPushButton>
++#include <QTimer>
++#include <QVBoxLayout>
++
++#include "control/controlobject.h"
++#include "control/controlpushbutton.h"
++#include "library/rekordbox/removablemounts.h"
++#include "library/rekordbox/sourceidentity.h"
++#include "library/media/copyservice.h"
++#include "library/mixpicontrolleddialog.h"
++
++class MixpiMedia final : public QObject {
++  public:
++    using OpenSource = std::function<QString(const QJsonObject&)>;
++
++    MixpiMedia(QObject* owner, std::function<QWidget*()> parent, OpenSource openSource,
++            std::function<void()> refreshSources = {})
++            : QObject(owner), m_parent(std::move(parent)), m_openSource(std::move(openSource)),
++              m_refreshSources(std::move(refreshSources)),
++              m_available(new ControlObject(ConfigKey("[MixPi]", "media_available"))),
++              m_load(new ControlPushButton(ConfigKey("[MixPi]", "media_load"))),
++              m_eject(new ControlPushButton(ConfigKey("[MixPi]", "media_eject"))) {
++        m_load->connectValueChangeRequest(this, [this](double value) {
++            if (value > 0) {
++                show(false);
++            }
++        });
++        m_eject->connectValueChangeRequest(this, [this](double value) {
++            if (value > 0) {
++                show(true);
++            }
++        });
++#ifdef __linux__
++        auto& copies = mixxx::media::copyService();
++        copies.tick();
++        auto* copyTimer = new QTimer(this);
++        connect(copyTimer, &QTimer::timeout, this, [&copies] { copies.tick(); });
++        copyTimer->start(20);
++#endif
++#ifdef __LINUX__
++        m_available->set(QFileInfo(helper()).isReadable() ? 1 : 0);
++#else
++        m_available->set(0);
++#endif
++    }
++
++    ~MixpiMedia() override {
++        if (m_dialog) {
++            m_dialog->close();
++        }
++    }
++
++    static QString helper() {
++        return QStringLiteral("/opt/mixpi-skin-tools/mixpi-media-inventory.py");
++    }
++
++    static QJsonArray entries(const QJsonObject& snapshot, bool eject) {
++        if (eject) {
++            return snapshot.value("drives").toArray();
++        }
++        QJsonArray result;
++        for (const auto& drive : snapshot.value("drives").toArray()) {
++            for (const auto& volume : drive.toObject().value("volumes").toArray()) {
++                result.append(volume);
++            }
++        }
++        return result;
++    }
++
++    static QJsonObject resolve(const QJsonObject& snapshot, const QString& token, bool eject) {
++        QJsonObject found;
++        if (token.isEmpty() || snapshot.contains("error") || snapshot.value("version").toInt() != 1) {
++            return found;
++        }
++        for (const auto& value : entries(snapshot, eject)) {
++            const auto entry = value.toObject();
++            if (entry.value("token").toString() == token) {
++                if (!found.isEmpty()) {
++                    return {};
++                }
++                found = entry;
++            }
++        }
++        return found;
++    }
++
++    static mixxx::rekordbox::SourceObservation inspectSelected(const QJsonObject& volume) {
++        const auto physical = volume.value("physical").toObject();
++        const auto mount = volume.value("mount").toObject();
++        const auto path = mount.value("path").toString().toStdString();
++        const mixxx::rekordbox::SourceMount expectedMount{
++                QString::number(mount.value("id").toInt()).toStdString(),
++                mount.value("device").toString().toStdString(),
++                mount.value("root").toString().toStdString(), path};
++        const mixxx::rekordbox::PhysicalGeneration expectedGeneration{
++                physical.value("boot_id").toString().toStdString(),
++                physical.value("namespace").toString().toStdString(),
++                physical.value("sysfs").toString().toStdString(),
++                physical.value("device").toString().toStdString(),
++                physical.value("diskseq").toString().toStdString()};
++        auto observed = mixxx::rekordbox::inspectSource(path);
++        if (observed.revision.empty() ||
++                observed.revision != mixxx::rekordbox::sourceRevision(expectedMount, expectedGeneration)) {
++            return {};
++        }
++        return observed;
++    }
++
++    static bool stillPresent(const QJsonObject& volume) {
++        return !inspectSelected(volume).revision.empty();
++    }
++
++  private:
++    void showControlled(bool mount) {
++        if (!m_controlled) {
++            m_controlled = MixpiControlledMedia::openProduction();
++            m_controlled->setCompletionHandler(this, m_refreshSources);
++        }
++        auto* dialog = new MixpiControlledDialog(m_controlled, mount, m_parent());
++        m_dialog = dialog;
++        connect(dialog, &QDialog::accepted, this, [this] {
++            m_dialog = nullptr;
++            show(false);
++        });
++        dialog->show();
++    }
++
++    void observe(std::function<void(QJsonObject)> receive) {
++        auto* process = new QProcess(QCoreApplication::instance());
++        auto* deadline = new QTimer(process);
++        deadline->setSingleShot(true);
++        auto finished = std::make_shared<bool>(false);
++        const QPointer<MixpiMedia> owner(this);
++        auto complete = [process, deadline, finished, receive, owner](QJsonObject answer) {
++            if (*finished) {
++                return;
++            }
++            *finished = true;
++            deadline->stop();
++            if (owner) {
++                receive(answer);
++            }
++            if (process->state() == QProcess::NotRunning) {
++                process->deleteLater();
++            }
++        };
++        connect(deadline, &QTimer::timeout, process, [process, complete] {
++            process->kill();
++            complete(QJsonObject{{"error", "Media observation timed out; nothing was changed."}});
++        });
++        connect(process, &QProcess::errorOccurred, process, [complete](QProcess::ProcessError) {
++            complete(QJsonObject{{"error", "Media observer unavailable; nothing was changed."}});
++        });
++        connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), process,
++                [process, complete](int exitCode, QProcess::ExitStatus exitStatus) {
++                    const auto document = QJsonDocument::fromJson(process->readAllStandardOutput());
++                    auto answer = document.object();
++                    if (exitStatus != QProcess::NormalExit || exitCode != 0 ||
++                            !document.isObject() || answer.value("version").toInt() != 1 ||
++                            !answer.value("drives").isArray()) {
++                        if (!answer.contains("error")) {
++                            answer.insert("error", "Media inventory could not be verified.");
++                        }
++                    }
++                    complete(answer);
++                    process->deleteLater();
++                });
++        deadline->start(6000);
++        process->start(QStringLiteral("/usr/bin/python3"), {helper()});
++    }
++
++    static QString description(const QJsonObject& entry, bool eject) {
++        const QString capacity = QString::number(entry.value("size").toDouble() / 1073741824.0, 'f', 1) + " GiB";
++        if (!eject) {
++            return entry.value("label").toString() + " · " + capacity + "\n" +
++                    entry.value("discriminator").toString();
++        }
++        QStringList volumes;
++        for (const auto& value : entry.value("volumes").toArray()) {
++            const auto volume = value.toObject();
++            volumes.append(volume.value("label").toString() + " — " +
++                    volume.value("discriminator").toString());
++        }
++        return capacity + " · disk " + entry.value("device").toString() +
++                " · generation " + entry.value("diskseq").toString() + " · EJECT BLOCKED\n" +
++                (volumes.isEmpty() ? QStringLiteral("No mounted whole-volume source") : volumes.join("\n"));
++    }
++
++    void show(bool eject) {
++        if (m_dialog) {
++            m_dialog->raise();
++            return;
++        }
++        auto* parent = m_parent();
++        if (!parent || m_available->get() != 1) {
++            return;
++        }
++        if (eject || (m_controlled && m_controlled->locked())) {
++            showControlled(false);
++            return;
++        }
++        auto* dialog = new QDialog(parent);
++        dialog->setAttribute(Qt::WA_DeleteOnClose);
++        dialog->setWindowTitle(eject ? tr("EJECT — choose physical USB drive") : tr("LOAD — choose USB volume"));
++        dialog->setMinimumSize(650, 320);
++        dialog->setWindowModality(Qt::WindowModal);
++        m_dialog = dialog;
++        auto* layout = new QVBoxLayout(dialog);
++        auto* status = new QLabel(tr("Choose explicitly. Playback and files are unchanged."), dialog);
++        status->setTextFormat(Qt::PlainText);
++        status->setWordWrap(true);
++        layout->addWidget(status);
++        auto* list = new QListWidget(dialog);
++        list->setStyleSheet("QListWidget::item { min-height: 56px; }");
++        layout->addWidget(list);
++        auto* actions = new QHBoxLayout;
++        auto* refresh = new QPushButton(tr("Refresh"), dialog);
++        auto* accept = new QPushButton(eject ? tr("Check selected drive") : tr("Load selected source"), dialog);
++        auto* cancel = new QPushButton(tr("Cancel"), dialog);
++        auto* mount = new QPushButton(tr("Mount USB…"), dialog);
++        for (auto* button : {refresh, accept, mount, cancel}) {
++            button->setMinimumHeight(48);
++            button->setAutoDefault(false);
++            actions->addWidget(button);
++        }
++        layout->addLayout(actions);
++        accept->setEnabled(false);
++        connect(mount, &QPushButton::clicked, dialog, [this, dialog] {
++            dialog->close();
++            m_dialog = nullptr;
++            showControlled(true);
++        });
++        connect(cancel, &QPushButton::clicked, dialog, &QDialog::reject);
++        connect(list, &QListWidget::currentItemChanged, dialog,
++                [accept](QListWidgetItem* current) { accept->setEnabled(current != nullptr); });
++        const QPointer<QDialog> guard(dialog);
++        auto reload = [this, guard, list, status, accept, refresh, eject] {
++            list->clear();
++            accept->setEnabled(false);
++            refresh->setEnabled(false);
++            status->setText(tr("Observing connected physical USB media…"));
++            observe([guard, list, status, refresh, eject](const QJsonObject& snapshot) {
++                if (!guard || !guard->isVisible()) {
++                    return;
++                }
++                refresh->setEnabled(true);
++                if (snapshot.contains("error")) {
++                    status->setText(snapshot.value("error").toString());
++                    return;
++                }
++                for (const auto& value : entries(snapshot, eject)) {
++                    const auto entry = value.toObject();
++                    auto* item = new QListWidgetItem(description(entry, eject), list);
++                    item->setData(Qt::UserRole, entry.value("token").toString());
++                }
++                list->setCurrentRow(-1);
++                list->clearSelection();
++                status->setText(list->count() ? tr("Select one entry. Identity is checked again before dispatch.") :
++                                              tr("No eligible physical USB media. Internal copies and system disks are excluded."));
++            });
++        };
++        connect(refresh, &QPushButton::clicked, dialog, reload);
++        connect(accept, &QPushButton::clicked, dialog,
++                [this, guard, list, status, accept, refresh, eject] {
++                    if (!list->currentItem()) {
++                        return;
++                    }
++                    const QString token = list->currentItem()->data(Qt::UserRole).toString();
++                    list->setEnabled(false);
++                    accept->setEnabled(false);
++                    refresh->setEnabled(false);
++                    status->setText(tr("Rechecking the exact selected device and all its partitions…"));
++                    observe([this, guard, list, status, refresh, token, eject](const QJsonObject& snapshot) {
++                        if (!guard || !guard->isVisible()) {
++                            return;
++                        }
++                        list->setEnabled(true);
++                        list->setCurrentRow(-1);
++                        refresh->setEnabled(true);
++                        const auto entry = resolve(snapshot, token, eject);
++                        if (entry.isEmpty()) {
++                            list->clear();
++                            status->setText(tr("Selection invalidated: media changed or observation failed. Refresh and choose again."));
++                            return;
++                        }
++                        if (eject) {
++                            status->setText(entry.value("reason").toString());
++                            return;
++                        }
++                        const QString error = m_openSource(entry);
++                        if (!error.isEmpty()) {
++                            status->setText(error);
++                            return;
++                        }
++                        guard->accept();
++                    });
++                });
++        dialog->show();
++        reload();
++    }
++
++    std::function<QWidget*()> m_parent;
++    OpenSource m_openSource;
++    std::function<void()> m_refreshSources;
++    QScopedPointer<ControlObject> m_available;
++    QScopedPointer<ControlPushButton> m_load;
++    QScopedPointer<ControlPushButton> m_eject;
++    QPointer<QDialog> m_dialog;
++    QPointer<MixpiControlledMedia> m_controlled;
++};
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -19,6 +19,8 @@
+ #include "library/library.h"
+ #include "library/queryutil.h"
+ #include "library/rekordbox/rekordboxconstants.h"
++#include "library/rekordbox/sourceidentity.h"
++#include "library/rekordbox/sourcecache.h"
+ #include "library/trackcollection.h"
+ #include "library/trackcollectionmanager.h"
+ #include "library/treeitem.h"
+@@ -168,7 +170,10 @@
+ // The returned list owns the pointers, but we can't use a unique_ptr because
+ // the result is passed by a const reference inside QFuture and than copied
+ // to the main thread requiring a copy-able object.
+-QList<TreeItem*> findRekordboxDevices() {
++QList<TreeItem*> findRekordboxDevices(const QMap<QString, QString>& requestedMounts) {
++#ifndef __LINUX__
++    Q_UNUSED(requestedMounts);
++#endif
+     QThread* thisThread = QThread::currentThread();
+     thisThread->setPriority(QThread::LowPriority);
+ 
+@@ -219,15 +224,20 @@
+         directoryPaths.push_back(directory.filePath().toStdString());
+     }
+     std::ifstream mountInfo("/proc/self/mountinfo");
+-    const auto sources = mixxx::rekordbox::addExportDirectories(
++    auto sources = mixxx::rekordbox::addExportDirectories(
+             mixxx::rekordbox::readRemovableMounts(mountInfo), directoryPaths);
++    for (auto request = requestedMounts.cbegin(); request != requestedMounts.cend(); ++request) {
++        sources.emplace(request.key().toStdString(), request.value().toStdString());
++    }
+     for (const auto& [path, identity] : sources) {
+         const QString devicePath = QString::fromStdString(path);
+-        const QFileInfo rbDBFileInfo(devicePath + QStringLiteral("/") + kPdbPath);
+-        if (rbDBFileInfo.exists() && rbDBFileInfo.isFile()) {
+-            const QString revision = QString::fromStdString(identity) + ":" +
+-                    QString::number(rbDBFileInfo.size()) + ":" +
+-                    QString::number(rbDBFileInfo.lastModified().toMSecsSinceEpoch());
++        const auto observed = mixxx::rekordbox::inspectSource(path);
++        if (requestedMounts.contains(devicePath) && identity == requestedMounts.value(devicePath).toStdString() &&
++                observed.revision != identity) {
++            continue;
++        }
++        if (!observed.database.empty()) {
++            const QString revision = QString::fromStdString(observed.database);
+             auto* pFoundDevice = new TreeItem(
+                     QFileInfo(devicePath).fileName(),
+                     QVariant(QList<QString>{devicePath, IS_RECORDBOX_DEVICE, revision}));
+@@ -446,6 +456,13 @@
+ 
+ QString parseDeviceDB(mixxx::DbConnectionPoolPtr dbConnectionPool, TreeItem* deviceItem) {
+     QString devicePath = deviceItem->getData().toList()[0].toString();
++#ifdef __LINUX__
++    const auto observed = mixxx::rekordbox::inspectSource(devicePath.toStdString());
++    if (observed.database.empty() ||
++            observed.database != deviceItem->getData().toList().value(2).toString().toStdString()) {
++        return {};
++    }
++#endif
+     // Labels can be duplicated across mount roots; database ownership cannot.
+     QString device = devicePath;
+ 
+@@ -454,7 +471,7 @@
+     QString dbPath = devicePath + QStringLiteral("/") + kPdbPath;
+ 
+     if (!QFile(dbPath).exists()) {
+-        return devicePath;
++        return {};
+     }
+ 
+     // The pooler limits the lifetime all thread-local connections,
+@@ -1472,11 +1489,19 @@
+     if (!m_deviceRefreshPending || m_deviceDiscoveryActive || m_trackImportActive) {
+         return;
+     }
++    auto mediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Discovery);
++    if (!mediaUse) {
++        return;
++    }
++    m_discoveryMediaUse = mediaUse;
+     m_deviceRefreshPending = false;
+     m_deviceDiscoveryActive = true;
+     // Discover export.pdb files only. Import metadata when the user opens a
+     // device; never start whole-drive audio analysis on insertion.
+-    m_devicesFuture = QtConcurrent::run(findRekordboxDevices);
++    m_devicesFuture = QtConcurrent::run([mounts = m_requestedMounts, mediaUse = std::move(mediaUse)]() mutable {
++        auto workUse = std::move(mediaUse);
++        return findRekordboxDevices(mounts);
++    });
+     m_devicesFutureWatcher.setFuture(m_devicesFuture);
+ }
+ 
+@@ -1489,7 +1514,34 @@
+         emit featureIsLoading(this, false);
+     }
+     m_deviceDiscoveryActive = false;
++    m_discoveryMediaUse.reset();
+     refreshDevices();
++}
++
++QString RekordboxFeature::openRemovableDevice(const QString& path, const QString& mountRevision) {
++    const auto mediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Import);
++    if (!mediaUse) {
++        return tr("Media is draining; source selection rejected.");
++    }
++    if (m_trackImportActive || m_deviceDiscoveryActive) {
++        return tr("Rekordbox is importing or discovering sources. Retry this volume when complete.");
++    }
++    const auto observed = mixxx::rekordbox::inspectSource(path.toStdString());
++    if (observed.database.empty() || observed.revision != mountRevision.toStdString()) {
++        return tr("Selected Rekordbox generation or database path changed; choose again.");
++    }
++    const QString revision = QString::fromStdString(observed.database);
++    auto* root = m_pSidebarModel->getRootItem();
++    const int row = mixxx::rekordbox::cachedSourceRow(root, path, revision);
++    if (row >= 0) {
++        const auto index = m_pSidebarModel->index(row, 0);
++        emit featureSelect(this, index);
++        activateChild(index);
++        return {};
++    }
++    m_requestedMounts.insert(path, mountRevision);
++    requestDeviceRefresh();
++    return tr("Selected Rekordbox source is not current. Discovery requested; choose it again after refresh.");
+ }
+ 
+ void RekordboxFeature::activate() {
+@@ -1505,6 +1557,10 @@
+ }
+ 
+ void RekordboxFeature::activateChild(const QModelIndex& index) {
++    const auto activationUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Import);
++    if (!activationUse) {
++        return;
++    }
+     if (!index.isValid()) {
+         return;
+     }
+@@ -1514,6 +1570,20 @@
+     if (!(item && item->getData().isValid())) {
+         return;
+     }
++
++#ifdef __LINUX__
++    auto* device = item;
++    const auto* root = m_pSidebarModel->getRootItem();
++    while (device->parent() && device->parent() != root) {
++        device = device->parent();
++    }
++    const auto source = device->getData().toList();
++    const auto current = mixxx::rekordbox::inspectSource(source.value(0).toString().toStdString());
++    if (current.database.empty() || source.value(2).toString().toStdString() != current.database) {
++        requestDeviceRefresh();
++        return;
++    }
++#endif
+ 
+     // The first two TreeItem data values select a device or playlist. Linux
+     // device roots additionally retain a source revision in the third value.
+@@ -1537,12 +1607,20 @@
+         if (m_trackImportActive) {
+             return;
+         }
++        m_importMediaUse = mixxx::media::acquirePath(playlist.toStdString(), mixxx::media::Producer::Import);
++        if (!m_importMediaUse) {
++            return;
++        }
+         m_trackImportActive = true;
+         m_pImportingDevice = item;
+         // Set the marker before launching the worker, which reads this data.
+         data[1] = QVariant(IS_NOT_RECORDBOX_DEVICE);
+         item->setData(QVariant(data));
+-        m_tracksFuture = QtConcurrent::run(parseDeviceDB, static_cast<Library*>(parent())->dbConnectionPool(), item);
++        m_tracksFuture = QtConcurrent::run([pool = static_cast<Library*>(parent())->dbConnectionPool(),
++                                                 item, mediaUse = m_importMediaUse]() mutable {
++            auto workUse = std::move(mediaUse);
++            return parseDeviceDB(pool, item);
++        });
+         m_tracksFutureWatcher.setFuture(m_tracksFuture);
+     } else {
+         qDebug() << "Activate Rekordbox Playlist: " << playlist;
+@@ -1562,10 +1640,23 @@
+     const QList<TreeItem*> result = m_devicesFuture.result();
+     auto foundDevices = std::vector<std::unique_ptr<TreeItem>>(result.cbegin(), result.cend());
+ 
++#ifdef __LINUX__
++    foundDevices.erase(std::remove_if(foundDevices.begin(), foundDevices.end(), [](const auto& device) {
++        const auto data = device->getData().toList();
++        const auto observed = mixxx::rekordbox::inspectSource(data.value(0).toString().toStdString());
++        return observed.database.empty() || observed.database != data.value(2).toString().toStdString();
++    }), foundDevices.end());
++#endif
++
+     TreeItem* root = m_pSidebarModel->getRootItem();
+     const auto sameSource = [](const TreeItem* a, const TreeItem* b) {
+-        return a->getData().toList().value(0) == b->getData().toList().value(0) &&
+-                a->getData().toList().value(2) == b->getData().toList().value(2);
++        const auto first = a->getData().toList();
++        const auto second = b->getData().toList();
++#ifdef __LINUX__
++        return mixxx::rekordbox::matchesCachedSource(a, second.value(0).toString(), second.value(2).toString());
++#else
++        return first.value(0) == second.value(0) && first.value(2) == second.value(2);
++#endif
+     };
+     bool unchanged = foundDevices.size() == static_cast<size_t>(root->childRows());
+     for (int i = 0; unchanged && i < root->childRows(); ++i) {
+@@ -1654,6 +1745,18 @@
+     } catch (const std::exception& e) {
+         qWarning() << "Failed to load Rekordbox database:" << e.what();
+     }
++#ifdef __LINUX__
++    auto imported = m_pImportingDevice->getData().toList();
++    const auto observed = mixxx::rekordbox::inspectSource(imported.value(0).toString().toStdString());
++    if (observed.database.empty() || imported.value(2).toString().toStdString() != observed.database) {
++        QSqlDatabase database = m_pTrackCollection->database();
++        clearDeviceTables(database, m_pImportingDevice);
++        imported[2] = QVariant(QString());
++        m_pImportingDevice->setData(QVariant(imported));
++        devicePlaylist.clear();
++        requestDeviceRefresh();
++    }
++#endif
+     if (devicePlaylist.isEmpty()) {
+         // A failed import must remain selectable for a later retry. Discovery
+         // was deferred, so the TreeItem is still alive even after an unplug.
+@@ -1663,6 +1766,7 @@
+     }
+     m_pImportingDevice = nullptr;
+     m_trackImportActive = false;
++    m_importMediaUse.reset();
+     // Also process queued removals after a failed import (the catch below).
+     QTimer::singleShot(0, this, [this] {
+         // Only replay a finished signal that was actually deferred. A future
+diff --git a/src/library/rekordbox/rekordboxfeature.h b/src/library/rekordbox/rekordboxfeature.h
+--- a/src/library/rekordbox/rekordboxfeature.h
++++ b/src/library/rekordbox/rekordboxfeature.h
+@@ -23,9 +23,11 @@
+ //      https://github.com/Deep-Symmetry/crate-digger/blob/master/src/main/kaitai/rekordbox_pdb.ksy
+ 
+ #pragma once
++#include "library/media/mediause.h"
+ 
+ #include <QFuture>
+ #include <QFutureWatcher>
++#include <QMap>
+ #include <QStringListModel>
+ #include <QTimer>
+ #include <QtConcurrentRun>
+@@ -69,6 +71,8 @@
+             KeyboardEventFilter* keyboard) override;
+ 
+     TreeItemModel* sidebarModel() const override;
++    QString openRemovableDevice(const QString& path, const QString& mountRevision);
++    void refreshRemovableSources() { requestDeviceRefresh(); }
+ 
+   public slots:
+     void activate() override;
+@@ -84,6 +87,7 @@
+     void requestDeviceRefresh();
+     void refreshDevices();
+     void finishDeviceRefresh();
++    QMap<QString, QString> m_requestedMounts;
+ #ifdef __LINUX__
+     QTimer m_devicePollTimer;
+ #endif
+@@ -91,6 +95,8 @@
+     bool m_deviceDiscoveryActive = false;
+     bool m_deviceResultsDeferred = false;
+     bool m_trackImportActive = false;
++    mixxx::media::Lease m_importMediaUse;
++    mixxx::media::Lease m_discoveryMediaUse;
+     bool m_deviceRefreshPending = false;
+     bool m_showDeviceLoading = false;
+     TreeItem* m_pImportingDevice = nullptr;
+diff --git a/src/library/rekordbox/sourcecache.h b/src/library/rekordbox/sourcecache.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/rekordbox/sourcecache.h
+@@ -0,0 +1,23 @@
++#pragma once
++
++#include "library/treeitem.h"
++#include "sourceidentity.h"
++
++namespace mixxx::rekordbox {
++
++inline bool matchesCachedSource(const TreeItem* item, const QString& path, const QString& revision) {
++    const auto data = item->getData().toList();
++    return sameSourceRevision(data.value(0).toString().toStdString(),
++            data.value(2).toString().toStdString(), path.toStdString(), revision.toStdString());
++}
++
++inline int cachedSourceRow(const TreeItem* root, const QString& path, const QString& revision) {
++    for (int row = 0; row < root->childRows(); ++row) {
++        if (matchesCachedSource(root->child(row), path, revision)) {
++            return row;
++        }
++    }
++    return -1;
++}
++
++}
+diff --git a/src/library/rekordbox/sourceidentity.h b/src/library/rekordbox/sourceidentity.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/rekordbox/sourceidentity.h
+@@ -0,0 +1,239 @@
++#pragma once
++
++#include <algorithm>
++#include <fstream>
++#include <functional>
++#include <memory>
++#include <sstream>
++#include <string>
++#include <vector>
++
++#include "removablemounts.h"
++
++#ifdef __linux__
++#include <cerrno>
++#include <filesystem>
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <sys/sysmacros.h>
++#include <unistd.h>
++#endif
++
++namespace mixxx::rekordbox {
++
++struct SourceMount {
++    std::string id;
++    std::string device;
++    std::string root;
++    std::string path;
++};
++
++struct PhysicalGeneration {
++    std::string boot;
++    std::string nameSpace;
++    std::string sysfs;
++    std::string device;
++    std::string diskseq;
++};
++
++inline bool positiveNumber(const std::string& value) {
++    return !value.empty() && value.find_first_not_of("0123456789") == std::string::npos &&
++            value.find_first_not_of('0') != std::string::npos;
++}
++
++inline std::string identityFields(const std::vector<std::string>& fields) {
++    std::string result;
++    for (const auto& field : fields) {
++        result += std::to_string(field.size()) + ":" + field;
++    }
++    return result;
++}
++
++inline std::string generationRevision(const PhysicalGeneration& generation) {
++    if (generation.boot.empty() || generation.nameSpace.empty() || generation.sysfs.empty() ||
++            generation.device.empty() || !positiveNumber(generation.diskseq)) {
++        return {};
++    }
++    return identityFields({generation.boot, generation.nameSpace, generation.sysfs,
++            generation.device, generation.diskseq});
++}
++
++inline std::string sourceRevision(const SourceMount& mount, const PhysicalGeneration& generation) {
++    const auto physical = generationRevision(generation);
++    if (physical.empty() || !positiveNumber(mount.id) || mount.device.empty() ||
++            mount.root.empty() || mount.path.empty()) {
++        return {};
++    }
++    return identityFields({physical, mount.id, mount.device, mount.root, mount.path});
++}
++
++inline std::string databaseRevision(const std::string& source, const std::string& metadata) {
++    return source.empty() || metadata.empty() ? std::string() : identityFields({source, metadata});
++}
++
++inline bool sameSourceRevision(const std::string& oldPath, const std::string& oldRevision,
++        const std::string& newPath, const std::string& newRevision) {
++    return !newRevision.empty() && oldPath == newPath && oldRevision == newRevision;
++}
++
++inline bool resolvedOnMount(const SourceMount& mount, const std::string& device,
++        const std::string& mountId) {
++    return positiveNumber(mountId) && mount.id == mountId && mount.device == device;
++}
++
++inline std::string descriptorMountId(std::istream& input) {
++    std::string line;
++    std::string result;
++    while (std::getline(input, line)) {
++        if (line.rfind("mnt_id:", 0) != 0) {
++            continue;
++        }
++        std::istringstream fields(line.substr(7));
++        std::string value, extra;
++        if (!result.empty() || !(fields >> value) || fields >> extra || !positiveNumber(value)) {
++            return {};
++        }
++        result = value;
++    }
++    return input.eof() ? result : std::string();
++}
++
++inline SourceMount containingMount(const std::string& path, std::istream& input) {
++    SourceMount result;
++    std::string line;
++    bool ambiguous = false;
++    while (std::getline(input, line)) {
++        SourceMount mount;
++        std::string parent;
++        std::istringstream fields(line);
++        if (!(fields >> mount.id >> parent >> mount.device >> mount.root >> mount.path)) {
++            return {};
++        }
++        mount.root = decodeMountPath(mount.root);
++        mount.path = decodeMountPath(mount.path);
++        if (mount.path != "/" && path != mount.path && path.rfind(mount.path + "/", 0) != 0) {
++            continue;
++        }
++        if (mount.path.size() > result.path.size()) {
++            result = mount;
++            ambiguous = false;
++        } else if (mount.path == result.path) {
++            ambiguous = true;
++        }
++    }
++    return input.eof() && !ambiguous ? result : SourceMount{};
++}
++
++class SourceDescriptor {
++  public:
++    explicit SourceDescriptor(int descriptor) : value(descriptor) {}
++    ~SourceDescriptor() {
++#ifdef __linux__
++        if (value >= 0) {
++            ::close(value);
++        }
++#endif
++    }
++    SourceDescriptor(const SourceDescriptor&) = delete;
++    SourceDescriptor& operator=(const SourceDescriptor&) = delete;
++    const int value;
++};
++
++struct SourceObservation {
++    SourceMount mount;
++    PhysicalGeneration generation;
++    std::string revision;
++    std::string database;
++    std::shared_ptr<SourceDescriptor> directoryDescriptor;
++    std::shared_ptr<SourceDescriptor> databaseDescriptor;
++};
++
++#ifdef __linux__
++inline std::string readIdentityFile(const std::filesystem::path& path) {
++    std::ifstream input(path);
++    std::string value;
++    std::getline(input, value);
++    return input.bad() ? std::string() : value;
++}
++
++inline PhysicalGeneration physicalGeneration(const std::string& device) {
++    std::error_code error;
++    auto sysfs = std::filesystem::canonical("/sys/dev/block/" + device, error);
++    if (error) {
++        return {};
++    }
++    if (std::filesystem::exists(sysfs / "partition", error)) {
++        sysfs = sysfs.parent_path();
++    }
++    if (error) {
++        return {};
++    }
++    const auto nameSpace = std::filesystem::read_symlink("/proc/self/ns/mnt", error);
++    if (error) {
++        return {};
++    }
++    return {readIdentityFile("/proc/sys/kernel/random/boot_id"), nameSpace.string(),
++            sysfs.string(), readIdentityFile(sysfs / "dev"), readIdentityFile(sysfs / "diskseq")};
++}
++
++inline bool descriptorOnMount(int descriptor, const SourceMount& mount, bool directory,
++        std::string* metadata = nullptr) {
++    struct stat status {};
++    if (::fstat(descriptor, &status) != 0 ||
++            (directory ? !S_ISDIR(status.st_mode) : !S_ISREG(status.st_mode))) {
++        return false;
++    }
++    std::ifstream info("/proc/self/fdinfo/" + std::to_string(descriptor));
++    const auto device = std::to_string(major(status.st_dev)) + ":" + std::to_string(minor(status.st_dev));
++    if (!resolvedOnMount(mount, device, descriptorMountId(info))) {
++        return false;
++    }
++    if (metadata) {
++        *metadata = identityFields({std::to_string(status.st_size), std::to_string(status.st_mtim.tv_sec),
++                std::to_string(status.st_mtim.tv_nsec), std::to_string(status.st_ino)});
++    }
++    return true;
++}
++#endif
++
++inline SourceObservation inspectSource(const std::string& path) {
++#ifdef __linux__
++    if (path.empty() || path.front() != '/' || std::filesystem::path(path).lexically_normal() != path) {
++        return {};
++    }
++    SourceObservation result;
++    result.directoryDescriptor = std::make_shared<SourceDescriptor>(
++            ::open(path.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC));
++    std::ifstream mounts("/proc/self/mountinfo");
++    result.mount = containingMount(path, mounts);
++    if (!descriptorOnMount(result.directoryDescriptor->value, result.mount, true)) {
++        return {};
++    }
++    result.generation = physicalGeneration(result.mount.device);
++    result.revision = sourceRevision(result.mount, result.generation);
++    if (result.revision.empty()) {
++        return {};
++    }
++    const int database = ::openat(result.directoryDescriptor->value,
++            "PIONEER/rekordbox/export.pdb", O_PATH | O_CLOEXEC);
++    if (database >= 0) {
++        result.databaseDescriptor = std::make_shared<SourceDescriptor>(database);
++        std::string metadata;
++        if (!descriptorOnMount(database, result.mount, false, &metadata)) {
++            return {};
++        }
++        result.database = databaseRevision(result.revision, metadata);
++    } else if (errno != ENOENT) {
++        return {};
++    }
++    if (generationRevision(result.generation) != generationRevision(physicalGeneration(result.mount.device))) {
++        return {};
++    }
++    return result;
++#else
++    (void)path;
++    return {};
++#endif
++}
++
++}
+diff --git a/src/library/scanner/importfilestask.cpp b/src/library/scanner/importfilestask.cpp
+--- a/src/library/scanner/importfilestask.cpp
++++ b/src/library/scanner/importfilestask.cpp
+@@ -21,6 +21,10 @@
+ }
+ 
+ void ImportFilesTask::run() {
++    if (!m_mediaUse) {
++        setSuccess(false);
++        return;
++    }
+     ScopedTimer timer(u"ImportFilesTask::run");
+     for (const QFileInfo& fileInfo: m_filesToImport) {
+         // If a flag was raised telling us to cancel the library scan then stop.
+diff --git a/src/library/scanner/libraryscanner.cpp b/src/library/scanner/libraryscanner.cpp
+--- a/src/library/scanner/libraryscanner.cpp
++++ b/src/library/scanner/libraryscanner.cpp
+@@ -114,10 +114,6 @@
+ 
+     m_pool.setMaxThreadCount(kScannerThreadPoolSize);
+ 
+-    // Listen to signals from our public methods (invoked by other threads) and
+-    // connect them to our slots to run the command on the scanner thread.
+-    connect(this, &LibraryScanner::startScan, this, &LibraryScanner::slotStartScan);
+-
+     m_pProgressDlg.reset(new LibraryScannerDlg());
+     connect(this,
+             &LibraryScanner::progressLoading,
+@@ -194,6 +190,7 @@
+     // If there are no directories then we have nothing to do. Cleanup and
+     // finish the scan immediately.
+     if (m_libraryRootDirs.isEmpty()) {
++        m_scanMediaUse.reset();
+         changeScannerState(IDLE);
+         return;
+     }
+@@ -210,6 +207,7 @@
+     m_scannerGlobal = ScannerGlobalPointer(
+             new ScannerGlobal(trackLocations, directoryHashes, extensionFilter,
+                               coverExtensionFilter, directoryBlacklist));
++    m_scannerGlobal->mediaUse = m_scanMediaUse;
+ 
+     m_scannerGlobal->startTimer();
+ 
+@@ -441,6 +439,7 @@
+             static_cast<int>(m_scannerGlobal->addedTracks().size()));
+ 
+     m_scannerGlobal.clear();
++    m_scanMediaUse.reset();
+     changeScannerState(FINISHED);
+     // now we may accept new scan commands
+ 
+@@ -448,8 +447,17 @@
+ }
+ 
+ void LibraryScanner::scan() {
++    auto mediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Discovery);
++    if (!mediaUse) {
++        return;
++    }
+     if (changeScannerState(STARTING)) {
+-        emit startScan();
++        if (!QMetaObject::invokeMethod(this, [this, mediaUse = std::move(mediaUse)]() mutable {
++                    m_scanMediaUse = std::move(mediaUse);
++                    slotStartScan();
++                }, Qt::QueuedConnection)) {
++            changeScannerState(IDLE);
++        }
+     }
+ }
+ 
+@@ -496,12 +504,11 @@
+ void LibraryScanner::queueTask(ScannerTask* pTask) {
+     //kLogger.debug() << "queueTask" << pTask;
+     ScopedTimer timer(u"LibraryScanner::queueTask");
+-    if (m_scannerGlobal.isNull() || m_scannerGlobal->shouldCancel()) {
++    if (!pTask->hasMediaUse() || m_scannerGlobal.isNull() || m_scannerGlobal->shouldCancel()) {
+         delete pTask;
+         m_pool.clear();
+         return;
+     }
+-    m_scannerGlobal->getTaskWatcher().watchTask();
+     connect(pTask,
+             &ScannerTask::queueTask,
+             this,
+diff --git a/src/library/scanner/libraryscanner.h b/src/library/scanner/libraryscanner.h
+--- a/src/library/scanner/libraryscanner.h
++++ b/src/library/scanner/libraryscanner.h
+@@ -15,6 +15,7 @@
+ #include "library/dao/playlistdao.h"
+ #include "library/dao/trackdao.h"
+ #include "library/scanner/scannerglobal.h"
++#include "library/media/mediause.h"
+ #include "track/track_decl.h"
+ #include "util/db/dbconnectionpool.h"
+ 
+@@ -48,10 +49,6 @@
+     void trackAdded(TrackPointer pTrack);
+     void tracksChanged(const QSet<TrackId>& changedTrackIds);
+     void tracksRelocated(const QList<RelocatedTrack>& relocatedTracks);
+-
+-    // Emitted by scan() to invoke slotStartScan in the scanner thread's event
+-    // loop.
+-    void startScan();
+ 
+   protected:
+     void run() override;
+@@ -97,6 +94,8 @@
+ 
+     mixxx::DbConnectionPoolPtr m_pDbConnectionPool;
+ 
++    mixxx::media::Lease m_scanMediaUse;
++
+     // The pool of threads used for worker tasks.
+     QThreadPool m_pool;
+ 
+diff --git a/src/library/scanner/recursivescandirectorytask.cpp b/src/library/scanner/recursivescandirectorytask.cpp
+--- a/src/library/scanner/recursivescandirectorytask.cpp
++++ b/src/library/scanner/recursivescandirectorytask.cpp
+@@ -20,6 +20,10 @@
+ }
+ 
+ void RecursiveScanDirectoryTask::run() {
++    if (!m_mediaUse) {
++        setSuccess(false);
++        return;
++    }
+     ScopedTimer timer(u"RecursiveScanDirectoryTask::run");
+     if (m_scannerGlobal->shouldCancel()) {
+         setSuccess(false);
+diff --git a/src/library/scanner/scannerglobal.h b/src/library/scanner/scannerglobal.h
+--- a/src/library/scanner/scannerglobal.h
++++ b/src/library/scanner/scannerglobal.h
+@@ -13,9 +13,12 @@
+ #include "util/fileaccess.h"
+ #include "util/performancetimer.h"
+ #include "util/task.h"
++#include "library/media/mediause.h"
+ 
+ class ScannerGlobal {
+   public:
++    mixxx::media::Lease mediaUse;
++
+     ScannerGlobal(const QSet<QString>& trackLocations,
+             const QHash<QString, mixxx::cache_key_t>& directoryHashes,
+             const QRegularExpression& supportedExtensionsMatcher,
+diff --git a/src/library/scanner/scannertask.cpp b/src/library/scanner/scannertask.cpp
+--- a/src/library/scanner/scannertask.cpp
++++ b/src/library/scanner/scannertask.cpp
+@@ -6,7 +6,10 @@
+                          const ScannerGlobalPointer scannerGlobal)
+         : m_pScanner(pScanner),
+           m_scannerGlobal(scannerGlobal),
++          m_mediaUse(scannerGlobal->mediaUse ? scannerGlobal->mediaUse :
++                          mixxx::media::acquireUnknown(mixxx::media::Producer::Discovery)),
+           m_success(false) {
++    m_scannerGlobal->getTaskWatcher().watchTask();
+     setAutoDelete(true);
+ }
+ 
+diff --git a/src/library/scanner/scannertask.h b/src/library/scanner/scannertask.h
+--- a/src/library/scanner/scannertask.h
++++ b/src/library/scanner/scannertask.h
+@@ -15,6 +15,10 @@
+     virtual ~ScannerTask();
+ 
+     virtual void run() = 0;
++
++    bool hasMediaUse() const {
++        return bool(m_mediaUse);
++    }
+ 
+   signals:
+     void taskDone(bool success);
+@@ -36,6 +40,7 @@
+ 
+     LibraryScanner* m_pScanner;
+     const ScannerGlobalPointer m_scannerGlobal;
++    const mixxx::media::Lease m_mediaUse;
+ 
+   private:
+     bool m_success;
+diff --git a/src/library/trackloader.cpp b/src/library/trackloader.cpp
+--- a/src/library/trackloader.cpp
++++ b/src/library/trackloader.cpp
+@@ -4,6 +4,7 @@
+ #include <mutex>
+ 
+ #include "library/trackcollectionmanager.h"
++#include "library/media/mediause.h"
+ #include "moc_trackloader.cpp"
+ #include "track/trackref.h"
+ #include "util/logger.h"
+@@ -38,12 +39,23 @@
+ void TrackLoader::invokeSlotLoadTrack(
+         const TrackRef& trackRef,
+         Qt::ConnectionType connectionType) {
++    auto mediaUse = media::acquirePath(trackRef.getLocation().toStdString(), media::Producer::Load);
++    if (!mediaUse) {
++        emit trackLoaded(trackRef, {});
++        return;
++    }
+     DEBUG_ASSERT(connectionType == (connectionType & ~Qt::UniqueConnection));
+     DEBUG_ASSERT((thread() == QThread::currentThread()) ||
+             (connectionType != Qt::DirectConnection));
+     QMetaObject::invokeMethod(
+             this,
+-            [this, trackRef = std::move(trackRef)] {
++            [this, trackRef = std::move(trackRef), mediaUse = std::move(mediaUse)]() mutable {
++                auto workUse = std::move(mediaUse);
++                if (!media::acquirePath(trackRef.getLocation().toStdString(), media::Producer::Load, workUse)) {
++                    emit trackLoaded(trackRef, {});
++                    return;
++                }
++                const media::PathUseScope mediaScope(trackRef.getLocation().toStdString(), workUse);
+                 this->slotLoadTrack(trackRef);
+             },
+             connectionType);
+@@ -51,13 +63,24 @@
+ 
+ void TrackLoader::slotLoadTrack(
+         const TrackRef& trackRef) {
++    const auto mediaUse = media::acquirePath(trackRef.getLocation().toStdString(), media::Producer::Metadata);
++    if (!mediaUse) {
++        emit trackLoaded(trackRef, {});
++        return;
++    }
+     VERIFY_OR_DEBUG_ASSERT(m_trackCollectionManager) {
+         kLogger.warning()
+                 << "Track collection manager not accessible";
++        emit trackLoaded(trackRef, {});
++        return;
+     }
++    const media::PathUseScope mediaScope(trackRef.getLocation().toStdString(), mediaUse);
+     // Verify that still collocated with the TrackCollectionManager
+     DEBUG_ASSERT(thread() == m_trackCollectionManager->thread());
+     TrackPointer trackPtr = m_trackCollectionManager->getOrAddTrack(trackRef);
++    if (!media::acquirePath(trackRef.getLocation().toStdString(), media::Producer::Metadata, mediaUse)) {
++        trackPtr.reset();
++    }
+     emit trackLoaded(std::move(trackRef), std::move(trackPtr));
+ }
+ 
+diff --git a/src/sources/audiosourcetrackproxy.h b/src/sources/audiosourcetrackproxy.h
+--- a/src/sources/audiosourcetrackproxy.h
++++ b/src/sources/audiosourcetrackproxy.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "sources/audiosourceproxy.h"
++#include "library/media/mediause.h"
+ #include "sources/removabletrackcache.h"
+ #include "track/track_decl.h"
+ 
+@@ -10,14 +11,16 @@
+   public:
+     explicit TrackPointerHolder(
+             TrackPointer&& pTrack,
+-            RemovableTrackCache::Lease ramCache)
+-            : m_ramCache(std::move(ramCache)),
++            RemovableTrackCache::Lease ramCache,
++            media::Lease mediaUse)
++            : m_mediaUse(std::move(mediaUse)), m_ramCache(std::move(ramCache)),
+               m_pTrack(std::move(pTrack)) {
+     }
+ 
+   private:
+     // AudioSourceProxy is destroyed before this holder, closing decoders
+     // before the last lease unlinks the RAM file (also at shutdown).
++    media::Lease m_mediaUse;
+     RemovableTrackCache::Lease m_ramCache;
+     TrackPointer m_pTrack;
+ };
+@@ -37,18 +40,20 @@
+     static AudioSourcePointer create(
+             TrackPointer pTrack,
+             AudioSourcePointer pAudioSource,
+-            RemovableTrackCache::Lease ramCache = {}) {
++            RemovableTrackCache::Lease ramCache = {},
++            media::Lease mediaUse = {}) {
+         return std::make_shared<AudioSourceTrackProxy>(
+                 std::move(pTrack),
+                 std::move(pAudioSource),
+-                std::move(ramCache));
++                std::move(ramCache), std::move(mediaUse));
+     }
+ 
+     AudioSourceTrackProxy(
+             TrackPointer pTrack,
+             AudioSourcePointer pAudioSource,
+-            RemovableTrackCache::Lease ramCache = {})
+-            : TrackPointerHolder(std::move(pTrack), std::move(ramCache)),
++            RemovableTrackCache::Lease ramCache = {},
++            media::Lease mediaUse = {})
++            : TrackPointerHolder(std::move(pTrack), std::move(ramCache), std::move(mediaUse)),
+               AudioSourceProxy(std::move(pAudioSource)) {
+     }
+ };
+diff --git a/src/sources/soundsourceproxy.cpp b/src/sources/soundsourceproxy.cpp
+--- a/src/sources/soundsourceproxy.cpp
++++ b/src/sources/soundsourceproxy.cpp
+@@ -374,6 +374,11 @@
+         Track* pTrack,
+         const SyncTrackMetadataParams& syncParams) {
+     DEBUG_ASSERT(pTrack);
++    const auto mediaUse = mixxx::media::acquirePath(pTrack->getLocation().toStdString(),
++            mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return ExportTrackMetadataResult::Failed;
++    }
+     const auto fileInfo = pTrack->getFileInfo();
+     mixxx::SoundSourcePointer pSoundSource;
+     {
+@@ -414,26 +419,36 @@
+ SoundSourceProxy::SoundSourceProxy(
+         TrackPointer pTrack,
+         mixxx::SoundSourceProviderPointer pProvider)
+-        : m_pTrack(std::move(pTrack)),
++        : m_mediaUse(mixxx::media::acquirePath(pTrack ? pTrack->getLocation().toStdString() : std::string(),
++                  mixxx::media::Producer::Decoder)),
++          m_pTrack(std::move(pTrack)),
+           m_url(m_pTrack ? m_pTrack->getFileInfo().toQUrl() : QUrl()),
+           m_providerRegistrationIndex(-1) {
+     initSoundSourceWithProvider(std::move(pProvider));
+ }
+ 
+-SoundSourceProxy::SoundSourceProxy(TrackPointer pTrack, RamCacheMode cacheMode)
+-        : m_pTrack(std::move(pTrack)),
+-          m_ramCache(m_pTrack && cacheMode != RamCacheMode::Original
++SoundSourceProxy::SoundSourceProxy(TrackPointer pTrack, RamCacheMode cacheMode, mixxx::media::Lease mediaUse)
++        : m_mediaUse(mixxx::media::acquirePath(pTrack ? pTrack->getLocation().toStdString() : std::string(),
++                  mixxx::media::Producer::Decoder, std::move(mediaUse))),
++          m_pTrack(std::move(pTrack)),
++          m_ramCache(m_mediaUse && m_pTrack && cacheMode != RamCacheMode::Original
+                           ? mixxx::RemovableTrackCache::acquire(m_pTrack->getLocation(),
+                                     cacheMode == RamCacheMode::Create)
+                           : mixxx::RemovableTrackCache::Lease()),
+           m_url(m_ramCache ? QUrl::fromLocalFile(m_ramCache->path)
+                           : (m_pTrack ? m_pTrack->getFileInfo().toQUrl() : QUrl())),
+           m_providerRegistrations(allProviderRegistrationsForUrl(m_url)) {
++    if (!m_ramCache && m_mediaUse && m_pTrack &&
++            !mixxx::media::acquirePath(m_pTrack->getLocation().toStdString(),
++                    mixxx::media::Producer::Decoder, m_mediaUse)) {
++        return;
++    }
+     findProviderAndInitSoundSource();
+ }
+ 
+ SoundSourceProxy::SoundSourceProxy(const QUrl& url)
+-        : m_url(url),
++        : m_mediaUse(mixxx::media::acquirePath(url.toLocalFile().toStdString(), mixxx::media::Producer::Metadata)),
++          m_url(url),
+           m_providerRegistrations(allProviderRegistrationsForUrl(m_url)) {
+     findProviderAndInitSoundSource();
+ }
+@@ -515,6 +530,9 @@
+ 
+ bool SoundSourceProxy::initSoundSourceWithProvider(
+         mixxx::SoundSourceProviderPointer&& pProvider) {
++    if (!m_mediaUse) {
++        return false;
++    }
+     DEBUG_ASSERT(!m_pProvider);
+     DEBUG_ASSERT(!m_pSoundSource);
+     DEBUG_ASSERT(pProvider);
+@@ -554,6 +572,10 @@
+         mixxx::TrackMetadata* pTrackMetadata,
+         QImage* pCoverImage,
+         bool resetMissingTagMetadata) {
++    const auto mediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return importTrackMetadataAndCoverImageUnavailable();
++    }
+     if (!trackFileAccess.info().checkFileExists()) {
+         // Silently ignore missing files to avoid spaming the log:
+         // https://github.com/mixxxdj/mixxx/issues/9944
+@@ -585,7 +607,7 @@
+         mixxx::TrackMetadata* pTrackMetadata,
+         QImage* pCoverImage,
+         bool resetMissingTagMetadata) const {
+-    if (!m_pSoundSource) {
++    if (!m_mediaUse || !m_pSoundSource) {
+         // The file doesn't seem to be readable or the file format
+         // is not supported.
+         return importTrackMetadataAndCoverImageUnavailable();
+@@ -872,6 +894,9 @@
+ 
+ bool SoundSourceProxy::openSoundSource(
+         const mixxx::AudioSource::OpenParams& params) {
++    if (!m_mediaUse) {
++        return false;
++    }
+     auto openMode = mixxx::SoundSource::OpenMode::Strict;
+     int attemptCount = 0;
+     while (m_pProvider && m_pSoundSource) {
+@@ -944,12 +969,12 @@
+     if (!openSoundSource(params)) {
+         if (m_ramCache) {
+             kLogger.warning() << "MixPi RAM cache decoder failed; retrying original";
+-            return SoundSourceProxy(m_pTrack).openAudioSource(params);
++            return SoundSourceProxy(m_pTrack, RamCacheMode::Original, m_mediaUse).openAudioSource(params);
+         }
+         return nullptr;
+     }
+     // Overwrite metadata with actual audio properties
+     m_pTrack->updateStreamInfoFromSource(
+             m_pSoundSource->getStreamInfo());
+-    return mixxx::AudioSourceTrackProxy::create(m_pTrack, m_pSoundSource, m_ramCache);
+-}
++    return mixxx::AudioSourceTrackProxy::create(m_pTrack, m_pSoundSource, m_ramCache, m_mediaUse);
++}
+diff --git a/src/sources/soundsourceproxy.h b/src/sources/soundsourceproxy.h
+--- a/src/sources/soundsourceproxy.h
++++ b/src/sources/soundsourceproxy.h
+@@ -6,6 +6,7 @@
+ 
+ #include "sources/soundsourceproviderregistry.h"
+ #include "sources/removabletrackcache.h"
++#include "library/media/mediause.h"
+ #include "track/track_decl.h"
+ 
+ namespace mixxx {
+@@ -65,7 +66,8 @@
+ 
+     enum class RamCacheMode { Original, Existing, Create };
+     explicit SoundSourceProxy(TrackPointer pTrack,
+-            RamCacheMode cacheMode = RamCacheMode::Original);
++            RamCacheMode cacheMode = RamCacheMode::Original,
++            mixxx::media::Lease mediaUse = {});
+ 
+     // Only needed for testing all available providers explicitly
+     SoundSourceProxy(
+@@ -218,6 +220,7 @@
+     bool openSoundSource(
+             const mixxx::AudioSource::OpenParams& params = mixxx::AudioSource::OpenParams());
+ 
++    const mixxx::media::Lease m_mediaUse;
+     const TrackPointer m_pTrack;
+     const mixxx::RemovableTrackCache::Lease m_ramCache;
+ 
+diff --git a/src/library/coverartutils.cpp b/src/library/coverartutils.cpp
+--- a/src/library/coverartutils.cpp
++++ b/src/library/coverartutils.cpp
+@@ -1,4 +1,5 @@
+ #include "library/coverartutils.h"
++#include "library/media/mediause.h"
+ 
+ #include <QDir>
+ #include <QDirIterator>
+@@ -72,6 +73,11 @@
+ 
+ //static
+ QList<QFileInfo> CoverArtUtils::findPossibleCoversInFolder(const QString& folder) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return {};
++    }
++
+     // Search for image files in the track directory.
+     QRegularExpression coverArtFilenames(supportedCoverArtExtensionsRegex(),
+             QRegularExpression::CaseInsensitiveOption);
+@@ -106,6 +112,11 @@
+         const mixxx::FileInfo& trackFile,
+         const QString& albumName,
+         const QList<QFileInfo>& covers) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return {};
++    }
++
+     CoverInfoRelative coverInfoRelative;
+     DEBUG_ASSERT(coverInfoRelative.type == CoverInfo::NONE);
+     DEBUG_ASSERT(coverInfoRelative.imageDigest().isNull());
+@@ -211,6 +222,11 @@
+ 
+ CoverInfoRelative CoverInfoGuesser::guessCoverInfoForTrack(
+         TrackPointer pTrack) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return pTrack->getCoverInfo();
++    }
++
+     const auto fileInfo = pTrack->getFileInfo();
+     if (kLogger.debugEnabled()) {
+         kLogger.debug()
+@@ -243,13 +259,26 @@
+ 
+ QFuture<void> guessTrackCoverInfoConcurrently(
+         TrackPointer pTrack) {
++    if (!pTrack) {
++        return {};
++    }
++    auto mediaUse = mixxx::media::acquirePath(pTrack->getLocation().toStdString(), mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return {};
++    }
++    auto guess = [pTrack, mediaUse = std::move(mediaUse)]() mutable {
++        auto workUse = std::move(mediaUse);
++        if (!mixxx::media::acquirePath(pTrack->getLocation().toStdString(), mixxx::media::Producer::Metadata, workUse)) {
++            return;
++        }
++        const mixxx::media::PathUseScope mediaScope(pTrack->getLocation().toStdString(), workUse);
++        CoverInfoGuesser().guessAndSetCoverInfoForTrack(pTrack);
++    };
+     if (s_enableConcurrentGuessingOfTrackCoverInfo) {
+-        return QtConcurrent::run([pTrack] {
+-            CoverInfoGuesser().guessAndSetCoverInfoForTrack(pTrack);
+-        });
++        return QtConcurrent::run(std::move(guess));
+     } else {
+         // Disabled only during tests
+-        CoverInfoGuesser().guessAndSetCoverInfoForTrack(pTrack);
++        guess();
+         return {};
+     }
+ }
+diff --git a/src/library/dao/trackdao.cpp b/src/library/dao/trackdao.cpp
+--- a/src/library/dao/trackdao.cpp
++++ b/src/library/dao/trackdao.cpp
+@@ -1,4 +1,5 @@
+ #include "library/dao/trackdao.h"
++#include "library/media/mediause.h"
+ 
+ #include <QChar>
+ #include <QDir>
+@@ -838,6 +839,11 @@
+ TrackPointer TrackDAO::addTracksAddFile(
+         const QString& filePath,
+         bool unremove) {
++    const auto mediaUse = mixxx::media::acquirePath(filePath.toStdString(), mixxx::media::Producer::Import);
++    if (!mediaUse) {
++        return {};
++    }
++    const mixxx::media::PathUseScope mediaScope(filePath.toStdString(), mediaUse);
+     const auto fileAccess = mixxx::FileAccess(mixxx::FileInfo(filePath));
+     // Check that track is a supported extension.
+     // TODO(uklotzde): The following check can be skipped if
+@@ -903,7 +909,7 @@
+ 
+     // Initially (re-)import the metadata for the newly created track
+     // from the file.
+-    SoundSourceProxy(pTrack).updateTrackFromSource(
++    SoundSourceProxy(pTrack, SoundSourceProxy::RamCacheMode::Original, mediaUse).updateTrackFromSource(
+             SoundSourceProxy::UpdateTrackFromSourceMode::Once,
+             SyncTrackMetadataParams::readFromUserSettings(*m_pConfig));
+     if (!pTrack->checkSourceSynchronized()) {
+@@ -998,6 +1004,11 @@
+ }
+ 
+ QList<TrackRef> TrackDAO::getAllTrackRefs(const QDir& rootDir) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return {};
++    }
++
+     const QString locationPathPrefix = locationPathPrefixFromRootDir(rootDir);
+     QSqlQuery query(m_database);
+     query.prepare(
+@@ -1454,6 +1465,12 @@
+         DEBUG_ASSERT(!query.next());
+     }
+ 
++    const auto trackLocation = queryRecord.value(0).toString();
++    const auto mediaUse = mixxx::media::acquirePath(trackLocation.toStdString(), mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return {};
++    }
++    const mixxx::media::PathUseScope mediaScope(trackLocation.toStdString(), mediaUse);
+     { // Locking scope of cacheResolver
+         // Location is the first column.
+         DEBUG_ASSERT(queryRecord.count() > 0);
+@@ -1559,7 +1576,7 @@
+     DEBUG_ASSERT(!pTrack->isDirty());
+     const auto sourceSynchronizedAtBefore = pTrack->getSourceSynchronizedAt();
+     const auto result =
+-            SoundSourceProxy(pTrack).updateTrackFromSource(
++            SoundSourceProxy(pTrack, SoundSourceProxy::RamCacheMode::Original, mediaUse).updateTrackFromSource(
+                     updateTrackFromSourceMode,
+                     SyncTrackMetadataParams::readFromUserSettings(*m_pConfig));
+     if (result == SoundSourceProxy::UpdateTrackFromSourceResult::MetadataImportedAndUpdated) {
+@@ -1619,6 +1636,11 @@
+ 
+ TrackPointer TrackDAO::getTrackByRef(
+         const TrackRef& trackRef) const {
++    const auto mediaUse = mixxx::media::acquirePath(trackRef.getLocation().toStdString(), mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return {};
++    }
++    const mixxx::media::PathUseScope mediaScope(trackRef.getLocation().toStdString(), mediaUse);
+     if (!trackRef.isValid()) {
+         return nullptr;
+     }
+@@ -2223,6 +2245,11 @@
+         // kLogger.debug() << "Searching for cover art for" << trackLocation;
+         emit progressCoverArt(track.trackLocation);
+ 
++        const auto mediaUse = mixxx::media::acquirePath(track.trackLocation.toStdString(), mixxx::media::Producer::Metadata);
++        if (!mediaUse) {
++            continue;
++        }
++        const mixxx::media::PathUseScope mediaScope(track.trackLocation.toStdString(), mediaUse);
+         const auto fileInfo = mixxx::FileInfo(track.trackLocation);
+         if (!fileInfo.checkFileExists()) {
+             // kLogger.debug() << fileInfo << "does not exist";
+@@ -2260,6 +2287,11 @@
+ TrackPointer TrackDAO::getOrAddTrack(
+         const TrackRef& trackRef,
+         bool* pAlreadyInLibrary) {
++    const auto mediaUse = mixxx::media::acquirePath(trackRef.getLocation().toStdString(), mixxx::media::Producer::Import);
++    if (!mediaUse) {
++        return {};
++    }
++    const mixxx::media::PathUseScope mediaScope(trackRef.getLocation().toStdString(), mediaUse);
+     // This function should only be used when you do not yet know whether the
+     // specified track is contained in the library. Use TrackDAO::getTrackByRef
+     // instead for tracks that you already know to be in the library.
+@@ -2291,9 +2323,11 @@
+     const TrackPointer pAddedTrack = addTracksAddFile(trackRef.getLocation(), unremove);
+     bool rollback = !pAddedTrack;
+     addTracksFinish(rollback);
+-    if (!pAddedTrack) {
+-        return pAddedTrack;
+-    }
++    if (!pAddedTrack || !mixxx::media::acquirePath(pAddedTrack->getLocation().toStdString(),
++                               mixxx::media::Producer::Import, mediaUse)) {
++        return {};
++    }
++    const mixxx::media::PathUseScope resolvedScope(pAddedTrack->getLocation().toStdString(), mediaUse);
+     if (pAlreadyInLibrary) {
+         *pAlreadyInLibrary = false;
+     }
+@@ -2311,6 +2345,11 @@
+ }
+ 
+ mixxx::FileAccess TrackDAO::relocateCachedTrack(TrackId trackId) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return {};
++    }
++
+     QString trackLocation = getTrackLocation(trackId);
+     if (trackLocation.isEmpty()) {
+         // not found
+diff --git a/src/mixer/playermanager.cpp b/src/mixer/playermanager.cpp
+--- a/src/mixer/playermanager.cpp
++++ b/src/mixer/playermanager.cpp
+@@ -1,4 +1,5 @@
+ #include "mixer/playermanager.h"
++#include "library/media/mediause.h"
+ 
+ #include <QRegularExpression>
+ 
+@@ -161,7 +162,30 @@
+ void PlayerManager::bindToLibrary(Library* pLibrary) {
+     m_pLibrary = pLibrary;
+     const auto locker = lockMutex(&m_mutex);
+-    connect(pLibrary, &Library::loadTrackToPlayer, this, &PlayerManager::slotLoadTrackToPlayer);
++    connect(pLibrary, &Library::loadTrackToPlayer, this,
++            [this](TrackPointer track, const QString& group, bool play) {
++                if (!track) {
++                    QMetaObject::invokeMethod(this,
++                            [this, group, play] { slotLoadTrackToPlayer({}, group, play); },
++                            Qt::AutoConnection);
++                    return;
++                }
++                const auto path = track->getLocation().toStdString();
++                auto mediaUse = mixxx::media::acquirePath(path, mixxx::media::Producer::Load);
++                if (!mediaUse) {
++                    return;
++                }
++                QMetaObject::invokeMethod(this,
++                        [this, track, group, play, path, mediaUse = std::move(mediaUse)] {
++                            if (!mixxx::media::acquirePath(path, mixxx::media::Producer::Load, mediaUse)) {
++                                return;
++                            }
++                            const mixxx::media::PathUseScope mediaScope(path, mediaUse);
++                            slotLoadTrackToPlayer(track, group, play);
++                        },
++                        Qt::AutoConnection);
++            },
++            Qt::DirectConnection);
+     connect(pLibrary,
+             &Library::loadTrack,
+             this,
+@@ -169,7 +193,22 @@
+     connect(this,
+             &PlayerManager::loadLocationToPlayer,
+             pLibrary,
+-            &Library::slotLoadLocationToPlayer);
++            [pLibrary](const QString& location, const QString& group, bool play) {
++                auto mediaUse = mixxx::media::acquirePath(location.toStdString(), mixxx::media::Producer::Load);
++                if (!mediaUse) {
++                    return;
++                }
++                QMetaObject::invokeMethod(pLibrary,
++                        [pLibrary, location, group, play, mediaUse = std::move(mediaUse)] {
++                            if (!mixxx::media::acquirePath(location.toStdString(), mixxx::media::Producer::Load, mediaUse)) {
++                                return;
++                            }
++                            const mixxx::media::PathUseScope mediaScope(location.toStdString(), mediaUse);
++                            pLibrary->slotLoadLocationToPlayer(location, group, play);
++                        },
++                        Qt::AutoConnection);
++            },
++            Qt::DirectConnection);
+ 
+     DEBUG_ASSERT(!m_pTrackAnalysisScheduler);
+     m_pTrackAnalysisScheduler = pLibrary->createTrackAnalysisScheduler(
+@@ -658,6 +697,11 @@
+ 
+ void PlayerManager::slotLoadLocationToPlayer(
+         const QString& location, const QString& group, bool play) {
++    const auto mediaUse = mixxx::media::acquirePath(location.toStdString(), mixxx::media::Producer::Load);
++    if (!mediaUse) {
++        return;
++    }
++    const mixxx::media::PathUseScope mediaScope(location.toStdString(), mediaUse);
+     // The library will get the track and then signal back to us to load the
+     // track via slotLoadTrackToPlayer.
+     emit loadLocationToPlayer(location, group, play);
+diff --git a/src/library/banshee/bansheeplaylistmodel.cpp b/src/library/banshee/bansheeplaylistmodel.cpp
+--- a/src/library/banshee/bansheeplaylistmodel.cpp
++++ b/src/library/banshee/bansheeplaylistmodel.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/banshee/bansheeplaylistmodel.h"
+ 
+ #include <QSqlQuery>
+@@ -256,6 +257,10 @@
+ }
+ 
+ TrackId BansheePlaylistModel::doGetTrackId(const TrackPointer& pTrack) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return {};
++    }
+     if (pTrack) {
+         for (int row = 0; row < rowCount(); ++row) {
+             const QUrl rowUrl(getFieldString(index(row, 0),
+@@ -276,6 +281,12 @@
+         return TrackPointer();
+     }
+ 
++    const auto mediaUse = mixxx::media::acquirePath(
++            location.toStdString(), mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return {};
++    }
++    const mixxx::media::PathUseScope mediaScope(location.toStdString(), mediaUse);
+     bool track_already_in_library = false;
+     TrackPointer pTrack = m_pTrackCollectionManager->getOrAddTrack(
+             TrackRef::fromFilePath(location),
+@@ -325,6 +336,10 @@
+ 
+ // Gets the on-disk location of the track at the given location.
+ QString BansheePlaylistModel::getTrackLocation(const QModelIndex& index) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return {};
++    }
+     const QUrl url = getTrackUrl(index);
+     if (!url.isValid()) {
+         return {};
+diff --git a/src/library/baseexternalplaylistmodel.cpp b/src/library/baseexternalplaylistmodel.cpp
+--- a/src/library/baseexternalplaylistmodel.cpp
++++ b/src/library/baseexternalplaylistmodel.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/baseexternalplaylistmodel.h"
+ 
+ #include "library/dao/trackschema.h"
+@@ -42,6 +43,12 @@
+         return TrackPointer();
+     }
+ 
++    const auto mediaUse = mixxx::media::acquirePath(
++            location.toStdString(), mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return {};
++    }
++    const mixxx::media::PathUseScope mediaScope(location.toStdString(), mediaUse);
+     bool track_already_in_library = false;
+     TrackPointer pTrack = m_pTrackCollectionManager->getOrAddTrack(
+             TrackRef::fromFilePath(location),
+diff --git a/src/library/baseexternaltrackmodel.cpp b/src/library/baseexternaltrackmodel.cpp
+--- a/src/library/baseexternaltrackmodel.cpp
++++ b/src/library/baseexternaltrackmodel.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/baseexternaltrackmodel.h"
+ 
+ #include <QSqlDatabase>
+@@ -61,6 +62,12 @@
+         return TrackPointer();
+     }
+ 
++    const auto mediaUse = mixxx::media::acquirePath(
++            location.toStdString(), mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return {};
++    }
++    const mixxx::media::PathUseScope mediaScope(location.toStdString(), mediaUse);
+     bool track_already_in_library = false;
+     TrackPointer pTrack = m_pTrackCollectionManager->getOrAddTrack(
+             TrackRef::fromFilePath(location),
+diff --git a/src/library/basesqltablemodel.cpp b/src/library/basesqltablemodel.cpp
+--- a/src/library/basesqltablemodel.cpp
++++ b/src/library/basesqltablemodel.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/basesqltablemodel.h"
+ 
+ #include <QUrl>
+@@ -901,6 +902,11 @@
+ 
+ QList<TrackRef> BaseSqlTableModel::getTrackRefs(
+         const QModelIndexList& indices) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return {};
++    }
++
+     QList<TrackRef> trackRefs;
+     trackRefs.reserve(indices.size());
+     foreach (QModelIndex index, indices) {
+diff --git a/src/library/browse/browsetablemodel.cpp b/src/library/browse/browsetablemodel.cpp
+--- a/src/library/browse/browsetablemodel.cpp
++++ b/src/library/browse/browsetablemodel.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/browse/browsetablemodel.h"
+ 
+ #include <QMessageBox>
+@@ -216,7 +217,14 @@
+ }
+ 
+ TrackPointer BrowseTableModel::getTrack(const QModelIndex& index) const {
+-    return getTrackByRef(TrackRef::fromFilePath(getTrackLocation(index)));
++    const auto location = getTrackLocation(index);
++    const auto mediaUse = mixxx::media::acquirePath(
++            location.toStdString(), mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return {};
++    }
++    const mixxx::media::PathUseScope mediaScope(location.toStdString(), mediaUse);
++    return getTrackByRef(TrackRef::fromFilePath(location));
+ }
+ 
+ TrackPointer BrowseTableModel::getTrackByRef(const TrackRef& trackRef) const {
+diff --git a/src/library/coverart.cpp b/src/library/coverart.cpp
+--- a/src/library/coverart.cpp
++++ b/src/library/coverart.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/coverart.h"
+ 
+ #include <QDebugStateSaver>
+@@ -107,6 +108,11 @@
+ }
+ 
+ CoverInfo::LoadedImage CoverInfo::loadImage(TrackPointer pTrack) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return LoadedImage(LoadedImage::Result::ErrorUnknown);
++    }
++
+     LoadedImage loadedImage(LoadedImage::Result::ErrorUnknown);
+     if (type == CoverInfo::METADATA) {
+         VERIFY_OR_DEBUG_ASSERT(!trackLocation.isEmpty()) {
+diff --git a/src/library/export/engineprimeexportjob.cpp b/src/library/export/engineprimeexportjob.cpp
+--- a/src/library/export/engineprimeexportjob.cpp
++++ b/src/library/export/engineprimeexportjob.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/export/engineprimeexportjob.h"
+ 
+ #include <QHash>
+@@ -383,6 +384,11 @@
+ EnginePrimeExportJob::~EnginePrimeExportJob() = default;
+ 
+ void EnginePrimeExportJob::loadIds(const QSet<CrateId>& crateIds) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return;
++    }
++
+     DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(m_pTrackCollectionManager);
+ 
+     if (crateIds.isEmpty()) {
+@@ -454,7 +460,11 @@
+     DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(m_pTrackCollectionManager);
+ 
+     // Load the track.
++    m_pLastLoadedWaveform.reset();
+     m_pLastLoadedTrack = m_pTrackCollectionManager->getOrAddTrack(trackRef);
++    if (!m_pLastLoadedTrack) {
++        return;
++    }
+ 
+     // Load high-resolution waveform from analysis info.
+     auto& analysisDao = m_pTrackCollectionManager->internalCollection()->getAnalysisDAO();
+@@ -487,6 +497,12 @@
+ }
+ 
+ void EnginePrimeExportJob::run() {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        emit failed(tr("Media is draining"));
++        return;
++    }
++
+     // Crate music directory if it doesn't already exist.
+     QDir().mkpath(m_pRequest->musicFilesDir.path());
+ 
+@@ -495,9 +511,11 @@
+     // manager, which is not the same as this method's worker thread.
+     QMetaObject::invokeMethod(
+             this,
+-            "loadIds",
+-            Qt::BlockingQueuedConnection,
+-            Q_ARG(QSet<CrateId>, m_pRequest->crateIdsToExport));
++            [this, mediaUse = operationUse.lease()] {
++                const mixxx::media::UnknownUseScope operationScope(mediaUse);
++                loadIds(m_pRequest->crateIdsToExport);
++            },
++            Qt::BlockingQueuedConnection);
+ 
+     // Measure progress as one 'count' for each track, each crate, plus some
+     // additional counts for various other operations.
+@@ -537,18 +555,24 @@
+         // Load each track.
+         // Note that loading must happen on the same thread as the track collection
+         // manager, which is not the same as this method's worker thread.
+-        QMetaObject::invokeMethod(
+-                this,
+-                "loadTrack",
+-                Qt::BlockingQueuedConnection,
+-                Q_ARG(TrackRef, trackRef));
++        const bool trackLoaded = QMetaObject::invokeMethod(
++            this,
++            [this, mediaUse = operationUse.lease(), trackRef] {
++                const mixxx::media::UnknownUseScope operationScope(mediaUse);
++                loadTrack(trackRef);
++            },
++            Qt::BlockingQueuedConnection);
+ 
+         if (m_cancellationRequested.loadAcquire() != 0) {
+             qInfo() << "Cancelling export";
+             return;
+         }
+ 
+-        DEBUG_ASSERT(m_pLastLoadedTrack != nullptr);
++        if (!trackLoaded || !m_pLastLoadedTrack) {
++            m_lastErrorMessage = tr("Failed to load a track for export. Media may be unavailable or draining.");
++            emit failed(m_lastErrorMessage);
++            return;
++        }
+ 
+         qInfo() << "Exporting track" << m_pLastLoadedTrack->getId().toString()
+                 << "at" << m_pLastLoadedTrack->getFileInfo().location() << "...";
+@@ -624,10 +648,12 @@
+         // Note that loading must happen on the same thread as the track collection
+         // manager, which is not the same as this method's worker thread.
+         QMetaObject::invokeMethod(
+-                this,
+-                "loadCrate",
+-                Qt::BlockingQueuedConnection,
+-                Q_ARG(CrateId, crateId));
++            this,
++            [this, mediaUse = operationUse.lease(), crateId] {
++                const mixxx::media::UnknownUseScope operationScope(mediaUse);
++                loadCrate(crateId);
++            },
++            Qt::BlockingQueuedConnection);
+ 
+         if (m_cancellationRequested.loadAcquire() != 0) {
+             qInfo() << "Cancelling export";
+diff --git a/src/library/parser.cpp b/src/library/parser.cpp
+--- a/src/library/parser.cpp
++++ b/src/library/parser.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/parser.h"
+ 
+ #include <QDir>
+@@ -34,6 +35,11 @@
+ 
+ // static
+ QList<QString> Parser::parse(const QString& playlistFile) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Import);
++    if (!operationUse) {
++        return {};
++    }
++
+     const QList<QString> allLocations = parseAllLocations(playlistFile);
+ 
+     QFileInfo fileInfo(playlistFile);
+diff --git a/src/library/parsercsv.cpp b/src/library/parsercsv.cpp
+--- a/src/library/parsercsv.cpp
++++ b/src/library/parsercsv.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/parsercsv.h"
+ 
+ #include <QDir>
+@@ -34,6 +35,11 @@
+ 
+ // static
+ QList<QString> ParserCsv::parseAllLocations(const QString& playlistFile) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Import);
++    if (!operationUse) {
++        return {};
++    }
++
+     QFile file(playlistFile);
+ 
+     QList<QString> locations;
+@@ -149,6 +155,11 @@
+ 
+ bool ParserCsv::writeCSVFile(const QString &file_str, BaseSqlTableModel* pPlaylistTableModel, bool useRelativePath)
+ {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return false;
++    }
++
+     /*
+      * Important note:
+      * On Windows \n will produce a <CR><CL> (=\r\n)
+@@ -242,6 +253,11 @@
+ 
+ bool ParserCsv::writeReadableTextFile(const QString &file_str, BaseSqlTableModel* pPlaylistTableModel, bool writeTimestamp)
+ {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return false;
++    }
++
+     /*
+      * Important note:
+      * On Windows \n will produce a <CR><CL> (=\r\n)
+diff --git a/src/library/parserm3u.cpp b/src/library/parserm3u.cpp
+--- a/src/library/parserm3u.cpp
++++ b/src/library/parserm3u.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ //
+ // C++ Implementation: parserm3u
+ //
+@@ -54,6 +55,11 @@
+ }
+ 
+ QList<QString> ParserM3u::parseAllLocations(const QString& playlistFile) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Import);
++    if (!operationUse) {
++        return {};
++    }
++
+     QList<QString> paths;
+ 
+     QFile file(playlistFile);
+@@ -100,6 +106,11 @@
+ 
+ bool ParserM3u::writeM3UFile(const QString &file_str, const QList<QString> &items, bool useRelativePath, bool useUtf8)
+ {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return false;
++    }
++
+     // Important note:
+     // On Windows \n will produce a <CR><CL> (=\r\n)
+     // On Linux and OS X \n is <CR> (which remains \n)
+diff --git a/src/library/parserpls.cpp b/src/library/parserpls.cpp
+--- a/src/library/parserpls.cpp
++++ b/src/library/parserpls.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/parserpls.h"
+ 
+ #include <QDir>
+@@ -35,6 +36,11 @@
+ 
+ // static
+ QList<QString> ParserPls::parseAllLocations(const QString& playlistFile) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Import);
++    if (!operationUse) {
++        return {};
++    }
++
+     QFile file(playlistFile);
+ 
+     QList<QString> locations;
+@@ -78,6 +84,11 @@
+ 
+ bool ParserPls::writePLSFile(const QString &file_str, const QList<QString> &items, bool useRelativePath)
+ {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return false;
++    }
++
+     QFile file(file_str);
+     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+         ErrorDialogHandler* pDialogHandler = ErrorDialogHandler::instance();
+diff --git a/src/library/tabledelegates/coverartdelegate.cpp b/src/library/tabledelegates/coverartdelegate.cpp
+--- a/src/library/tabledelegates/coverartdelegate.cpp
++++ b/src/library/tabledelegates/coverartdelegate.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/tabledelegates/coverartdelegate.h"
+ 
+ #include <QPainter>
+@@ -65,6 +66,12 @@
+         const CoverInfo& coverInfo,
+         int width,
+         int row) const {
++    const auto mediaUse = mixxx::media::acquirePath(
++            coverInfo.trackLocation.toStdString(), mixxx::media::Producer::Metadata);
++    if (!mediaUse) {
++        return;
++    }
++    const mixxx::media::PathUseScope mediaScope(coverInfo.trackLocation.toStdString(), mediaUse);
+     if (coverInfo.imageDigest().isEmpty()) {
+         // This happens if we have the legacy hash
+         // The CoverArtCache will take care of the update
+diff --git a/src/library/trackcollectionmanager.cpp b/src/library/trackcollectionmanager.cpp
+--- a/src/library/trackcollectionmanager.cpp
++++ b/src/library/trackcollectionmanager.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/trackcollectionmanager.h"
+ 
+ #include <utility>
+@@ -198,6 +199,8 @@
+ TrackCollectionManager::SaveTrackResult TrackCollectionManager::saveTrack(
+         Track* pTrack,
+         TrackMetadataExportMode mode) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++
+     DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(this);
+     VERIFY_OR_DEBUG_ASSERT(pTrack) {
+         return SaveTrackResult::Skipped;
+@@ -209,7 +212,8 @@
+     // export by the user or export of metadata was deferred during a
+     // previous invocation.
+     const auto exportTrackMetadataResult =
+-            exportTrackMetadataBeforeSaving(pTrack, mode);
++            operationUse ? exportTrackMetadataBeforeSaving(pTrack, mode)
++                         : ExportTrackMetadataResult::Failed;
+     DEBUG_ASSERT(
+             exportTrackMetadataResult != ExportTrackMetadataResult::Succeeded ||
+             pTrack->getSourceSynchronizedAt().isValid());
+@@ -225,7 +229,7 @@
+         // TODO: Is this race condition even possible?? The debug assertion
+         // in TrackDAO::saveTrack() never triggered so it must at least be
+         // very unlikely.
+-        if (!m_externalCollections.isEmpty()) {
++        if (operationUse && !m_externalCollections.isEmpty()) {
+             kLogger.debug()
+                     << "Purging deleted track"
+                     << pTrack->getLocation()
+@@ -263,7 +267,7 @@
+     // The dirty flag is reset after the track has been saved successfully
+     DEBUG_ASSERT(!pTrack->isDirty());
+ 
+-    if (!m_externalCollections.isEmpty()) {
++    if (operationUse && !m_externalCollections.isEmpty()) {
+         // Track still exists in the internal collection/database
+         kLogger.debug()
+                 << "Saving modified track"
+@@ -354,6 +358,11 @@
+ 
+ DirectoryDAO::RelocateResult TrackCollectionManager::relocateDirectory(
+         const QString& oldDir, const QString& newDir) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return DirectoryDAO::RelocateResult::UnreadableDirectory;
++    }
++
+     DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(this);
+ 
+     kLogger.debug()
+@@ -400,6 +409,11 @@
+ }
+ 
+ void TrackCollectionManager::purgeTracks(const QList<TrackRef>& trackRefs) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return;
++    }
++
+     DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(this);
+ 
+     if (trackRefs.isEmpty()) {
+@@ -443,6 +457,11 @@
+ }
+ 
+ void TrackCollectionManager::purgeAllTracks(const QDir& rootDir) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return;
++    }
++
+     DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(this);
+ 
+     kLogger.debug()
+@@ -490,6 +509,11 @@
+ }
+ 
+ void TrackCollectionManager::afterTrackAdded(const TrackPointer& pTrack) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return;
++    }
++
+     DEBUG_ASSERT(pTrack);
+     DEBUG_ASSERT(pTrack->getDateAdded().isValid());
+ 
+@@ -509,6 +533,11 @@
+ }
+ 
+ void TrackCollectionManager::afterTracksUpdated(const QSet<TrackId>& updatedTrackIds) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return;
++    }
++
+     DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(this);
+ 
+     // Already updated in m_pInternalCollection
+@@ -551,6 +580,11 @@
+ 
+ void TrackCollectionManager::afterTracksRelocated(
+         const QList<RelocatedTrack>& relocatedTracks) const {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return;
++    }
++
+     DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(this);
+ 
+     // Already replaced in m_pInternalCollection
+diff --git a/src/mixer/samplerbank.cpp b/src/mixer/samplerbank.cpp
+--- a/src/mixer/samplerbank.cpp
++++ b/src/mixer/samplerbank.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "mixer/samplerbank.h"
+ 
+ #include <QFileDialog>
+@@ -85,6 +86,11 @@
+ }
+ 
+ bool SamplerBank::saveSamplerBankToPath(const QString& samplerBankPath) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Import);
++    if (!operationUse) {
++        return false;
++    }
++
+     // The user has picked a new directory via a file dialog. This means the
+     // system sandboxer (if we are sandboxed) has granted us permission to this
+     // folder. We don't need access to this file on a regular basis so we do not
+@@ -166,6 +172,11 @@
+ }
+ 
+ bool SamplerBank::loadSamplerBankFromPath(const QString& samplerBankPath) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Import);
++    if (!operationUse) {
++        return false;
++    }
++
+     // The user has picked a new directory via a file dialog. This means the
+     // system sandboxer (if we are sandboxed) has granted us permission to this
+     // folder. We don't need access to this file on a regular basis so we do not
+diff --git a/src/track/globaltrackcache.cpp b/src/track/globaltrackcache.cpp
+--- a/src/track/globaltrackcache.cpp
++++ b/src/track/globaltrackcache.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "track/globaltrackcache.h"
+ 
+ #include <QCoreApplication>
+@@ -315,6 +316,11 @@
+ 
+ void GlobalTrackCache::relocateTracks(
+         GlobalTrackCacheRelocator* pRelocator) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return;
++    }
++
+     if (debugLogEnabled()) {
+         kLogger.debug()
+                 << "Relocating tracks";
+diff --git a/src/widget/wtrackmenu.cpp b/src/widget/wtrackmenu.cpp
+--- a/src/widget/wtrackmenu.cpp
++++ b/src/widget/wtrackmenu.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "widget/wtrackmenu.h"
+ 
+ #include <QCheckBox>
+@@ -1433,6 +1434,11 @@
+ 
+ void WTrackMenu::slotUpdateExternalTrackCollection(
+         ExternalTrackCollection* externalTrackCollection) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Metadata);
++    if (!operationUse) {
++        return;
++    }
++
+     VERIFY_OR_DEBUG_ASSERT(externalTrackCollection) {
+         return;
+     }
+diff --git a/src/library/trackset/baseplaylistfeature.cpp b/src/library/trackset/baseplaylistfeature.cpp
+--- a/src/library/trackset/baseplaylistfeature.cpp
++++ b/src/library/trackset/baseplaylistfeature.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include <QAction>
+ #include <QFileInfo>
++#include "library/media/mediause.h"
+ #include <QInputDialog>
+ #include <QList>
+ #include <QSqlTableModel>
+@@ -455,6 +456,10 @@
+     }
+ 
+     // Update the import/export playlist directory
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Import);
++    if (!operationUse) {
++        return;
++    }
+     QFileInfo fileDirectory(playlistFile);
+     m_pConfig->set(kConfigKeyLastImportExportPlaylistDirectory,
+             ConfigValue(fileDirectory.absoluteDir().canonicalPath()));
+@@ -464,6 +469,10 @@
+ 
+ void BasePlaylistFeature::slotImportPlaylistFile(const QString& playlistFile,
+         int playlistId) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Import);
++    if (!operationUse) {
++        return;
++    }
+     if (playlistFile.isEmpty()) {
+         return;
+     }
+@@ -505,6 +514,10 @@
+     }
+ 
+     // Set last import directory
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Import);
++    if (!operationUse) {
++        return;
++    }
+     QFileInfo fileDirectory(playlistFiles.first());
+     m_pConfig->set(kConfigKeyLastImportExportPlaylistDirectory,
+             ConfigValue(fileDirectory.absoluteDir().canonicalPath()));
+@@ -567,6 +580,10 @@
+     }
+ 
+     // Update the import/export playlist directory
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return;
++    }
+     QFileInfo fileDirectory(fileLocation);
+     m_pConfig->set(kConfigKeyLastImportExportPlaylistDirectory,
+             ConfigValue(fileDirectory.absoluteDir().canonicalPath()));
+diff --git a/src/library/libraryfeature.cpp b/src/library/libraryfeature.cpp
+--- a/src/library/libraryfeature.cpp
++++ b/src/library/libraryfeature.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/libraryfeature.h"
+ 
+ #include <QStandardPaths>
+@@ -56,6 +57,11 @@
+         QString playlistFilePath,
+         const QList<QString>& playlistItemLocations,
+         bool useRelativePath)    {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return false;
++    }
++
+     if (playlistFilePath.endsWith(
+             QStringLiteral(".pls"),
+             Qt::CaseInsensitive)) {
+diff --git a/src/library/trackset/crate/cratefeature.cpp b/src/library/trackset/crate/cratefeature.cpp
+--- a/src/library/trackset/crate/cratefeature.cpp
++++ b/src/library/trackset/crate/cratefeature.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "library/trackset/crate/cratefeature.h"
+ 
+ #include <QInputDialog>
+@@ -645,6 +646,10 @@
+     }
+ 
+     // Update the import/export crate directory
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return;
++    }
+     QFileInfo fileDirectory(playlistFile);
+     m_pConfig->set(kConfigKeyLastImportExportCrateDirectoryKey,
+             ConfigValue(fileDirectory.absoluteDir().canonicalPath()));
+@@ -665,6 +670,11 @@
+ }
+ 
+ void CrateFeature::slotImportPlaylistFile(const QString& playlistFile, CrateId crateId) {
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return;
++    }
++
+     Crate crate;
+     if (!m_pTrackCollection->crates().readCrateById(crateId, &crate)) {
+         return;
+@@ -705,6 +715,10 @@
+     }
+ 
+     // Set last import directory
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return;
++    }
+     QFileInfo fileDirectory(playlistFiles.first());
+     m_pConfig->set(kConfigKeyLastImportExportCrateDirectoryKey,
+             ConfigValue(fileDirectory.absoluteDir().canonicalPath()));
+@@ -796,6 +810,10 @@
+         return;
+     }
+     // Update the import/export crate directory
++    const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++    if (!operationUse) {
++        return;
++    }
+     QFileInfo fileDirectory(fileLocation);
+     m_pConfig->set(kConfigKeyLastImportExportCrateDirectoryKey,
+             ConfigValue(fileDirectory.absoluteDir().canonicalPath()));
+diff --git a/src/util/file.cpp b/src/util/file.cpp
+--- a/src/util/file.cpp
++++ b/src/util/file.cpp
+@@ -1,3 +1,4 @@
++#include "library/media/mediause.h"
+ #include "util/file.h"
+ 
+ #include <QFileDialog>
+@@ -72,6 +73,10 @@
+         if (fileLocation.isEmpty()) {
+             break;
+         }
++        const mixxx::media::UnknownUseScope operationUse(mixxx::media::Producer::Copy);
++        if (!operationUse) {
++            return {};
++        }
+         const QString fileLocationAdjusted = filePathWithSelectedExtension(
+                 fileLocation,
+                 selectedFileFilter,
+diff --git a/src/library/media/copyservice.h b/src/library/media/copyservice.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/media/copyservice.h
+@@ -0,0 +1,345 @@
++#pragma once
++
++#include "library/media/mediause.h"
++
++#ifdef __linux__
++#include <algorithm>
++#include <chrono>
++#include <functional>
++#include <linux/nsfs.h>
++#include <poll.h>
++#include <pwd.h>
++#include <sched.h>
++#include <sys/file.h>
++#include <sys/ioctl.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <vector>
++
++namespace mixxx::media {
++
++class CopyService final {
++  public:
++    using Observer = std::function<Binding(const std::string&)>;
++    explicit CopyService(std::string directory, std::vector<std::string> roots,
++            Observer observer = observePath)
++            : m_directory(std::move(directory)), m_roots(std::move(roots)),
++              m_observer(std::move(observer)), m_startup(acquireUnknown(Producer::Copy)) {
++        struct stat status {};
++        if (!m_startup || (::mkdir(m_directory.c_str(), 0700) != 0 && errno != EEXIST)) {
++            return;
++        }
++        if (::lstat(m_directory.c_str(), &status) || !S_ISDIR(status.st_mode) ||
++                status.st_uid != ::getuid() || (status.st_mode & 0777) != 0700) {
++            return;
++        }
++        const auto parent = std::filesystem::path(m_directory).parent_path();
++        if (::lstat(parent.c_str(), &status) || !S_ISDIR(status.st_mode) ||
++                status.st_uid != ::getuid() || (status.st_mode & 0777) != 0700) {
++            return;
++        }
++        m_owner = secureFile("owner.lock");
++        m_guard = secureFile("sessions.lock");
++        if (m_owner < 0 || m_guard < 0 || ::flock(m_owner, LOCK_EX | LOCK_NB)) {
++            return;
++        }
++        m_socket = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
++        sockaddr_un address {};
++        address.sun_family = AF_UNIX;
++        const auto path = m_directory + "/control";
++        if (m_socket < 0 || path.size() >= sizeof(address.sun_path)) {
++            if (m_socket >= 0) ::close(m_socket);
++            m_socket = -1;
++            return;
++        }
++        std::copy(path.begin(), path.end(), address.sun_path);
++        ::unlink(path.c_str());
++        if (::bind(m_socket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) ||
++                ::chmod(path.c_str(), 0600) || ::listen(m_socket, 16)) {
++            ::close(m_socket);
++            m_socket = -1;
++        }
++    }
++    ~CopyService() {
++        for (auto& client : m_clients) {
++            ::close(client.socket);
++            ::close(client.process);
++        }
++        if (m_socket >= 0) ::close(m_socket);
++        if (m_guard >= 0) ::close(m_guard);
++        if (m_owner >= 0) ::close(m_owner);
++    }
++    bool ready() const { return m_socket >= 0; }
++    void tick() {
++        if (!ready()) return;
++        if (m_startup && ::flock(m_guard, LOCK_EX | LOCK_NB) == 0) {
++            m_startup.reset();
++            ::flock(m_guard, LOCK_UN);
++        }
++        for (int count = 0; count < 8 && m_clients.size() < 32; ++count) {
++            const int socket = ::accept4(m_socket, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
++            if (socket < 0) break;
++            ucred credentials {};
++            socklen_t length = sizeof(credentials);
++            int process = -1;
++            socklen_t processLength = sizeof(process);
++            struct stat ownNamespace {}, peerNamespace {};
++            if (::getsockopt(socket, SOL_SOCKET, SO_PEERCRED, &credentials, &length) ||
++                    (credentials.uid != ::getuid() && credentials.uid != 0) ||
++                    ::getsockopt(socket, SOL_SOCKET, 77, &process, &processLength) ||
++                    (credentials.uid != 0 && (::stat("/proc/self/ns/mnt", &ownNamespace) ||
++                    ::stat(("/proc/" + std::to_string(credentials.pid) + "/ns/mnt").c_str(), &peerNamespace) ||
++                    ownNamespace.st_dev != peerNamespace.st_dev || ownNamespace.st_ino != peerNamespace.st_ino)) ||
++                    exited(process)) {
++                ::close(socket);
++                if (process >= 0) ::close(process);
++                continue;
++            }
++            m_clients.push_back({socket, process, false, {}, {}, std::chrono::steady_clock::now(), credentials.uid == 0, {}, credentials.uid != 0});
++        }
++        for (auto iterator = m_clients.begin(); iterator != m_clients.end();) {
++            auto& client = *iterator;
++            if (!client.begun && std::chrono::steady_clock::now() - client.connected > std::chrono::seconds(2)) {
++                ::close(client.socket);
++                client.socket = -1;
++            }
++            if (exited(client.process)) {
++                if (client.drain) m_orphanDrains.push_back(std::move(client.drain));
++                ::close(client.socket);
++                ::close(client.process);
++                iterator = m_clients.erase(iterator);
++                continue;
++            }
++            if (client.socket >= 0) {
++                char buffer[16384];
++                alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int) * 8)] {};
++                iovec payload {buffer, sizeof(buffer)};
++                msghdr packet {};
++                packet.msg_iov = &payload;
++                packet.msg_iovlen = 1;
++                packet.msg_control = control;
++                packet.msg_controllen = sizeof(control);
++                const auto size = ::recvmsg(client.socket, &packet, MSG_DONTWAIT | MSG_TRUNC | MSG_CMSG_CLOEXEC);
++                std::vector<int> descriptors;
++                for (auto* ancillary = CMSG_FIRSTHDR(&packet); size >= 0 && ancillary;
++                        ancillary = CMSG_NXTHDR(&packet, ancillary)) {
++                    if (ancillary->cmsg_level != SOL_SOCKET || ancillary->cmsg_type != SCM_RIGHTS) continue;
++                    const auto count = (ancillary->cmsg_len - CMSG_LEN(0)) / sizeof(int);
++                    const auto* values = reinterpret_cast<const int*>(CMSG_DATA(ancillary));
++                    descriptors.insert(descriptors.end(), values, values + count);
++                }
++                const bool truncated = packet.msg_flags & (MSG_TRUNC | MSG_CTRUNC);
++                std::string response = "DENIED";
++                if (size > 0 && size < static_cast<ssize_t>(sizeof(buffer)) && !truncated) {
++                    const std::string message(buffer, size);
++                    if (!client.namespaceVerified && client.privileged && message == "NAMESPACE" && descriptors.size() == 1) {
++                        struct stat ownNamespace {}, peerNamespace {};
++                        if (!::stat("/proc/self/ns/mnt", &ownNamespace) &&
++                                !::fstat(descriptors.front(), &peerNamespace) &&
++                                ::ioctl(descriptors.front(), NS_GET_NSTYPE) == CLONE_NEWNS &&
++                                ownNamespace.st_dev == peerNamespace.st_dev && ownNamespace.st_ino == peerNamespace.st_ino &&
++                                !exited(client.process)) {
++                            client.namespaceVerified = true;
++                            response = "OK";
++                        }
++                    } else if (client.namespaceVerified && descriptors.empty()) {
++                        response = request(client, message);
++                    }
++                }
++                for (const int descriptor : descriptors) ::close(descriptor);
++                if (size == 0 || size >= static_cast<ssize_t>(sizeof(buffer)) ||
++                        (size < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
++                    ::close(client.socket);
++                    client.socket = -1;
++                } else if (size > 0) {
++                    if (::send(client.socket, response.data(), response.size(), MSG_NOSIGNAL) !=
++                            static_cast<ssize_t>(response.size()) || response == "DENIED") {
++                        ::close(client.socket);
++                        client.socket = -1;
++                    }
++                }
++            }
++            if (client.socket < 0 && client.leases.empty() && !client.drain) {
++                ::close(client.process);
++                iterator = m_clients.erase(iterator);
++            } else {
++                ++iterator;
++            }
++        }
++    }
++  private:
++    struct Path {
++        std::string name;
++        bool create;
++        std::string anchor;
++        dev_t device;
++        ino_t inode;
++    };
++    struct Client {
++        int socket;
++        int process;
++        bool begun;
++        std::vector<Path> paths;
++        std::vector<Lease> leases;
++        std::chrono::steady_clock::time_point connected;
++        bool privileged;
++        std::unique_ptr<MediaUseRegistry::Drain> drain;
++        bool namespaceVerified;
++    };
++    static bool exited(int process) {
++        pollfd descriptor {process, POLLIN, 0};
++        return process >= 0 && ::poll(&descriptor, 1, 0) > 0 && (descriptor.revents & POLLIN);
++    }
++    int secureFile(const std::string& name) {
++        const int descriptor = ::open((m_directory + "/" + name).c_str(),
++                O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
++        struct stat status {};
++        if (descriptor < 0) return -1;
++        if (::fstat(descriptor, &status) || !S_ISREG(status.st_mode) || status.st_uid != ::getuid() ||
++                status.st_nlink != 1 || (status.st_mode & 0777) != 0600) {
++            ::close(descriptor);
++            return -1;
++        }
++        return descriptor;
++    }
++    Binding resolve(Path& path, bool initial) {
++        const std::filesystem::path requested(path.name);
++        if (path.name.size() > 4096 || !requested.is_absolute() ||
++                requested.lexically_normal() != requested ||
++                std::any_of(path.name.begin(), path.name.end(), [](unsigned char byte) { return byte < 32; }) ||
++                std::none_of(m_roots.begin(), m_roots.end(), [&](const auto& root) {
++                    return path.name == root || path.name.compare(0, root.size() + 1, root + "/") == 0;
++                })) return {};
++        std::filesystem::path current("/");
++        struct stat status {};
++        bool missing = false;
++        std::string ancestor;
++        for (const auto& part : requested.relative_path()) {
++            current /= part;
++            if (missing) continue;
++            if (::lstat(current.c_str(), &status)) {
++                if (errno != ENOENT || !path.create || ancestor.empty()) return {};
++                missing = true;
++            } else {
++                if (!S_ISDIR(status.st_mode) && !(current == requested && S_ISREG(status.st_mode))) return {};
++                ancestor = current.string();
++            }
++        }
++        if (ancestor.empty() || std::none_of(m_roots.begin(), m_roots.end(), [&](const auto& root) {
++                    return ancestor == root || ancestor.compare(0, root.size() + 1, root + "/") == 0;
++                })) return {};
++        if (initial) {
++            path.anchor = ancestor;
++            if (::lstat(ancestor.c_str(), &status)) return {};
++            path.device = status.st_dev;
++            path.inode = status.st_ino;
++        } else if (::lstat(path.anchor.c_str(), &status) ||
++                status.st_dev != path.device || status.st_ino != path.inode) {
++            return {};
++        }
++        auto binding = m_observer(ancestor);
++        if (binding.generation.empty() || binding.source.empty() || !binding.descriptor) return {};
++        return binding;
++    }
++    static std::string hex(const std::string& value) {
++        std::string output;
++        for (unsigned char byte : value) {
++            output += "0123456789abcdef"[byte >> 4];
++            output += "0123456789abcdef"[byte & 15];
++        }
++        return output;
++    }
++    std::string request(Client& client, const std::string& message) {
++        if (client.privileged && message.compare(0, 6, "DRAIN\n") == 0 && !client.begun && !m_startup) {
++            const auto generation = message.substr(6);
++            if (generation.empty() || generation.size() > 4096 || generation.find('\n') != std::string::npos ||
++                    generation.find('\0') != std::string::npos) return "DENIED";
++            auto drain = registry().beginDrain(generation);
++            if (!drain) return "DENIED";
++            client.drain = std::make_unique<MediaUseRegistry::Drain>(std::move(drain));
++            client.begun = true;
++            return client.drain->snapshot().locallyIdle() ? "IDLE" : "BUSY";
++        }
++        if (client.drain) {
++            if (message == "DRAIN_STATUS") return client.drain->snapshot().locallyIdle() ? "IDLE" : "BUSY";
++            if (message == "DRAIN_COMMIT") {
++                if (!client.drain->retire()) return "DENIED";
++                client.drain.reset();
++                return "OK";
++            }
++            if (message == "DRAIN_CANCEL") {
++                client.drain.reset();
++                return "OK";
++            }
++            return "DENIED";
++        }
++        if (client.privileged && ::getuid() != 0) return "DENIED";
++        if (!client.begun && message.compare(0, 6, "BEGIN\n") == 0 && !m_startup) {
++            std::istringstream input(message.substr(6));
++            std::string line, response = "OK";
++            std::vector<Path> paths;
++            std::vector<Lease> leases;
++            while (std::getline(input, line)) {
++                if (paths.size() >= 6 || line.size() < 3 || (line[0] != 'R' && line[0] != 'W')) return "DENIED";
++                Path path {line.substr(1), line[0] == 'W', {}, 0, 0};
++                auto binding = resolve(path, true);
++                if (binding.generation.empty()) return "DENIED";
++                auto lease = registry().acquire(binding, Producer::Copy);
++                if (!lease || !lease->matches(resolve(path, false))) return "DENIED";
++                response += "\n" + hex(binding.generation) + ":" + hex(binding.source);
++                paths.push_back(std::move(path));
++                leases.push_back(std::move(lease));
++            }
++            if (paths.empty() || response.size() >= 16384) return "DENIED";
++            client.paths = std::move(paths);
++            client.leases = std::move(leases);
++            client.begun = true;
++            return response;
++        }
++        if (!client.begun || client.leases.empty()) return "DENIED";
++        if (message == "FINISH" || message == "CANCEL") {
++            client.leases.clear();
++            return "OK";
++        }
++        if (message != "CHECK" && message.compare(0, 6, "CHECK\n") != 0) return "DENIED";
++        for (std::size_t index = 0; index < client.paths.size(); ++index) {
++            if (!client.leases[index]->matches(resolve(client.paths[index], false))) return "DENIED";
++        }
++        if (message != "CHECK") {
++            const auto requested = message.substr(6);
++            bool matched = false;
++            for (std::size_t index = 0; index < client.paths.size(); ++index) {
++                const auto& parent = client.paths[index];
++                if (requested != parent.name && requested.compare(0, parent.name.size() + 1, parent.name + "/") != 0) continue;
++                Path path {requested, parent.create, {}, 0, 0};
++                if (client.leases[index]->matches(resolve(path, true))) matched = true;
++            }
++            if (!matched) return "DENIED";
++        }
++        return "OK";
++    }
++    std::string m_directory;
++    std::vector<std::string> m_roots;
++    Observer m_observer;
++    Lease m_startup;
++    int m_owner = -1;
++    int m_guard = -1;
++    int m_socket = -1;
++    std::vector<Client> m_clients;
++    std::vector<std::unique_ptr<MediaUseRegistry::Drain>> m_orphanDrains;
++};
++
++inline CopyService& copyService() {
++    static auto* service = [] {
++        const auto* user = ::getpwuid(::getuid());
++        const std::string name = user ? user->pw_name : "";
++        const std::string home = user ? user->pw_dir : "";
++        return new CopyService("/run/user/" + std::to_string(::getuid()) + "/mixpi-copy",
++                name.empty() ? std::vector<std::string>{} :
++                        std::vector<std::string>{home, "/media/" + name, "/run/media/" + name});
++    }();
++    return *service;
++}
++
++}
++#endif
+diff --git a/src/library/mixpicontrolledmedia.h b/src/library/mixpicontrolledmedia.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/mixpicontrolledmedia.h
+@@ -0,0 +1,348 @@
++#pragma once
++
++#include <algorithm>
++#include <functional>
++
++#include <QCoreApplication>
++#include <QFile>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QObject>
++#include <QPointer>
++#include <QSet>
++#include <QSocketNotifier>
++#include <QTimer>
++
++#ifdef __linux__
++#include <cerrno>
++#include <fcntl.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/un.h>
++#include <unistd.h>
++#endif
++
++class MixpiControlledMedia final : public QObject {
++  public:
++    enum class State { Unavailable, Inventory, Waiting, Preparing, Ready, Committing,
++        Mounted, Cancelled, Safe, Unknown, Quarantined };
++
++    explicit MixpiControlledMedia(int descriptor, QObject* owner, int deadlineMs = 5000)
++            : QObject(owner), m_descriptor(descriptor), m_deadlineMs(deadlineMs) {
++#ifdef __linux__
++        if (descriptor < 0) {
++            return;
++        }
++        if (fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK) < 0) {
++            ::close(m_descriptor);
++            m_descriptor = -1;
++            return;
++        }
++        m_reader = new QSocketNotifier(descriptor, QSocketNotifier::Read, this);
++        connect(m_reader, &QSocketNotifier::activated, this, [this] { receive(); });
++        m_deadline = new QTimer(this);
++        m_deadline->setSingleShot(true);
++        connect(m_deadline, &QTimer::timeout, this, [this] {
++            m_message = tr("Reply overdue; outcome pending. Keep drive connected. This does not interrupt kernel work.");
++        });
++        m_poll = new QTimer(this);
++        m_poll->setSingleShot(true);
++        connect(m_poll, &QTimer::timeout, this, [this] { send(m_cancelRequested ? "cancel" : "poll"); });
++        m_state = State::Inventory;
++        refresh();
++#endif
++    }
++
++    ~MixpiControlledMedia() override {
++#ifdef __linux__
++        if (m_descriptor >= 0) {
++            ::close(m_descriptor);
++        }
++#endif
++    }
++
++    static MixpiControlledMedia* openProduction() {
++        int descriptor = -1;
++#ifdef __linux__
++        bool trusted = true;
++        for (const char* path : {"/etc/mixpi/controlled-media", "/etc/mixpi/eject-reviewed"}) {
++            struct stat metadata{};
++            QFile file(QString::fromUtf8(path));
++            trusted = trusted && ::lstat(path, &metadata) == 0 && S_ISREG(metadata.st_mode) &&
++                    metadata.st_uid == 0 && !(metadata.st_mode & 0022) &&
++                    file.open(QIODevice::ReadOnly) && file.readAll() == "v1\n";
++        }
++        struct stat directory{};
++        trusted = trusted && ::lstat("/run/mixpi-mount", &directory) == 0 &&
++                S_ISDIR(directory.st_mode) && directory.st_uid == 0 && !(directory.st_mode & 0022);
++        if (trusted) {
++            descriptor = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
++            sockaddr_un address{};
++            address.sun_family = AF_UNIX;
++            const QByteArray endpoint("/run/mixpi-mount/control");
++            std::copy(endpoint.begin(), endpoint.end(), address.sun_path);
++            struct ucred credentials{};
++            socklen_t size = sizeof(credentials);
++            if (descriptor >= 0 && (::connect(descriptor, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 ||
++                    ::getsockopt(descriptor, SOL_SOCKET, SO_PEERCRED, &credentials, &size) != 0 ||
++                    size != sizeof(credentials) || credentials.uid != 0)) {
++                ::close(descriptor);
++                descriptor = -1;
++            }
++        }
++#endif
++        return new MixpiControlledMedia(descriptor, QCoreApplication::instance());
++    }
++
++    static bool validToken(const QString& token) {
++        if (token.size() != 64) {
++            return false;
++        }
++        for (const auto character : token) {
++            if (!QStringLiteral("0123456789abcdef").contains(character)) {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    static QJsonObject resolve(const QJsonArray& drives, const QString& token) {
++        QJsonObject selected;
++        if (!validToken(token)) {
++            return {};
++        }
++        for (const auto& value : drives) {
++            const auto drive = value.toObject();
++            if (drive.value("token").toString() == token) {
++                if (!selected.isEmpty()) {
++                    return {};
++                }
++                selected = drive;
++            }
++        }
++        return selected;
++    }
++
++    static QString description(const QJsonObject& drive) {
++        QStringList volumes;
++        for (const auto& value : drive.value("volumes").toArray()) {
++            const auto volume = value.toObject();
++            volumes.append(volume.value("label").toString() + " — " + volume.value("discriminator").toString());
++        }
++        return tr("Physical USB %1 · generation %2\n%3")
++                .arg(drive.value("device").toString(), drive.value("diskseq").toString(),
++                        volumes.isEmpty() ? tr("No mounted volumes — controlled mount required") : volumes.join("\n"));
++    }
++
++    State state() const { return m_state; }
++    QString message() const { return m_message; }
++    QString selectedDescription() const { return m_selectedDescription; }
++    QJsonArray drives() const { return m_drives; }
++    bool pending() const { return !m_request.isEmpty(); }
++    void setCompletionHandler(QObject* owner, std::function<void()> callback) {
++        m_completionOwner = owner;
++        m_completionCallback = std::move(callback);
++    }
++    bool locked() const {
++        return m_started && m_state != State::Mounted && m_state != State::Cancelled && m_state != State::Safe;
++    }
++    bool canCancel() const {
++        return m_eject && locked() && !m_cutoff && m_state != State::Unknown && m_state != State::Quarantined;
++    }
++    void refresh() {
++        if (locked() || pending() || m_descriptor < 0 || m_state == State::Unknown) {
++            return;
++        }
++        m_drives = {};
++        m_started = false;
++        m_selectedDescription.clear();
++        send("list");
++    }
++    void begin(const QString& token, bool eject) {
++        if (m_state != State::Inventory || pending()) {
++            return;
++        }
++        const auto selected = resolve(m_drives, token);
++        if (selected.isEmpty() || (!eject && !selected.value("volumes").toArray().isEmpty())) {
++            m_message = tr("Selection invalidated; refresh and choose the physical disk again.");
++            return;
++        }
++        m_token = token;
++        m_selectedDescription = description(selected);
++        m_started = true;
++        m_eject = eject;
++        m_cutoff = false;
++        m_commitAcknowledged = false;
++        m_cancelRequested = false;
++        m_drives = {};
++        send(eject ? "eject" : "mount");
++    }
++    void cancel() {
++        if (!canCancel()) {
++            return;
++        }
++        m_cancelRequested = true;
++        m_message = tr("Cancellation requested; awaiting broker acknowledgement. Keep drive connected.");
++        if (!pending()) {
++            m_poll->stop();
++            send("cancel");
++        }
++    }
++    void commit() {
++        if (m_state != State::Ready || pending() || m_cancelRequested || m_cutoff) {
++            return;
++        }
++        m_cutoff = true;
++        send("commit");
++    }
++
++  private:
++    void notifyCompletion() {
++        if (m_completionOwner && m_completionCallback) {
++            QTimer::singleShot(0, m_completionOwner.data(), m_completionCallback);
++        }
++    }
++    void unknown(const QString& reason) {
++        m_state = State::Unknown;
++        m_message = reason + tr(" Outcome unknown; keep drive connected. Recovery review required.");
++        if (m_reader) {
++            m_reader->setEnabled(false);
++            m_deadline->stop();
++            m_poll->stop();
++        }
++    }
++    void send(const QString& operation) {
++#ifdef __linux__
++        if (pending() || m_descriptor < 0) {
++            return;
++        }
++        const auto bytes = QJsonDocument(QJsonObject{{"op", operation}, {"token", m_token}}).toJson(QJsonDocument::Compact);
++        m_request = operation;
++        m_state = operation == "commit" ? State::Committing : State::Waiting;
++        m_message = operation == "list" ? tr("Observing controlled physical USB disks…") :
++                operation == "mount" ? tr("Mount pending; keep drive connected.") :
++                operation == "commit" ? tr("Irreversible cutoff sent; cancellation is no longer guaranteed. Keep drive connected.") :
++                operation == "cancel" ? tr("Awaiting cancellation acknowledgement; keep drive connected.") :
++                m_cutoff ? tr("Past irreversible cutoff; unmount pending. Keep drive connected.") :
++                tr("Draining / busy; preparation remains cancellable. Keep drive connected.");
++        if (::send(m_descriptor, bytes.constData(), bytes.size(), MSG_NOSIGNAL | MSG_DONTWAIT) != bytes.size()) {
++            unknown(tr("Broker request could not be delivered."));
++            return;
++        }
++        m_deadline->start(m_deadlineMs);
++#else
++        Q_UNUSED(operation);
++#endif
++    }
++    void receive() {
++#ifdef __linux__
++        char buffer[65536];
++        const auto size = ::recv(m_descriptor, buffer, sizeof(buffer), MSG_DONTWAIT | MSG_TRUNC);
++        if (size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
++            return;
++        }
++        if (size <= 0 || size >= static_cast<ssize_t>(sizeof(buffer)) || !pending()) {
++            unknown(tr("Broker disconnected or sent an unexpected reply."));
++            return;
++        }
++        const auto document = QJsonDocument::fromJson(QByteArray(buffer, size));
++        const auto answer = document.object();
++        const auto status = answer.value("status").toString();
++        const auto request = m_request;
++        m_request.clear();
++        m_deadline->stop();
++        if (!document.isObject() || !answer.value("safe").isBool()) {
++            unknown(tr("Invalid broker reply."));
++            return;
++        }
++        if (request == "poll" && m_eject && m_cutoff && m_commitAcknowledged &&
++                status == "unmounted" && answer.value("safe").toBool() &&
++                answer.contains("token") && answer.value("token").isNull() &&
++                answer.value("removed").isArray() && !answer.value("removed").toArray().isEmpty()) {
++            QSet<int> removed;
++            for (const auto& value : answer.value("removed").toArray()) {
++                const int mount = value.toInt(-1);
++                if (mount <= 0 || value.toDouble() != mount || removed.contains(mount)) {
++                    unknown(tr("Invalid completion proof."));
++                    return;
++                }
++                removed.insert(mount);
++            }
++            m_state = State::Safe;
++            m_message = tr("Broker verified safe to remove ONLY this selected physical drive.");
++            notifyCompletion();
++            return;
++        }
++        if (answer.value("safe").toBool()) {
++            unknown(tr("Unexpected safe-removal claim rejected."));
++            return;
++        }
++        if (request == "list" && status == "inventory" && answer.value("drives").isArray()) {
++            m_drives = answer.value("drives").toArray();
++            QSet<QString> tokens;
++            for (const auto& value : m_drives) {
++                const auto drive = value.toObject();
++                const auto token = drive.value("token").toString();
++                if (!validToken(token) || tokens.contains(token) || drive.value("device").toString().isEmpty() ||
++                        drive.value("diskseq").toString().isEmpty() || !drive.value("volumes").isArray()) {
++                    m_drives = {};
++                    unknown(tr("Ambiguous physical inventory."));
++                    return;
++                }
++                tokens.insert(token);
++            }
++            m_state = State::Inventory;
++            m_message = tr("Choose one physical disk explicitly. The broker revalidates its exact token.");
++        } else if (request == "mount" && status == "mounted" && validToken(answer.value("token").toString()) &&
++                answer.value("token").toString() != m_token) {
++            m_state = State::Mounted;
++            m_message = tr("Mounted. Refresh LOAD and explicitly choose a fresh volume; nothing was imported.");
++            notifyCompletion();
++        } else if (request == "cancel" && status == "cancelled" && !m_cutoff) {
++            m_state = State::Cancelled;
++            m_message = tr("Cancellation acknowledged. Drive remains mounted; NOT safe to remove.");
++        } else if (request == "commit" && status == "committing" && m_cutoff) {
++            m_commitAcknowledged = true;
++            m_state = State::Committing;
++            m_message = tr("Cutoff acknowledged. Unmount pending; keep drive connected.");
++            m_poll->start(0);
++        } else if ((request == "eject" && status == "draining") ||
++                (request == "poll" && status == "busy")) {
++            m_state = m_cutoff ? State::Committing : State::Preparing;
++            m_poll->start(250);
++        } else if (request == "poll" && status == "ready" && !m_cutoff && answer.value("cancellable").toBool()) {
++            m_state = State::Ready;
++            m_message = tr("Ready. Cancel preparation, or explicitly accept the irreversible cutoff to eject.");
++            if (m_cancelRequested) {
++                send("cancel");
++            }
++        } else if (status == "quarantined") {
++            m_state = State::Quarantined;
++            m_message = tr("Broker quarantined this operation. Keep drive connected; recovery review required.");
++        } else {
++            unknown(status == "too-late" ? tr("Cancellation too late.") :
++                    tr("Broker unavailable, refused, or incompatible: %1").arg(answer.value("error").toString()));
++        }
++#endif
++    }
++
++    int m_descriptor = -1;
++    int m_deadlineMs;
++    QSocketNotifier* m_reader = nullptr;
++    QTimer* m_deadline = nullptr;
++    QTimer* m_poll = nullptr;
++    State m_state = State::Unavailable;
++    QString m_message = tr("Controlled media unavailable: reviewed profile/service required. Keep drive connected.");
++    QString m_request;
++    QString m_token;
++    QString m_selectedDescription;
++    QJsonArray m_drives;
++    QPointer<QObject> m_completionOwner;
++    std::function<void()> m_completionCallback;
++    bool m_started = false;
++    bool m_eject = false;
++    bool m_cutoff = false;
++    bool m_commitAcknowledged = false;
++    bool m_cancelRequested = false;
++};
+diff --git a/src/library/mixpicontrolleddialog.h b/src/library/mixpicontrolleddialog.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/mixpicontrolleddialog.h
+@@ -0,0 +1,118 @@
++#pragma once
++
++#include <QDialog>
++#include <QHBoxLayout>
++#include <QLabel>
++#include <QListWidget>
++#include <QPointer>
++#include <QPushButton>
++#include <QVBoxLayout>
++
++#include "library/mixpicontrolledmedia.h"
++
++class MixpiControlledDialog final : public QDialog {
++  public:
++    MixpiControlledDialog(MixpiControlledMedia* operation, bool mount, QWidget* parent)
++            : QDialog(parent), m_operation(operation), m_mount(mount) {
++        setAttribute(Qt::WA_DeleteOnClose);
++        setWindowModality(Qt::WindowModal);
++        setWindowTitle(mount ? tr("LOAD — mount a physical USB disk") : tr("EJECT — one physical USB disk"));
++        resize(740, 380);
++        auto* layout = new QVBoxLayout(this);
++        m_status = new QLabel(this);
++        m_status->setTextFormat(Qt::PlainText);
++        m_status->setWordWrap(true);
++        layout->addWidget(m_status);
++        m_list = new QListWidget(this);
++        m_list->setObjectName("physicalDisks");
++        layout->addWidget(m_list);
++        auto* actions = new QHBoxLayout;
++        m_refresh = new QPushButton(tr("Refresh"), this);
++        m_begin = new QPushButton(mount ? tr("Mount selected disk") : tr("Prepare selected disk"), this);
++        m_cancel = new QPushButton(tr("Cancel preparation"), this);
++        m_commit = new QPushButton(tr("Eject irreversibly"), this);
++        m_volumes = new QPushButton(tr("Choose fresh volume"), this);
++        auto* close = new QPushButton(tr("Close"), this);
++        for (auto* button : {m_refresh, m_begin, m_cancel, m_commit, m_volumes, close}) {
++            button->setAutoDefault(false);
++            button->setMinimumHeight(44);
++            actions->addWidget(button);
++        }
++        layout->addLayout(actions);
++        connect(close, &QPushButton::clicked, this, &QDialog::reject);
++        connect(m_refresh, &QPushButton::clicked, this, [this] {
++            m_list->clear();
++            m_inventory = {};
++            m_operation->refresh();
++            update();
++        });
++        connect(m_begin, &QPushButton::clicked, this, [this] {
++            if (m_list->currentItem()) {
++                const auto token = m_list->currentItem()->data(Qt::UserRole).toString();
++                m_list->clear();
++                m_operation->begin(token, !m_mount);
++                update();
++            }
++        });
++        connect(m_cancel, &QPushButton::clicked, this, [this] { m_operation->cancel(); update(); });
++        connect(m_commit, &QPushButton::clicked, this, [this] { m_operation->commit(); update(); });
++        connect(m_volumes, &QPushButton::clicked, this, &QDialog::accept);
++        connect(m_list, &QListWidget::currentItemChanged, this, [this] { updateActions(); });
++        auto* timer = new QTimer(this);
++        connect(timer, &QTimer::timeout, this, [this] { update(); });
++        timer->start(50);
++        update();
++    }
++
++  private:
++    void updateActions() {
++        const bool inventory = m_operation->state() == MixpiControlledMedia::State::Inventory && !m_operation->pending();
++        m_begin->setEnabled(inventory && m_list->currentItem());
++        m_begin->setVisible(!m_operation->locked());
++        m_list->setEnabled(inventory);
++        m_refresh->setEnabled(!m_operation->locked() && !m_operation->pending() &&
++                m_operation->state() != MixpiControlledMedia::State::Unknown &&
++                m_operation->state() != MixpiControlledMedia::State::Unavailable);
++        m_cancel->setVisible(m_operation->canCancel());
++        m_cancel->setEnabled(m_operation->canCancel());
++        m_commit->setVisible(m_operation->state() == MixpiControlledMedia::State::Ready);
++        m_commit->setEnabled(m_operation->state() == MixpiControlledMedia::State::Ready && !m_operation->pending());
++        m_volumes->setVisible(m_operation->state() == MixpiControlledMedia::State::Mounted);
++    }
++    void update() {
++        auto message = m_operation->message();
++        if (!m_operation->selectedDescription().isEmpty()) {
++            message = m_operation->selectedDescription() + "\n" + message;
++        }
++        if (m_operation->locked()) {
++            message += tr("\nClosing this window does NOT cancel. Reopen LOAD/EJECT to check the retained operation.");
++        }
++        m_status->setText(message);
++        const auto inventory = m_operation->drives();
++        if (inventory != m_inventory) {
++            m_inventory = inventory;
++            m_list->clear();
++            for (const auto& value : inventory) {
++                const auto drive = value.toObject();
++                if (m_mount && !drive.value("volumes").toArray().isEmpty()) {
++                    continue;
++                }
++                auto* item = new QListWidgetItem(MixpiControlledMedia::description(drive), m_list);
++                item->setData(Qt::UserRole, drive.value("token").toString());
++            }
++            m_list->setCurrentRow(-1);
++            m_list->clearSelection();
++        }
++        updateActions();
++    }
++    MixpiControlledMedia* m_operation;
++    bool m_mount;
++    QJsonArray m_inventory;
++    QLabel* m_status;
++    QListWidget* m_list;
++    QPushButton* m_refresh;
++    QPushButton* m_begin;
++    QPushButton* m_cancel;
++    QPushButton* m_commit;
++    QPushButton* m_volumes;
++};
+diff --git a/src/library/browse/foldertreemodel.h b/src/library/browse/foldertreemodel.h
+--- a/src/library/browse/foldertreemodel.h
++++ b/src/library/browse/foldertreemodel.h
+@@ -17,6 +17,8 @@
+     virtual bool hasChildren(const QModelIndex& parent = QModelIndex()) const;
+     bool directoryHasChildren(const QString& path) const;
+     void removeChildDirsFromCache(const QStringList& rootPaths);
++    void deferDirectoryProbes();
++    void rememberChildDirectories(const QString& path, bool hasChildren);
+ 
+   private:
+     // Used for memorizing the results of directoryHasChildren.
+@@ -25,4 +27,5 @@
+     // be displayed and removed dirs will remain in the sidebar tree.
+     // removeChildDirsFromCache() can be used to reset selected directories.
+     mutable QHash<QString, bool> m_directoryCache;
++    bool m_directoryProbesDeferred = false;
+ };
+diff --git a/src/library/browse/foldertreemodel.cpp b/src/library/browse/foldertreemodel.cpp
+--- a/src/library/browse/foldertreemodel.cpp
++++ b/src/library/browse/foldertreemodel.cpp
+@@ -55,6 +55,9 @@
+     auto it = m_directoryCache.constFind(path);
+     if (it != m_directoryCache.constEnd()) {
+         return it.value();
++    }
++    if (m_directoryProbesDeferred) {
++        return true;
+     }
+ 
+     // Acquire a security token for the path.
+@@ -133,6 +136,15 @@
+     return has_children;
+ }
+ 
++void FolderTreeModel::deferDirectoryProbes() {
++    m_directoryProbesDeferred = true;
++    m_directoryCache.clear();
++}
++
++void FolderTreeModel::rememberChildDirectories(const QString& path, bool hasChildren) {
++    m_directoryCache.insert(path, hasChildren);
++}
++
+ void FolderTreeModel::removeChildDirsFromCache(const QStringList& rootPaths) {
+     // PerformanceTimer time;
+     // const auto start = time.elapsed();

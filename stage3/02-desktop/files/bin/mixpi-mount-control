@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Explicit controlled-media CLI; ordinary image capability remains disabled."""
+import argparse
+import json
+import signal
+import socket
+import sys
+import time
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('operation', choices=('list', 'mount', 'eject'))
+    parser.add_argument('token', nargs='?')
+    arguments = parser.parse_args()
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    connection.settimeout(5)
+    try:
+        connection.connect('/run/mixpi-mount/control')
+        def request(operation):
+            connection.sendall(json.dumps(dict(op=operation, token=arguments.token)).encode())
+            return json.loads(connection.recv(65536))
+        answer = request(arguments.operation)
+        print(json.dumps(answer, indent=2), flush=True)
+        if arguments.operation == 'eject' and answer['status'] == 'draining':
+            cancelled = False
+            cutoff = False
+            def interrupt(signum, frame):
+                nonlocal cancelled
+                cancelled = True
+            previous = signal.signal(signal.SIGINT, interrupt)
+            try:
+                for attempt in range(120):
+                    answer = request('poll')
+                    if cancelled and not cutoff:
+                        answer = request('cancel')
+                        break
+                    if answer['status'] == 'ready':
+                        print('Accepting irreversible cutoff; cancellation is no longer guaranteed once commit is sent.', flush=True)
+                        if cancelled:
+                            answer = request('cancel')
+                            break
+                        cutoff = True
+                        answer = request('commit')
+                        print(json.dumps(answer, indent=2), flush=True)
+                        if answer['status'] != 'committing':
+                            break
+                        answer = request('poll')
+                    if answer['status'] != 'busy':
+                        break
+                    if attempt == 0:
+                        print('Selected drive busy. Ctrl-C requests cancellation before cutoff; wait for cancelled acknowledgement.', flush=True)
+                    time.sleep(0.5)
+                else:
+                    answer = request('cancel') if not cutoff else dict(status='quarantined', safe=False)
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            print(json.dumps(answer, indent=2))
+        return 0 if answer['status'] in ('inventory', 'mounted', 'unmounted', 'cancelled') else 1
+    except (OSError, ValueError) as error:
+        print(f'BLOCKED: {error}. No safe-removal claim; keep the selected drive connected.', file=sys.stderr)
+        return 1
+    finally:
+        connection.close()
+
+
+if __name__ == '__main__':
+    sys.exit(main())

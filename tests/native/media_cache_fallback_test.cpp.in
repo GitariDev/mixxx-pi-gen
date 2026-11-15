@@ -1,0 +1,77 @@
+#include "mediauseregistry.h"
+#include <cassert>
+#include <iostream>
+#include <memory>
+#include <string>
+
+struct QString { std::string value; std::string toStdString() const { return value; } };
+struct QUrl { std::string value; static QUrl fromLocalFile(QString path) { return {path.value}; } };
+struct FileInfo { QUrl toQUrl() { return {"/media/Guest/song.wav"}; } };
+struct Track {
+    QString getLocation() { return {"/media/Guest/song.wav"}; }
+    FileInfo getFileInfo() { return {}; }
+    void updateStreamInfoFromSource(int) {}
+};
+using TrackPointer = std::shared_ptr<Track>;
+namespace mixxx::media {
+std::string observedGeneration = "original";
+Binding observePath(const std::string&) { return {observedGeneration, "mount", {}}; }
+PRODUCTION_ACQUIRE_PATH
+}
+namespace mixxx {
+struct RemovableTrackCache {
+    struct Entry { QString path; };
+    using Lease = std::shared_ptr<Entry>;
+    static inline bool replaceDuringCopy = false;
+    static Lease acquire(QString, bool) {
+        if (replaceDuringCopy) media::observedGeneration = "replacement";
+        return {};
+    }
+};
+struct AudioSource { struct OpenParams {}; int getStreamInfo() { return 0; } };
+using AudioSourcePointer = std::shared_ptr<AudioSource>;
+struct AudioSourceTrackProxy {
+    static AudioSourcePointer create(TrackPointer, AudioSourcePointer source,
+            RemovableTrackCache::Lease, media::Lease) { return source; }
+};
+}
+struct Logger { std::ostream& warning() { return std::cerr; } } kLogger;
+#define VERIFY_OR_DEBUG_ASSERT(condition) if (!(condition))
+struct SoundSourceProxy {
+    enum class RamCacheMode { Original, Existing, Create };
+    const mixxx::media::Lease m_mediaUse;
+    TrackPointer m_pTrack;
+    mixxx::RemovableTrackCache::Lease m_ramCache;
+    QUrl m_url;
+    int m_providerRegistrations;
+    mixxx::AudioSourcePointer m_pSoundSource;
+    SoundSourceProxy(TrackPointer, RamCacheMode, mixxx::media::Lease);
+    int allProviderRegistrationsForUrl(QUrl) { return 1; }
+    void findProviderAndInitSoundSource() {
+        if (m_mediaUse) m_pSoundSource = std::make_shared<mixxx::AudioSource>();
+    }
+    bool openSoundSource(const mixxx::AudioSource::OpenParams&) { return m_mediaUse && m_pSoundSource; }
+    mixxx::AudioSourcePointer openAudioSource(const mixxx::AudioSource::OpenParams&);
+};
+PRODUCTION_CACHE_CONSTRUCTOR
+PRODUCTION_AUDIO_OPEN
+
+int main() {
+    for (auto mode : {SoundSourceProxy::RamCacheMode::Create, SoundSourceProxy::RamCacheMode::Existing}) {
+        for (bool replacement : {false, true}) {
+            mixxx::media::observedGeneration = "original";
+            mixxx::RemovableTrackCache::replaceDuringCopy = replacement;
+            auto admitted = mixxx::media::acquirePath("/media/Guest/song.wav", mixxx::media::Producer::Load);
+            SoundSourceProxy proxy(std::make_shared<Track>(), mode, admitted);
+            auto drain = mixxx::media::registry().beginDrain(mixxx::media::observedGeneration);
+            auto audio = proxy.openAudioSource({});
+            if (replacement) {
+                assert(!audio && !proxy.m_pSoundSource);
+                assert(drain.snapshot().locallyIdle());
+            } else {
+                assert(audio && proxy.m_mediaUse && !drain.snapshot().locallyIdle());
+            }
+        }
+    }
+    std::cout << "PASS production constructor rejects changed generation after failed cache acquisition; stable fallback remains usable\n";
+}

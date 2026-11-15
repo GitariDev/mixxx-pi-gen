@@ -1,0 +1,258 @@
+diff --git a/src/library/media/copyservice.h b/src/library/media/copyservice.h
+--- a/src/library/media/copyservice.h
++++ b/src/library/media/copyservice.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "library/media/mediause.h"
++#include "library/media/transferstatus.h"
+ 
+ #ifdef __linux__
+ #include <algorithm>
+@@ -62,6 +63,7 @@
+     }
+     ~CopyService() {
+         for (auto& client : m_clients) {
++            m_transfers.interrupt(client.transfer);
+             ::close(client.socket);
+             ::close(client.process);
+         }
+@@ -70,6 +72,11 @@
+         if (m_owner >= 0) ::close(m_owner);
+     }
+     bool ready() const { return m_socket >= 0; }
++    // Exact generation+source only; no descriptors are retained by reporting history.
++    // Progress is integer percent, 0..99 while running and 100 only when verified.
++    TransferSnapshot transferStatus(const Binding& binding) const {
++        return m_transfers.snapshot({binding.generation, binding.source});
++    }
+     void tick() {
+         if (!ready()) return;
+         if (m_startup && ::flock(m_guard, LOCK_EX | LOCK_NB) == 0) {
+@@ -95,7 +102,7 @@
+                 if (process >= 0) ::close(process);
+                 continue;
+             }
+-            m_clients.push_back({socket, process, false, {}, {}, std::chrono::steady_clock::now(), credentials.uid == 0, {}, credentials.uid != 0});
++            m_clients.push_back({socket, process, false, {}, {}, std::chrono::steady_clock::now(), credentials.uid == 0, {}, credentials.uid != 0, {}, 0, false});
+         }
+         for (auto iterator = m_clients.begin(); iterator != m_clients.end();) {
+             auto& client = *iterator;
+@@ -104,6 +111,7 @@
+                 client.socket = -1;
+             }
+             if (exited(client.process)) {
++                m_transfers.interrupt(client.transfer);
+                 if (client.drain) m_orphanDrains.push_back(std::move(client.drain));
+                 ::close(client.socket);
+                 ::close(client.process);
+@@ -159,6 +167,7 @@
+                     }
+                 }
+             }
++            if (client.socket < 0) m_transfers.interrupt(client.transfer);
+             if (client.socket < 0 && client.leases.empty() && !client.drain) {
+                 ::close(client.process);
+                 iterator = m_clients.erase(iterator);
+@@ -185,6 +194,9 @@
+         bool privileged;
+         std::unique_ptr<MediaUseRegistry::Drain> drain;
+         bool namespaceVerified;
++        std::vector<TransferHistory::Key> bindings;
++        std::uint64_t transfer = 0;
++        bool transferEnded = false;
+     };
+     static bool exited(int process) {
+         pollfd descriptor {process, POLLIN, 0};
+@@ -279,6 +291,7 @@
+             std::string line, response = "OK";
+             std::vector<Path> paths;
+             std::vector<Lease> leases;
++            std::vector<TransferHistory::Key> bindings;
+             while (std::getline(input, line)) {
+                 if (paths.size() >= 6 || line.size() < 3 || (line[0] != 'R' && line[0] != 'W')) return "DENIED";
+                 Path path {line.substr(1), line[0] == 'W', {}, 0, 0};
+@@ -287,17 +300,42 @@
+                 auto lease = registry().acquire(binding, Producer::Copy);
+                 if (!lease || !lease->matches(resolve(path, false))) return "DENIED";
+                 response += "\n" + hex(binding.generation) + ":" + hex(binding.source);
++                bindings.emplace_back(binding.generation, binding.source);
+                 paths.push_back(std::move(path));
+                 leases.push_back(std::move(lease));
+             }
+             if (paths.empty() || response.size() >= 16384) return "DENIED";
+             client.paths = std::move(paths);
+             client.leases = std::move(leases);
++            client.bindings = std::move(bindings);
+             client.begun = true;
+             return response;
+         }
+         if (!client.begun || client.leases.empty()) return "DENIED";
++        if (message == "TRANSFER_BEGIN\n1" || message.compare(0, 9, "TRANSFER\n") == 0 ||
++                message.compare(0, 13, "TRANSFER_END\n") == 0) {
++            for (std::size_t index = 0; index < client.paths.size(); ++index) {
++                if (!client.leases[index]->matches(resolve(client.paths[index], false))) return "DENIED";
++            }
++            if (message == "TRANSFER_BEGIN\n1") {
++                if (client.transfer) return "DENIED";
++                client.transfer = m_transfers.begin(client.bindings);
++                return client.transfer ? "OK\nTRANSFER:1" : "DENIED";
++            }
++            if (!client.transfer || client.transferEnded) return "DENIED";
++            if (message.compare(0, 9, "TRANSFER\n") == 0) {
++                const auto separator = message.find('\n', 9);
++                if (separator == std::string::npos ||
++                        !m_transfers.update(client.transfer, message.substr(9, separator - 9),
++                                message.substr(separator + 1))) return "DENIED";
++                return "OK";
++            }
++            if (!m_transfers.finish(client.transfer, message.substr(13))) return "DENIED";
++            client.transferEnded = true;
++            return "OK";
++        }
+         if (message == "FINISH" || message == "CANCEL") {
++            if (client.transfer && !client.transferEnded) return "DENIED";
+             client.leases.clear();
+             return "OK";
+         }
+@@ -327,6 +365,7 @@
+     int m_socket = -1;
+     std::vector<Client> m_clients;
+     std::vector<std::unique_ptr<MediaUseRegistry::Drain>> m_orphanDrains;
++    TransferHistory m_transfers;
+ };
+ 
+ inline CopyService& copyService() {
+diff --git a/src/library/media/transferstatus.h b/src/library/media/transferstatus.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/media/transferstatus.h
+@@ -0,0 +1,128 @@
++#pragma once
++
++#include <algorithm>
++#include <cstdint>
++#include <deque>
++#include <mutex>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace mixxx::media {
++
++enum class TransferPhase { Unknown, Copying, Verifying };
++enum class TransferOutcome { Unknown, Running, Verified, Failed, Cancelled, Interrupted };
++
++struct TransferSnapshot {
++    // Unknown/evicted bindings have valid=false. Interrupted progress is not current.
++    bool valid = false;
++    bool progressValid = false;
++    std::uint64_t job = 0;
++    TransferPhase phase = TransferPhase::Unknown;
++    TransferOutcome status = TransferOutcome::Unknown;
++    int progress = 0;
++    std::size_t activeJobs = 0;
++};
++
++class TransferHistory final {
++  public:
++    using Key = std::pair<std::string, std::string>;
++    static constexpr std::size_t Capacity = 64;
++
++    std::uint64_t begin(std::vector<Key> bindings) {
++        std::lock_guard<std::mutex> lock(m_mutex);
++        if (bindings.empty() || bindings.size() > 6 || m_next == UINT64_MAX) return 0;
++        std::size_t bytes = 0;
++        for (const auto& binding : bindings) {
++            if (binding.first.empty() || binding.second.empty() ||
++                    binding.first.size() > 8192 || binding.second.size() > 8192) return 0;
++            bytes += binding.first.size() + binding.second.size();
++            if (bytes > 8192) return 0;
++        }
++        if (m_jobs.size() == Capacity) {
++            const auto terminal = std::find_if(m_jobs.begin(), m_jobs.end(), [](const Job& job) {
++                return job.snapshot.status != TransferOutcome::Running;
++            });
++            if (terminal == m_jobs.end()) return 0;
++            m_jobs.erase(terminal);
++        }
++        const auto identifier = ++m_next;
++        m_jobs.push_back({std::move(bindings), {true, true, identifier,
++                TransferPhase::Copying, TransferOutcome::Running, 0, 0}});
++        return identifier;
++    }
++
++    bool update(std::uint64_t identifier, const std::string& phase, const std::string& value) {
++        std::lock_guard<std::mutex> lock(m_mutex);
++        auto* job = running(identifier);
++        if (!job || (phase != "copying" && phase != "verifying") || value.empty() || value.size() > 2 ||
++                (value.size() > 1 && value.front() == '0')) return false;
++        int progress = 0;
++        for (const char character : value) {
++            if (character < '0' || character > '9') return false;
++            progress = progress * 10 + character - '0';
++        }
++        if (progress < job->snapshot.progress || progress > 99) return false;
++        job->snapshot.phase = phase == "copying" ? TransferPhase::Copying : TransferPhase::Verifying;
++        job->snapshot.progress = progress;
++        return true;
++    }
++
++    bool finish(std::uint64_t identifier, const std::string& outcome) {
++        std::lock_guard<std::mutex> lock(m_mutex);
++        auto* job = running(identifier);
++        if (!job) return false;
++        if (outcome == "verified") {
++            if (job->snapshot.phase != TransferPhase::Verifying || job->snapshot.progress != 99) return false;
++            job->snapshot.status = TransferOutcome::Verified;
++            job->snapshot.progress = 100;
++        } else if (outcome == "failed") {
++            job->snapshot.status = TransferOutcome::Failed;
++        } else if (outcome == "cancelled") {
++            job->snapshot.status = TransferOutcome::Cancelled;
++        } else {
++            return false;
++        }
++        return true;
++    }
++
++    void interrupt(std::uint64_t identifier) {
++        std::lock_guard<std::mutex> lock(m_mutex);
++        auto* job = running(identifier);
++        if (!job) return;
++        job->snapshot.status = TransferOutcome::Interrupted;
++        job->snapshot.progressValid = false;
++    }
++
++    TransferSnapshot snapshot(const Key& binding) const {
++        // Select the newest running job before terminal history; do not hide active work.
++        std::lock_guard<std::mutex> lock(m_mutex);
++        TransferSnapshot result;
++        for (const auto& job : m_jobs) {
++            if (std::find(job.bindings.begin(), job.bindings.end(), binding) == job.bindings.end()) continue;
++            const auto active = result.activeJobs + (job.snapshot.status == TransferOutcome::Running ? 1 : 0);
++            if (!result.valid || job.snapshot.status == TransferOutcome::Running || result.activeJobs == 0) {
++                result = job.snapshot;
++            }
++            result.activeJobs = active;
++        }
++        return result;
++    }
++
++  private:
++    struct Job {
++        std::vector<Key> bindings;
++        TransferSnapshot snapshot;
++    };
++    Job* running(std::uint64_t identifier) {
++        for (auto& job : m_jobs) {
++            if (job.snapshot.job == identifier && job.snapshot.status == TransferOutcome::Running) return &job;
++        }
++        return nullptr;
++    }
++    mutable std::mutex m_mutex;
++    std::deque<Job> m_jobs;
++    std::uint64_t m_next = 0;
++};
++
++}

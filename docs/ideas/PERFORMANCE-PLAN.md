@@ -1,5 +1,18 @@
 # Performance, strip-down and CDJ-style media plan
 
+## Current field checkpoint — November 11, 2026
+
+The owner now confirms EOS boots and generally works. Package/software/image
+milestones remain accepted within their original scopes, but native appearance
+is rejected and recording/first-start/media usability need a new climb.
+Operational EJECT was never accepted and the shipped controlled profile is OFF.
+Use the [field stocktake](FIELD-FIXES-20261111.md), the new draft record
+`mixpi-field-fixes-20261111` in the adjacent climb-contract-tuner, and
+`tools/ui-tuner/` rather than treating the old HTML proposal as today's native UI.
+Keep EOS intact; the eventual 64 GB release includes verified backup songs and
+requires fresh preservation/capacity/device checks. No deployment starts from a
+draft contract. The historical contract and evidence below remain unchanged.
+
 Researched **2026-11-08**. Sources: live SSH inspection, a Codex OS review,
 Codex upstream and OS research, a Claude Mixxx UI/CDJ review, and live playback
 tests. **Unconfirmed** marks anything not measured. The walkthrough version
@@ -26,6 +39,54 @@ eject interlock, appliance stripping and the same-card preservation gate remain.
 See [same-card checkpoint](../setup/SAME-CARD-UPGRADE.md).
 
 ## Next build changes (2026-11-09)
+
+### Required before the flash point (recovery, November 9)
+
+- Keep the accepted 60 fps waveform rate, audio buffer, keylock engine and
+  full user profile. Do not erase or flash during implementation trials.
+- Try translucent loop controls over the native waveforms. If the Pi's native
+  OpenGL window stacks above the controls, use the user's fallback: replace
+  the selected deck's bottom full-track overview with a real zoomable detailed
+  waveform while its loop panel is open. Keep the other overview, deck titles,
+  BPM and transports visible; closing restores the full-track overview.
+  This is temporal waveform zoom, not an enlarged static screenshot.
+- Restore a four-pad SAMPLER tab with loaded titles, touch trigger and explicit
+  Stop buttons. LOAD SAMPLE opens the existing library (preserving search,
+  source and selection); select a track and tap PAD 1–4 to load it without
+  starting playback. Playing pads cannot be replaced through these buttons.
+  DONE returns to the sampler; changing tabs cancels destination mode.
+- Validate both flows on the Pi, including empty selection, replacing a
+  stopped sample, repeated loading and closing loops from other tabs.
+- The native settings prototype is recovered as the seventh package patch,
+  `mixxx-performance-settings.patch`. Native compilation and runtime audio
+  acceptance remain separate gates. The skin disables Settings and hides the
+  CPU value unless the binary publishes its settings capability; older
+  extracted binaries must not present skin-only controls as working APIs.
+- Shared removable-media status/eject remains a separate blocking gate. Do not
+  expose a safe-to-remove indicator or rely on a file-descriptor snapshot to
+  allow eject while pending loads, analyzers or copy operations can reopen it.
+  The eighth patch now supplies multi-drive selection and blocked preflight,
+  not operational eject. Its reviewed identity and completion-recovery fixes
+  are integrated; full native linking and runtime chooser acceptance remain.
+- Multiple USB drives are a required case, not a later enhancement. Shared
+  media LOAD and EJECT each open a drive chooser; never silently target the
+  first mounted drive or the last inserted drive. Show label, capacity and a
+  mount/device discriminator so duplicate labels remain distinguishable.
+  Media LOAD opens the chosen drive's library; sampler LOAD SAMPLE remains a
+  separate track-and-pad workflow.
+- Bind the selection to the observed device/mount identity, not a row index
+  or label. Revalidate it before acting; removal or replacement invalidates
+  confirmation rather than retargeting it. Display loading/cached/in-use/eject
+  state per drive. Eject checks only the selected physical device and every
+  mounted partition on it, without interrupting another USB's playback/copy.
+  Never include the boot/system disk or copied internal exports as ejectable
+  media. Only confirmed unmount completion permits a safe-to-remove message.
+- Test two simultaneous USBs, duplicate labels, independent source selection,
+  multiple partitions, busy-selected versus busy-other drives, and removal
+  while a chooser/confirmation is open. The November 9 recovery observed
+  MANTACORE and GANDER1 mounted together; discovery is not eject acceptance.
+- Rebuild from the final recipe, verify artifacts, then refresh the stopped
+  session backup and music/recording inventory before the card handoff.
 
 - Runtime cleanup removes Firefox, Syncthing and qpwgraph, repairs portal
   backend selection, preserves private config modes and removes `preempt=full`.
@@ -91,9 +152,11 @@ worktrees remain intact. No push, ARM build or Pi deployment was performed.
   that a real USB can be removed. Eject must refuse while any player/analyzer
   still depends on the device or a copy/load is pending. Cached-file leases,
   fallback behavior, hotplug races and decoder lifetime require runtime tests.
-- Read-ahead is currently a bounded startup environment setting (2–24 chunks,
-  default 8); the touch selector is only proposed. Source filtering and the
-  full tab/settings layout are also prototype behavior, not Mixxx features yet.
+- Read-ahead remains a bounded startup setting (2–24 chunks, default 8).
+  Its persisted next-launch selector is now in the recovered settings patch,
+  pending native runtime acceptance. Four tabs, loop focus and sampler loading
+  are implemented in the native skin; source defaults/reordering and the full
+  media/settings target still require completion and acceptance.
 
 Next: review the proposed touch layout; compile the ARM package; exercise
 cache success/failure and safe eject with removable media; test supervised

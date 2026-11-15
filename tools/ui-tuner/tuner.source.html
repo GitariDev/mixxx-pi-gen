@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src 'none'; form-action 'none'; base-uri 'none'">
+<title>MixPi · Editable UI workshop</title>
+<style>
+:root{color-scheme:dark;--ui-bg:#17191f;--ui-text:#e5e6ea;--ui-alt:#32323c;--ui-blue:#123b80;--ui-accent:#b5e15c;--row:34px;--track-font:17px;--rail:8px;--thumb:20px;--pane:290px}
+html,body{margin:0;padding:0;background:transparent}.screen [hidden]{display:none!important}
+body{font-family:var(--font-sans,Arial,sans-serif);color:var(--foreground,#e5e6ea)}
+*{box-sizing:border-box}main{max-width:1000px;margin:auto}h1{font-size:25px;margin:4px 0 9px}h2{font-size:17px;margin:0 0 12px}p{line-height:1.5;font-size:14px;margin:8px 0}.muted{color:var(--muted-foreground,#abb3c2)}
+.card{background:var(--card,#20242d);border-radius:var(--radius,10px);padding:16px;margin:14px 0}.eyebrow{font:12px var(--font-mono,monospace);color:var(--success,#a6d95c);letter-spacing:1px}.warning{color:var(--warning,#edc16b)}
+button,select,input,textarea{font:inherit}button,select{color:var(--foreground,#e5e6ea);background:var(--secondary,#303744);border:1px solid var(--border,#5b6472);border-radius:6px;padding:8px 10px;cursor:pointer}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--ring,#73bfff);outline-offset:2px}button[aria-pressed=true]{border-color:var(--success,#b5e15c)}.toolbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.toolbar button{font-size:13px}.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}.compare img{display:block;width:100%;height:240px;object-fit:contain;background:#111318;border-radius:5px}.compare label{display:block;font-size:13px;margin-bottom:8px}.compare select{max-width:100%;font-size:12px}.controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.controls label{display:grid;gap:6px;font-size:13px}.controls input[type=range]{width:100%;accent-color:#73bfff}.controls output{color:var(--muted-foreground,#b4c0d0)}textarea{width:100%;min-height:70px;background:var(--background,#17191f);color:inherit;border:1px solid var(--border,#596171);border-radius:5px;padding:8px}.screen-fit{width:100%;aspect-ratio:5/3;position:relative;overflow:hidden;margin-top:10px;border-radius:5px}.screen{position:absolute;top:0;left:0;width:800px;height:480px;transform-origin:top left;background:#111318;color:var(--ui-text);font:16px Arial,sans-serif;overflow:hidden}
+.desktop{height:36px;display:flex;align-items:center;gap:4px;background:#17191f;padding:2px;font:12px Arial}.desktop span{padding:8px 9px;background:#30343f;border-radius:3px}.desktop span:nth-child(2){background:#285a88}.desktop span:nth-child(3){background:#245b47}.desktop i{flex:1}.desktop time{padding-right:12px}
+.native-tabs{display:flex;gap:4px;height:50px;align-items:center;padding:2px}.screen button{height:44px;background:#222833;color:#f5f6fa;border:1px solid #687381;border-radius:5px;padding:0 8px;font:bold 15px Arial;min-width:0}.screen button.current{border:2px solid var(--ui-accent);background:#303b21}.screen button:disabled{cursor:default;opacity:1}.native-tabs .gap{flex:1}.screen .cpu{width:48px;color:#a6d95c;font-size:14px}.native-main{height:262px;position:relative;overflow:hidden}.browse-tools{height:48px;display:flex;background:var(--ui-alt);gap:3px;align-items:center}.search{flex:1;padding:8px;color:#aab0bb;font-weight:bold}.browse-body{height:214px;display:flex}.table-scroll{flex:1;overflow:auto;min-width:0;background:#000}.track-table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:var(--track-font)}.track-table th{height:34px;background:var(--ui-alt);color:#e5e6ea;text-align:left;font-size:14px;padding:0 7px}.track-table td{height:var(--row);padding:0 7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.track-table tr:nth-child(even){background:#1f1f26}.track-table tr.selected{background:#e5e6ea;color:#000}.track-table .number{width:31px}.track-table .title{width:40%}.track-table .bpm{width:66px}.track-table .key{width:58px}.sources{width:var(--pane);background:#32323c;border-left:3px solid #666;overflow:auto;font-size:var(--track-font)}.sources div{min-height:48px;padding:13px}.sources div:first-child{background:#285a88}.titles{height:28px;display:flex;background:var(--ui-blue);color:white}.titles span{width:50%;padding:4px 8px;overflow:hidden;white-space:nowrap}.overviews{height:52px;display:flex;gap:2px;background:#05070c}.overview{width:50%;height:52px;background:repeating-linear-gradient(90deg,#4376a5 0px,#5dafb1 2px,#c595b2 3px,#223044 4px);clip-path:polygon(0 20%,10% 8%,15% 30%,30% 8%,40% 22%,70% 2%,80% 15%,90% 3%,100% 20%,100% 80%,90% 98%,80% 85%,70% 98%,40% 78%,30% 92%,15% 70%,10% 92%,0 80%)}.transport{height:52px;display:flex;gap:3px;padding:3px 2px}.transport button{flex:1;font-size:16px}.transport button:nth-child(6n){border-color:#91cb72}.stats{height:54px;display:flex;gap:3px;align-items:center;padding:3px 8px;font-size:22px}.stats span{width:50%}.stats b{background:#f4f6fa;color:#101318;padding:5px;margin:0 6px}
+.fx{height:208px;padding:4px}.fx-header{height:56px;display:flex;gap:5px;align-items:center}.fx-header strong{width:90px;font-size:15px}.fx-header button{width:112px}.mix-rail{flex:1;min-width:170px;padding:2px 12px}.mix-rail label{font-size:13px;display:flex;justify-content:space-between}.native-range{appearance:none;width:100%;height:32px;background:transparent;margin:1px 0}.native-range::-webkit-slider-runnable-track{height:var(--rail);border-radius:4px;background:#344d69}.native-range::-webkit-slider-thumb{appearance:none;width:var(--thumb);height:30px;background:#e5eaf2;border:2px solid #1d2738;border-radius:4px;margin-top:calc((var(--rail) - 30px)/2)}.native-range::-moz-range-track{height:var(--rail);background:#344d69}.native-range::-moz-range-thumb{width:var(--thumb);height:30px;background:#e5eaf2;border:2px solid #1d2738}.fx-cards{display:flex;gap:8px;height:140px}.fx-card{width:33.33%;padding:6px;border:1px solid #536276;background:#172033}.fx-card select{width:100%;height:36px;background:#20334a;color:white;font-size:17px;padding:4px}.fx-card button{width:100%;height:36px}.popup{position:absolute;top:96px;left:12px;width:240px;max-height:150px;overflow:auto;background:#20334a;color:white;border:1px solid #73bfff;z-index:3;box-shadow:0 5px 15px #0009}.popup div{padding:10px 14px}.popup div:nth-child(2){background:#285a88}
+.settings{height:208px;padding:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px}.setting-group{background:#172033;border:1px solid #39475c;padding:8px}.setting-group h3{font-size:13px;color:#aab8cc;margin:0 0 8px}.setting-line{display:flex;justify-content:space-between;align-items:center;gap:5px;height:47px}.setting-line span{font-size:14px}.setting-line button{height:36px;font-size:14px}.settings.dense{gap:2px}.settings.dense .setting-group{border-color:#6897cb;background:#121c2e}.settings.dense h3{color:white}.dialog{margin:10px auto;width:700px;height:240px;border:1px solid #687381;background:#172033;padding:12px;border-radius:5px}.dialog h3{font-size:19px;margin:0 0 8px}.dialog p{font-size:15px;color:#c9d5e4;margin:8px 0}.device{border:1px solid #536276;padding:10px;background:#20334a}.device small{display:block;margin-top:6px;color:#b7c4d5}.dialog-actions{display:flex;gap:7px;margin-top:14px}.dialog-actions button{height:42px;flex:1}.state-note{font-size:13px;color:#edc16b}.boot{padding:30px;background:#172033;height:262px}.boot h3{font-size:23px;margin:5px 0 15px}.boot p{font-size:17px}.path{font:16px monospace;color:#a6d95c}.fact-list{font:12px var(--font-mono,monospace);overflow-wrap:anywhere;line-height:1.6}.status{font-size:13px;min-height:20px}.bottom-controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.deferred{font-size:12px}.screen-note{font-size:12px;color:var(--muted-foreground,#b4bfce)}
+@media(max-width:650px){.controls{grid-template-columns:1fr 1fr}.compare{grid-template-columns:1fr}.compare img{height:220px}h1{font-size:22px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+.screen button,button,select{border-radius:2px}
+.browse-body{height:266px;position:relative}.sources{position:absolute;left:0;top:0;bottom:0;z-index:4;border:1px solid #687381;box-shadow:6px 0 18px #0009}
+.screen .preview-menu{position:absolute;z-index:30;top:134px;right:8px;bottom:12px;width:340px;overflow:auto;background:#172338;border:1px solid #8393a9;box-shadow:0 8px 24px #000b;padding:10px;font-size:15px}
+.menu-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.preview-menu button{width:100%;text-align:left;margin:3px 0;flex-shrink:0}.preview-menu .menu-heading button{width:auto;text-align:center}.preview-menu label{display:flex;align-items:center;gap:12px;min-height:44px}.preview-menu input[type=checkbox]{width:22px;height:22px;accent-color:#b5e15c}.preview-menu p{font-size:14px}.column-line{display:flex;align-items:center;gap:5px}.column-line label{flex:1}.preview-menu .column-line button{width:42px;text-align:center}.fx{height:314px}.fx-header{height:76px}.mix-rail{background:#123363;border:1px solid #416395;border-radius:2px;padding:9px 14px;margin-left:auto;max-width:290px}.fx-cards{height:214px}.fx-card{display:flex;flex-direction:column;justify-content:space-around}.fx-card .native-range{width:100%}.screen .effect-choice{background:#123363}.settings{height:314px;grid-template-columns:1fr}.setting-line select{background:#172338;color:white;height:42px;min-width:130px}.settings .setting-group{overflow:auto}.screen .advanced-link{float:right}.dialog{height:314px;margin:0;padding:14px}.dialog-header{display:flex;justify-content:space-between;align-items:center}.dialog-header h3{margin:0}.device-list{display:flex;gap:8px;margin-top:14px}.screen .device-choice{height:74px;flex:1;text-align:left;white-space:normal}.device-choice small{display:block;margin-top:7px;font-weight:normal}.dialog-actions{align-items:center}.dialog-actions button{flex:0 0 150px}.dialog-actions .state-note{margin-left:10px;font-size:14px}.boot{height:314px}.deck-sketch{padding:30px;background:#172338;height:208px}.deck-sketch h3{margin-top:0}.menu-status{font-size:13px;color:#edc16b;min-height:18px}.screen .preview-menu[hidden]{display:none}.track-table .title{width:auto}
+.browse-body{height:calc(var(--main-height,314px) - 48px)}
+.sources{left:auto;right:0;box-shadow:-6px 0 18px #0009}
+.screen .sources button{width:100%;min-height:44px;text-align:left;display:block;border-width:0 0 1px;background:#32323c;font-weight:normal;font-size:var(--track-font)}
+.screen .sources button[data-action="source-back"]{background:#285a88;text-align:center;font-weight:bold}
+.sources .source-controls{position:sticky;top:0;padding:0;min-height:0;background:#32323c;z-index:1}
+.sources .source-location{background:#222833;padding:8px;min-height:0;font-size:13px;overflow-wrap:anywhere}
+.sources small{display:block;padding:8px;color:#bcc6d5;font-size:12px}
+.track-table caption{text-align:left;padding:5px 8px;background:#172033;font-size:12px;color:#bac7d8}
+.settings{height:100%;grid-template-columns:1fr 1fr;align-items:stretch}
+.settings.advanced{grid-template-columns:1fr}.settings p{font-size:14px;color:#bbc8da}
+.fx,.dialog,.boot,.deck-sketch{height:100%}.fx-cards{height:calc(100% - 76px)}
+.screen select.effect-choice{background:#20334a}
+.preview-menu .menu-heading{position:sticky;top:0;background:#172338;z-index:1}
+</style>
+</head>
+<body><main>
+<p class="eyebrow">NOV 11 FIELD BASELINE · UI TUNER 03</p>
+<h1>MixPi UI workshop</h1>
+<p>Open this file locally. Show opens the files/folders pane with Back; Sources chooses what appears there. Save an editable HTML copy to keep working later; no installation or server needed.</p>
+<p><a href="#workshop">Jump to the editable screen</a></p>
+<p class="muted">Your Pi photographs, the exact shipped skin, optional captured native screens, and the earlier Browse reference. No simulated functionality passed off as working software.</p>
+<section class="card"><h2>Evidence, not a recreated “before”</h2><div class="compare">
+<div><label for="photo">Current field photo</label><select id="photo"></select><img id="field-photo" alt="Owner photograph of the current Pi display"></div>
+<div><label>Earlier native track presentation · restoration reference</label><img id="historic-photo" alt="Historical native Pioneered Browse screenshot with dark table and readable track rows"></div></div>
+<p class="screen-note">Photos include perspective and room lighting. The historical capture is not a fresh live screenshot.</p>
+<div id="native-evidence" hidden><h2>Actual Pi · captured native baseline, not the proposed repair</h2><label for="native-screen">Captured screen</label><select id="native-screen"></select><div class="compare"><img id="native-photo" alt="Captured native Mixxx screen on the working Pi"></div><p id="native-provenance" class="screen-note"></p></div>
+<p id="native-missing" class="screen-note">No native capture bundle supplied. This page does not claim to show the inspected Pi baseline.</p></section>
+<section class="card" id="workshop"><h2>Editable proposal · not installed on the Pi</h2>
+<div class="toolbar" id="pages"><button data-page="decks" aria-pressed="false">Decks</button><button data-page="browse" aria-pressed="true">Tracks</button><button data-page="fx" aria-pressed="false">Effects</button><button data-page="media" aria-pressed="false">Load / Eject</button><button data-page="settings" aria-pressed="false">Settings</button><button data-page="startup" aria-pressed="false">First start</button></div>
+<div class="screen-fit" id="screen-fit"><div class="screen" id="screen">
+<div class="desktop"><span>Desktop</span><span>Mixxx</span><span>Speaker</span><span>Settings</span><span>USB ⇄ Pi</span><i></i><time>20:44</time><span>⌨</span><span>⏻</span></div>
+<div class="native-tabs"><button data-page="decks">DECKS</button><button data-page="browse" id="tab-browse" class="current">TRACKS</button><button data-page="fx" id="tab-fx">FX</button><button disabled>SAMPLER</button><button data-page="media">LOAD / EJECT</button><span class="gap"></span><button data-page="settings">SETTINGS</button><button disabled>● REC</button><span class="cpu">CPU<br>—</span></div>
+<div class="native-main" id="native-main"></div>
+<div class="titles"><span>1　busstop</span><span>2　Let It Happen (Soulwax Remix)</span></div>
+<div class="stats" id="stats" hidden><span>0:00.00 <b>114.1</b> 8A</span><span>0:00.00 <b>108.1</b> 12A</span></div>
+<div class="overviews" aria-label="Illustrative waveform texture, not audio data"><div class="overview"></div><div class="overview"></div></div>
+<div class="transport" id="transport"></div><div id="preview-menu" class="preview-menu" hidden></div></div></div>
+<p class="screen-note">Fixed 800×480 canvas, 36 px desktop / 444 px app. Track names and waveform marks are illustrative. REC, audio and media operations are deliberately inert.</p>
+<p id="page-description" class="warning"></p>
+<label for="screen-notes">Notes for this screen</label><textarea id="screen-notes" placeholder="Describe what to keep, remove or change on this screen."></textarea>
+</section>
+<section class="card"><h2>Adjust the proposal</h2><div class="controls">
+<label>Track font <output id="font-value"></output><input id="font" type="range" min="15" max="20" value="17"></label>
+<label>Track row <output id="row-value"></output><input id="row" type="range" min="34" max="48" step="2" value="34"></label>
+<label>Source pane <output id="pane-value"></output><input id="pane" type="range" min="240" max="320" step="10" value="290"></label>
+<label>Slider rail <output id="rail-value"></output><input id="rail" type="range" min="4" max="12" value="8"></label>
+<label>Slider thumb <output id="thumb-value"></output><input id="thumb" type="range" min="16" max="28" step="2" value="20"></label>
+<label>Track columns<select id="columns"><option value="classic">Title · Artist · BPM · Key</option><option value="played">Last played · Title · Artist · BPM · Key</option></select></label>
+<label>Selected row<select id="selection"><option value="classic">Earlier light selection / dark text</option><option value="blue">Blue selection / white text</option></select></label>
+<label>Settings density<select id="settings-style"><option value="grouped">Grouped by purpose</option><option value="dense">Stronger group borders</option></select></label>
+<label>Media scenario · simulation only<select id="media-scenario"><option value="off">Mounted · broker OFF (current)</option><option value="available">Available to load</option><option value="in-use">In use · eject refused</option><option value="reviewed-idle">Mock reviewed idle state</option><option value="unknown">Probe error · unavailable</option></select></label>
+<label>Theme baseline<select disabled><option>Original dark Pioneered palette</option></select></label></div>
+<p class="deferred">No audio-engine, keylock, buffer or tempo defaults are changed. The live keylock/tempo observation is recorded for later.</p>
+<label for="notes">What would you change next?</label><textarea id="notes" placeholder="For example: keep the earlier column order; make MIX wider; move advanced settings to a second page."></textarea>
+<div class="bottom-controls"><button id="save-html">Save editable HTML copy</button><button id="export">Export preferences JSON</button><button id="import">Import preferences JSON</button><input id="import-file" type="file" accept="application/json,.json" hidden><button id="reset">Reset preview</button></div><p class="status" id="status" role="status">Unsaved draft. Save an HTML copy or export preferences to retain your edits.</p></section>
+<details class="card"><summary>Actions audit · what the original menu contains</summary><p>The current native Actions button opens Mixxx’s track context menu. It requires a selected track; available entries depend on the source, selection and model capabilities.</p><p>Search related / Select in Library; Auto DJ queue; Load to Deck / Sampler / Preview; Playlists and Crates; Remove from list; BPM correction / lock / reset; Rating and Color; Metadata, Cover art and web search; Clear track data; Analyze / Reanalyze; Hide / Unhide / Purge; Trash files; Open in File Browser; Properties. ReplayGain-from-pregain exists in applicable deck-widget menus, not every track table.</p><p>New primary surface: Load → Deck 1 / Deck 2; Arrange columns → persistent checkboxes and ordering; Original full menu → native commands. Show / Hide opens the file/folder pane; Sources sits at its top, above Back. No native command is deleted by this proposal. The full-menu panel here is an audit, not an operational clone.</p><p>Native Mixxx already keeps column visibility checkboxes open and supports drag ordering of headers. The touch-friendly combined arrange panel and simplified Actions entry still need native integration.</p></details>
+<details class="card"><summary>Exact baseline and implementation boundary</summary><p>Confirmed structural mismatch: shipped XML has no LibraryWrapper ancestor, but the dark library styles require it. Popup/dialog styling needs separate native coverage. This page does not repair those files.</p><div id="facts" class="fact-list"></div><p>Preferences are not owner acceptance of native rendering, recording or eject. Incorporate them into the climb-contract-tuner record before approving an implementation revision.</p></details>
+</main>
+<script id="baseline" type="application/json">__BASELINE_JSON__</script>
+<script id="saved-draft" type="application/json">null</script>
+<script>
+'use strict';
+const baseline = JSON.parse(document.getElementById('baseline').textContent);
+const defaults = Object.freeze({font:17,row:34,pane:290,rail:8,thumb:20,columns:'classic',selection:'classic',settingsStyle:'grouped',tempoRange:16,buttonRadius:2,mediaScenario:'off'});
+let preferences = {...defaults};
+let currentPage = 'browse';
+let sourcesVisible = false;
+const element = identifier => document.getElementById(identifier);
+const photoLabels = ['1 · Effects popup','2 · Effects sliders','3 · Record','4 · LOAD','5 · EJECT','6 · Sources menu','7 · Track table','7b · Source pane','8 · Settings','9 · Startup library'];
+baseline.photos.forEach((photo,index) => {const option = document.createElement('option');option.value=String(index);option.textContent=photoLabels[index]+' · '+photo.name;element('photo').append(option);});
+element('photo').value='6';
+function showPhoto(){element('field-photo').src=baseline.photos[Number(element('photo').value)].url;}
+showPhoto();element('photo').addEventListener('change',showPhoto);
+element('historic-photo').src=baseline.historical.url;
+if(baseline.native){element('native-evidence').hidden=false;element('native-missing').hidden=true;baseline.native.screens.forEach((screen,index)=>{const option=document.createElement('option');option.value=String(index);option.textContent=screen.label;element('native-screen').append(option);});const showNative=()=>{const screen=baseline.native.screens[Number(element('native-screen').value)];element('native-photo').src=screen.url;element('native-provenance').textContent='Captured on '+baseline.native.observedAt+' · boot '+baseline.native.bootId+' · '+screen.name+' · SHA256 '+screen.sha256+'. This is a retained observation, not a live connection or corrected native render.';};element('native-screen').addEventListener('change',showNative);showNative();}
+element('facts').textContent=['Overlay '+baseline.overlaySha256,'XML '+baseline.skinSha256,'QSS '+baseline.styleSha256,'LibraryWrapper count '+baseline.libraryWrapperCount,'Scoped library styles present '+baseline.scopedLibraryStylePresent].join('\n');element('facts').style.whiteSpace='pre-wrap';
+for(let deck=1;deck<=2;deck++){for(const title of ['KEY','Q','SYNC','LOOP','CUE','▶']){const button=document.createElement('button');button.disabled=true;button.textContent=title;element('transport').append(button);}}
+function range(label,value){return '<input class="native-range" type="range" min="0" max="100" value="'+value+'" aria-label="'+label+' preview only">';}
+const columnCatalog = Object.freeze({title:'Title',artist:'Artist',bpm:'BPM',key:'Key',played:'Last played'});
+const initialOrder = ['title','artist','bpm','key','played'];
+let columnOrder = [...initialOrder];
+let visibleColumns = ['title','artist','bpm','key'];
+let menu = null;
+let settingsAdvanced = false;
+let selectedDrive = 'usb';
+let feedback = '';
+let showTitles = true;
+let showWaveforms = true;
+let selectedTrack = 1;
+let selectedEffects = ['ECHO','REVERB','FILTER'];
+const sourceCatalog=['Tracks','Auto DJ','Playlists','Crates','Computer','Recordings','History','Analyse','iTunes','Rekordbox','Serato'];
+let visibleSources=[...sourceCatalog];
+let showDesktop=true;
+let sourcePath=[];
+const sourceFolders=Object.freeze({Computer:['computer-music'], 'computer-music':['copied-library'],Playlists:['playlist-demo'],Crates:['crate-demo'],Rekordbox:['rekordbox-playlists'], 'rekordbox-playlists':['rekordbox-demo']});
+const sourceLabels=Object.freeze({'computer-music':'Music','copied-library':'Copied library','playlist-demo':'My playlist','crate-demo':'My crate','rekordbox-playlists':'Playlists','rekordbox-demo':'USB playlist'});
+function sourceLabel(identifier){return sourceLabels[identifier]||identifier;}
+function sourceEntries(path=sourcePath){return path.length?(sourceFolders[path[path.length-1]]||[]):visibleSources;}
+function validSourcePath(path,visible=visibleSources){
+ if(!Array.isArray(path)||path.length>8)return false;
+ let allowed=visible;
+ for(const identifier of path){if(!allowed.includes(identifier))return false;allowed=sourceFolders[identifier]||[];}
+ return true;
+}
+function openSource(identifier){if(sourceEntries().includes(identifier))sourcePath=[...sourcePath,identifier];}
+function sourcePane(){return '<aside class="sources" aria-label="Files and folders overlay"><div class="source-controls"><button data-action="sources" aria-expanded="'+(menu==='sources')+'">Sources ▾</button><button data-action="source-back" '+(!sourcePath.length?'disabled':'')+'>← Back</button></div>'+(sourcePath.length?'<div class="source-location">'+sourcePath.map(sourceLabel).join(' / ')+'</div>':'')+sourceEntries().map(identifier=>'<button data-source-entry="'+identifier+'">▸ '+sourceLabel(identifier)+'</button>').join('')+'<small>Sample navigation · no drive access</small></aside>';}
+const sampleTracks = [
+ {title:'MS NEW BOOTY',artist:'—',bpm:'—',key:'—',played:'—'},
+ {title:'Lady (BryceG Edit)',artist:'BryceGrove',bpm:'114.1',key:'B♭m',played:'11/11/2026'},
+ {title:'Tropical Storm Lenny',artist:'The Alchemist',bpm:'154.2',key:'B♭m',played:'—'},
+ {title:'Jealousy',artist:'RAYMOND',bpm:'104.0',key:'Em',played:'—'},
+ {title:'CHAMPIONSHIP',artist:'KAYTRANADA',bpm:'108.1',key:'Fm',played:'—'}
+];
+function moveColumn(order,name,offset){
+ const index=order.indexOf(name);
+ if(![-1,1].includes(offset)||index<0||index+offset<0||index+offset>=order.length)return [...order];
+ const result=[...order];
+ [result[index],result[index+offset]]=[result[index+offset],result[index]];
+ return result;
+}
+function toggleColumn(visible,name){
+ if(!Object.hasOwn(columnCatalog,name))return [...visible];
+ if(visible.includes(name))return visible.length>1?visible.filter(value=>value!==name):[...visible];
+ return [...visible,name];
+}
+function menuButton(action,label){return '<button data-action="'+action+'">'+label+'</button>';}
+function menuHeader(title,back){return '<div class="menu-heading"><strong>'+title+'</strong>'+menuButton(back||'close-menu',back?'Back':'Close')+'</div>';}
+function tracks(){
+ const columns=columnOrder.filter(name=>visibleColumns.includes(name));
+ return '<div class="browse-tools"><span class="search">SEARCH…</span><button data-action="actions" aria-expanded="'+(['actions','decks','columns','full'].includes(menu))+'">Actions</button><button data-action="show" aria-expanded="'+sourcesVisible+'">'+(sourcesVisible?'Hide ↦':'Show ↤')+'</button></div><div class="browse-body"><div class="table-scroll"><table class="track-table"><caption>'+(sourcePath.length?sourcePath.map(sourceLabel).join(' / '):'Tracks')+' · sample files</caption><thead><tr><th class="number">#</th>'+columns.map(name=>'<th>'+columnCatalog[name]+'</th>').join('')+'</tr></thead><tbody>'+sampleTracks.map((track,index)=>'<tr tabindex="0" data-track="'+index+'" aria-selected="'+(index===selectedTrack)+'" class="'+(index===selectedTrack?'selected':'')+'"><td>'+(index+1)+'</td>'+columns.map(name=>'<td>'+track[name]+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>'+(sourcesVisible?sourcePane():'')+'</div>';
+}
+function effects(){return '<div class="fx"><div class="fx-header"><button disabled>DECK 1</button><button disabled>DECK 2</button><button disabled>MASTER</button><div class="mix-rail"><label>MIX <span>50%</span></label>'+range('MIX',50)+'</div></div><div class="fx-cards">'+selectedEffects.map((name,index)=>'<div class="fx-card"><select class="effect-choice" data-effect-slot="'+index+'" aria-label="Effect '+(index+1)+' preview only">'+['---','ECHO','REVERB','FILTER','FLANGER','PHASER'].map(effect=>'<option value="'+effect+'" '+(name===effect?'selected':'')+'>'+(effect==='---'?'Select effect…':effect)+'</option>').join('')+'</select>'+range('Effect '+(index+1)+' depth',index===0?20:50)+'<button disabled>ON / OFF</button></div>').join('')+'</div></div>';}
+function settings(){
+ const advanced='<h3>ADVANCED · DISPLAY / NEXT LAUNCH</h3><div class="setting-line"><span>WAVEFORM FPS</span><button disabled>60</button></div><div class="setting-line"><span>READ-AHEAD *</span><button disabled>8</button></div><div class="setting-line"><span>CACHE MB *</span><button disabled>1024</button></div><p>* Apply at next launch. Native controls unchanged.</p>';
+ const basic='<h3>PLAYBACK</h3><div class="setting-line"><span>KEYLOCK</span><button disabled>RB Fast</button></div><div class="setting-line"><span>BUFFER</span><button disabled>1024</button></div><div class="setting-line"><label for="tempo-preview">TEMPO ±</label><select id="tempo-preview" aria-label="Tempo range preview only">'+[4,6,8,10,16,24,50,90].map(value=>'<option '+(value===(preferences.tempoRange||16)?'selected ':'')+'value="'+value+'">'+value+'%</option>').join('')+'</select></div>';
+ const interfacePanel='<section class="setting-group"><h3>INTERFACE</h3><div class="setting-line"><span>DESKTOP TOP BAR</span><button data-action="desktop-bar" aria-pressed="'+showDesktop+'">'+(showDesktop?'Hide top bar':'Show top bar')+'</button></div><p>Desktop · Mixxx · Speaker · system shortcuts</p><p>'+(showDesktop?'Hide to give the app more space.':'Hidden · Settings stays available to restore it.')+'</p><button data-action="advanced">Advanced…</button></section>';
+ return '<div class="settings '+(preferences.settingsStyle==='dense'?'dense':'')+(settingsAdvanced?' advanced':'')+'"><section class="setting-group">'+(settingsAdvanced?'<button class="advanced-link" data-action="advanced">Back</button>'+advanced:basic)+'</section>'+(settingsAdvanced?'':interfacePanel)+'</div>';
+}
+function mediaPresentation(scenario){
+ const states={off:{state:'Mounted · broker OFF',label:'Eject unavailable',action:null,reason:'Broker OFF · keep the drive connected.'},available:{state:'Available · not loaded',label:'Load',action:'load-source',reason:'Preview selection only; no mounting or import.'},'in-use':{state:'In use by a deck',label:'Eject unavailable',action:null,reason:'Release every user of this drive first.'},'reviewed-idle':{state:'Mock reviewed idle state',label:'Eject',action:'eject-preview',reason:'Hypothetical authority only, not current Pi status.'},unknown:{state:'Probe error',label:'Unavailable',action:null,reason:'Identity or state unknown; fail closed.'}};
+ return states[scenario]||states.unknown;
+}
+function media(){
+ const state=mediaPresentation(preferences.mediaScenario||'off');
+ const action=selectedDrive==='internal'?menuButton('load-source','Load'):state.action?menuButton(state.action,state.label):'<button disabled>'+state.label+'</button>';
+ return '<section class="dialog"><div class="dialog-header"><h3>LOAD / EJECT</h3><button data-action="close-media">Close</button></div><div class="device-list"><button class="device-choice '+(selectedDrive==='internal'?'current':'')+'" data-action="drive-internal">Internal music<small>Local folder · not removable</small></button><button class="device-choice '+(selectedDrive==='usb'?'current':'')+'" data-action="drive-usb">MANTACORE<small>'+state.state+' · simulation</small></button></div><div class="dialog-actions">'+action+'<span class="state-note">'+(selectedDrive==='internal'?'Select this source in preview only.':state.reason)+'</span></div><p class="menu-status" role="status">'+feedback+'</p><p class="state-note">No mount, unmount, power-off or authority change</p></section>';
+}
+const descriptions={decks:'Decks keeps the performance controls. Their preview is inert; native behavior is unchanged.',browse:'Show / Hide opens the ordinary files/folders overlay with Back. Sources is at the top of that pane, above Back, and chooses which sources appear; its checkboxes stay open until Close. Folder contents here are samples, not a drive scan.',fx:'The ordinary effect dropdown stays a dropdown; only its empty-selection text becomes “Select effect…”. MIX keeps its dark-blue box. No bottom quick controls.',media:'One media surface, selected-drive actions. Current broker-OFF restrictions remain visible; no false safe-to-remove status.',settings:'Playback and interface controls share the space. Hide / Show desktop top bar reclaims 36 px while keeping Settings accessible. Display and next-launch items stay in Advanced; all changes are previews.',startup:'Normal Mixxx startup with no first-run folder chooser. Initialize only a fresh profile to the ordinary internal music folder; preserve existing libraries. No automatic USB scan.'};
+function renderMenu(){
+ const container=element('preview-menu');
+ container.hidden=menu===null;
+ if(menu===null){container.innerHTML='';return;}
+ let content='';
+ if(menu==='sources')content=menuHeader('Sources')+sourceCatalog.map(name=>'<label><input type="checkbox" data-source="'+name+'" '+(visibleSources.includes(name)?'checked':'')+'>'+name+'</label>').join('');
+ if(menu==='actions')content=menuHeader('Actions')+menuButton('load-menu','Load →')+menuButton('columns','Arrange columns →')+menuButton('full','Original full menu →');
+ if(menu==='decks')content=menuHeader('Load selected track','actions')+menuButton('deck-1','Deck 1')+menuButton('deck-2','Deck 2');
+ if(menu==='columns')content=menuHeader('Arrange columns','actions')+columnOrder.map((name,index)=>'<div class="column-line"><label><input type="checkbox" data-column="'+name+'" '+(visibleColumns.includes(name)?'checked':'')+'>'+columnCatalog[name]+'</label><button data-move="'+name+'" data-offset="-1" aria-label="Move '+columnCatalog[name]+' earlier" '+(index===0?'disabled':'')+'>↑</button><button data-move="'+name+'" data-offset="1" aria-label="Move '+columnCatalog[name]+' later" '+(index===columnOrder.length-1?'disabled':'')+'>↓</button></div>').join('')+menuButton('close-menu','Close');
+ if(menu==='full')content=menuHeader('Original full menu','actions')+'<p>Native handoff, not a replacement of Mixxx commands.</p><p>Load to · Auto DJ · Playlists / Crates · BPM · Rating / Color · Metadata / Cover art · Clear / Analyze · Hide / Remove · Properties</p><p>Entries depend on the active view, selection and supported capabilities. Destructive items stay in this deeper menu.</p>';
+ container.innerHTML=content+'<div class="menu-status" role="status">'+feedback+'</div>';
+}
+function render(){
+ const deckPage=currentPage==='decks';
+ const mainHeight=(deckPage?208:314)+(!showTitles?28:0)+(!showWaveforms?52:0)+(!showDesktop?36:0);
+ element('native-main').style.height=mainHeight+'px';
+ element('screen').style.setProperty('--main-height',mainHeight+'px');
+ element('screen').querySelector('.desktop').hidden=!showDesktop;
+ element('preview-menu').style.top=(showDesktop?134:98)+'px';
+ element('stats').hidden=!deckPage;element('transport').hidden=!deckPage;
+ element('screen').querySelector('.titles').hidden=!showTitles;
+ element('screen').querySelector('.overviews').hidden=!showWaveforms;
+ if(currentPage==='browse')element('native-main').innerHTML=tracks();
+ if(currentPage==='fx')element('native-main').innerHTML=effects();
+ if(currentPage==='settings')element('native-main').innerHTML=settings();
+ if(currentPage==='media')element('native-main').innerHTML=media();
+ if(deckPage)element('native-main').innerHTML='<section class="deck-sketch"><h3>Decks</h3><p>Existing deck controls stay here, not on Tracks or FX.</p><p>Layout placeholder, not a playable deck.</p></section>';
+ if(currentPage==='startup')element('native-main').innerHTML='<section class="boot"><h3>Mixxx</h3><p>Open normally, straight into the library.</p><p>No first-cold-boot folder selection.</p><p>Fresh profile only: internal music default. Existing library choices stay untouched.</p></section>';
+ element('page-description').textContent=descriptions[currentPage];
+ element('screen-notes').value=screenNotes[currentPage]||'';
+ for(const button of document.querySelectorAll('[data-page]')){const active=button.dataset.page===currentPage;button.setAttribute('aria-pressed',String(active));button.classList.toggle('current',active);}
+ const selected=document.querySelector('tr.selected');if(selected){selected.style.background=preferences.selection==='blue'?'#285a88':'#e5e6ea';selected.style.color=preferences.selection==='blue'?'#fff':'#000';}
+ renderMenu();
+}
+function openMenu(next){menu=menu===next?null:next;feedback='';render();if(menu)element('preview-menu').querySelector('button,input')?.focus();}
+function act(action){
+ const previousMenu=menu;
+ feedback='';
+ if(action==='sources'||action==='actions'){openMenu(action);return;}
+ if(action==='show'){sourcesVisible=!sourcesVisible;menu=null;}
+ if(action==='source-back')sourcePath=sourcePath.slice(0,-1);
+ if(action==='desktop-bar')showDesktop=!showDesktop;
+ if(action==='close-menu')menu=null;
+ if(action==='load-menu')menu='decks';
+ if(action==='columns'||action==='full')menu=action;
+ if(action==='deck-1'||action==='deck-2')feedback='Preview only: '+sampleTracks[selectedTrack].title+' → '+action.replace('-',' ')+'. No audio or native loading.';
+ if(action==='advanced')settingsAdvanced=!settingsAdvanced;
+ if(action==='drive-internal')selectedDrive='internal';
+ if(action==='drive-usb')selectedDrive='usb';
+ if(action==='load-source')feedback=(selectedDrive==='internal'?'Internal music':'MANTACORE')+' selected in preview only. No files opened.';
+ if(action==='eject-preview')feedback='Layout demonstration only. Nothing was ejected; no removal authorization.';
+ if(action==='close-media'){currentPage='browse';menu=null;}
+ render();
+ if(action==='close-menu')element('native-main').querySelector(previousMenu==='sources'?'[data-action="sources"]':'[data-action="actions"]')?.focus();
+ if(action==='desktop-bar')element('native-main').querySelector('[data-action="desktop-bar"]')?.focus();
+}
+element('screen').addEventListener('click',event=>{
+ const button=event.target.closest('[data-action]');
+ if(button){act(button.dataset.action);return;}
+ const move=event.target.closest('[data-move]');
+ if(move){columnOrder=moveColumn(columnOrder,move.dataset.move,Number(move.dataset.offset));render();element('preview-menu').querySelector('[data-move="'+move.dataset.move+'"][data-offset="'+move.dataset.offset+'"]')?.focus();return;}
+ const source=event.target.closest('[data-source-entry]');
+ if(source){openSource(source.dataset.sourceEntry);render();element('native-main').querySelector('[data-action="source-back"]')?.focus();return;}
+ const track=event.target.closest('[data-track]');if(track){selectedTrack=Number(track.dataset.track);render();}
+});
+element('screen').addEventListener('change',event=>{
+ const target=event.target;
+ if(target.dataset.source&&sourceCatalog.includes(target.dataset.source)){const name=target.dataset.source;visibleSources=visibleSources.includes(name)?visibleSources.length>1?visibleSources.filter(value=>value!==name):[...visibleSources]:[...visibleSources,name];if(!validSourcePath(sourcePath))sourcePath=[];render();element('preview-menu').querySelector('[data-source="'+name+'"]')?.focus();}
+ if(target.dataset.effectSlot!==undefined&&/^[0-2]$/.test(target.dataset.effectSlot)&&['---','ECHO','REVERB','FILTER','FLANGER','PHASER'].includes(target.value))selectedEffects[Number(target.dataset.effectSlot)]=target.value;
+ if(target.dataset.column){const name=target.dataset.column;visibleColumns=toggleColumn(visibleColumns,name);render();element('preview-menu').querySelector('[data-column="'+name+'"]')?.focus();}
+ if(target.id==='tempo-preview')preferences.tempoRange=Number(target.value);
+});
+element('screen').addEventListener('keydown',event=>{
+ if(event.key==='Escape'&&menu!==null){event.preventDefault();act('close-menu');}
+ const track=event.target.closest('[data-track]');if(track&&['Enter',' '].includes(event.key)){event.preventDefault();selectedTrack=Number(track.dataset.track);render();element('native-main').querySelector('[data-track="'+selectedTrack+'"]')?.focus();}
+});
+function update(){for(const name of ['font','row','pane','rail','thumb']){preferences[name]=Number(element(name).value);element(name+'-value').textContent=preferences[name]+' px';}const preset=element('columns').value;if(preset!==preferences.columns){columnOrder=preset==='played'?['played','title','artist','bpm','key']:[...initialOrder];visibleColumns=preset==='played'?[...columnOrder]:['title','artist','bpm','key'];}preferences.columns=preset;preferences.selection=element('selection').value;preferences.settingsStyle=element('settings-style').value;preferences.mediaScenario=element('media-scenario').value;for(const [key,value] of Object.entries({'--track-font':preferences.font,'--row':preferences.row,'--pane':preferences.pane,'--rail':preferences.rail,'--thumb':preferences.thumb}))element('screen').style.setProperty(key,value+'px');render();element('status').textContent='Unsaved draft. Export to retain choices; reloading discards edits.';}
+for(const input of document.querySelectorAll('.controls input,.controls select:not(:disabled)'))input.addEventListener('input',update);
+for(const button of document.querySelectorAll('[data-page]'))button.addEventListener('click',()=>{currentPage=button.dataset.page;menu=null;feedback='';render();});
+let screenNotes={};
+function draftRecord(){return {schemaVersion:1,uiRevision:3,kind:'mixpi-ui-preferences',approved:false,nativeValidated:false,baseline:{overlaySha256:baseline.overlaySha256,skinSha256:baseline.skinSha256,styleSha256:baseline.styleSha256,inputs:baseline.inputs,photos:baseline.photos.map(({name,sha256})=>({name,sha256})),historicalSha256:baseline.historical.sha256,native:baseline.native?{...baseline.native,screens:baseline.native.screens.map(({name,label,sha256})=>({name,label,sha256}))}:null},geometry:baseline.geometry,preferences:{...preferences,sourcesVisible,columnOrder:[...columnOrder],visibleColumns:[...visibleColumns],visibleSources:[...visibleSources],showDesktop,showTitles,showWaveforms,effects:[...selectedEffects],navigation:['Decks','Tracks','FX','Sampler','Load / Eject','Settings'],sourcesLayout:'overlay with file/folder navigation and Back',actions:['Load','Arrange columns','Original full menu'],startup:'normal Mixxx; fresh-profile internal default; preserve existing roots'},notes:element('notes').value,screenNotes:{...screenNotes},view:{currentPage,settingsAdvanced,selectedDrive,sourcePath:[...sourcePath]}};}
+function download(contents,type,filename){const blob=new Blob([contents],{type});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function validateDraft(record){
+ if(record?.kind!=='mixpi-ui-preferences'||record.schemaVersion!==1||![2,3].includes(record.uiRevision)||record.approved!==false||record.nativeValidated!==false)throw new Error('Expected an unapproved workshop revision 2 or 3 draft.');
+ for(const key of ['overlaySha256','skinSha256','styleSha256'])if(record.baseline?.[key]!==baseline[key])throw new Error('Draft baseline does not match this workshop.');
+ if((record.baseline.native?.inventorySha256||null)!==(baseline.native?.inventorySha256||null))throw new Error('Captured native baseline differs.');
+ const prefs=record.preferences;
+ if(!prefs||typeof prefs!=='object')throw new Error('Missing preferences.');
+ for(const [name,min,max,step] of [['font',15,20,1],['row',34,48,2],['pane',240,320,10],['rail',4,12,1],['thumb',16,28,2]])if(!Number.isInteger(prefs[name])||prefs[name]<min||prefs[name]>max||(prefs[name]-min)%step)throw new Error('Invalid '+name+'.');
+ if(!['classic','played'].includes(prefs.columns)||!['classic','blue'].includes(prefs.selection)||!['grouped','dense'].includes(prefs.settingsStyle)||![4,6,8,10,16,24,50,90].includes(prefs.tempoRange)||prefs.buttonRadius!==2)throw new Error('Unsupported setting.');
+ const order=prefs.columnOrder,visible=prefs.visibleColumns;
+ if(!Array.isArray(prefs.visibleSources)||!prefs.visibleSources.length||new Set(prefs.visibleSources).size!==prefs.visibleSources.length||prefs.visibleSources.some(name=>!sourceCatalog.includes(name)))throw new Error('Invalid source visibility.');
+ if(!['off','available','in-use','reviewed-idle','unknown'].includes(prefs.mediaScenario))throw new Error('Invalid media scenario.');
+ if(!Array.isArray(prefs.effects)||prefs.effects.length!==3||prefs.effects.some(name=>!['---','ECHO','REVERB','FILTER','FLANGER','PHASER'].includes(name)))throw new Error('Invalid effects.');
+ if(!Array.isArray(order)||order.length!==initialOrder.length||new Set(order).size!==order.length||order.some(name=>!Object.hasOwn(columnCatalog,name)))throw new Error('Invalid column order.');
+ if(!Array.isArray(visible)||!visible.length||new Set(visible).size!==visible.length||visible.some(name=>!order.includes(name)))throw new Error('Invalid visible columns.');
+ for(const name of ['sourcesVisible','showTitles','showWaveforms'])if(typeof prefs[name]!=='boolean')throw new Error('Invalid visibility.');
+ if((record.uiRevision===3||prefs.showDesktop!==undefined)&&typeof prefs.showDesktop!=='boolean')throw new Error('Invalid desktop bar visibility.');
+ if(typeof record.notes!=='string'||record.notes.length>20000||!record.screenNotes||typeof record.screenNotes!=='object'||Array.isArray(record.screenNotes))throw new Error('Invalid notes.');
+ for(const [name,value] of Object.entries(record.screenNotes))if(!Object.hasOwn(descriptions,name)||typeof value!=='string'||value.length>20000)throw new Error('Invalid screen note.');
+ if(!Object.hasOwn(descriptions,record.view?.currentPage)||typeof record.view.settingsAdvanced!=='boolean')throw new Error('Invalid screen.');
+ if(!['internal','usb'].includes(record.view.selectedDrive))throw new Error('Invalid selected drive.');
+ if((record.uiRevision===3||record.view.sourcePath!==undefined)&&!validSourcePath(record.view.sourcePath,prefs.visibleSources))throw new Error('Invalid source path.');
+ return record;
+}
+function restoreDraft(record){
+ validateDraft(record);
+ const prefs=record.preferences;
+ preferences={...defaults,...Object.fromEntries(Object.keys(defaults).map(name=>[name,prefs[name]]))};
+ columnOrder=[...prefs.columnOrder];visibleColumns=[...prefs.visibleColumns];visibleSources=[...prefs.visibleSources];sourcesVisible=prefs.sourcesVisible;showTitles=prefs.showTitles;showWaveforms=prefs.showWaveforms;
+ showDesktop=prefs.showDesktop??true;sourcePath=[...(record.view.sourcePath||[])];
+ screenNotes={...record.screenNotes};selectedEffects=[...prefs.effects];selectedDrive=record.view.selectedDrive;currentPage=record.view.currentPage;settingsAdvanced=record.view.settingsAdvanced;menu=null;feedback='';
+ for(const name of ['font','row','pane','rail','thumb','columns','selection'])element(name).value=String(preferences[name]);
+ element('settings-style').value=preferences.settingsStyle;element('media-scenario').value=preferences.mediaScenario;element('notes').value=record.notes;
+ update();element('status').textContent='Draft restored. This is not native validation or deployment.';
+}
+element('screen-notes').addEventListener('input',()=>{screenNotes[currentPage]=element('screen-notes').value;});
+element('export').addEventListener('click',()=>{download(JSON.stringify(draftRecord(),null,2)+'\n','application/json','mixpi-ui-preferences.json');element('status').textContent='Preferences exported. Save HTML for an editable standalone copy.';});
+element('save-html').addEventListener('click',()=>{
+ const root=document.documentElement.cloneNode(true);
+ for(const selector of ['#photo','#native-screen','#transport'])root.querySelector(selector)?.replaceChildren();
+ root.querySelector('#saved-draft').textContent=JSON.stringify(draftRecord()).replace(/</g,'\\u003c').replace(/>/g,'\\u003e').replace(/&/g,'\\u0026');
+ download('<!doctype html>\n'+root.outerHTML,'text/html','mixpi-ui-workshop.html');
+ element('status').textContent='Editable HTML download requested. Reopen the downloaded file to continue with your choices and notes.';
+});
+element('import').addEventListener('click',()=>element('import-file').click());
+element('import-file').addEventListener('change',async()=>{
+ const file=element('import-file').files[0];if(!file)return;
+ try{if(file.size>1048576)throw new Error('Draft exceeds 1 MiB.');restoreDraft(JSON.parse(await file.text()));}catch(error){element('status').textContent='Import refused: '+error.message;}
+ element('import-file').value='';
+});
+element('reset').addEventListener('click',()=>{if(!confirm('Discard the current unsaved preview choices and notes?'))return;for(const name of ['font','row','pane','rail','thumb','columns','selection'])element(name).value=String(defaults[name]);element('settings-style').value=defaults.settingsStyle;element('media-scenario').value=defaults.mediaScenario;element('notes').value='';screenNotes={};visibleSources=[...sourceCatalog];preferences={...defaults};columnOrder=[...initialOrder];visibleColumns=['title','artist','bpm','key'];sourcesVisible=false;showDesktop=true;sourcePath=[];showTitles=true;showWaveforms=true;settingsAdvanced=false;selectedEffects=['ECHO','REVERB','FILTER'];selectedDrive='usb';selectedTrack=1;currentPage='browse';menu=null;feedback='';update();});
+new ResizeObserver(()=>{element('screen').style.transform='scale('+(element('screen-fit').clientWidth/800)+')';}).observe(element('screen-fit'));
+update();
+try{const saved=JSON.parse(element('saved-draft').textContent);if(saved!==null)restoreDraft(saved);}catch(error){element('status').textContent='Saved draft refused: '+error.message;}
+</script></body></html>

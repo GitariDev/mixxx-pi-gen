@@ -1,0 +1,59 @@
+#MixpiTopbar, #MixpiTransport, #MixpiDeckButtons { background: #111318; }
+#MixpiButton, #MixpiPlay, #MixpiTab, #MixpiRecord, #MixpiDesktopBar {
+    color: #f5f6fa; background: #222833; border: 1px solid #687381;
+    border-radius: 5px; margin: 2px; font-size: 16px; font-weight: bold;
+}
+#MixpiButton[value="1"], #MixpiPlay[value="1"] { background: #27577d; border-color: #73bfff; }
+#MixpiPlay { border-color: #91cb72; }
+#MixpiRecord[value="1"] { color: #101318; background: #f2c465; border-color: #f2c465; }
+#MixpiRecord[value="2"], #MixpiRecord[value="3"] {
+    color: white; background: #a52132; border-color: #ff8190;
+}
+#MixpiTab[value="1"] { border: 2px solid #b5e15c; background: #303b21; color: #d9f694; }
+#MixpiLabel, #MixpiWaveKey { color: #f0f3f9; font-size: 17px; }
+#MixpiWaveInfo { background: #172033; border-right: 1px solid #39475c; }
+#MixpiTitleStrip { background: #123b80; }
+#MixpiDeckTitle, #MixpiDeckNumber { color: white; font-size: 17px; }
+#MixpiDeckNumber { font-weight: bold; }
+#MixpiDeckStats { background: #101318; border-right: 1px solid #637184; }
+#MixpiTime, #MixpiRate, #MixpiKey { color: #f4f6fa; font-size: 21px; }
+#MixpiKey, #MixpiWaveKey { font-size: 17px; }
+#MixpiBpm { background: #f4f6fa; color: #101318; font-size: 25px; font-weight: bold; margin: 4px; }
+#MixpiLoopPanel { background: rgba(12,19,31,150); border: 1px solid #6897cb; }
+#MixpiLoopHeader { background: #173357; }
+#MixpiLoopPanel #MixpiButton { font-size: 19px; }
+#MixpiFx { background: #111823; }
+#MixpiFxCard { border: 1px solid #536276; margin: 3px; }
+#MixpiFxHeader { padding: 4px 8px; }
+#MixpiFxMix { background: #123363; border: 1px solid #416395; margin: 2px 6px; }
+#MixpiEffectSelector { color: white; background: #20334a; font-size: 18px; }
+#MixpiEffectSelector QAbstractItemView {
+    color: #f5f6fa; background: #20334a;
+    selection-color: #101318; selection-background-color: #b5e15c;
+}
+#MixpiEffectSelector:disabled, #MixpiEffectSelector QAbstractItemView:disabled {
+    color: #a9b7c8; background: #182536;
+}
+#MixpiEffectSelector QAbstractItemView::item:disabled { color: #a9b7c8; }
+#MixpiEffectSelector QAbstractItemView::item:selected {
+    color: #101318; background: #b5e15c;
+}
+#MixpiSettingSelector, #MixpiSettingSelector QAbstractItemView {
+    color: #f5f6fa; background: #20334a; font-size: 17px;
+    selection-color: #101318; selection-background-color: #b5e15c;
+}
+#MixpiDepth { background: #1d2634; margin: 2px 12px; }
+#MixpiCpuBox { margin: 3px; }
+
+#MixpiSettings { background: #121c2e; border: 1px solid #6897cb; }
+#MixpiPlaybackSettings, #MixpiInterfaceSettings { padding: 4px; }
+#MixpiSetting { border-bottom: 1px solid #34445e; }
+#MixpiSettingLabel { font-size: 13px; color: #d9e3f2; padding: 3px; }
+#MixpiCpu { color: #a6d95c; font-size: 19px; }
+#MixpiSamplerCard { background: #172033; border: 1px solid #536276; }
+#MixpiSamplerTitle { color: #f4f6fa; font-size: 16px; margin: 4px; }
+#MixpiSamplerHeader #MixpiLabel { font-size: 14px; }
+#MixpiSamplerDestinations { background: #173357; }
+#MixpiButton:disabled { color: #89909a; background: #171b22; }
+#MixpiDesktopBar { border-radius: 2px; }
+#MixpiDesktopBar:disabled { color: #a9b7c8; background: #182536; }

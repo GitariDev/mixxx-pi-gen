@@ -1,0 +1,82 @@
+diff --git a/src/library/mixpimediaactivity.h b/src/library/mixpimediaactivity.h
+--- a/src/library/mixpimediaactivity.h
++++ b/src/library/mixpimediaactivity.h
+@@ -4,6 +4,7 @@
+ #include <QStringList>
+ 
+ #include "library/media/mediauseregistry.h"
++#include "library/media/transferstatus.h"
+ 
+ namespace mixxx::media {
+ 
+@@ -30,4 +31,46 @@
+             states.join(QStringLiteral(" / "));
+ }
+ 
++inline QString transferText(const TransferSnapshot& snapshot) {
++    if (!snapshot.valid) {
++        return QStringLiteral("No retained transfer result");
++    }
++    if (snapshot.status == TransferOutcome::Interrupted) {
++        return QStringLiteral("Transfer interrupted; progress unavailable");
++    }
++    if (!snapshot.progressValid || snapshot.progress < 0 || snapshot.progress > 100) {
++        return QStringLiteral("Transfer result unavailable");
++    }
++    if (snapshot.status == TransferOutcome::Verified) {
++        return snapshot.progress == 100 && snapshot.phase == TransferPhase::Verifying ?
++                QStringLiteral("Transfer verified by copy worker: 100%") :
++                QStringLiteral("Transfer result unavailable");
++    }
++    if (snapshot.progress > 99) {
++        return QStringLiteral("Transfer result unavailable");
++    }
++    if (snapshot.status == TransferOutcome::Failed || snapshot.status == TransferOutcome::Cancelled) {
++        return (snapshot.status == TransferOutcome::Failed ? QStringLiteral("Transfer failed") :
++                        QStringLiteral("Transfer cancelled")) +
++                QStringLiteral("; last progress: %1%").arg(snapshot.progress);
++    }
++    if (snapshot.status != TransferOutcome::Running || snapshot.activeJobs == 0 ||
++            (snapshot.phase != TransferPhase::Copying && snapshot.phase != TransferPhase::Verifying)) {
++        return QStringLiteral("Transfer result unavailable");
++    }
++    auto text = (snapshot.phase == TransferPhase::Copying ? QStringLiteral("Copying: %1%") :
++                        QStringLiteral("Verifying: %1%"))
++                        .arg(snapshot.progress);
++    if (snapshot.activeJobs > 1) {
++        text += QStringLiteral(" (%1 active jobs; newest shown)")
++                        .arg(static_cast<qulonglong>(snapshot.activeJobs));
++    }
++    return text;
+ }
++
++inline QString activityText(const MediaUseRegistry::Snapshot& ownership,
++        const TransferSnapshot& transfer) {
++    return activityText(ownership) + QStringLiteral("\n") + transferText(transfer);
++}
++
++}
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -225,7 +225,8 @@
+                             continue;
+                         }
+                         states.append(mixxx::media::activityText(
+-                                mixxx::media::registry().observe(binding.generation)));
++                                mixxx::media::registry().observe(binding.generation),
++                                mixxx::media::copyService().transferStatus(binding)));
+                     }
+                     states.removeDuplicates();
+                     return states.isEmpty() ? QStringLiteral("Not mounted; usage unavailable") :
+diff --git a/src/library/mixpimediadialog.h b/src/library/mixpimediadialog.h
+--- a/src/library/mixpimediadialog.h
++++ b/src/library/mixpimediadialog.h
+@@ -53,6 +53,7 @@
+         resize(740, 380);
+         auto* layout = new QVBoxLayout(this);
+         m_list = new QListWidget(this);
++        m_list->setWordWrap(true);
+         m_list->setObjectName("mediaDrives");
+         m_list->setAccessibleName(tr("Connected USB drives"));
+         layout->addWidget(m_list);

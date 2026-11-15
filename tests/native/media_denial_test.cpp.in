@@ -1,0 +1,207 @@
+#include "mediauseregistry.h"
+#include <cassert>
+#include <iostream>
+#include <string>
+#include <vector>
+
+#define DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(value) ((void)0)
+#define DEBUG_ASSERT(value) assert(value)
+#define VERIFY_OR_DEBUG_ASSERT(value) if (!(value))
+#define emit
+
+namespace mixxx::media {
+Binding observePath(const std::string&) { return {"A", "mount-A", {}}; }
+PRODUCTION_ACQUIRE
+}
+
+struct Valid {
+    bool valid = true;
+    bool isValid() const { return valid; }
+    operator int() const { return 42; }
+};
+struct Track {
+    bool dirty = true;
+    bool validId = true;
+    int synchronizationResets = 0;
+    Valid getDateAdded() const { return {}; }
+    Valid getSourceSynchronizedAt() const { return {}; }
+    Valid getId() const { return {validId}; }
+    void resetSourceSynchronizedAt() { ++synchronizationResets; }
+    const char* getLocation() const { return "/synthetic/A/song.wav"; }
+    bool isDirty() const { return dirty; }
+    void markClean() { dirty = false; }
+};
+enum class TrackMetadataExportMode { Immediate, Deferred };
+enum class ExportTrackMetadataResult { Succeeded, Failed, Skipped };
+int tagExports = 0;
+ExportTrackMetadataResult exportTrackMetadataBeforeSaving(Track*, TrackMetadataExportMode) {
+    ++tagExports;
+    return ExportTrackMetadataResult::Skipped;
+}
+using QStringList = std::vector<const char*>;
+struct ExternalTrackCollection {
+    enum class ChangeHint { Modified };
+    int saves = 0;
+    int purges = 0;
+    void purgeTracks(QStringList) { ++purges; }
+    void saveTrack(Track&, ChangeHint) { ++saves; }
+};
+struct ExternalList : std::vector<ExternalTrackCollection*> {
+    bool isEmpty() const { return empty(); }
+};
+struct InternalCollection {
+    int saves = 0;
+    bool failSave = false;
+    bool saveTrack(Track* track) {
+        if (failSave) return false;
+        ++saves;
+        track->markClean();
+        return true;
+    }
+};
+struct Logger {
+    Logger& debug() { return *this; }
+    template<typename Value> Logger& operator<<(const Value&) { return *this; }
+} kLogger;
+Logger qInfo() { return {}; }
+struct TrackCollectionManager {
+    enum class SaveTrackResult { Failed, Saved, Skipped };
+    ExternalList m_externalCollections;
+    InternalCollection* m_pInternalCollection;
+    SaveTrackResult saveTrack(Track*, TrackMetadataExportMode) const;
+    void saveEvictedTrack(Track*) noexcept;
+};
+PRODUCTION_SAVE
+PRODUCTION_EVICTION
+
+struct TrackRef {};
+struct Analyses {
+    bool present = false;
+    bool isEmpty() const { return !present; }
+    int first() const { return 0; }
+};
+struct AnalysisDao {
+    enum { TYPE_WAVEFORM };
+    int reads = 0;
+    bool waveform = false;
+    Analyses getAnalysesForTrackByType(int, int) { ++reads; return {waveform}; }
+};
+struct WaveformFactory { static int* loadWaveformFromAnalysis(int) { return new int(8); } };
+struct Collection { AnalysisDao analysis; AnalysisDao& getAnalysisDAO() { return analysis; } };
+struct Manager {
+    Collection collection;
+    std::shared_ptr<Track> getOrAddTrack(const TrackRef&) {
+        const auto mediaUse = mixxx::media::acquirePath(
+                "/synthetic/A/song.wav", mixxx::media::Producer::Import);
+        if (!mediaUse) return {};
+        return std::make_shared<Track>();
+    }
+    Collection* internalCollection() { return &collection; }
+};
+namespace Qt { enum { BlockingQueuedConnection }; }
+bool rejectPost = false;
+struct QMetaObject {
+    template<typename Receiver, typename Callback>
+    static bool invokeMethod(Receiver*, Callback callback, int) {
+        if (rejectPost) return false;
+        callback();
+        return true;
+    }
+};
+struct Cancellation {
+    int value = 0;
+    int loadAcquire() const { return value; }
+};
+struct EnginePrimeExportJob {
+    Manager* m_pTrackCollectionManager;
+    std::shared_ptr<Track> m_pLastLoadedTrack;
+    std::unique_ptr<int> m_pLastLoadedWaveform;
+    std::vector<TrackRef> m_trackRefs{{}};
+    Cancellation m_cancellationRequested;
+    std::string m_lastErrorMessage;
+    int failures = 0;
+    int exports = 0;
+    explicit EnginePrimeExportJob(Manager* manager) : m_pTrackCollectionManager(manager) {}
+    std::string tr(const char* text) { return text; }
+    void failed(const std::string&) { ++failures; }
+    void loadTrack(const TrackRef&);
+    void handoff(const mixxx::media::UnknownUseScope& operationUse) {
+PRODUCTION_HANDOFF
+    }
+};
+PRODUCTION_LOAD
+
+void testEviction() {
+    using namespace mixxx::media;
+    InternalCollection collection;
+    ExternalTrackCollection external;
+    TrackCollectionManager manager{{}, &collection};
+    for (const bool externalConfigured : {false, true}) {
+        manager.m_externalCollections.clear();
+        if (externalConfigured) manager.m_externalCollections.push_back(&external);
+        auto drain = registry().beginDrain("unrelated-B");
+        auto track = std::make_unique<Track>();
+        const int savedBefore = collection.saves;
+        const int tagsBefore = tagExports;
+        manager.saveEvictedTrack(track.get());
+        assert(collection.saves == savedBefore + 1);
+        assert(!track->isDirty());
+        assert(tagExports == tagsBefore && external.saves == 0);
+        track.reset();
+        assert(drain.snapshot().locallyIdle());
+    }
+    Track stable;
+    manager.saveEvictedTrack(&stable);
+    assert(!stable.isDirty() && external.saves == 1 && tagExports == 1);
+    collection.failSave = true;
+    Track failedSave;
+    assert(manager.saveTrack(&failedSave, TrackMetadataExportMode::Deferred) ==
+            TrackCollectionManager::SaveTrackResult::Failed);
+    assert(failedSave.isDirty());
+    collection.failSave = false;
+    std::cout << "PASS eviction\n";
+}
+
+int main(int argc, char** argv) {
+    using namespace mixxx::media;
+    assert(argc == 2);
+    if (std::string(argv[1]) == "eviction") {
+        testEviction();
+        return 0;
+    }
+
+    Manager engineManager;
+    EnginePrimeExportJob job(&engineManager);
+    {
+        UnknownUseScope worker(Producer::Metadata);
+        auto drain = registry().beginDrain("A");
+        job.m_pLastLoadedTrack = std::make_shared<Track>();
+        job.m_pLastLoadedWaveform = std::make_unique<int>(9);
+        job.handoff(worker);
+        assert(job.failures == 1 && job.exports == 0);
+        assert(!job.m_pLastLoadedTrack && !job.m_pLastLoadedWaveform);
+        assert(engineManager.collection.analysis.reads == 0);
+        assert(!drain.snapshot().locallyIdle());
+    }
+    {
+        UnknownUseScope worker(Producer::Metadata);
+        job.m_pLastLoadedTrack = std::make_shared<Track>();
+        rejectPost = true;
+        job.handoff(worker);
+        rejectPost = false;
+        assert(job.failures == 2 && job.exports == 0);
+        job.m_cancellationRequested.value = 1;
+        job.handoff(worker);
+        assert(job.failures == 2 && job.exports == 0);
+        job.m_cancellationRequested.value = 0;
+        engineManager.collection.analysis.waveform = true;
+        job.handoff(worker);
+        assert(job.exports == 1 && job.m_pLastLoadedWaveform);
+        engineManager.collection.analysis.waveform = false;
+        job.handoff(worker);
+        assert(job.exports == 2 && !job.m_pLastLoadedWaveform);
+    }
+    auto idle = registry().beginDrain("A");
+    assert(idle.snapshot().locallyIdle());
+    std::cout << "PASS export\n";
+}

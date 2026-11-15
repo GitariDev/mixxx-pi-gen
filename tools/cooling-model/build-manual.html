@@ -1,0 +1,304 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+:root{--line:var(--border,#606771);--fg:var(--foreground,#ddd);--accent-text:var(--primary,#e39b28);--font-mono:monospace}
+body{font-family:var(--font-sans,sans-serif);color:var(--fg);margin:0}p{line-height:1.5;margin:0}h3{margin:0}figure{margin:0}svg{fill:#1d1f23} .need span,.step .check{color:var(--muted-foreground,var(--foreground))}pre{white-space:pre-wrap;overflow-wrap:anywhere}button{padding:9px 12px;margin:3px;border:1px solid var(--border);border-radius:var(--radius,6px);background:var(--secondary);color:var(--foreground);font:inherit}button[aria-pressed=true]{outline:2px solid var(--primary)}.part[hidden]{display:none}.part-head{margin-top:12px}.need{margin-bottom:8px}
+.manual { display: grid; gap: 26px; }
+.part { display: grid; gap: 12px; }
+.part-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 14px; }
+.part:first-child .part-head { border-top: 0; padding-top: 0; }
+.part-head h3 { font-size: 16px; }
+.need { display: flex; flex-wrap: wrap; gap: 6px; }
+.need span { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; color: var(--muted); }
+.steps-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.step { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.step-wide { grid-column: 1 / -1; }
+.step-top { display: flex; gap: 10px; align-items: baseline; }
+.step .num { font: 700 28px/1 var(--font-mono); color: var(--accent-text); min-width: 1.4em; }
+.step h4 { font-size: 15px; margin: 0; text-wrap: balance; }
+.step p { font-size: 14px; }
+.step .check { font-size: 13px; color: var(--muted); }
+/* Drawings sit on white cards, like a printed manual, in both themes. */
+.art { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #fff; }
+.art svg { display: block; width: 100%; height: auto; }
+</style></head><body><nav aria-label="Manual parts"><button type="button" data-part="0" aria-pressed="true">1 · Fan plug</button><button type="button" data-part="1" aria-pressed="false">2 · Later mount</button><button type="button" data-part="2" aria-pressed="false">3 · Box vents</button><button type="button" data-part="3" aria-pressed="false">4 · Big fan power</button><button type="button" data-part="4" aria-pressed="false">5 · Test</button></nav>    <div class="manual">
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 1 · Wire the 30 mm fan to the header</h3>
+          <div class="need"><span>Needle or safety pin</span><span>Heat-shrink or electrical tape</span><span>Single-pin housings preferred</span><span>Suitable heat source if using heat-shrink</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step">
+            <div class="step-top"><span class="num">1</span><h4>Shut down and unplug</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Run sudo poweroff, then pull the USB-C lead out of the Pi"><defs><marker id="mb1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <rect x="12" y="12" width="122" height="22" rx="4" fill="#1d1f23"/><text x="20" y="27" fill="#fff" font-family="DejaVu Sans Mono, Menlo, monospace">$ sudo poweroff</text>
+              <rect x="104" y="48" width="124" height="80" rx="6" fill="#2f8a57"/><rect x="150" y="74" width="24" height="24" rx="2" fill="#b4bcc5"/><rect x="188" y="62" width="22" height="16" rx="2" fill="#b4bcc5"/>
+              <circle cx="118" cy="118" r="4" fill="#d9dde2" stroke="#1d1f23"/><text x="126" y="142" font-size="8" fill="#5f6772">green LED stops flashing</text><path d="M124 136 L119 123" stroke="#5f6772"/>
+              <rect x="100" y="90" width="10" height="16" rx="2" fill="#b4bcc5" stroke="#1d1f23"/><rect x="54" y="92" width="28" height="12" rx="3" fill="#3a3f46"/><path d="M54 98 H12" stroke="#1d1f23" stroke-width="3"/>
+              <path d="M98 82 H62" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb1)"/><text x="14" y="74" fill="#e39b28" font-weight="700">unplug USB-C</text>
+            </svg></figure>
+            <p>Run <span class="mono">sudo poweroff</span>. Wait until the green LED stops flashing, then disconnect USB-C and any powered hub or separate display supply. Leave the screen connector in place.</p>
+            <p class="check">Check: no lights on the board.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">2</span><h4>Find the locking tabs</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" role="img" aria-label="Two retention types: lift plastic latch or depress metal tang; identify yours first" font-family="sans-serif" font-size="10" fill="#1d1f23">
+<rect width="240" height="150" fill="white"/>
+<text x="12" y="18">A · Plastic latch: lift gently</text>
+<rect x="34" y="34" width="96" height="32" rx="3" fill="#30343a"/>
+<path d="M132 52H224" stroke="#ce3029" stroke-width="4"/>
+<rect x="47" y="46" width="70" height="9" fill="#b4bcc5"/>
+<path d="M65 34L96 25" stroke="#e39b28" stroke-width="5"/>
+<path d="M102 34V23m-4 4 4-4 4 4" fill="none" stroke="#1d1f23" stroke-width="2"/>
+<text x="12" y="91">B · Metal tang: press inward</text>
+<rect x="34" y="106" width="96" height="32" rx="3" fill="#30343a"/>
+<path d="M132 122H224" stroke="#ce3029" stroke-width="4"/>
+<rect x="47" y="116" width="70" height="9" fill="#b4bcc5"/>
+<path d="M67 116L94 108" stroke="#e39b28" stroke-width="3"/>
+<path d="M95 96V111m-4-4 4 4 4-4" fill="none" stroke="#1d1f23" stroke-width="2"/>
+</svg></figure>
+            <p>Turn the fan's black plug until you see a small window over each pin. Identify what retains the contact: a flexible plastic latch on many Dupont housings, or a metal locking tang on others. Do not assume which type you have.</p>
+            <p class="check">Check: locate the latch before inserting the needle; stop if you cannot identify it.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">3</span><h4>Release each pin</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Release the latch using the method in step 2, then withdraw the contact toward the wire"><defs><marker id="mb3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <rect x="36" y="40" width="96" height="66" rx="5" fill="#2a2d33"/><line x1="36" y1="73" x2="132" y2="73" stroke="#4a4f57" stroke-width="2"/>
+              <rect x="70" y="48" width="22" height="16" rx="2" fill="#4a4f57"/>
+              <rect x="70" y="82" width="22" height="16" rx="2" fill="#b4bcc5"/><path d="M74 95 L88 95 L88 86 Z" fill="#e39b28"/>
+              <path d="M58 8 L80 54" stroke="#1d1f23" stroke-width="2"/><circle cx="57" cy="5" r="2.5" fill="none" stroke="#1d1f23"/>
+              <rect x="146" y="49" width="34" height="14" rx="2" fill="#b4bcc5" stroke="#1d1f23"/><rect x="180" y="51" width="12" height="10" fill="#b4bcc5" stroke="#1d1f23"/>
+              <path d="M192 56 H232" stroke="#d33a2c" stroke-width="4"/><path d="M132 90 H232" stroke="#1d1f23" stroke-width="4"/>
+              <text x="86" y="22" fill="#e39b28" font-weight="700">1 release latch</text>
+              <path d="M150 42 H200" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb3)"/><text x="150" y="35" fill="#e39b28" font-weight="700">2 withdraw</text>
+              <text x="120" y="130" text-anchor="middle" font-size="8" fill="#5f6772">one pin at a time; never force it</text>
+            </svg></figure>
+            <p>Push the wire slightly inward first. For a plastic latch, lift it just enough to free the contact. For a metal tang, depress it through the window. Gently withdraw the wire toward the cable end. Do one contact at a time; never force it.</p>
+            <p class="check">Check: both pins are out and their tabs are still there.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">4</span><h4>Insulate each pin</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Right: sleeve covers the metal up to the tip with the opening clear. Wrong: bare metal showing"><defs><marker id="mb4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <path d="M10 15 l4 4 l8 -9" stroke="#1d7a4c" stroke-width="2.5" fill="none"/><text x="28" y="20" fill="#1d7a4c" font-weight="700">covered to the tip</text>
+              <rect x="40" y="34" width="44" height="16" rx="2" fill="#b4bcc5" stroke="#1d1f23"/><rect x="84" y="36" width="16" height="12" fill="#b4bcc5" stroke="#1d1f23"/><path d="M100 42 H228" stroke="#d33a2c" stroke-width="4"/>
+              <rect x="39" y="30" width="101" height="24" rx="6" fill="#1d1f23" fill-opacity="0.8"/>
+              <path d="M38 42 H18" stroke="#e39b28" stroke-width="2" marker-end="url(#mb4)"/><text x="10" y="66" font-size="8" fill="#5f6772">opening clear</text>
+              <path d="M10 92 l10 10 M20 92 l-10 10" stroke="#c0392b" stroke-width="2.5"/><text x="26" y="101" fill="#c0392b" font-weight="700">bare metal</text>
+              <rect x="40" y="110" width="44" height="16" rx="2" fill="#b4bcc5" stroke="#1d1f23"/><rect x="84" y="112" width="16" height="12" fill="#b4bcc5" stroke="#1d1f23"/><path d="M100 118 H228" stroke="#d33a2c" stroke-width="4"/>
+              <rect x="104" y="112" width="40" height="12" rx="4" fill="#1d1f23" fill-opacity="0.8"/>
+              <text x="40" y="142" font-size="8" fill="#c0392b">can touch pin 1 or 3 and damage the Pi</text>
+            </svg></figure>
+            <p>Prefer separate 1-pin housings that lock around each contact. For a temporary setup, sleeve each contact individually with heat-shrink covering all outer metal while leaving the socket opening clear. Apply heat away from the Pi and cardboard. Tape alone is not a durable gig connector; if insulation or retention is doubtful, wait for jumpers.</p>
+            <p class="check">Check: no metal shows except the opening.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">5</span><h4>Find your pins</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Example only: screen on pins 4 and 6, fan red on pin 2 and black on pin 14; confirm occupied pins first"><rect width="240" height="150" fill="#fff"/>
+              <path d="M28 34 H216" stroke="#1d1f23" stroke-width="2"/><text x="216" y="28" text-anchor="end" font-size="8" fill="#5f6772">board edge</text>
+              <rect x="28" y="52" width="188" height="60" rx="4" fill="#2a2d33" fill-opacity="0.07"/>
+              <g stroke="#1d1f23"><circle cx="44" cy="66" r="9" fill="#f2c4bf"/><circle cx="70" cy="66" r="9" fill="#f2c4bf"/><circle cx="96" cy="66" r="9" fill="#c7cbd1"/><circle cx="122" cy="66" r="9" fill="#fff"/><circle cx="148" cy="66" r="9" fill="#fff"/><circle cx="174" cy="66" r="9" fill="#fff"/><circle cx="200" cy="66" r="9" fill="#c7cbd1"/>
+              <rect x="35" y="89" width="18" height="18" fill="#f7ddb0"/><circle cx="70" cy="98" r="9" fill="#fff"/><circle cx="96" cy="98" r="9" fill="#fff"/><circle cx="122" cy="98" r="9" fill="#fff"/><circle cx="148" cy="98" r="9" fill="#c7cbd1"/><circle cx="174" cy="98" r="9" fill="#fff"/><circle cx="200" cy="98" r="9" fill="#fff"/></g>
+              <g font-size="8" text-anchor="middle"><text x="44" y="69">2</text><text x="70" y="69">4</text><text x="96" y="69">6</text><text x="122" y="69">8</text><text x="148" y="69">10</text><text x="174" y="69">12</text><text x="200" y="69">14</text>
+              <text x="44" y="101">1</text><text x="70" y="101">3</text><text x="96" y="101">5</text><text x="122" y="101">7</text><text x="148" y="101">9</text><text x="174" y="101">11</text><text x="200" y="101">13</text></g>
+              <g font-size="8" text-anchor="middle" fill="#5f6772"><text x="44" y="49">5V</text><text x="70" y="49">5V</text><text x="96" y="49">GND</text><text x="200" y="49">GND</text><text x="44" y="122">3V3</text><text x="148" y="122">GND</text></g>
+              <rect x="58" y="54" width="50" height="24" rx="4" fill="none" stroke="#1d1f23" stroke-width="2.5"/>
+              <circle cx="44" cy="66" r="12.5" fill="none" stroke="#d33a2c" stroke-width="3"/><circle cx="200" cy="66" r="12.5" fill="none" stroke="#1d1f23" stroke-width="3"/>
+              <text x="216" y="122" text-anchor="end" font-size="8" fill="#5f6772">USB ports →</text>
+              <rect x="8" y="135" width="14" height="9" rx="2" fill="none" stroke="#1d1f23" stroke-width="2"/><text x="26" y="143" font-size="8">screen (fixed)</text>
+              <circle cx="100" cy="139.5" r="5" fill="none" stroke="#d33a2c" stroke-width="2.5"/><text x="109" y="143" font-size="8">fan red</text>
+              <circle cx="158" cy="139.5" r="5" fill="none" stroke="#1d1f23" stroke-width="2.5"/><text x="167" y="143" font-size="8">fan black</text>
+            </svg></figure>
+            <p>Example shown: screen on pins 4 + 6; fan red on pin 2, black on pin 14. Actual screen pins remain unconfirmed. Identify pin 1 by its square solder pad at the end farthest from the USB ports; count physical pins, not GPIO numbers. Leave the screen connector untouched.</p>
+            <p class="check">Check: if screen red occupies pin 2, use pin 4 for fan red. If neither 5 V pin is accessible, stop and use an adapter.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">6</span><h4>Push on, then tug</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Push each insulated socket straight down over its header pin"><defs><marker id="mb6" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <rect x="40" y="112" width="160" height="12" rx="2" fill="#2a2d33"/>
+              <rect x="72" y="66" width="4" height="46" fill="#b4bcc5"/><rect x="164" y="66" width="4" height="46" fill="#b4bcc5"/><text x="120" y="98" text-anchor="middle" fill="#5f6772">· · ·</text>
+              <rect x="66" y="40" width="16" height="34" rx="3" fill="#1d1f23" fill-opacity="0.85"/><path d="M74 40 V8" stroke="#d33a2c" stroke-width="4"/>
+              <rect x="158" y="40" width="16" height="34" rx="3" fill="#1d1f23" fill-opacity="0.85"/><path d="M166 40 V8" stroke="#1d1f23" stroke-width="4"/>
+              <path d="M52 32 V60" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb6)"/><path d="M190 32 V60" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb6)"/>
+              <text x="74" y="140" text-anchor="middle" font-size="8">pin 2 (or 4)</text><text x="166" y="140" text-anchor="middle" font-size="8">pin 14</text>
+            </svg></figure>
+            <p>With all power disconnected, seat each insulated socket on its verified pin. Secure the cable to a nearby support so a tug cannot pull the contacts off. Check retention gently; never force a loose or damaged contact.</p>
+            <p class="check">Check: nothing bare touches a neighbouring pin.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">7</span><h4>Power on and check</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="The fan spins and blows air down onto the heatsink"><defs><marker id="mb7" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <rect x="40" y="16" width="76" height="76" rx="8" fill="#f1f3f5" stroke="#1d1f23" stroke-width="2"/><circle cx="78" cy="54" r="30" fill="none" stroke="#1d1f23" stroke-width="1.5"/>
+              <g fill="#5f6772"><ellipse cx="78" cy="36" rx="7" ry="11" transform="rotate(20 78 54)"/><ellipse cx="78" cy="36" rx="7" ry="11" transform="rotate(110 78 54)"/><ellipse cx="78" cy="36" rx="7" ry="11" transform="rotate(200 78 54)"/><ellipse cx="78" cy="36" rx="7" ry="11" transform="rotate(290 78 54)"/></g><circle cx="78" cy="54" r="9" fill="#1d1f23"/>
+              <path d="M122 30 A 40 40 0 0 1 122 78" stroke="#e39b28" stroke-width="2.5" fill="none" marker-end="url(#mb7)"/>
+              <path d="M60 96 V110 M78 96 V110 M96 96 V110" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb7)"/>
+              <rect x="44" y="132" width="68" height="6" fill="#b4bcc5"/><g fill="#b4bcc5"><rect x="46" y="114" width="5" height="18"/><rect x="57" y="114" width="5" height="18"/><rect x="68" y="114" width="5" height="18"/><rect x="79" y="114" width="5" height="18"/><rect x="90" y="114" width="5" height="18"/><rect x="101" y="114" width="5" height="18"/></g>
+              <text x="138" y="50">spins within</text><text x="138" y="62">a few seconds</text><text x="124" y="118" font-size="8">air onto the heatsink,</text><text x="124" y="129" font-size="8">label towards the board</text>
+            </svg></figure>
+            <p>Secure the fan clear of the board and loose wires before restoring power. Check that it starts. Use its airflow arrow or feel the flow; the label side is only a usual guide. Disconnect power again before mounting or adjusting it.</p>
+            <p class="check">Check: if it doesn't spin, power off and check red is on 5 V and black on pin 14.</p>
+          </li>
+        </ol>
+      </div>
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 2 · Later: mount the 30 mm fan over the heatsink</h3>
+          <div class="need"><span>M2.5 male-female standoff kit</span><span>Small screwdriver</span><span>Ruler</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step">
+            <div class="step-top"><span class="num">8</span><h4>Measure the stack</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Standoff length is the heatsink height plus a 5 to 10 mm gap plus the 7 mm fan"><rect width="240" height="150" fill="#fff"/>
+              <rect x="16" y="118" width="208" height="7" fill="#2f8a57"/><text x="20" y="140" font-size="8" fill="#5f6772">Pi board</text>
+              <rect x="60" y="112" width="44" height="6" fill="#b4bcc5"/><g fill="#b4bcc5"><rect x="62" y="94" width="4" height="18"/><rect x="70" y="94" width="4" height="18"/><rect x="78" y="94" width="4" height="18"/><rect x="86" y="94" width="4" height="18"/><rect x="94" y="94" width="4" height="18"/></g>
+              <rect x="20" y="56" width="200" height="5" fill="#2a2d33"/><rect x="54" y="61" width="56" height="10" rx="2" fill="#f1f3f5" stroke="#1d1f23" stroke-width="1.5"/>
+              <rect x="186" y="61" width="10" height="57" fill="#c9a24a" stroke="#1d1f23"/><text x="191" y="50" text-anchor="middle" font-size="8">standoff ≈ h + 15</text>
+              <path d="M44 94 V118 M40 94 H48 M40 118 H48" stroke="#1d1f23"/><text x="36" y="110" text-anchor="end" font-weight="700">h</text>
+              <path d="M44 72 V93" stroke="#e39b28" stroke-width="2" stroke-dasharray="3 2"/>
+              <text x="114" y="69" font-size="8">fan, 7 mm</text><text x="114" y="87" font-size="8" fill="#e39b28">gap 5–10 mm</text>
+            </svg></figure>
+            <p>Measure the tallest heatsink (h). Measure the fan thickness too (7 mm is an assumption). The support height must allow the heatsink height + 5–10 mm clear air gap + any fan thickness below the lid; account for the actual bracket.</p>
+            <p class="check">Check: h + 15 mm is only an example; confirm clearance and matching lid holes before buying.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">9</span><h4>Fit standoffs and the lid</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Exploded stack: screen, existing standoffs, Pi, new standoffs, lid with fan, screws"><rect width="240" height="150" fill="#fff"/>
+              <path d="M56 20 V126 M184 20 V126" stroke="#5f6772" stroke-dasharray="3 3"/>
+              <rect x="50" y="24" width="12" height="4" fill="#5f6772"/><rect x="53" y="28" width="6" height="10" fill="#8d98a5"/><rect x="178" y="24" width="12" height="4" fill="#5f6772"/><rect x="181" y="28" width="6" height="10" fill="#8d98a5"/>
+              <rect x="30" y="44" width="180" height="5" fill="#2a2d33"/><rect x="100" y="49" width="40" height="8" fill="#f1f3f5" stroke="#1d1f23"/><text x="120" y="40" text-anchor="middle" font-size="8">lid with fan</text>
+              <rect x="52" y="62" width="8" height="28" fill="#c9a24a" stroke="#1d1f23"/><rect x="54" y="90" width="4" height="6" fill="#8a7a50"/><rect x="180" y="62" width="8" height="28" fill="#c9a24a" stroke="#1d1f23"/><rect x="182" y="90" width="4" height="6" fill="#8a7a50"/><text x="120" y="80" text-anchor="middle" font-size="8">new M2.5 standoffs</text>
+              <rect x="36" y="100" width="168" height="8" fill="#2f8a57"/><text x="120" y="120" text-anchor="middle" font-size="8">Pi board</text>
+              <rect x="52" y="110" width="8" height="16" fill="#c9a24a"/><rect x="180" y="110" width="8" height="16" fill="#c9a24a"/>
+              <rect x="20" y="126" width="200" height="12" rx="2" fill="#1d1f23"/><text x="120" y="135" text-anchor="middle" font-size="8" fill="#fff">screen (face down on a towel)</text>
+            </svg></figure>
+            <p>When ready to change the mount, disconnect all power. If the lid holes and existing threads match, swap the Pi's screws for standoffs one at a time, so the Pi stays on the screen. Screw the lid on top with the fan over the SoC, offset about 5 mm. The fan's label faces the board.</p>
+            <p class="check">Check: the fan clears the heatsinks, and the hub on the floor below.</p>
+          </li>
+        </ol>
+      </div>
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 3 · Mount the 60 mm fan and cut the outlet</h3>
+          <div class="need"><span>60 mm fan guard</span><span>4 × M3 × 35 mm screws, nuts, washers</span><span>Craft knife</span><span>Ruler and pencil</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step">
+            <div class="step-top"><span class="num">10</span><h4>Mark the back wall</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Back wall: a 57 mm circle centred 67 mm above the floor, with four screw holes on a 50 mm square"><rect width="240" height="150" fill="#fff"/>
+              <rect x="10" y="26" width="221" height="94" fill="#e8d3b0" stroke="#b08655" stroke-width="2"/><path d="M10 26 H231" stroke="#1d1f23" stroke-width="3" stroke-dasharray="6 3"/><text x="12" y="20" font-size="8">hinge (top edge)</text>
+              <path d="M4 120 H237" stroke="#1d1f23" stroke-width="2.5"/>
+              <circle cx="120" cy="57" r="26.8" fill="#fff" stroke="#e39b28" stroke-width="2" stroke-dasharray="5 3"/><text x="120" y="60" text-anchor="middle" font-weight="700">Ø57</text>
+              <g fill="#1d1f23"><circle cx="96.5" cy="33.5" r="2.2"/><circle cx="143.5" cy="33.5" r="2.2"/><circle cx="96.5" cy="80.5" r="2.2"/><circle cx="143.5" cy="80.5" r="2.2"/></g>
+              <path d="M96.5 92 H143.5 M96.5 88 V96 M143.5 88 V96" stroke="#1d1f23"/><text x="120" y="105" text-anchor="middle" font-size="8">50</text>
+              <path d="M178 120 V57 M174 57 H182 M174 120 H182" stroke="#1d1f23"/><text x="186" y="92" font-size="8">67 mm</text>
+              <text x="120" y="138" text-anchor="middle" font-size="8">centre on the SoC heatsink; check with the lid shut</text>
+            </svg></figure>
+            <p>Close the lid and find the SoC heatsink's position from outside. Use the actual fan as a template. The drawing assumes a 57 mm opening, a 67 mm centre height and 50 mm hole spacing; verify these against the fan and closed lid before cutting.</p>
+            <p class="check">Check: the circle stays below the hinge.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">11</span><h4>Cut, then fit it outside</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Section: guard, then fan, then the cardboard wall; screws from outside, nuts inside; label faces into the box"><defs><marker id="mb11" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <text x="12" y="16" font-size="8" fill="#5f6772">outside</text><text x="228" y="16" text-anchor="end" font-size="8" fill="#5f6772">inside the box</text>
+              <rect x="132" y="20" width="5" height="34" fill="#b08655"/><rect x="132" y="106" width="5" height="34" fill="#b08655"/>
+              <path d="M90 50 V110" stroke="#5f6772" stroke-width="2.5"/><path d="M86 60 H94 M86 72 H94 M86 84 H94 M86 96 H94" stroke="#5f6772"/>
+              <rect x="96" y="50" width="36" height="60" rx="3" fill="#f1f3f5" stroke="#1d1f23" stroke-width="2"/><rect x="127" y="70" width="4" height="20" fill="#e39b28"/>
+              <path d="M84 58 H150 M84 102 H150" stroke="#8d98a5" stroke-width="2.5"/><rect x="80" y="54" width="4" height="8" fill="#5f6772"/><rect x="80" y="98" width="4" height="8" fill="#5f6772"/><rect x="140" y="54" width="6" height="8" fill="#5f6772"/><rect x="140" y="98" width="6" height="8" fill="#5f6772"/>
+              <path d="M14 70 H66 M14 90 H66" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb11)"/><text x="16" y="62" font-size="8" fill="#e39b28" font-weight="700">air in</text>
+              <path d="M152 80 H222" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb11)"/>
+              <text x="146" y="44" font-size="8">label faces in</text><path d="M150 46 L131 72" stroke="#1d1f23"/>
+              <text x="66" y="132" font-size="8">guard · fan · wall · nuts</text>
+            </svg></figure>
+            <p>Remove the electronics from the cutting area. Cut on a backing board, then make the verified screw holes. Reinforce the cardboard with washers or backing plates. Stack guard, fan and wall from the outside, with the fan's label facing into the box. Screws go in from outside, nuts inside.</p>
+            <p class="check">Check: the blades spin freely and the lid still opens.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">12</span><h4>Cut the outlet</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Front wall: two rows of six 15 mm holes with centres 15 and 35 mm above the floor"><rect width="240" height="150" fill="#fff"/>
+              <text x="10" y="56" font-size="8">front (low) wall, 57 mm tall</text>
+              <rect x="8" y="64" width="223" height="54" fill="#e8d3b0" stroke="#b08655" stroke-width="2"/><path d="M2 118 H238" stroke="#1d1f23" stroke-width="2.5"/>
+              <g fill="#fff" stroke="#1d1f23"><circle cx="72.5" cy="103.75" r="7.1"/><circle cx="91.5" cy="103.75" r="7.1"/><circle cx="110.5" cy="103.75" r="7.1"/><circle cx="129.5" cy="103.75" r="7.1"/><circle cx="148.5" cy="103.75" r="7.1"/><circle cx="167.5" cy="103.75" r="7.1"/>
+              <circle cx="72.5" cy="84.75" r="7.1"/><circle cx="91.5" cy="84.75" r="7.1"/><circle cx="110.5" cy="84.75" r="7.1"/><circle cx="129.5" cy="84.75" r="7.1"/><circle cx="148.5" cy="84.75" r="7.1"/><circle cx="167.5" cy="84.75" r="7.1"/></g>
+              <path d="M196 118 V103.75 M192 103.75 H200 M214 118 V84.75 M210 84.75 H218" stroke="#1d1f23"/><text x="199" y="100" font-size="8">15</text><text x="217" y="81" font-size="8">35</text>
+              <text x="120" y="138" text-anchor="middle" font-size="8">or one 100 × 20 mm slot, 10 mm up</text>
+            </svg></figure>
+            <p>Low on the front wall, cut two rows of six 15 mm holes, with centres 15 mm and 35 mm above the floor. One 100 × 20 mm slot works too.</p>
+            <p class="check">Check: about 20 cm² open, roughly the size of the fan.</p>
+          </li>
+        </ol>
+      </div>
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 4 · Power the 60 mm fan</h3>
+          <div class="need"><span>USB 5→9 V boost cable, 5.5 × 2.1 mm</span><span>Barrel-to-screw-terminal adapter</span><span>Scissors or wire strippers</span><span>Small screwdriver</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step">
+            <div class="step-top"><span class="num">13</span><h4>Cut and strip</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Cut the white plug off and strip 5 mm from each wire"><rect width="240" height="150" fill="#fff"/>
+              <rect x="10" y="56" width="20" height="22" rx="2" fill="#f4f4f4" stroke="#1d1f23"/><path d="M30 62 H196" stroke="#d33a2c" stroke-width="4"/><path d="M30 72 H196" stroke="#1d1f23" stroke-width="4"/>
+              <path d="M46 44 V92" stroke="#e39b28" stroke-width="2" stroke-dasharray="4 3"/>
+              <circle cx="38" cy="20" r="5" fill="none" stroke="#1d1f23" stroke-width="2"/><circle cx="54" cy="20" r="5" fill="none" stroke="#1d1f23" stroke-width="2"/><path d="M41 24 L50 40 M51 24 L42 40" stroke="#1d1f23" stroke-width="2"/>
+              <text x="52" y="104" font-size="8" fill="#e39b28">cut off the white plug</text>
+              <path d="M196 62 H212 M196 72 H212" stroke="#c8873a" stroke-width="3"/><path d="M196 86 H212 M196 82 V90 M212 82 V90" stroke="#1d1f23"/><text x="204" y="100" text-anchor="middle" font-size="8">5 mm</text>
+              <text x="204" y="50" text-anchor="middle" font-size="8">strip, twist</text>
+            </svg></figure>
+            <p>Cut the white plug off the fan lead. Strip 5 mm from each wire and twist the strands tight.</p>
+            <p class="check">Check: no stray strands.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">14</span><h4>Connect to a hub port</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Hub port, USB boost cable set to 9 V, barrel plug, screw terminal with red to plus and black to minus, fan"><rect width="240" height="150" fill="#fff"/>
+              <rect x="6" y="42" width="40" height="30" rx="3" fill="#2a2d33"/><text x="26" y="86" text-anchor="middle" font-size="8">hub port</text>
+              <rect x="46" y="52" width="12" height="10" fill="#b4bcc5" stroke="#1d1f23"/><path d="M58 57 H74" stroke="#1d1f23" stroke-width="3"/>
+              <rect x="74" y="46" width="36" height="22" rx="4" fill="#fff" stroke="#e39b28" stroke-width="2"/><text x="92" y="61" text-anchor="middle" font-weight="700">9 V</text><text x="92" y="84" text-anchor="middle" font-size="8">boost cable</text>
+              <path d="M110 57 H128" stroke="#1d1f23" stroke-width="3"/><rect x="128" y="52" width="12" height="10" rx="2" fill="#5f6772"/>
+              <rect x="140" y="44" width="36" height="28" rx="3" fill="#2a2d33"/><circle cx="152" cy="58" r="5" fill="#b4bcc5" stroke="#1d1f23"/><circle cx="166" cy="58" r="5" fill="#b4bcc5" stroke="#1d1f23"/>
+              <text x="152" y="38" text-anchor="middle" font-weight="700">+</text><text x="166" y="38" text-anchor="middle" font-weight="700">−</text>
+              <path d="M152 72 V98 H206" stroke="#d33a2c" stroke-width="3" fill="none"/><path d="M166 72 V88 H206" stroke="#1d1f23" stroke-width="3" fill="none"/>
+              <rect x="206" y="70" width="30" height="30" rx="4" fill="#f1f3f5" stroke="#1d1f23" stroke-width="2"/><circle cx="221" cy="85" r="10" fill="none" stroke="#1d1f23"/>
+              <text x="120" y="128" text-anchor="middle" font-size="8">red → +, black → −, tighten, tug</text>
+            </svg></figure>
+            <p>Put red into + and black into − on the screw terminal; tighten and tug. Push the barrel plug into the adapter and the USB end into a hub port. Set the voltage before connecting. This is a 12 V rated fan: 9 V is an optional noise experiment, not a guaranteed starting voltage. Check adapter polarity and repeated starts; use rated 12 V if it stalls. Size the boost cable and powered hub for at least 2.64 W output plus startup margin (about 0.62 A at 5 V at 85% efficiency, before startup).</p>
+            <p class="check">Check: the hub has its own supply; no 9 V or 12 V connection goes to the Pi header.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">15</span><h4>Check the airflow</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Air comes in through the fan on the back wall, crosses the Pi and leaves through the low front holes"><defs><marker id="mb15" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <polygon points="30,124 167,124 167,34 30,73" fill="#e8d3b0" fill-opacity="0.5" stroke="#b08655" stroke-width="2"/>
+              <path d="M60 64.5 L150 38.8" stroke="#1d1f23" stroke-width="5"/>
+              <rect x="120" y="48" width="30" height="5" fill="#2f8a57" transform="rotate(-16 135 50)"/><text x="122" y="66" font-size="8">Pi</text>
+              <rect x="168" y="37" width="22" height="54" rx="3" fill="#f1f3f5" stroke="#1d1f23" stroke-width="2"/>
+              <path d="M228 54 H196 M228 74 H196" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb15)"/>
+              <path d="M164 62 C 120 60, 80 96, 40 112" stroke="#e39b28" stroke-width="2.5" stroke-dasharray="6 4" fill="none" marker-end="url(#mb15)"/>
+              <rect x="27" y="104" width="6" height="14" fill="#fff" stroke="#b08655"/><path d="M26 112 H6" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb15)"/>
+              <text x="228" y="46" text-anchor="end" font-size="8" fill="#e39b28" font-weight="700">air in</text><text x="4" y="100" font-size="8" fill="#e39b28" font-weight="700">air out</text>
+              <text x="100" y="142" text-anchor="middle" font-size="8">feel air leaving the front holes</text>
+            </svg></figure>
+            <p>With the hub on, the fan pulls room air in at the back, across the Pi. Hold a hand to the front holes: you should feel air coming out.</p>
+            <p class="check">Check: if air goes the wrong way, the fan is backwards. Flip it.</p>
+          </li>
+        </ol>
+      </div>
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 5 · Test it</h3>
+          <div class="need"><span>Mac on the same Wi-Fi</span><span>Two tracks you play at gigs</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step step-wide">
+            <div class="step-top"><span class="num">16</span><h4>Log a 30-minute session</h4></div>
+            <pre class="code">mkdir -p deploy/cooling-YYYYMMDD
+ssh -4 -o BatchMode=yes -i ~/.ssh/mixpi_ed25519 -o HostKeyAlias=mixxxpi.local \
+  pi@192.168.68.56 'bash -s -- 1800 10' &lt; tools/cooling-model/log-temps.sh \
+  &gt; deploy/cooling-YYYYMMDD/after-intake.csv</pre>
+            <p>Start the logger and two-deck playback together, with the box closed. When it finishes, drop the CSV on the 30-minute chart above to compare it with the model.</p>
+            <p class="check">Pass: peak under 75 °C, throttle flags 0x0, no dropouts heard. The model expects about 40 °C.</p>
+          </li>
+        </ol>
+      </div>
+
+    </div>
+  <script>const parts=[...document.querySelectorAll('.part')];function show(i){parts.forEach((p,n)=>p.hidden=n!==i);document.querySelectorAll('button[data-part]').forEach((b,n)=>b.setAttribute('aria-pressed',n===i))}document.querySelectorAll('button[data-part]').forEach(b=>b.onclick=()=>show(Number(b.dataset.part)));show(0)</script></body></html>

@@ -9,6 +9,7 @@ import threading
 import unittest
 from unittest.mock import patch
 import sys
+from media_copy_fakes import ScratchAdmission
 
 SCRIPT = Path(__file__).resolve().parents[1] / "stage3/02-desktop/files/bin/mixpi-media"
 loader = importlib.machinery.SourceFileLoader("mixpi_media", str(SCRIPT))
@@ -20,6 +21,9 @@ loader.exec_module(media)
 
 class MediaTransferTests(unittest.TestCase):
     def setUp(self):
+        admission = patch.object(media, "CopyAdmission", ScratchAdmission)
+        admission.start()
+        self.addCleanup(admission.stop)
         self.temp = tempfile.TemporaryDirectory()
         # macOS /var is a symlink; fixture paths must use their physical path.
         self.root = Path(self.temp.name).resolve()
@@ -322,6 +326,29 @@ class MediaTransferTests(unittest.TestCase):
         self.assertEqual(len(drives), 1)
         self.assertEqual(drives[0]["source"], "/media/pi/Music")
         self.assertEqual(drives[0]["uuid"], "123")
+
+    def test_multiple_usb_volumes_with_duplicate_labels_remain_selectable(self):
+        data = {"blockdevices": [
+            {"path": "/dev/sda", "tran": "usb", "children": [
+                {"path": "/dev/sda1", "label": "Music", "uuid": "cloned-id",
+                 "mountpoints": ["/media/pi/Music"]},
+                {"path": "/dev/sda2", "label": "Samples", "uuid": "sample-id",
+                 "mountpoints": ["/media/pi/Samples"]}]},
+            {"path": "/dev/sdb", "tran": "usb", "children": [
+                {"path": "/dev/sdb1", "label": "Music", "uuid": "cloned-id",
+                 "mountpoints": ["/media/pi/Music2"]}]},
+        ]}
+        drives = media.mounted_drives(data)
+        self.assertEqual({(drive["device"], drive["source"]) for drive in drives}, {
+            ("/dev/sda1", "/media/pi/Music"),
+            ("/dev/sda2", "/media/pi/Samples"),
+            ("/dev/sdb1", "/media/pi/Music2"),
+        })
+        data["blockdevices"].pop(0)
+        remaining = media.mounted_drives(data)
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["device"], "/dev/sdb1")
+        self.assertEqual(remaining[0]["source"], "/media/pi/Music2")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,239 @@
+#include "mediauseregistry.h"
+#include <cassert>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <vector>
+namespace fs = std::filesystem;
+using namespace mixxx::media;
+int reads = 0;
+bool failRead = false;
+bool checkBusy = true;
+bool failOpen = false;
+void filesystemRead() {
+    ++reads;
+    auto drain = registry().beginDrain("B");
+    if (checkBusy) assert(!drain.snapshot().locallyIdle());
+    if (failRead) throw std::runtime_error("synthetic IO error");
+}
+namespace Qt { enum { CaseInsensitive }; }
+struct QString {
+    std::string value;
+    QString() = default;
+    QString(std::string text) : value(std::move(text)) {}
+    QString(const char* text) : value(text) {}
+    int compare(const QString& other, int) const { return value.compare(other.value); }
+    bool isNull() const { return value.empty(); }
+    std::string toStdString() const { return value; }
+    QString toUtf8() const { return *this; }
+    const char* constData() const { return value.c_str(); }
+};
+std::ostream& operator<<(std::ostream& stream, const QString& text) { return stream << text.value; }
+namespace mixxx::media {
+std::string revision;
+Binding observePath(const std::string&) { return {"A" + revision, "mount", {}}; }
+PRODUCTION_ACQUIRE
+}
+using QLatin1String = QString;
+template<class Value> struct QList : std::vector<Value> {
+    bool isEmpty() const { return this->empty(); }
+    const Value& first() const { return this->front(); }
+    void append(const Value& value) { this->push_back(value); }
+};
+#define foreach(declaration, container) for (declaration : container)
+#define DEBUG_ASSERT(condition) assert(condition)
+struct QFileInfo {
+    fs::path path;
+    QString fileName() const { return path.filename().string(); }
+    QString completeBaseName() const { return path.stem().string(); }
+    QString filePath() const { return path.string(); }
+    bool isFile() const { filesystemRead(); return fs::is_regular_file(path); }
+};
+namespace mixxx { using FileInfo = QFileInfo; }
+struct QDir { enum { Dirs = 1, Files = 2, NoDotAndDotDot = 4 }; };
+namespace QIODevice { enum { WriteOnly }; }
+struct QFile {
+    std::ofstream stream;
+    QString path;
+    QFile() = default;
+    explicit QFile(QString location) : path(std::move(location)) {}
+    bool open(int) {
+        filesystemRead();
+        if (failOpen) return false;
+        stream.open(path.value);
+        return stream.good();
+    }
+    void write(const char* text) { filesystemRead(); stream << text; }
+    void close() { stream.close(); }
+};
+struct QDirIterator {
+    fs::directory_iterator current, finish;
+    fs::path selected;
+    QDirIterator(const QString& folder, int) {
+        filesystemRead();
+        current = fs::directory_iterator(folder.value);
+    }
+    bool hasNext() const { return current != finish; }
+    void next() { selected = current->path(); ++current; }
+    QFileInfo fileInfo() const { return {selected}; }
+};
+struct QRegularExpressionMatch { bool hasMatch() const { return true; } };
+struct QRegularExpression {
+    enum { CaseInsensitiveOption };
+    QRegularExpression(QString, int) {}
+    QRegularExpressionMatch match(QString) const { return {}; }
+};
+struct QImage {
+    bool empty = true;
+    explicit QImage(const QString& path) {
+        filesystemRead();
+        std::ifstream input(path.value);
+        empty = !input.good();
+    }
+    bool isNull() const { return empty; }
+};
+struct CoverInfo { enum { NONE, FILE, GUESSED }; };
+struct CoverInfoRelative {
+    int type = CoverInfo::NONE, source = 0;
+    QString coverLocation;
+    QString imageDigest() const { return {}; }
+    void setImageDigest(const QImage&) {}
+};
+struct CoverArtUtils {
+    enum PreferredCoverType { TRACK_BASENAME, ALBUM_NAME, COVER, FRONT, ALBUM, FOLDER, NONE };
+    static QString supportedCoverArtExtensionsRegex() { return {}; }
+    static QList<QFileInfo> findPossibleCoversInFolder(const QString& folder);
+    static CoverInfoRelative selectCoverArtForTrack(const mixxx::FileInfo& trackFile,
+            const QString& albumName, const QList<QFileInfo>& covers);
+};
+PRODUCTION_FIND
+PRODUCTION_SELECT
+struct QModelIndex {};
+struct Track { QString getLocation() const { return "A"; } };
+using TrackPointer = std::shared_ptr<Track>;
+struct TrackRef {
+    static TrackRef fromFilePath(QString) { filesystemRead(); return {}; }
+};
+struct BrowseTableModel {
+    QString getTrackLocation(const QModelIndex&) const { return "A"; }
+    TrackPointer getTrackByRef(TrackRef) const {
+        return acquirePath("A", Producer::Load) ? std::make_shared<Track>() : TrackPointer{};
+    }
+    TrackPointer getTrack(const QModelIndex&) const;
+};
+PRODUCTION_BROWSE
+#define QStringLiteral(text) QString(text)
+#define VERIFY_OR_DEBUG_ASSERT(condition) if (!(condition))
+std::ostringstream warnings;
+std::ostream& qWarning() { return warnings; }
+struct QDomElement {
+    void setAttribute(QString, QString) {}
+    void appendChild(QDomElement) {}
+};
+struct QDomDocument {
+    explicit QDomDocument(QString) {}
+    QDomElement createElement(QString) { return {}; }
+    void appendChild(QDomElement) {}
+    QString toString() const { return "synthetic bank"; }
+};
+struct Sampler {
+    QString getGroup() const { return {}; }
+    TrackPointer getLoadedTrack() const { return {}; }
+};
+struct PlayerManager {
+    int numberOfSamplers() const { return 0; }
+    Sampler* getSampler(int) const { return nullptr; }
+};
+struct SamplerBank {
+    PlayerManager manager;
+    PlayerManager* m_pPlayerManager = &manager;
+    bool saveSamplerBankToPath(const QString& samplerBankPath);
+};
+PRODUCTION_SAVE
+int main(int argc, char** argv) {
+    assert(argc == 2);
+    fs::path root(argv[1]);
+    fs::create_directory(root / "A");
+    fs::create_directory(root / "B");
+    std::ofstream(root / "B/cover.jpg") << "synthetic image";
+    fs::create_symlink(root / "B/cover.jpg", root / "A/cover.jpg");
+    QString folder((root / "A").string());
+    mixxx::FileInfo track{root / "A/track.wav"};
+    auto trackUse = registry().acquire({"A", "track", {}}, Producer::Load);
+    {
+        auto drain = registry().beginDrain("B");
+        assert(CoverArtUtils::findPossibleCoversInFolder(folder).isEmpty());
+        assert(reads == 0);
+        QList<QFileInfo> covers;
+        covers.append({root / "A/cover.jpg"});
+        assert(CoverArtUtils::selectCoverArtForTrack(track, {}, covers).type == CoverInfo::NONE);
+        assert(reads == 0);
+    }
+    auto covers = CoverArtUtils::findPossibleCoversInFolder(folder);
+    assert(covers.size() == 1);
+    assert(CoverArtUtils::selectCoverArtForTrack(track, {}, covers).type == CoverInfo::FILE);
+    assert(registry().beginDrain("B").snapshot().locallyIdle());
+    failRead = true;
+    try { CoverArtUtils::findPossibleCoversInFolder(folder); assert(false); }
+    catch (const std::runtime_error&) {}
+    failRead = false;
+    assert(registry().beginDrain("B").snapshot().locallyIdle());
+    covers.front().path = root / "B/not-created.jpg";
+    assert(CoverArtUtils::selectCoverArtForTrack(track, {}, covers).type == CoverInfo::NONE);
+    assert(registry().beginDrain("B").snapshot().locallyIdle());
+    {
+        UnknownUseScope outer(Producer::Copy);
+        auto drain = registry().beginDrain("B");
+        assert(!drain.snapshot().locallyIdle());
+        UnknownUseScope inner(Producer::Metadata);
+        assert(inner && inner.lease() == outer.lease());
+    }
+    Lease queued;
+    { UnknownUseScope operation(Producer::Copy); queued = operation.lease(); }
+    {
+        auto drain = registry().beginDrain("B");
+        assert(!drain.snapshot().locallyIdle());
+        { UnknownUseScope callback(queued); assert(callback); }
+        queued.reset();
+        assert(drain.snapshot().locallyIdle());
+    }
+    SamplerBank bank;
+    const QString newDestination((root / "B/new-bank.xml").string());
+    {
+        auto drain = registry().beginDrain("B");
+        const int previousReads = reads;
+        assert(!bank.saveSamplerBankToPath(newDestination));
+        assert(reads == previousReads);
+        assert(!fs::exists(newDestination.value));
+    }
+    assert(bank.saveSamplerBankToPath(newDestination));
+    assert(fs::exists(newDestination.value));
+    failOpen = true;
+    assert(!bank.saveSamplerBankToPath(newDestination));
+    failOpen = false;
+    assert(registry().beginDrain("B").snapshot().locallyIdle());
+    checkBusy = false;
+    BrowseTableModel browse;
+    trackUse.reset();
+    {
+        auto drain = registry().beginDrain("A");
+        const int previousReads = reads;
+        assert(!browse.getTrack({}));
+        assert(reads == previousReads);
+    }
+    {
+        auto existing = acquirePath("A", Producer::Load);
+        PathUseScope scope("A", existing);
+        auto drain = registry().beginDrain("A");
+        assert(browse.getTrack({}));
+        revision = "replacement";
+        const int previousReads = reads;
+        assert(!browse.getTrack({}));
+        assert(reads == previousReads);
+        revision.clear();
+    }
+    assert(registry().beginDrain("A").snapshot().locallyIdle());
+    std::cout << "PASS finite cover cross-volume, error, missing destination and scope cleanup\n";
+}

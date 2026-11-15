@@ -1,4 +1,5 @@
 #!/bin/bash -e
+set -e
 
 # shellcheck disable=SC2119
 run_sub_stage()
@@ -186,6 +187,14 @@ do
 	esac
 done
 
+if [[ -n "${!MIXPI_ARTIFACT_*}" ]]; then
+	for artifact_variable in ${!MIXPI_ARTIFACT_@}; do
+		export "$artifact_variable"
+	done
+	export MIXPI_CONTROLLED_MEDIA ARCH WORK_DIR USE_QCOW2 STAGE_LIST CLEAN
+	python3 "${BASE_DIR}/tools/performance/accepted-artifact.py" initialize || exit $?
+fi
+
 term() {
 	if [ "${USE_QCOW2}" = "1" ]; then
 		log "Unloading image"
@@ -333,6 +342,19 @@ for STAGE_DIR in $STAGE_LIST; do
 	STAGE_DIR=$(realpath "${STAGE_DIR}")
 	run_stage
 done
+
+if [[ -n "${!MIXPI_ARTIFACT_*}" ]]; then
+	on_chroot <<'EOF' || exit $?
+set -eu
+test "$(dpkg --print-architecture)" = arm64
+test "$(dpkg-query -W -f='${Status} ${Architecture} ${Version}' mixxx)" = 'install ok installed arm64 2.5.6+rmodified-1'
+test "$(dpkg-query -S /usr/bin/mixxx)" = 'mixxx: /usr/bin/mixxx'
+test -z "$(dpkg --audit)"
+apt-get check
+EOF
+	python3 "${BASE_DIR}/tools/performance/accepted-artifact.py" final || exit $?
+	unmount "${ROOTFS_DIR}" || exit $?
+fi
 
 CLEAN=1
 for EXPORT_DIR in ${EXPORT_DIRS}; do

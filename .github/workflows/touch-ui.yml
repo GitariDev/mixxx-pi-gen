@@ -5,17 +5,28 @@ on:
     paths:
       - 'stage3/02-desktop/**'
       - 'tests/**'
+      - 'stage3/01-install-packages/**'
+      - 'source-versions'
+      - 'tools/performance/**'
+      - '.github/workflows/required-native.yml'
       - '.github/workflows/touch-ui.yml'
   pull_request:
     paths:
       - 'stage3/02-desktop/**'
       - 'tests/**'
+      - 'stage3/01-install-packages/**'
+      - 'source-versions'
+      - 'tools/performance/**'
+      - '.github/workflows/required-native.yml'
       - '.github/workflows/touch-ui.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  required-native:
+    uses: ./.github/workflows/required-native.yml
   native-ui:
+    needs: required-native
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +38,7 @@ jobs:
         env:
           MIXPI_UI_SCREENSHOTS: output/ui-review
           NO_AT_BRIDGE: '1'
-        run: dbus-run-session -- xvfb-run -a -s '-screen 0 800x480x24' /usr/bin/python3 -m unittest discover -s tests -v
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 800x480x24' /usr/bin/python3 -m unittest discover -s tests -p test_touch_ui.py -v
       - name: Save rendered screens
         if: always()
         uses: actions/upload-artifact@v4

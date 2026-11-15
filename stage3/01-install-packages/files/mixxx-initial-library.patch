@@ -1,0 +1,111 @@
+diff --git a/src/coreservices.cpp b/src/coreservices.cpp
+--- a/src/coreservices.cpp
++++ b/src/coreservices.cpp
+@@ -1,4 +1,6 @@
+ #include "coreservices.h"
++
++#include "library/initiallibrary.h"
+ 
+ #include <QApplication>
+ #include <QFileDialog>
+@@ -586,7 +588,26 @@
+ 
+     bool musicDirAdded = false;
+ 
+-    if (m_pTrackCollectionManager->internalCollection()->loadRootDirs().isEmpty()) {
++    const bool hasRegisteredRoots =
++            !m_pTrackCollectionManager->internalCollection()->loadRootDirs().isEmpty();
++    const ConfigKey bootstrapKey("[Library]", "MixPiBootstrapLibrary");
++    const auto bootstrap = mixpi::initiallibrary::initialize(
++            pConfig->getValue<bool>(bootstrapKey, false),
++            hasRegisteredRoots,
++            QDir::homePath(),
++            [this](const QString& directory) {
++                return m_pTrackCollectionManager->addDirectory(mixxx::FileInfo(directory)) ==
++                        DirectoryDAO::AddResult::Ok;
++            });
++    if (bootstrap == mixpi::initiallibrary::Result::Registered ||
++            bootstrap == mixpi::initiallibrary::Result::Preserved) {
++        pConfig->setValue(bootstrapKey, false);
++        musicDirAdded = bootstrap == mixpi::initiallibrary::Result::Registered;
++    } else if (bootstrap == mixpi::initiallibrary::Result::Unavailable) {
++        qWarning() << "Internal copied-library root unavailable; automatic setup deferred";
++    }
++
++    if (bootstrap == mixpi::initiallibrary::Result::Unmanaged && !hasRegisteredRoots) {
+         // TODO(XXX) this needs to be smarter, we can't distinguish between an empty
+         // path return value (not sure if this is normally possible, but it is
+         // possible with the Windows 7 "Music" library, which is what
+diff --git a/src/library/initiallibrary.h b/src/library/initiallibrary.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/initiallibrary.h
+@@ -0,0 +1,68 @@
++#pragma once
++
++#include <QDir>
++#include <QFile>
++#include <QFileInfo>
++#include <QString>
++#include <functional>
++#include <sys/stat.h>
++
++namespace mixpi::initiallibrary {
++
++enum class Result {
++    Unmanaged,
++    Preserved,
++    Registered,
++    Unavailable,
++};
++
++inline QString prepareRoot(const QString& homePath) {
++    const QFileInfo home(homePath);
++    const auto canonicalHome = home.canonicalFilePath();
++    struct stat homeIdentity {};
++    if (!home.isDir() || !home.isReadable() || canonicalHome.isEmpty() ||
++            canonicalHome == QDir::rootPath() ||
++            ::stat(QFile::encodeName(canonicalHome).constData(), &homeIdentity) != 0) {
++        return {};
++    }
++    QString path = canonicalHome;
++    for (const auto& component : {QStringLiteral("Music"), QStringLiteral("Backup")}) {
++        path = QDir(path).filePath(component);
++        QFileInfo directory(path);
++        if (directory.isSymLink() ||
++                (directory.exists() && !directory.isDir())) {
++            return {};
++        }
++        if (!directory.exists() && !QDir().mkdir(path)) {
++            return {};
++        }
++        directory.refresh();
++        struct stat identity {};
++        if (directory.isSymLink() || !directory.isDir() || !directory.isReadable() ||
++                directory.canonicalFilePath() != path ||
++                ::stat(QFile::encodeName(path).constData(), &identity) != 0 ||
++                identity.st_dev != homeIdentity.st_dev) {
++            return {};
++        }
++    }
++    return path;
++}
++
++inline Result initialize(bool enabled,
++        bool hasRegisteredRoots,
++        const QString& homePath,
++        const std::function<bool(const QString&)>& registerRoot) {
++    if (!enabled) {
++        return Result::Unmanaged;
++    }
++    if (hasRegisteredRoots) {
++        return Result::Preserved;
++    }
++    const auto root = prepareRoot(homePath);
++    if (root.isEmpty() || !registerRoot(root)) {
++        return Result::Unavailable;
++    }
++    return Result::Registered;
++}
++
++}

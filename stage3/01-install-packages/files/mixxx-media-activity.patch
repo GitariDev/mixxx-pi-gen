@@ -1,0 +1,182 @@
+diff --git a/src/library/media/mediauseregistry.h b/src/library/media/mediauseregistry.h
+--- a/src/library/media/mediauseregistry.h
++++ b/src/library/media/mediauseregistry.h
+@@ -152,6 +152,15 @@
+         return result;
+     }
+ 
++    Snapshot observe(const std::string& generation) const {
++        std::lock_guard<std::mutex> lock(m_state->mutex);
++        const auto entry = m_state->entries.find(generation);
++        if (entry == m_state->entries.end()) {
++            return {false, {}, m_state->unknown};
++        }
++        return {entry->second.draining, entry->second.users, m_state->unknown};
++    }
++
+     Drain beginDrain(const std::string& generation) {
+         if (generation.empty()) {
+             return {};
+diff --git a/src/library/mixpimediaactivity.h b/src/library/mixpimediaactivity.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/mixpimediaactivity.h
+@@ -0,0 +1,33 @@
++#pragma once
++
++#include <QString>
++#include <QStringList>
++
++#include "library/media/mediauseregistry.h"
++
++namespace mixxx::media {
++
++inline QString activityText(const MediaUseRegistry::Snapshot& snapshot) {
++    const char* names[] = {"Loading", "Audio", "Analysis", "Import", "Discovery",
++            "Browsing", "Metadata", "Recording", "Copy/check"};
++    static_assert(sizeof(names) / sizeof(*names) == static_cast<std::size_t>(Producer::Count));
++    QStringList states;
++    if (snapshot.draining) {
++        states.append(QStringLiteral("Release requested"));
++    }
++    bool unresolved = false;
++    for (std::size_t index = 0; index < snapshot.users.size(); ++index) {
++        if (snapshot.users[index]) {
++            states.append(QString::fromLatin1(names[index]) + QStringLiteral(": ") +
++                    QString::number(static_cast<qulonglong>(snapshot.users[index])));
++        }
++        unresolved = unresolved || snapshot.unknown[index] != 0;
++    }
++    if (unresolved) {
++        states.append(QStringLiteral("Unresolved media use"));
++    }
++    return states.isEmpty() ? QStringLiteral("No tracked use; not eject clearance") :
++            states.join(QStringLiteral(" / "));
++}
++
++}
+diff --git a/src/library/mixpimediadialog.h b/src/library/mixpimediadialog.h
+--- a/src/library/mixpimediadialog.h
++++ b/src/library/mixpimediadialog.h
+@@ -10,6 +10,7 @@
+ #include <QPointer>
+ #include <QPushButton>
+ #include <QSet>
++#include <QTimer>
+ #include <QVBoxLayout>
+ #include <functional>
+ #include <memory>
+@@ -21,6 +22,7 @@
+     using Cancel = std::function<void()>;
+     using OpenSource = std::function<Cancel(const QJsonObject&, QObject*, std::function<void(QString)>)>;
+     using Controlled = std::function<void(bool, QString)>;
++    using Activity = std::function<QString(const QJsonObject&)>;
+ 
+     static void configure(QDialog* dialog) {
+         dialog->setObjectName("MixpiMediaDialog");
+@@ -39,9 +41,10 @@
+     }
+ 
+     MixpiMediaDialog(QWidget* parent, Observe observe, OpenSource open,
+-            Controlled controlled, std::shared_ptr<QSet<QString>> opened)
++            Controlled controlled, std::shared_ptr<QSet<QString>> opened, Activity activity = {})
+             : QDialog(parent), m_observe(std::move(observe)), m_open(std::move(open)),
+-              m_controlled(std::move(controlled)), m_opened(std::move(opened)) {
++              m_controlled(std::move(controlled)), m_opened(std::move(opened)),
++              m_activity(std::move(activity)) {
+         configure(this);
+         setAttribute(Qt::WA_DeleteOnClose);
+         setWindowTitle(tr("Load / Eject"));
+@@ -96,6 +99,10 @@
+         connect(m_load, &QPushButton::clicked, this, [this] { dispatch(false, false); });
+         connect(m_mount, &QPushButton::clicked, this, [this] { dispatch(true, false); });
+         connect(m_eject, &QPushButton::clicked, this, [this] { dispatch(false, true); });
++        auto* activityTimer = new QTimer(this);
++        activityTimer->setObjectName("mediaActivityTimer");
++        connect(activityTimer, &QTimer::timeout, this, [this] { updateActivity(); });
++        activityTimer->start(1000);
+         reload();
+         m_close->setFocus(Qt::OtherFocusReason);
+     }
+@@ -121,6 +128,18 @@
+     }
+ 
+   private:
++    void updateActivity() {
++        if (!m_activity) {
++            return;
++        }
++        for (int index = 0; index < m_list->count(); ++index) {
++            auto* item = m_list->item(index);
++            const auto drive = findDrive(m_snapshot, item->data(Qt::UserRole).toString());
++            const auto state = drive.isEmpty() ? tr("Drive identity unavailable") : m_activity(drive);
++            item->setText(item->data(Qt::UserRole + 1).toString() + "\n" + state);
++        }
++    }
++
+     void cancelPending() {
+         ++m_generation;
+         m_loading = false;
+@@ -208,7 +227,9 @@
+                         drive.value("device").toString();
+                 auto* item = new QListWidgetItem(text, guard->m_list);
+                 item->setData(Qt::UserRole, token);
+-            }
++                item->setData(Qt::UserRole + 1, text);
++            }
++            guard->updateActivity();
+             guard->m_list->setCurrentRow(-1);
+             guard->m_list->clearSelection();
+             guard->m_status->setText(guard->m_list->count() ? tr("Select a drive.") : tr("No eligible USB drives. Internal copies and system disks are excluded."));
+@@ -286,6 +307,7 @@
+     OpenSource m_open;
+     Controlled m_controlled;
+     std::shared_ptr<QSet<QString>> m_opened;
++    Activity m_activity;
+     Cancel m_cancel;
+     quint64 m_generation = 0;
+     bool m_loading = false;
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -28,6 +28,8 @@
+ #include "library/media/copyservice.h"
+ #include "library/mixpicontrolleddialog.h"
+ #include "library/mixpimediadialog.h"
++#include "library/mixpimediaactivity.h"
++#include "library/media/mediause.h"
+ 
+ class MixpiMedia final : public QObject {
+   public:
+@@ -209,7 +211,30 @@
+                 [this](bool mount, QString token) {
+                     m_dialog = nullptr;
+                     showControlled(mount, token);
+-                }, m_opened);
++                }, m_opened, [](const QJsonObject& drive) {
++#ifdef __linux__
++                    QStringList states;
++                    for (const auto& value : drive.value("volumes").toArray()) {
++                        const auto volume = value.toObject();
++                        const auto selected = inspectSelected(volume);
++                        const auto path = volume.value("mount").toObject().value("path").toString();
++                        const auto binding = mixxx::media::observePath(path.toStdString());
++                        if (selected.revision.empty() || binding.generation.empty() ||
++                                binding.source != selected.revision) {
++                            states.append(QStringLiteral("Drive identity changed or unavailable"));
++                            continue;
++                        }
++                        states.append(mixxx::media::activityText(
++                                mixxx::media::registry().observe(binding.generation)));
++                    }
++                    states.removeDuplicates();
++                    return states.isEmpty() ? QStringLiteral("Not mounted; usage unavailable") :
++                            states.join(QStringLiteral(" | "));
++#else
++                    Q_UNUSED(drive);
++                    return QStringLiteral("Live usage unavailable on this platform");
++#endif
++                });
+         m_dialog = dialog;
+         dialog->show();
+     }

@@ -1,0 +1,139 @@
+#include <QDir>
+#include <QHash>
+#include <QPersistentModelIndex>
+#include <QStandardItemModel>
+#include <QTreeView>
+#include <QFileInfoList>
+#include <cassert>
+#include <cstring>
+#include <dirent.h>
+#include <sys/stat.h>
+
+#define QUICK_LINK_NODE "::mixxx_quick_lnk_node::"
+#define __LINUX__
+
+struct TreeItemModel {
+    static constexpr int kDataRole = Qt::UserRole;
+};
+
+inline int syntheticOpenCalls = 0;
+inline int syntheticFileAccessCalls = 0;
+inline DIR* syntheticOpen(const char*) {
+    ++syntheticOpenCalls;
+    return reinterpret_cast<DIR*>(1);
+}
+inline dirent* syntheticRead(DIR*) {
+    static dirent entry{};
+    entry.d_type = DT_DIR;
+    std::strcpy(entry.d_name, "synthetic-child");
+    return &entry;
+}
+inline int syntheticClose(DIR*) { return 0; }
+
+namespace mixxx {
+struct FileInfo { explicit FileInfo(const QString&) {} };
+struct FileAccess {
+    explicit FileAccess(const FileInfo&) { ++syntheticFileAccessCalls; }
+    ~FileAccess() {}
+};
+}
+
+struct FolderTreeModel : QStandardItemModel {
+    mutable QHash<QString, bool> m_directoryCache;
+    bool m_directoryProbesDeferred = false;
+    void deferDirectoryProbes();
+    void rememberChildDirectories(const QString& path, bool hasChildren);
+    bool directoryHasChildren(const QString& path) const;
+    void triggerRepaint();
+    bool hasChildren(const QModelIndex& parent = QModelIndex()) const override {
+        if (!parent.isValid()) {
+            return QStandardItemModel::hasChildren(parent);
+        }
+        const QString path = parent.data(Qt::UserRole).toString();
+        if (path == QUICK_LINK_NODE) {
+            return rowCount(parent) > 0;
+        }
+        if (path == "::mixxx_device_node::") {
+            return true;
+        }
+        return directoryHasChildren(path);
+    }
+};
+
+struct BrowseFeature {
+    FolderTreeModel* m_pSidebarModel;
+    QModelIndex m_lastRightClickedIndex;
+    void refreshMediaLifecycle();
+};
+
+#define opendir syntheticOpen
+#define readdir syntheticRead
+#define closedir syntheticClose
+PRODUCTION_DIRECTORY_PROBE
+#undef opendir
+#undef readdir
+#undef closedir
+
+PRODUCTION_DEFER_PROBES
+PRODUCTION_REMEMBER_CHILDREN
+PRODUCTION_REPAINT
+PRODUCTION_MEDIA_REFRESH
+
+inline QStandardItem* refreshItem(const QString& path) {
+    auto* item = new QStandardItem(path);
+    item->setData(path, TreeItemModel::kDataRole);
+    return item;
+}
+
+inline void testBrowseRefresh() {
+    for (bool contextSelected : {false, true}) {
+        FolderTreeModel model;
+        auto* quickLinks = refreshItem(QUICK_LINK_NODE);
+        auto* localAlias = refreshItem("/home/pi/usb-alias");
+        auto* mediaLink = refreshItem("/media/pi/old-generation");
+        quickLinks->appendRow(localAlias);
+        quickLinks->appendRow(mediaLink);
+        localAlias->appendRow(refreshItem("stale-alias-child"));
+        mediaLink->appendRow(refreshItem("stale-media-child"));
+        auto* devices = refreshItem("::mixxx_device_node::");
+        devices->appendRow(refreshItem("stale-device"));
+        auto* root = refreshItem("/");
+        root->appendRow(refreshItem("stale-root-child"));
+        model.appendRow(quickLinks);
+        model.appendRow(devices);
+        model.appendRow(root);
+        model.m_directoryCache.insert("/media/pi/old-generation", true);
+        model.m_directoryCache.insert("/home/pi/usb-alias", false);
+        const QPersistentModelIndex savedLink(localAlias->index());
+        BrowseFeature feature{&model, contextSelected ? localAlias->index() : QModelIndex{}};
+        QTreeView view;
+        view.setModel(&model);
+        view.show();
+        view.expandAll();
+        QCoreApplication::processEvents();
+        syntheticOpenCalls = 0;
+        syntheticFileAccessCalls = 0;
+        feature.refreshMediaLifecycle();
+        assert(syntheticOpenCalls == 0 && syntheticFileAccessCalls == 0);
+        QCoreApplication::processEvents();
+        assert(syntheticOpenCalls == 0 && syntheticFileAccessCalls == 0);
+        assert(model.rowCount() == 3 && quickLinks->rowCount() == 2);
+        assert(localAlias->rowCount() == 0 && mediaLink->rowCount() == 0);
+        assert(devices->rowCount() == 0 && root->rowCount() == 0);
+        assert(savedLink.isValid() && savedLink.data().toString() == "/home/pi/usb-alias");
+        assert(model.m_directoryCache.isEmpty());
+        feature.refreshMediaLifecycle();
+        assert(syntheticOpenCalls == 0 && syntheticFileAccessCalls == 0);
+        QCoreApplication::processEvents();
+        assert(syntheticOpenCalls == 0 && syntheticFileAccessCalls == 0);
+        assert(model.rowCount() == 3 && quickLinks->rowCount() == 2);
+        assert(model.directoryHasChildren("/uncached/slow-link"));
+        model.rememberChildDirectories("/uncached/slow-link", false);
+        assert(!model.directoryHasChildren("/uncached/slow-link"));
+        model.rememberChildDirectories("/uncached/slow-link", true);
+        assert(model.directoryHasChildren("/uncached/slow-link"));
+        feature.refreshMediaLifecycle();
+        assert(model.directoryHasChildren("/uncached/slow-link"));
+        assert(syntheticOpenCalls == 0 && syntheticFileAccessCalls == 0);
+    }
+}

@@ -1,0 +1,411 @@
+diff --git a/src/coreservices.cpp b/src/coreservices.cpp
+index 06cf17a..fc42b18 100644
+--- a/src/coreservices.cpp
++++ b/src/coreservices.cpp
+@@ -442,6 +442,20 @@ void CoreServices::initialize(QApplication* pApp) {
+ 
+     ScopedTimer t(u"CoreServices::initialize");
+ 
++    // Startup-only performance choices are read before any cache/reader exists.
++    // Explicit process environment overrides remain useful for controlled trials.
++    const auto performanceConfig = m_pSettingsManager->settings();
++    if (!qEnvironmentVariableIsSet("MIXPI_READAHEAD_CHUNKS")) {
++        const int chunks = qBound(2, performanceConfig->getValue(
++                ConfigKey("[MixPi]", "ReadAheadChunks"), 8), 24);
++        qputenv("MIXPI_READAHEAD_CHUNKS", QByteArray::number(chunks));
++    }
++    if (!qEnvironmentVariableIsSet("MIXPI_RAM_CACHE_MAX_MB")) {
++        const int mb = qBound(0, performanceConfig->getValue(
++                ConfigKey("[MixPi]", "RamCacheMB"), 1024), 1024);
++        qputenv("MIXPI_RAM_CACHE_MAX_MB", QByteArray::number(mb));
++    }
++
+     VERIFY_OR_DEBUG_ASSERT(SoundSourceProxy::registerProviders()) {
+         qCritical() << "Failed to register any SoundSource providers";
+         return;
+diff --git a/src/engine/readaheadmanager.cpp b/src/engine/readaheadmanager.cpp
+index 6a7697d..70e4b34 100644
+--- a/src/engine/readaheadmanager.cpp
++++ b/src/engine/readaheadmanager.cpp
+@@ -11,11 +11,14 @@
+ namespace {
+ 
+ // Initialized before the audio callback: no getenv/parsing or static guard there.
+-const int kReadAheadChunks = [] {
+-    bool ok = false;
+-    const int chunks = qEnvironmentVariableIntValue("MIXPI_READAHEAD_CHUNKS", &ok);
+-    return ok ? qBound(2, chunks, 24) : 8;
+-}();
++int readAheadChunks() {
++    static const int chunksAtStartup = [] {
++        bool ok = false;
++        const int chunks = qEnvironmentVariableIntValue("MIXPI_READAHEAD_CHUNKS", &ok);
++        return ok ? qBound(2, chunks, 24) : 8;
++    }();
++    return chunksAtStartup;
++}
+ 
+ } // namespace
+ 
+@@ -26,7 +29,8 @@ ReadAheadManager::ReadAheadManager()
+           m_pReader(nullptr),
+           m_pCrossFadeBuffer(SampleUtil::alloc(MAX_BUFFER_LEN)),
+           m_cacheMissCount(0),
+-          m_cacheMissExpected(false) {
++          m_cacheMissExpected(false),
++          m_readAheadChunks(readAheadChunks()) {
+     // For testing only: ReadAheadManagerMock
+ }
+ 
+@@ -38,7 +42,8 @@ ReadAheadManager::ReadAheadManager(CachingReader* pReader,
+           m_pReader(pReader),
+           m_pCrossFadeBuffer(SampleUtil::alloc(MAX_BUFFER_LEN)),
+           m_cacheMissCount(0),
+-          m_cacheMissExpected(false) {
++          m_cacheMissExpected(false),
++          m_readAheadChunks(readAheadChunks()) {
+     DEBUG_ASSERT(m_pLoopingControl != nullptr);
+     DEBUG_ASSERT(m_pReader != nullptr);
+ }
+@@ -242,7 +247,7 @@ void ReadAheadManager::hintReader(double dRate, gsl::not_null<HintVector*> pHint
+     // FIFO rounds the requested 80/4 entries up to 32, leaving at least
+     // 7 request slots and 55 cache slots outside this window.
+     // This is a source-frame horizon: faster playback shortens its duration.
+-    const SINT frameCountToCache = kReadAheadChunks * CachingReaderChunk::kFrames;
++    const SINT frameCountToCache = m_readAheadChunks * CachingReaderChunk::kFrames;
+     current_position.reverse = in_reverse;
+     current_position.frameCount = frameCountToCache;
+ 
+diff --git a/src/engine/readaheadmanager.h b/src/engine/readaheadmanager.h
+index 1e5b0cf..96ebe8f 100644
+--- a/src/engine/readaheadmanager.h
++++ b/src/engine/readaheadmanager.h
+@@ -125,4 +125,5 @@ class ReadAheadManager {
+     CSAMPLE* m_pCrossFadeBuffer;
+     int m_cacheMissCount;
+     bool m_cacheMissExpected;
++    const int m_readAheadChunks;
+ };
+diff --git a/src/mixxxmainwindow.cpp b/src/mixxxmainwindow.cpp
+index 322613b..2f7a565 100644
+--- a/src/mixxxmainwindow.cpp
++++ b/src/mixxxmainwindow.cpp
+@@ -58,6 +58,7 @@
+ #include "waveform/visualsmanager.h"
+ #include "waveform/waveformwidgetfactory.h"
+ #include "widget/wglwidget.h"
++#include "widget/mixpiperformancesettings.h"
+ #include "widget/wmainmenubar.h"
+ 
+ #ifdef __VINYLCONTROL__
+@@ -290,6 +291,8 @@ void MixxxMainWindow::initialize() {
+             WaveformWidgetFactory::instance(),
+             &WaveformWidgetFactory::slotSkinLoaded);
+ 
++    new MixpiPerformanceSettings(this, pConfig, m_pCoreServices->getSoundManager().get());
++
+     // Initialize preference dialog
+     m_pPrefDlg = new DlgPreferences(
+             m_pCoreServices->getScreensaverManager(),
+diff --git a/src/widget/mixpiperformancesettings.h b/src/widget/mixpiperformancesettings.h
+new file mode 100644
+--- /dev/null
++++ b/src/widget/mixpiperformancesettings.h
+@@ -0,0 +1,263 @@
++#pragma once
++
++#include <QMessageBox>
++#include <QFileInfo>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QProcess>
++#include <QTimer>
++#include <QWidget>
++#include <cmath>
++
++#include "control/controlobject.h"
++#include "control/controlproxy.h"
++#include "engine/enginebuffer.h"
++#include "preferences/usersettings.h"
++#include "soundio/soundmanager.h"
++#include "waveform/waveformwidgetfactory.h"
++
++// Own these controls before parsing a skin. Request handlers validate skin/MIDI
++// writes, and publish the applied value only after the underlying operation.
++class MixpiPerformanceSettings : public QObject {
++  public:
++    MixpiPerformanceSettings(QWidget* parent, UserSettingsPointer settings,
++            SoundManager* sound)
++            : QObject(parent), m_window(parent), m_settings(settings), m_sound(sound) {
++        m_cpu = control("audio_load_percent");
++        m_fps = control("waveform_fps");
++        m_fps->connectValueChangeRequest(this, [this](double v) {
++            if (!oneOf(v, {30, 45, 60})) return;
++            WaveformWidgetFactory::instance()->setFrameRate(static_cast<int>(v));
++            refresh();
++        });
++        m_buffer = control("buffer_frames");
++        m_buffer->connectValueChangeRequest(this, [this](double v) { changeBuffer(v); });
++        m_bufferAvailable = control("buffer_available");
++        m_range = control("tempo_range");
++        m_range->connectValueChangeRequest(this, [this](double v) {
++            if (!oneOf(v, {4, 6, 8, 10, 16, 24, 50, 90})) return;
++            for (const auto* group : {"[Channel1]", "[Channel2]"}) {
++                ControlProxy range(group, "rateRange");
++                range.set(v / 100.0);
++            }
++            refresh();
++        });
++        m_rangeIndex = control("tempo_range_index");
++        m_rangeIndex->connectValueChangeRequest(this, [this](double v) {
++            if (!oneOf(v, {1, 2, 3, 4, 5, 6, 7, 8})) return;
++            const int ranges[] = {4, 6, 8, 10, 16, 24, 50, 90};
++            const int range = ranges[static_cast<int>(v) - 1];
++            if (m_range->get() != range) m_range->set(range);
++        });
++        m_engine = control("keylock_engine");
++        m_engine->connectValueChangeRequest(this, [this](double v) {
++            if (!oneOf(v, {0, 1, 2})) return;
++            const auto engine = static_cast<EngineBuffer::KeylockEngine>(static_cast<int>(v));
++            if (!EngineBuffer::isKeylockEngineAvailable(engine)) return;
++            ControlProxy native("[App]", "keylock_engine");
++            native.set(v);
++            m_settings->set(ConfigKey("[Master]", "keylock_engine"), ConfigValue(static_cast<int>(v)));
++            refresh();
++        });
++        startupControl("read_ahead", "ReadAheadChunks", "MIXPI_READAHEAD_CHUNKS", 8, {2, 8, 24});
++        startupControl("cache_mb", "RamCacheMB", "MIXPI_RAM_CACHE_MAX_MB", 1024, {0, 512, 1024});
++        auto* timer = new QTimer(this);
++        connect(timer, &QTimer::timeout, this, [this] { refresh(); });
++        timer->start(1000);
++        auto* advanced = control("settings_advanced");
++        advanced->connectValueChangeRequest(this, [advanced](double v) {
++            if (oneOf(v, {0, 1})) advanced->setAndConfirm(v);
++        });
++        m_bar = control("desktop_bar");
++        m_barAvailable = control("desktop_bar_available");
++        m_bar->setAndConfirm(3);
++        m_bar->connectValueChangeRequest(this, [this](double v) {
++            if (v == 1 && m_barAvailable->get() == 1) {
++                desktopBar(m_bar->get() == 1 ? "hide" : "show");
++            }
++        });
++        auto* barTimer = new QTimer(this);
++        connect(barTimer, &QTimer::timeout, this, [this] { desktopBar("status"); });
++        barTimer->start(5000);
++        desktopBar("status");
++        refresh();
++        control("settings_available")->set(1);
++    }
++
++  private:
++    static bool oneOf(double v, std::initializer_list<int> allowed) {
++        for (auto n : allowed) if (v == n) return true;
++        return false;
++    }
++    ControlObject* control(const char* name) {
++        auto* c = new ControlObject(ConfigKey("[MixPi]", name));
++        c->setParent(this);
++        return c;
++    }
++    void startupControl(const char* name, const char* setting, const char* env,
++            int fallback, std::initializer_list<int> choices) {
++        auto* c = control(name);
++        const ConfigKey key("[MixPi]", setting);
++        bool ok = false;
++        const int overrideValue = qEnvironmentVariableIntValue(env, &ok);
++        c->setAndConfirm(m_settings->getValue(key, ok ? overrideValue : fallback));
++        // Copy the choices: the initializer_list storage expires after construction.
++        const QList<int> allowed(choices);
++        c->connectValueChangeRequest(this, [this, c, key, allowed](double v) {
++            if (!std::isfinite(v) || v < 0 || v > 1024 || v != std::floor(v) ||
++                    !allowed.contains(static_cast<int>(v))) return;
++            m_settings->set(key, ConfigValue(static_cast<int>(v)));
++            c->setAndConfirm(v);
++        });
++    }
++    bool supportsBuffer() const {
++        const auto cfg = m_sound->getConfig();
++        const double rate = cfg.getSampleRate().toDouble();
++        return cfg.getAPI() == "ALSA" && rate > 0 && std::isfinite(rate);
++    }
++    bool playersStopped() const {
++        if (ControlObject::get(ConfigKey("[Recording]", "status")) != 0) return false;
++        for (const auto& type : {QStringLiteral("Channel"), QStringLiteral("Sampler"),
++                QStringLiteral("PreviewDeck")}) {
++            const auto countKey = type == "Channel" ? "num_decks" :
++                    type == "Sampler" ? "num_samplers" : "num_preview_decks";
++            const double count = ControlObject::get(ConfigKey("[App]", countKey));
++            if (!std::isfinite(count) || count < 0 || count > 64) return false;
++            for (int index = 1; index <= count; ++index) {
++                const QString group = QStringLiteral("[%1%2]").arg(type).arg(index);
++                if (ControlObject::get(ConfigKey(group, "play")) != 0) return false;
++            }
++        }
++        return true;
++    }
++    void refresh() {
++        ControlProxy load("[App]", "audio_latency_usage");
++        m_cpu->set(load.get() * 100.0);
++        ControlProxy range1("[Channel1]", "rateRange");
++        ControlProxy range2("[Channel2]", "rateRange");
++        m_range->setAndConfirm(range1.get() == range2.get() ? std::round(range1.get() * 100) : -1);
++        int rangeIndex = 0;
++        const int ranges[] = {4, 6, 8, 10, 16, 24, 50, 90};
++        for (int index = 0; index < 8; ++index) {
++            if (m_range->get() == ranges[index]) rangeIndex = index + 1;
++        }
++        m_rangeIndex->setAndConfirm(rangeIndex);
++        m_fps->setAndConfirm(WaveformWidgetFactory::instance()->getFrameRate());
++        ControlProxy native("[App]", "keylock_engine");
++        m_engine->setAndConfirm(native.get());
++        m_bufferAvailable->set(supportsBuffer() && playersStopped() && !m_changing ? 1 : 0);
++        const auto cfg = m_sound->getConfig();
++        const auto index = cfg.getAudioBufferSizeIndex();
++        if (supportsBuffer() && index >= 1 && index <= SoundManagerConfig::kMaxAudioBufferSizeIndex) {
++            m_buffer->setAndConfirm(cfg.getFramesPerBuffer());
++        } else {
++            m_buffer->setAndConfirm(0);
++        }
++    }
++    void changeBuffer(double requested) {
++        if (m_changing || !supportsBuffer() || !playersStopped() ||
++                !oneOf(requested, {256, 512, 1024})) return;
++        auto previous = m_sound->getConfig();
++        const auto rate = previous.getSampleRate().toDouble();
++        auto candidate = previous;
++        unsigned index = 1;
++        candidate.setAudioBufferSizeIndex(index);
++        while (candidate.getFramesPerBuffer() < requested &&
++                index < SoundManagerConfig::kMaxAudioBufferSizeIndex) {
++            ++index;
++            candidate.setAudioBufferSizeIndex(index);
++        }
++        const unsigned frames = candidate.getFramesPerBuffer();
++        if (frames != requested || index == previous.getAudioBufferSizeIndex()) return;
++        m_changing = true;
++        refresh();
++        QMessageBox confirm(QMessageBox::Question, tr("Change audio buffer?"),
++                tr("Use %1 frames (%2 ms)? Audio will briefly restart. Keep all players and recording stopped.")
++                        .arg(frames).arg(frames * 1000.0 / rate, 0, 'f', 1),
++                QMessageBox::Ok | QMessageBox::Cancel, m_window);
++        confirm.setDefaultButton(QMessageBox::Cancel);
++        confirm.setStyleSheet("QPushButton { min-height: 48px; min-width: 140px; font-size: 18px; }");
++        if (confirm.exec() == QMessageBox::Ok) {
++            // A modal dialog runs the event loop. Preserve any device changes
++            // made meanwhile; never overwrite a newer audio configuration.
++            if (!playersStopped() || m_sound->getConfig().getAPI() != previous.getAPI() ||
++                    m_sound->getConfig().getSampleRate() != previous.getSampleRate() ||
++                    m_sound->getConfig().getAudioBufferSizeIndex() != previous.getAudioBufferSizeIndex()) {
++                QMessageBox::information(m_window, tr("Audio configuration changed"),
++                        tr("Stop playback and recording, then choose the buffer again using the current audio configuration."));
++            } else {
++                auto next = m_sound->getConfig();
++                previous = next;
++                next.setAudioBufferSizeIndex(index);
++                const auto status = m_sound->setConfig(next);
++                if (status != SoundDeviceStatus::Ok) {
++                    const auto error = m_sound->getLastErrorMessage(status);
++                    const auto rollback = m_sound->setConfig(previous);
++                    QMessageBox::warning(m_window, tr("Audio buffer was not applied"), error +
++                            (rollback == SoundDeviceStatus::Ok ? tr("\nPrevious configuration restored.") :
++                                    tr("\nAudio could not be restored. Open Sound Hardware preferences.")));
++                } else {
++                    m_sound->getConfig().writeToDisk();
++                }
++            }
++        }
++        m_changing = false;
++        refresh();
++    }
++    void desktopBar(const char* action) {
++        if (m_barProcess) return;
++        const QString helper = QStringLiteral("/usr/local/bin/mixpi-desktop-bar");
++        if (!QFileInfo(helper).isExecutable()) {
++            m_bar->setAndConfirm(3);
++            m_barAvailable->set(0);
++            return;
++        }
++        const bool changing = QByteArray(action) != "status";
++        m_barAvailable->set(0);
++        if (changing) m_bar->setAndConfirm(2);
++        auto* process = new QProcess(this);
++        m_barProcess = process;
++        auto* timeout = new QTimer(process);
++        timeout->setSingleShot(true);
++        connect(timeout, &QTimer::timeout, process, &QProcess::kill);
++        connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
++            if (error != QProcess::FailedToStart) return;
++            m_bar->setAndConfirm(3);
++            m_barAvailable->set(0);
++            m_barProcess = nullptr;
++            process->deleteLater();
++        });
++        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
++                [this, process, timeout, changing](int code, QProcess::ExitStatus status) {
++            timeout->stop();
++            const auto result = QJsonDocument::fromJson(process->readAllStandardOutput()).object();
++            const auto visible = result.value("visible");
++            const bool valid = code == 0 && status == QProcess::NormalExit && visible.isBool() &&
++                    result.value("error").isString() &&
++                    result.value("error").toString().isEmpty() &&
++                    result.value("reserved_px").toInt(-1) == (visible.toBool() ? 36 : 0);
++            m_bar->setAndConfirm(valid ? (visible.toBool() ? 1 : 0) : 3);
++            m_barAvailable->set(valid ? 1 : 0);
++            if (!valid && changing) QMessageBox::warning(m_window, tr("Top bar was not confirmed"),
++                    result.value("error").toString(tr("The desktop helper failed or timed out. No visibility change was confirmed.")));
++            m_barProcess = nullptr;
++            process->deleteLater();
++        });
++        process->start(helper, {QString::fromLatin1(action)});
++        timeout->start(12000);
++    }
++    QWidget* m_window;
++    UserSettingsPointer m_settings;
++    SoundManager* m_sound;
++    ControlObject* m_cpu;
++    ControlObject* m_fps;
++    ControlObject* m_buffer;
++    ControlObject* m_bufferAvailable;
++    ControlObject* m_engine;
++    ControlObject* m_range;
++    ControlObject* m_rangeIndex;
++    ControlObject* m_bar;
++    ControlObject* m_barAvailable;
++    QProcess* m_barProcess = nullptr;
++    bool m_changing = false;
++};
+diff --git a/src/widget/wkey.h b/src/widget/wkey.h
+--- a/src/widget/wkey.h
++++ b/src/widget/wkey.h
+@@ -20,6 +20,7 @@ class WKey : public WLabel  {
+     double m_dOldValue;
+     bool m_displayCents;
+     bool m_displayKey;
++    bool m_pairedNotation = false;
+     ControlProxy m_keyNotation;
+     ControlProxy m_engineKeyDistance;
+ };
+diff --git a/src/widget/wkey.cpp b/src/widget/wkey.cpp
+--- a/src/widget/wkey.cpp
++++ b/src/widget/wkey.cpp
+@@ -30,6 +30,8 @@ void WKey::setup(const QDomNode& node, const SkinContext& context) {
+     WLabel::setup(node, context);
+     m_displayCents = context.selectBool(node, "DisplayCents", false);
+     m_displayKey = context.selectBool(node, "DisplayKey", true);
++    m_pairedNotation = context.selectBool(node, "PairedNotation", false);
++    setValue(m_dOldValue);
+ }
+ 
+ void WKey::setValue(double dValue) {
+@@ -41,7 +43,9 @@ void WKey::setValue(double dValue) {
+         // Render this key with the user-provided notation.
+         QString keyStr = "";
+         if (m_displayKey) {
+-            keyStr = KeyUtils::keyToString(key);
++            keyStr = KeyUtils::keyToString(key,
++                    m_pairedNotation ? KeyUtils::KeyNotation::LancelotAndTraditional
++                                     : KeyUtils::KeyNotation::Custom);
+         }
+         if (m_displayCents) {
+             double diff_cents = m_engineKeyDistance.get();

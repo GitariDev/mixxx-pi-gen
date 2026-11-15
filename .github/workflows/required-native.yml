@@ -1,0 +1,38 @@
+name: Required current-source native and IPC
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  current-source-native-ipc:
+    name: Required current-source native / Linux IPC
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native Qt and IPC test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ git pkg-config qt6-base-dev qt6-base-dev-tools libqt6sql6-sqlite libsndfile1-dev
+      - name: Fetch exact upstream source-versions commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin=$(python3 -c 'import pathlib,re; print(re.search(r"MIXXX_COMMIT:-([0-9a-f]{40})", pathlib.Path("source-versions").read_text())[1])')
+          source="$RUNNER_TEMP/mixxx-test-source"
+          git init "$source"
+          git -C "$source" fetch --depth=1 https://github.com/mixxxdj/mixxx.git "$pin"
+          git -C "$source" cat-file -e "$pin^{commit}"
+          echo "MIXXX_TEST_SOURCE=$source" >> "$GITHUB_ENV"
+      - name: Require current-recipe native Qt and Linux IPC checks without skips
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: /usr/bin/python3 -B tools/performance/required-native.py
+      - name: Preserve recipe and helper regression discovery after dependencies
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: /usr/bin/python3 -B -m unittest discover -s tests -v

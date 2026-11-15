@@ -1,0 +1,279 @@
+#include "mediauseregistry.h"
+#include <cassert>
+#include <deque>
+#include <functional>
+#include <iostream>
+#include <sstream>
+using mixxx::media::Lease;
+using mixxx::media::Producer;
+struct QString {
+    std::string value;
+    std::string toStdString() const { return value; }
+};
+std::ostream& operator<<(std::ostream& stream, const QString& value) { return stream << value.value; }
+namespace mixxx::media {
+std::string revision;
+Binding observePath(const std::string& path) {
+    if (path == "missing") return {};
+    return {path + revision, "mount", {}};
+}
+PRODUCTION_ACQUIRE
+}
+#define DEBUG_ASSERT(condition) assert(condition)
+#define DEBUG_ASSERT_QOBJECT_THREAD_AFFINITY(target) assert(target)
+#define VERIFY_OR_DEBUG_ASSERT(condition) if (!(condition))
+#define Q_UNUSED(value) (void)value;
+#define emit
+struct Logger { std::ostringstream stream; std::ostream& warning() { return stream; }
+    std::ostream& debug() { return stream; } } kLogger;
+struct TrackId { int value = 0; bool isValid() const { return value != 0; }
+    bool operator==(TrackId other) const { return value == other.value; } };
+std::ostream& operator<<(std::ostream& stream, TrackId id) { return stream << id.value; }
+struct TrackRef {
+    QString path;
+    bool hasId() const { return false; }
+    bool hasLocation() const { return true; }
+    QString getLocation() const { return path; }
+    bool hasCanonicalLocation() const { return true; }
+    QString getCanonicalLocation() const { return path; }
+    TrackId getId() const { return {}; }
+    static inline int resolutions = 0;
+    static TrackRef fromFilePath(QString path) { ++resolutions; return {path}; }
+};
+struct Track {
+    QString path;
+    TrackId id{1};
+    TrackId getId() const { return id; }
+    QString getLocation() const { return path; }
+    struct Date { bool isValid() const { return true; } };
+    Date getDateAdded() const { return {}; }
+    struct Cover { bool hasImage() const { return false; } };
+    Cover getCoverInfo() const { return {}; }
+    bool checkSourceSynchronized() const { return true; }
+    void markClean() {}
+};
+using TrackPointer = std::shared_ptr<Track>;
+template<class Result> struct QFuture {};
+namespace Qt { enum ConnectionType { AutoConnection, DirectConnection, QueuedConnection, UniqueConnection = 128 }; }
+struct QThread { static int currentThread() { return 1; } };
+struct QMetaObject {
+    static inline bool accept = true;
+    static inline std::deque<std::function<void()>> events;
+    template<class Target, class Callback>
+    static bool invokeMethod(Target*, Callback callback, Qt::ConnectionType) {
+        if (!accept) return false;
+        events.push_back(std::move(callback)); return true;
+    }
+};
+namespace QtConcurrent {
+std::deque<std::function<void()>> events;
+template<class Callback> QFuture<void> run(Callback callback) {
+    events.push_back(std::move(callback)); return {};
+}
+}
+bool s_enableConcurrentGuessingOfTrackCoverInfo = true;
+struct CoverInfoGuesser {
+    static inline int reads = 0;
+    void guessAndSetCoverInfoForTrack(TrackPointer) { ++reads; }
+};
+PRODUCTION_COVER
+struct GlobalTrackCacheLocker {
+    TrackPointer lookupTrackByRef(const TrackRef&) { return {}; }
+};
+bool operator==(const QString& first, const QString& second) { return first.value == second.value; }
+namespace mixxx {
+struct FileInfo {
+    QString path;
+    explicit FileInfo(QString value) : path(value) {}
+    QString location() const { return path; }
+    QString canonicalLocation() const { return path; }
+};
+struct FileAccess {
+    static inline int operations = 0;
+    FileInfo file;
+    explicit FileAccess(FileInfo value) : file(value) { ++operations; }
+    const FileInfo& info() const { return file; }
+};
+}
+enum class GlobalTrackCacheLookupResult { Hit, Miss, ConflictCanonicalLocation };
+struct GlobalTrackCacheResolver {
+    TrackPointer track;
+    explicit GlobalTrackCacheResolver(const mixxx::FileAccess& file)
+        : track(std::make_shared<Track>(Track{file.info().location(), {0}})) {}
+    TrackPointer getTrack() const { return track; }
+    GlobalTrackCacheLookupResult getLookupResult() const { return GlobalTrackCacheLookupResult::Miss; }
+    TrackRef getTrackRef() const { return {track->path}; }
+    void initTrackIdAndUnlockCache(TrackId id) { track->id = id; }
+};
+struct SyncTrackMetadataParams { static int readFromUserSettings(int) { return 0; } };
+struct SoundSourceProxy {
+    enum class RamCacheMode { Original };
+    enum class UpdateTrackFromSourceMode { Once };
+    static inline bool replaceDuringImport = false;
+    static bool isFileSupported(const mixxx::FileInfo& file) { return file.path.value != "missing"; }
+    Lease lease;
+    QString path;
+    SoundSourceProxy(TrackPointer track, RamCacheMode, Lease use) : lease(use), path(track->path) {}
+    void updateTrackFromSource(UpdateTrackFromSourceMode, int) {
+        if (replaceDuringImport) mixxx::media::revision = "replacement";
+        auto use = mixxx::media::acquirePath(path.toStdString(), Producer::Metadata, lease);
+        if (!replaceDuringImport) assert(use);
+        else assert(!use);
+    }
+};
+struct TrackDAO {
+    static inline int& imports = mixxx::FileAccess::operations;
+    static inline bool& replaceDuringImport = SoundSourceProxy::replaceDuringImport;
+    int config = 0;
+    int* m_pConfig = &config;
+    struct Set { bool contains(TrackId) const { return true; } } m_tracksAddedSet;
+    TrackId getTrackIdByLocation(QString) { return {}; }
+    TrackPointer getTrackById(TrackId) { return {}; }
+    void addTracksPrepare() {}
+    void addTracksFinish(bool) {}
+    TrackPointer addTracksAddFile(const QString&, bool);
+    TrackId addTracksAddTrack(TrackPointer track, bool) { track->id = {1}; return {1}; }
+    TrackPointer getOrAddTrack(const TrackRef&, bool* = nullptr);
+};
+PRODUCTION_ADD_FILE
+PRODUCTION_DAO
+struct Manager {
+    TrackDAO dao;
+    int thread() const { return 1; }
+    TrackPointer getOrAddTrack(const TrackRef& ref) { return dao.getOrAddTrack(ref); }
+};
+struct Library {
+    Manager* m_pTrackCollectionManager;
+    static inline int loads = 0;
+    std::function<void(TrackPointer, const QString&, bool)> onLoad;
+    void loadTrackToPlayer(TrackPointer track, QString, bool) {
+        onLoad(track, {}, false);
+    }
+    void slotLoadLocationToPlayer(const QString&, const QString&, bool);
+};
+PRODUCTION_LIBRARY
+struct PlayerManager {
+    Library* library;
+    void loadLocationToPlayer(QString path, QString group, bool play) {
+        auto* pLibrary = library;
+        auto callback = PRODUCTION_LOCATION_CALLBACK;
+        callback(path, group, play);
+    }
+    void bind() { library->onLoad = PRODUCTION_TRACK_CALLBACK; }
+    void slotLoadTrackToPlayer(TrackPointer track, QString, bool) {
+        auto use = mixxx::media::acquirePath(track->getLocation().toStdString(), Producer::Load);
+        if (use) ++Library::loads;
+    }
+    void slotLoadLocationToPlayer(const QString&, const QString&, bool);
+};
+PRODUCTION_PLAYER
+namespace mixxx {
+struct TrackLoader {
+    Manager* m_trackCollectionManager;
+    TrackPointer result;
+    int thread() const { return 1; }
+    void trackLoaded(const TrackRef&, TrackPointer track) { result = track; }
+    void invokeSlotLoadTrack(const TrackRef&, Qt::ConnectionType = Qt::AutoConnection);
+    void slotLoadTrack(const TrackRef&);
+};
+PRODUCTION_INVOKE
+PRODUCTION_LOAD
+}
+void clearEvents() { QMetaObject::events.clear(); QtConcurrent::events.clear(); }
+void runEvents(std::deque<std::function<void()>>& events) {
+    while (!events.empty()) {
+        auto callback = std::move(events.front()); events.pop_front(); callback();
+    }
+}
+int main() {
+    Manager manager;
+    Library library{&manager, {}};
+    PlayerManager player{&library};
+    player.bind();
+    mixxx::TrackLoader loader{&manager, {}};
+    {
+        auto drain = mixxx::media::registry().beginDrain("A");
+        player.slotLoadLocationToPlayer({"A"}, {}, false);
+        assert(TrackRef::resolutions == 0 && TrackDAO::imports == 0);
+        manager.dao.getOrAddTrack({{"A"}});
+        assert(TrackDAO::imports == 0);
+        manager.dao.addTracksAddFile({"A"}, true);
+        assert(TrackDAO::imports == 0);
+        guessTrackCoverInfoConcurrently(std::make_shared<Track>(Track{{"A"}}));
+        assert(QtConcurrent::events.empty());
+    }
+    loader.invokeSlotLoadTrack({{"A"}});
+    {
+        auto drain = mixxx::media::registry().beginDrain("A");
+        auto other = mixxx::media::registry().beginDrain("B");
+        assert(!drain.snapshot().locallyIdle() && other.snapshot().locallyIdle());
+        mixxx::media::revision = "replacement";
+        runEvents(QMetaObject::events);
+        assert(!loader.result && TrackDAO::imports == 0 && drain.snapshot().locallyIdle());
+    }
+    mixxx::media::revision.clear();
+    player.slotLoadLocationToPlayer({"A"}, {}, false);
+    {
+        auto drain = mixxx::media::registry().beginDrain("A");
+        assert(!drain.snapshot().locallyIdle());
+        mixxx::media::revision = "replacement";
+        runEvents(QMetaObject::events);
+        assert(TrackRef::resolutions == 0 && drain.snapshot().locallyIdle());
+    }
+    mixxx::media::revision.clear();
+    player.slotLoadLocationToPlayer({"A"}, {}, false);
+    clearEvents();
+    {
+        auto drain = mixxx::media::registry().beginDrain("A");
+        assert(drain.snapshot().locallyIdle());
+    }
+    loader.invokeSlotLoadTrack({{"A"}});
+    clearEvents();
+    {
+        auto drain = mixxx::media::registry().beginDrain("A");
+        assert(drain.snapshot().locallyIdle());
+    }
+    QMetaObject::accept = false;
+    loader.invokeSlotLoadTrack({{"A"}});
+    QMetaObject::accept = true;
+    {
+        auto drain = mixxx::media::registry().beginDrain("A");
+        assert(drain.snapshot().locallyIdle());
+    }
+    player.slotLoadLocationToPlayer({"missing"}, {}, false);
+    runEvents(QMetaObject::events);
+    assert(Library::loads == 0);
+    player.slotLoadLocationToPlayer({"A"}, {}, false);
+    runEvents(QMetaObject::events);
+    assert(Library::loads == 1 && QtConcurrent::events.size() == 1);
+    {
+        auto drain = mixxx::media::registry().beginDrain("A");
+        auto other = mixxx::media::registry().beginDrain("B");
+        assert(!drain.snapshot().locallyIdle() && other.snapshot().locallyIdle());
+        mixxx::media::revision = "replacement";
+        runEvents(QtConcurrent::events);
+        assert(CoverInfoGuesser::reads == 0 && drain.snapshot().locallyIdle());
+    }
+    mixxx::media::revision.clear();
+    player.slotLoadLocationToPlayer({"A"}, {}, false);
+    {
+        auto callback = std::move(QMetaObject::events.front());
+        QMetaObject::events.pop_front();
+        callback();
+    }
+    assert(QMetaObject::events.size() == 1);
+    mixxx::media::revision = "replacement";
+    runEvents(QMetaObject::events);
+    assert(Library::loads == 1);
+    clearEvents();
+    mixxx::media::revision.clear();
+    guessTrackCoverInfoConcurrently(std::make_shared<Track>(Track{{"A"}}));
+    runEvents(QtConcurrent::events);
+    assert(CoverInfoGuesser::reads == 1);
+    TrackDAO::replaceDuringImport = true;
+    player.slotLoadLocationToPlayer({"A"}, {}, false);
+    runEvents(QMetaObject::events);
+    assert(Library::loads == 1 && QtConcurrent::events.empty());
+    clearEvents();
+    std::cout << "PASS location admission, replacement, cancellation, missing path, independent drive, cover handoff\n";
+}

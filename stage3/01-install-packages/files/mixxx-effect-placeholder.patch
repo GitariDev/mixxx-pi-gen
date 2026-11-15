@@ -1,0 +1,14 @@
+diff --git a/src/widget/weffectselector.cpp b/src/widget/weffectselector.cpp
+--- a/src/widget/weffectselector.cpp
++++ b/src/widget/weffectselector.cpp
+@@ -58,7 +58,9 @@ void WEffectSelector::populate() {
+     QFontMetrics metrics(font());
+ 
+     // Add empty item: no effect
+-    addItem(kNoEffectString);
++    addItem(objectName() == QStringLiteral("MixpiEffectSelector")
++                    ? tr("Select effect…")
++                    : kNoEffectString);
+     setItemData(0, QVariant(tr("No effect loaded.")), Qt::ToolTipRole);
+ 
+     for (int i = 0; i < visibleEffectManifests.size(); ++i) {

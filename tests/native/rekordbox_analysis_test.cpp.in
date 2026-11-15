@@ -1,0 +1,145 @@
+#include <QDebug>
+#include <QFile>
+#include <QFileInfo>
+#include <QTemporaryDir>
+#include <QString>
+#include <rekordbox_anlz.h>
+#include <kaitai/kaitaistream.h>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <memory>
+#include <sstream>
+#include <stdexcept>
+
+namespace mixxx::audio { using SampleRate = int; }
+struct TrackDouble { QString getTitle() const { return QStringLiteral("synthetic"); } };
+using TrackPointer = std::shared_ptr<TrackDouble>;
+static int parsedCount = 0;
+static int beatCount = 0;
+
+PRODUCTION_PARSE_PREFIX
+    ++parsedCount;
+    for (const auto& section : *anlz.sections()) {
+        if (section->fourcc() == rekordbox_anlz_t::SECTION_TAGS_BEAT_GRID) {
+            beatCount += static_cast<rekordbox_anlz_t::beat_grid_tag_t*>(section->body())->beats()->size();
+        }
+    }
+}
+
+static void append32(std::string& bytes, uint32_t value) {
+    for (int shift = 24; shift >= 0; shift -= 8) {
+        bytes += static_cast<char>(value >> shift);
+    }
+}
+
+static std::string analysis(const std::string& body) {
+    std::string bytes = "PMAI";
+    append32(bytes, 12);
+    append32(bytes, 12 + body.size());
+    return bytes + body;
+}
+
+static std::string beatGrid() {
+    std::string bytes = "PQTZ";
+    append32(bytes, 24);
+    append32(bytes, 32);
+    append32(bytes, 0);
+    append32(bytes, 0);
+    append32(bytes, 1);
+    bytes += std::string("\0\1\x30\x39", 4);
+    append32(bytes, 1000);
+    return bytes;
+}
+
+int main(int argc, char** argv) {
+    QTemporaryDir directory;
+    if (!directory.isValid()) return 2;
+    int failures = 0;
+    int checks = 0;
+    const auto track = std::make_shared<TrackDouble>();
+    auto check = [&](const char* name, const QString& path, bool accepted) {
+        ++checks;
+        const int before = parsedCount;
+        try {
+            readAnalyze(track, 44100, 0, false, path);
+            if ((parsedCount > before) != accepted) throw std::logic_error("wrong parse admission");
+        } catch (const std::exception& error) {
+            ++failures;
+            std::cerr << "FAIL " << name << ": " << error.what() << '\n';
+        }
+    };
+    auto fixture = [&](const char* name, const std::string& bytes, bool accepted) {
+        const QString path = directory.filePath(QString::fromUtf8(name));
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes.data(), bytes.size()) != static_cast<qint64>(bytes.size())) {
+            throw std::runtime_error("fixture write failed");
+        }
+        file.close();
+        check(name, path, accepted);
+    };
+    if (argc > 1 && std::string(argv[1]) == "holdout") {
+        std::string truncated = beatGrid();
+        truncated.pop_back();
+        fixture("truncated-section", analysis(truncated), false);
+        fixture("valid-after-truncated", analysis(beatGrid()), true);
+        ++checks;
+        if (beatCount != 1) ++failures;
+    } else {
+        check("directory", directory.path(), false);
+        check("missing", directory.filePath("missing.DAT"), false);
+        fixture("empty", "", false);
+        fixture("wrong-magic", "INVALID!", false);
+        fixture("truncated-header", "PMAI\0", false);
+        fixture("valid-empty", analysis(""), true);
+        fixture("valid-beatgrid", analysis(beatGrid()), true);
+        std::string invalidHeader = "PMAI";
+        append32(invalidHeader, 0xffffffff);
+        append32(invalidHeader, 12);
+        fixture("oversized-header", invalidHeader, false);
+        std::string invalidTag = "PQTZ";
+        append32(invalidTag, 24);
+        append32(invalidTag, 0xffffffff);
+        fixture("oversized-tag", analysis(invalidTag), false);
+        fixture("undersized-header", analysis("").replace(4, 4, std::string(4, '\0')), false);
+        const QString linked = directory.filePath("directory-link");
+        if (!QFile::link(directory.path(), linked)) return 3;
+        check("directory-symlink", linked, false);
+        const QString regularLink = directory.filePath("file-link");
+        if (!QFile::link(directory.filePath("valid-empty"), regularLink)) return 3;
+        check("regular-symlink", regularLink, true);
+        const QString denied = directory.filePath("denied");
+        QFile deniedFile(denied);
+        if (!deniedFile.open(QIODevice::WriteOnly)) return 3;
+        const auto emptyAnalysis = analysis("");
+        deniedFile.write(emptyAnalysis.data(), emptyAnalysis.size());
+        deniedFile.close();
+        if (!QFile::setPermissions(denied, {})) return 3;
+        check("unreadable-regular", denied, false);
+        QFile::setPermissions(denied, QFile::ReadOwner | QFile::WriteOwner);
+        ++checks;
+        if (beatCount != 1) ++failures;
+        ++checks;
+        std::istringstream validInput("abc");
+        kaitai::kstream validStream(&validInput);
+        if (validStream.read_bytes(2) != "ab" || validStream.pos() != 2 ||
+                validStream.read_bytes(1) != "c" || validStream.read_bytes(0) != "") ++failures;
+        for (const auto length : {-1LL, std::numeric_limits<long long>::max()}) {
+            ++checks;
+            std::istringstream input("abc");
+            kaitai::kstream stream(&input);
+            try {
+                stream.read_bytes(length);
+                ++failures;
+            } catch (const std::length_error&) {
+                ++failures;
+            } catch (const std::bad_alloc&) {
+                ++failures;
+            } catch (const std::runtime_error&) {
+            }
+        }
+    }
+    std::cout << "REAL PARSER / extracted production parse prefix: " << checks
+              << " checks, " << failures << " failures\n";
+    return failures ? 1 : 0;
+}

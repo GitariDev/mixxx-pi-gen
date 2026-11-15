@@ -1,0 +1,234 @@
+#include "mediauseregistry.h"
+#include <cassert>
+#include <deque>
+#include <functional>
+#include <iostream>
+#include <optional>
+#include <set>
+#include <sstream>
+#include <vector>
+using mixxx::media::Lease;
+using mixxx::media::Producer;
+struct QString { std::string value; std::string toStdString() const { return value; } };
+struct TrackId {
+    int value;
+    bool isValid() const { return value > 0; }
+    bool operator<(TrackId other) const { return value < other.value; }
+};
+std::ostream& operator<<(std::ostream& stream, TrackId id) { return stream << id.value; }
+struct Track { TrackId id; QString path; TrackId getId() const { return id; }
+    QString getLocation() const { return path; } };
+using TrackPointer = std::shared_ptr<Track>;
+namespace mixxx::media {
+std::string revision;
+Binding observePath(const std::string& path) { return {path + revision, "mount", {}}; }
+PRODUCTION_ACQUIRE_PATH
+}
+#define DEBUG_ASSERT(condition) assert(condition)
+#define VERIFY_OR_DEBUG_ASSERT(condition) if (!(condition))
+struct Logger { std::ostringstream stream;
+    std::ostream& debug() { return stream; } std::ostream& warning() { return stream; }
+} kLogger;
+std::ostream& qWarning() { return kLogger.warning(); }
+struct AnalyzerScheduledTrack { TrackId id; TrackId getTrackId() const { return id; }
+    int getOptions() const { return 0; } };
+struct AnalyzerTrack {
+    TrackPointer track; Lease mediaUse;
+    AnalyzerTrack(TrackPointer pointer, int) : track(std::move(pointer)) {}
+    TrackPointer getTrack() const { return track; }
+};
+struct Queue { std::optional<AnalyzerTrack> value;
+    bool try_emplace(AnalyzerTrack&& track) {
+        if (value) return false;
+        value.emplace(std::move(track)); return true;
+    }
+};
+struct AnalyzerThread { Queue m_nextTrack; void wake() {} int id() const { return 0; }
+    bool submitNextTrack(const AnalyzerTrack&);
+};
+PRODUCTION_WORKER_SUBMIT
+struct Environment {
+    bool missing = false;
+    TrackPointer loadTrackById(TrackId id) {
+        if (missing) return {};
+        return std::make_shared<Track>(Track{id, {id.value == 1 ? "A" : "B"}});
+    }
+};
+struct TrackAnalysisScheduler {
+    struct Worker {
+        AnalyzerThread actual;
+        bool changeDuringSubmit = false;
+        bool submitNextTrack(const AnalyzerTrack& track) {
+            if (changeDuringSubmit) mixxx::media::revision = "replacement";
+            return actual.submitNextTrack(track);
+        }
+        AnalyzerThread* thread() { return &actual; }
+        void stopThread() {}
+    };
+    std::unique_ptr<Environment> m_pEnvironment = std::make_unique<Environment>();
+    std::deque<AnalyzerTrack> m_queuedTracks;
+    std::vector<Worker> m_workers;
+    std::set<TrackId> m_pendingTrackIds;
+    int m_dequeuedTracksCount = 0;
+    bool allTracksFinished() const { return m_queuedTracks.empty() && m_pendingTrackIds.empty(); }
+    bool scheduleTrack(AnalyzerScheduledTrack);
+    bool submitNextTrack(Worker*);
+    void stop();
+};
+PRODUCTION_SCHEDULE
+PRODUCTION_SUBMIT
+PRODUCTION_STOP
+namespace Qt { enum { QueuedConnection }; }
+struct QMetaObject {
+    static inline std::deque<std::function<void()>> events;
+    static inline bool accept = true;
+    template<class Target, class Callback>
+    static bool invokeMethod(Target*, Callback callback, int) {
+        if (!accept) return false;
+        events.push_back(std::move(callback)); return true;
+    }
+};
+struct LibraryScanner {
+    enum State { IDLE, STARTING };
+    State state = IDLE;
+    Lease m_scanMediaUse;
+    bool changeScannerState(State next) {
+        if (next == STARTING && state != IDLE) return false;
+        state = next; return true;
+    }
+    void slotStartScan() {}
+    void scan();
+};
+PRODUCTION_SCAN
+struct Watcher { int count = 0; void watchTask() { ++count; }
+    void taskDone() { assert(count > 0); --count; } };
+struct ScannerGlobal {
+    Lease mediaUse; Watcher watcher; bool clean = true;
+    void clearScanFinishedCleanly() { clean = false; }
+    Watcher& getTaskWatcher() { return watcher; }
+};
+using ScannerGlobalPointer = std::shared_ptr<ScannerGlobal>;
+struct ScannerTask {
+    LibraryScanner* m_pScanner;
+    const ScannerGlobalPointer m_scannerGlobal;
+    const Lease m_mediaUse;
+    bool m_success;
+    void setAutoDelete(bool) {}
+    ScannerTask(LibraryScanner*, const ScannerGlobalPointer);
+    ~ScannerTask();
+};
+PRODUCTION_TASK_CREATE
+PRODUCTION_TASK_DESTROY
+int main() {
+    auto& registry = mixxx::media::registry();
+    {
+        TrackAnalysisScheduler scheduler;
+        assert(scheduler.scheduleTrack({{1}}));
+        auto drainA = registry.beginDrain("A");
+        auto drainB = registry.beginDrain("B");
+        assert(!drainA.snapshot().locallyIdle());
+        assert(drainB.snapshot().locallyIdle());
+        assert(!scheduler.scheduleTrack({{1}}));
+        TrackAnalysisScheduler::Worker worker;
+        assert(scheduler.submitNextTrack(&worker));
+        assert(!drainA.snapshot().locallyIdle());
+        scheduler.stop();
+        assert(!drainA.snapshot().locallyIdle());
+        worker.actual.m_nextTrack.value.reset();
+        assert(drainA.snapshot().locallyIdle());
+    }
+    {
+        TrackAnalysisScheduler scheduler;
+        assert(scheduler.scheduleTrack({{1}}));
+        assert(scheduler.scheduleTrack({{2}}));
+        TrackAnalysisScheduler::Worker worker;
+        assert(scheduler.submitNextTrack(&worker));
+        auto drainB = registry.beginDrain("B");
+        assert(!scheduler.submitNextTrack(&worker));
+        assert(scheduler.m_pendingTrackIds.size() == 1);
+        assert(!drainB.snapshot().locallyIdle());
+        worker.actual.m_nextTrack.value.reset();
+        assert(scheduler.submitNextTrack(&worker));
+        scheduler.stop();
+        worker.actual.m_nextTrack.value.reset();
+        assert(drainB.snapshot().locallyIdle());
+    }
+    for (bool duringSubmit : {false, true}) {
+        TrackAnalysisScheduler scheduler;
+        assert(scheduler.scheduleTrack({{1}}));
+        TrackAnalysisScheduler::Worker worker;
+        worker.changeDuringSubmit = duringSubmit;
+        if (!duringSubmit) mixxx::media::revision = "replacement";
+        assert(!scheduler.submitNextTrack(&worker));
+        assert(scheduler.allTracksFinished());
+        auto drain = registry.beginDrain("A");
+        assert(drain.snapshot().locallyIdle());
+        mixxx::media::revision.clear();
+    }
+    {
+        TrackAnalysisScheduler scheduler;
+        scheduler.m_pEnvironment->missing = true;
+        assert(!scheduler.scheduleTrack({{1}}));
+        auto emptyDrain = registry.beginDrain("A");
+        assert(emptyDrain.snapshot().locallyIdle());
+        emptyDrain.cancel();
+        scheduler.m_pEnvironment->missing = false;
+        assert(scheduler.scheduleTrack({{1}}));
+        assert(scheduler.scheduleTrack({{1}}));
+        TrackAnalysisScheduler::Worker worker;
+        assert(scheduler.submitNextTrack(&worker));
+        assert(!scheduler.submitNextTrack(&worker));
+        assert(scheduler.m_queuedTracks.empty());
+        auto drain = registry.beginDrain("A");
+        scheduler.stop();
+        assert(!drain.snapshot().locallyIdle());
+        worker.actual.m_nextTrack.value.reset();
+        assert(drain.snapshot().locallyIdle());
+    }
+    {
+        TrackAnalysisScheduler scheduler;
+        assert(scheduler.scheduleTrack({{1}}));
+        auto drain = registry.beginDrain("A");
+        scheduler.stop();
+        assert(drain.snapshot().locallyIdle());
+        drain.cancel();
+        assert(scheduler.scheduleTrack({{1}}));
+    }
+    {
+        LibraryScanner scanner;
+        scanner.scan();
+        scanner.scan();
+        assert(QMetaObject::events.size() == 1);
+        auto drain = registry.beginDrain("A");
+        assert(!drain.snapshot().locallyIdle());
+        scanner.scan();
+        assert(QMetaObject::events.size() == 1);
+        auto event = std::move(QMetaObject::events.front()); QMetaObject::events.pop_front();
+        event();
+        auto global = std::make_shared<ScannerGlobal>();
+        global->mediaUse = scanner.m_scanMediaUse;
+        auto task = std::make_unique<ScannerTask>(&scanner, global);
+        assert(global->watcher.count == 1);
+        scanner.m_scanMediaUse.reset(); global->mediaUse.reset();
+        assert(!drain.snapshot().locallyIdle());
+        task.reset();
+        assert(global->watcher.count == 0);
+        assert(drain.snapshot().locallyIdle());
+        drain.cancel(); scanner.state = LibraryScanner::IDLE;
+        QMetaObject::accept = false; scanner.scan();
+        assert(scanner.state == LibraryScanner::IDLE);
+        QMetaObject::accept = true; scanner.scan();
+        assert(QMetaObject::events.size() == 1);
+        QMetaObject::events.clear();
+        auto idle = registry.beginDrain("A"); assert(idle.snapshot().locallyIdle());
+        auto rejectedGlobal = std::make_shared<ScannerGlobal>();
+        {
+            ScannerTask rejected(&scanner, rejectedGlobal);
+            assert(!rejected.m_mediaUse);
+            assert(rejectedGlobal->watcher.count == 1);
+        }
+        assert(rejectedGlobal->watcher.count == 0);
+        assert(idle.snapshot().locallyIdle());
+    }
+    std::cout << "PASS backlog pending, cancel, retry, stale generation, distinct drives, scanner task accounting\n";
+}

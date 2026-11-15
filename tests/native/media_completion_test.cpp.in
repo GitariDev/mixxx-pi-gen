@@ -1,0 +1,262 @@
+
+#include <string>
+#include <vector>
+#include <functional>
+#include <stdexcept>
+#include <iostream>
+#include <memory>
+#include <algorithm>
+#define __LINUX__
+#define emit
+struct QString : std::string {
+    using std::string::string;
+    QString() = default;
+    QString(const std::string& text) : std::string(text) {}
+    std::string toStdString() const { return *this; }
+    bool isEmpty() const { return empty(); }
+};
+template<typename Entry> struct QList : std::vector<Entry> {
+    using std::vector<Entry>::vector;
+    Entry value(size_t index) const { return index < this->size() ? (*this)[index] : Entry{}; }
+};
+struct QVariant {
+    QString text;
+    QList<QVariant> list;
+    QVariant() = default;
+    QVariant(const QString& value) : text(value) {}
+    QVariant(const QList<QVariant>& value) : list(value) {}
+    QString toString() const { return text; }
+    QList<QVariant> toList() const { return list; }
+    bool isValid() const { return !list.empty(); }
+};
+#include "importoperation.h"
+constexpr bool cancellationEnabled = PRODUCTION_CANCEL_ENABLED;
+struct TreeItem {
+    TreeItem* owner = nullptr;
+    QVariant data;
+    std::vector<TreeItem*> children;
+    TreeItem* parent() const { return owner; }
+    QVariant getData() const { return data; }
+    void setData(const QVariant& value) { data = value; }
+    QString getLabel() const { return "fixture"; }
+    int childRows() const { return children.size(); }
+    TreeItem* child(int row) const { return children.at(row); }
+    void removeChildren(int row, int count) {
+        children.erase(children.begin() + row, children.begin() + row + count);
+    }
+};
+struct QModelIndex {
+    TreeItem* item;
+    bool isValid() const { return item != nullptr; }
+    void* internalPointer() const { return item; }
+};
+struct QSqlDatabase {};
+struct Collection { QSqlDatabase database() { return {}; } };
+struct Sidebar {
+    TreeItem root;
+    int repaints = 0;
+    TreeItem* getRootItem() { return &root; }
+    void triggerRepaint() { ++repaints; }
+    void removeRows(int row, int count) { root.children.erase(root.children.begin() + row, root.children.begin() + row + count); }
+    void insertTreeItemRows(std::vector<std::unique_ptr<TreeItem>> nodes, int row) {
+        for (auto& node : nodes) { node->owner = &root; root.children.insert(root.children.begin() + row++, node.release()); }
+    }
+};
+struct PlaylistModel {
+    QString playlist;
+    void setPlaylist(QString value) { playlist = value; }
+};
+struct Future {
+    QString value;
+    bool failure = false;
+    QString result() const {
+        if (failure) throw std::runtime_error("parse failure");
+        return value;
+    }
+};
+struct Watcher { void setFuture(const Future&) {} };
+struct Library { int dbConnectionPool() { return 0; } };
+namespace QTimer {
+    std::vector<std::function<void()>> callbacks;
+    template<typename Owner> void singleShot(int, Owner*, std::function<void()> action) {
+        callbacks.push_back(action);
+    }
+    void drain() { auto pending = callbacks; callbacks.clear(); for (auto& callback : pending) callback(); }
+}
+namespace mixxx::rekordbox {
+    PRODUCTION_REVISION_MATCHER
+    struct Observation { std::string database; };
+    Observation observation;
+    std::vector<std::string> paths;
+    Observation inspectSource(const std::string& path) { paths.push_back(path); return observation; }
+    PRODUCTION_CACHE_MATCHER
+}
+struct DeviceFuture {
+    QList<TreeItem*> value;
+    QList<TreeItem*> result() { return value; }
+};
+struct ScopedTransaction { ScopedTransaction(QSqlDatabase&) {} void commit() {} };
+const QString kRekordboxPlaylistTracksTable = "tracks", kRekordboxPlaylistsTable = "playlists", kRekordboxLibraryTable = "library";
+void dropTable(QSqlDatabase&, QString) {}
+void createLibraryTable(QSqlDatabase&, QString) {}
+void createPlaylistsTable(QSqlDatabase&, QString) {}
+void createPlaylistTracksTable(QSqlDatabase&, QString) {}
+const QString IS_RECORDBOX_DEVICE = "import-required";
+const QString IS_NOT_RECORDBOX_DEVICE = "imported";
+int cleanups = 0;
+void clearDeviceTables(QSqlDatabase&, TreeItem*) { ++cleanups; }
+std::ostream& qDebug() { return std::cerr; }
+std::ostream& qWarning() { return std::cerr; }
+QString parseDeviceDB(int, TreeItem*, const std::shared_ptr<mixxx::rekordbox::ImportOperation>& = {}) { return {}; }
+namespace QtConcurrent {
+    int submissions = 0;
+    template<typename... Args> Future run(Args&&...) { ++submissions; return {}; }
+}
+namespace mixxx::media {
+    inline Lease acquirePath(const std::string&, Producer producer) {
+        return registry().acquire({"generation-1", "mount-1", {}}, producer);
+    }
+}
+struct RekordboxFeature {
+    std::shared_ptr<mixxx::rekordbox::ImportOperation> m_importOperation =
+            std::make_shared<mixxx::rekordbox::ImportOperation>();
+    mixxx::media::Lease m_importMediaUse;
+    Sidebar sidebar;
+    Collection collection;
+    PlaylistModel playlistModel;
+    Library library;
+    Sidebar* m_pSidebarModel = &sidebar;
+    Collection* m_pTrackCollection = &collection;
+    PlaylistModel* m_pRekordboxPlaylistModel = &playlistModel;
+    Future m_tracksFuture;
+    DeviceFuture m_devicesFuture;
+    Watcher m_tracksFutureWatcher;
+    TreeItem* m_pImportingDevice = nullptr;
+    bool m_trackImportActive = false;
+    bool m_deviceResultsDeferred = false;
+    bool m_deviceRefreshPending = false;
+    int refreshRequests = 0;
+    int deferredCompletions = 0;
+    int displays = 0;
+    Library* parent() { return &library; }
+    void requestDeviceRefresh() { m_deviceRefreshPending = true; ++refreshRequests; }
+    void refreshDevices() { ++refreshRequests; }
+    void onRekordboxDevicesFound();
+    void finishDeviceRefresh() { ++deferredCompletions; }
+    void clearLastRightClickedIndex() {}
+    void showTrackModel(PlaylistModel*) { ++displays; }
+    void activateChild(const QModelIndex&);
+    void onTracksFound();
+};
+void require(bool condition, const char* message) {
+    if (!condition) throw std::runtime_error(message);
+}
+QVariant nodeData(const QString& path, const QString& marker, const QString& revision) {
+    return QVariant(QList<QVariant>{QVariant(path), QVariant(marker), QVariant(revision)});
+}
+
+PRODUCTION_METHODS
+
+int main() {
+    for (const std::string observed : {"generation-2", ""}) {
+        RekordboxFeature feature;
+        TreeItem device{&feature.sidebar.root, nodeData("/media/pi/A", IS_NOT_RECORDBOX_DEVICE, "generation-1")};
+        TreeItem playlist{&device, nodeData("/media/pi/A-->cached", IS_NOT_RECORDBOX_DEVICE, "")};
+        mixxx::rekordbox::observation.database = observed;
+        feature.activateChild({&playlist});
+        require(feature.displays == 0 && feature.refreshRequests == 1, "stale cached child must not display");
+        require(mixxx::rekordbox::paths.back() == "/media/pi/A", "activation validates owning root, not playlist path");
+    }
+    {
+        RekordboxFeature feature;
+        TreeItem device{&feature.sidebar.root, nodeData("/media/pi/A", IS_NOT_RECORDBOX_DEVICE, "generation-1")};
+        TreeItem playlist{&device, nodeData("/media/pi/A-->cached", IS_NOT_RECORDBOX_DEVICE, "")};
+        mixxx::rekordbox::observation.database = "generation-1";
+        feature.activateChild({&playlist});
+        require(feature.displays == 1, "valid cached child should display");
+        device.data = nodeData("/media/pi/A", IS_RECORDBOX_DEVICE, "generation-1");
+        feature.activateChild({&device});
+        require(feature.m_trackImportActive && feature.m_pImportingDevice == &device, "import must reserve node");
+        require(QtConcurrent::submissions == 1, "only one import starts");
+        feature.activateChild({&device});
+        require(QtConcurrent::submissions == 1, "repeat activation cannot enqueue second import");
+    }
+    for (int scenario = 0; scenario < 5; ++scenario) {
+        RekordboxFeature feature;
+        TreeItem device{&feature.sidebar.root, nodeData("/media/pi/A", IS_NOT_RECORDBOX_DEVICE, "generation-1")};
+        feature.m_pImportingDevice = &device;
+        feature.m_trackImportActive = true;
+        feature.m_tracksFuture.value = "/media/pi/A";
+        mixxx::rekordbox::observation.database = scenario == 0 ? "generation-2" : scenario == 1 ? "" : "generation-1";
+        feature.m_tracksFuture.failure = scenario == 2;
+        if (scenario == 3) feature.m_tracksFuture.value.clear();
+        feature.m_deviceResultsDeferred = scenario == 0;
+        const int priorCleanups = cleanups;
+        feature.onTracksFound();
+        require(!feature.m_trackImportActive && !feature.m_pImportingDevice, "completion must release import admission");
+        require(feature.displays == (scenario == 4 ? 1 : 0), "only valid success may display");
+        require(cleanups == priorCleanups + (scenario < (cancellationEnabled ? 4 : 2) ? 1 : 0),
+                "failed completion must discard persisted rows");
+        require(device.data.toList().value(1).toString() == (scenario == 4 ? IS_NOT_RECORDBOX_DEVICE : IS_RECORDBOX_DEVICE), "failure restores retry marker");
+        require(QTimer::callbacks.size() == 1, "one deferred continuation");
+        QTimer::drain();
+        require(feature.deferredCompletions == (scenario == 0 ? 1 : 0), "replay only actually deferred discovery");
+    }
+    {
+        RekordboxFeature feature;
+        TreeItem device{&feature.sidebar.root, nodeData("/media/pi/A", IS_NOT_RECORDBOX_DEVICE, "generation-1")};
+        TreeItem oldChild{&device, nodeData("/media/pi/A-->playlist", IS_NOT_RECORDBOX_DEVICE, "")};
+        device.children.push_back(&oldChild);
+        feature.sidebar.root.children.push_back(&device);
+        feature.m_pImportingDevice = &device;
+        feature.m_trackImportActive = true;
+        feature.m_tracksFuture.value = "/media/pi/A";
+        mixxx::rekordbox::observation.database.clear();
+        const int before = cleanups;
+        feature.onTracksFound();
+        require(cleanups == before + 1, "transient observation failure clears persisted rows");
+        QTimer::drain();
+        mixxx::rekordbox::observation.database = "generation-1";
+        if (cancellationEnabled) {
+            require(device.childRows() == 0, "failed completion removes stale children after worker finishes");
+        } else {
+            feature.activateChild({&oldChild});
+            require(feature.displays == 0, "invalidated children must reject activation even after observation recovers");
+        }
+        feature.m_devicesFuture.value.push_back(new TreeItem{nullptr, nodeData("/media/pi/A", IS_RECORDBOX_DEVICE, "generation-1")});
+        feature.onRekordboxDevicesFound();
+        require(feature.sidebar.root.childRows() == 1, "refresh keeps exactly one drive");
+        auto* fresh = feature.sidebar.root.child(0);
+        require(fresh != &device && fresh->childRows() == 0, "refresh replaces invalidated root and stale children");
+        const int priorSubmissions = QtConcurrent::submissions;
+        feature.activateChild({fresh});
+        require(QtConcurrent::submissions == priorSubmissions + 1, "fresh root allows retry");
+        TreeItem retryChild{fresh, nodeData("/media/pi/A-->playlist", IS_NOT_RECORDBOX_DEVICE, "")};
+        fresh->children.push_back(&retryChild);
+        feature.m_tracksFuture.value = "/media/pi/A";
+        feature.onTracksFound();
+        QTimer::drain();
+        feature.m_devicesFuture.value.clear();
+        feature.m_devicesFuture.value.push_back(new TreeItem{nullptr, nodeData("/media/pi/A", IS_RECORDBOX_DEVICE, "generation-1")});
+        feature.onRekordboxDevicesFound();
+        require(feature.sidebar.root.childRows() == 1 && feature.sidebar.root.child(0) == fresh && fresh->childRows() == 1,
+                "successful retry and refresh cannot duplicate playlist children");
+        const int priorDisplays = feature.displays;
+        feature.activateChild({&retryChild});
+        require(feature.displays == priorDisplays + 1, "fresh retry playlist is selectable");
+        std::cout << "PASS transient completion failure invalidates children; identical-source retry rebuilds once\n";
+    }
+    {
+        RekordboxFeature feature;
+        TreeItem device{&feature.sidebar.root, nodeData("/media/pi/A", IS_RECORDBOX_DEVICE, "generation-1")};
+        mixxx::rekordbox::observation.database = "generation-1";
+        feature.activateChild({&device});
+        auto drain = mixxx::media::registry().beginDrain("generation-1");
+        require(!drain.snapshot().locallyIdle(), "actual queued import holds generation ownership");
+        feature.m_tracksFuture.value = "/media/pi/A";
+        feature.onTracksFound();
+        require(drain.snapshot().locallyIdle(), "actual completion releases ownership after reconciliation");
+        QTimer::drain();
+    }
+    std::cout << "PASS extracted production activateChild/onTracksFound: stale generation, unavailable identity, cached success, repeat import, completion replacement, descriptor-observation failure, parser exception, empty result, valid completion, deferred replay, native import ownership\n";
+}

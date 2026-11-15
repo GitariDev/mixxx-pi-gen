@@ -12,6 +12,8 @@ on:
     - cron: '30 0 * * *'
 
 jobs:
+  required-native:
+    uses: ./.github/workflows/required-native.yml
   # build_self_hosted:
   #   runs-on: self-hosted
   #   steps:
@@ -55,6 +57,7 @@ jobs:
   #       name: mixxx-version
   #       path: deploy/*.version
   build:
+    needs: required-native
     runs-on: ubuntu-24.04-arm
     steps:
     - uses: actions/checkout@v4
@@ -74,10 +77,14 @@ jobs:
     - run: ls -lah .ccache
     - name: Build
       run: sudo ./build.sh
+    - name: Verify exact package provenance
+      run: python3 tools/performance/mixxx-candidate.py verify --output-dir deploy
     - uses: actions/upload-artifact@v4
       with:
         name: debs-qemu
-        path: deploy/*.deb
+        path: |
+          deploy/*.deb
+          deploy/*.deb.candidate.json
     - uses: actions/upload-artifact@v4
       with:
         name: images-qemu
@@ -96,7 +103,7 @@ jobs:
         path: deploy/*.tag
 
   release:
-    needs: build
+    needs: [build, required-native]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'schedule'
     permissions:
@@ -133,6 +140,8 @@ jobs:
       run: |
         echo "COMMIT=$(cat version/*.version)" >> $GITHUB_OUTPUT
         echo "TAG=$(cat tag/*.tag)" >> $GITHUB_OUTPUT
+    - name: Verify downloaded package provenance
+      run: python3 tools/performance/mixxx-candidate.py verify --output-dir debs
     - name: Delete existing nightly release
       run: |
         if gh release view nightly --repo $GITHUB_REPOSITORY 2>/dev/null; then

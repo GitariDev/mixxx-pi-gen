@@ -4,6 +4,7 @@ No Qt installation is required. This checks patch compatibility, not C++ build
 or runtime behaviour. Offline runs skip the network check explicitly.
 """
 from pathlib import Path
+import os
 import re
 import shutil
 import subprocess
@@ -32,6 +33,19 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-removable-ram-cache.patch",
             "mixxx-sidebar-sources.patch",
             "mixxx-touch-source-navigation.patch",
+            "mixxx-performance-settings.patch",
+            "mixxx-effect-placeholder.patch",
+            "mixxx-right-overlay.patch",
+            "mixxx-media-selection.patch",
+            "mixxx-library-interface.patch",
+            "mixxx-recording-lifecycle.patch",
+            "mixxx-initial-library.patch",
+            "mixxx-media-continuation.patch",
+            "mixxx-analysis-safety.patch",
+            "mixxx-media-activity.patch",
+            "mixxx-import-cancellation.patch",
+            "mixxx-transfer-reporting.patch",
+            "mixxx-transfer-display.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -40,7 +54,43 @@ class PackageRecipeTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("git"), "git required")
 class PinnedMixxxPatchTests(unittest.TestCase):
+    def check_local_patch_stack(self, reference):
+        commit = re.search(r'MIXXX_COMMIT:-([0-9a-f]{40})', (ROOT / 'source-versions').read_text())[1]
+        files = set(subprocess.check_output(['git', '-C', str(reference), 'ls-tree', '-r',
+                                            '--name-only', commit], text=True).splitlines())
+        names = patch_names()
+        touched = set()
+        for name in names:
+            touched.update(re.findall(r'^diff --git a/(\S+) b/\S+$',
+                                      (PATCH_DIR / name).read_text(), re.MULTILINE))
+        with tempfile.TemporaryDirectory(prefix='mixpi-patch-fixture-') as directory:
+            target = Path(directory)
+            baseline = {}
+            for name in sorted(touched & files):
+                data = subprocess.check_output(['git', '-C', str(reference), 'show', f'{commit}:{name}'])
+                path = target / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                baseline[name] = data
+            for name in names:
+                for options in (['--check'], []):
+                    result = subprocess.run(['git', 'apply', *options, str(PATCH_DIR / name)],
+                                            cwd=target, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+            for name in reversed(names):
+                for options in (['--check'], []):
+                    result = subprocess.run(['git', 'apply', '--reverse', *options, str(PATCH_DIR / name)],
+                                            cwd=target, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+            restored = {str(path.relative_to(target)): path.read_bytes()
+                        for path in target.rglob('*') if path.is_file()}
+            self.assertEqual(restored, baseline)
+
     def test_patch_stack_applies_to_pinned_source(self):
+        reference = os.environ.get('MIXXX_TEST_SOURCE')
+        if reference:
+            self.check_local_patch_stack(Path(reference))
+            return
         try:
             probe = subprocess.run(
                 ["git", "ls-remote", UPSTREAM, "HEAD"],
@@ -83,10 +133,21 @@ class PinnedMixxxPatchTests(unittest.TestCase):
             for name in reversed(names):
                 git("apply", "--reverse", str(PATCH_DIR / name))
             for name in names[2:]:
+                if name in {"mixxx-media-selection.patch", "mixxx-library-interface.patch",
+                            "mixxx-recording-lifecycle.patch", "mixxx-import-cancellation.patch",
+                            "mixxx-transfer-reporting.patch", "mixxx-transfer-display.patch"}:
+                    continue
                 if name == "mixxx-touch-source-navigation.patch":
                     git("apply", str(PATCH_DIR / "mixxx-sidebar-sources.patch"))
+                if name == "mixxx-performance-settings.patch":
+                    git("apply", str(PATCH_DIR / "mixxx-readahead.patch"))
                 with self.subTest(independent_patch=name):
                     git("apply", "--check", str(PATCH_DIR / name))
+            for name in ("mixxx-readahead.patch", "mixxx-sidebar-sources.patch"):
+                git("apply", "--reverse", str(PATCH_DIR / name))
+            for name in names[1:]:
+                git("apply", "--check", str(PATCH_DIR / name))
+                git("apply", str(PATCH_DIR / name))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,105 @@
+#!/usr/bin/python3
+"""Control only the current user's Waybar and verify its 36px reservation."""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+
+
+class BarError(Exception):
+    pass
+
+
+def command(arguments):
+    try:
+        result = subprocess.run(arguments, capture_output=True, text=True, timeout=3,
+                                check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise BarError(f'Desktop command unavailable: {error}') from error
+    if result.returncode:
+        raise BarError((result.stderr.strip() or 'Desktop command failed.')[:500])
+    return result.stdout
+
+
+def observe():
+    state = dict(line.split('=', 1) for line in command([
+        '/usr/bin/systemctl', '--user', 'show', 'waybar.service',
+        '--property=LoadState,ActiveState,SubState,MainPID']).splitlines() if '=' in line)
+    if state.get('LoadState') != 'loaded':
+        raise BarError('Waybar user service is not loaded.')
+    if state.get('ActiveState') == 'active' and state.get('SubState') == 'running':
+        try:
+            running = int(state.get('MainPID', '0')) > 0
+        except ValueError as error:
+            raise BarError('Invalid Waybar process identity.') from error
+        if not running:
+            raise BarError('Waybar has no running process.')
+    elif (state.get('ActiveState'), state.get('SubState'), state.get('MainPID')) == ('inactive', 'dead', '0'):
+        running = False
+    else:
+        raise BarError('Waybar service is failed, transitioning, or unrecognized.')
+    try:
+        workspaces = json.loads(command(['/usr/bin/swaymsg', '-r', '-t', 'get_workspaces']))
+        outputs = json.loads(command(['/usr/bin/swaymsg', '-r', '-t', 'get_outputs']))
+        focused = [workspace for workspace in workspaces if workspace.get('focused') is True]
+        if len(focused) != 1:
+            raise BarError('No unique focused Sway workspace.')
+        workspace = focused[0]
+        matched = [output for output in outputs if output.get('name') == workspace['output']
+                   and output.get('active') is True]
+        if len(matched) != 1:
+            raise BarError('No unique active Sway output.')
+        workspace_y = workspace['rect']['y']
+        output_y = matched[0]['rect']['y']
+        if type(workspace_y) is not int or type(output_y) is not int:
+            raise BarError('Invalid Sway workspace geometry.')
+        inset = workspace_y - output_y
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
+        raise BarError('Sway returned invalid workspace/output geometry.') from error
+    if inset != (36 if running else 0):
+        raise BarError('Waybar service and the 36px desktop reservation disagree; visibility is unconfirmed.')
+    return {'visible': running, 'reserved_px': inset, 'error': ''}
+
+
+def change(action):
+    if action not in ('status', 'show', 'hide'):
+        raise BarError('Unknown desktop-bar action.')
+    before = observe()
+    if action == 'status' or before['visible'] == (action == 'show'):
+        return before
+    command(['/usr/bin/systemctl', '--user', 'start' if action == 'show' else 'stop', 'waybar.service'])
+    last_error = 'Desktop visibility was not confirmed.'
+    for attempt in range(8):
+        try:
+            after = observe()
+            if after['visible'] == (action == 'show'):
+                return after
+        except BarError as error:
+            last_error = str(error)
+        if attempt < 7:
+            time.sleep(0.1)
+    raise BarError(last_error)
+
+
+def main(arguments=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=('status', 'show', 'hide'))
+    args = parser.parse_args(arguments)
+    try:
+        if os.geteuid() == 0:
+            raise BarError('Run as the logged-in desktop user, never root.')
+        if os.environ.get('XDG_RUNTIME_DIR') != f'/run/user/{os.getuid()}' or not os.environ.get('SWAYSOCK'):
+            raise BarError('No explicit local user Sway session is available.')
+        result = change(args.action)
+        status = 0
+    except BarError as error:
+        result = {'visible': None, 'reserved_px': None, 'error': str(error)}
+        status = 1
+    print(json.dumps(result))
+    return status
+
+
+if __name__ == '__main__':
+    sys.exit(main())

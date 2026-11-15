@@ -1,0 +1,821 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -213,7 +213,9 @@
+         }
+     });
+     new MixpiMedia(this, [this]() -> QWidget* { return m_pLibraryWidget; },
+-            [this](const QJsonObject& volume) { return openRemovableSource(volume); },
++            [this](const QJsonObject& volume, QObject* receiver, std::function<void(QString)> completion) {
++                return openRemovableSourceAsync(volume, receiver, std::move(completion));
++            },
+             [this] {
+                 m_pBrowseFeature->refreshMediaLifecycle();
+                 for (const auto& source : m_sidebarSources) {
+@@ -698,6 +700,59 @@
+         ControlObject::set(ConfigKey("[Tab]", "library"), 1);
+     }
+     return error;
++}
++
++std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volume,
++        QObject* receiver, std::function<void(QString)> completion) {
++    const auto observed = MixpiMedia::inspectSelected(volume);
++    if (observed.database.empty()) {
++        const auto error = openRemovableSource(volume);
++        QTimer::singleShot(0, receiver, [completion = std::move(completion), error] { completion(error); });
++        return {};
++    }
++    auto source = std::find_if(m_sidebarSources.begin(), m_sidebarSources.end(),
++            [](const SidebarSource& item) { return item.id == QStringLiteral("RekordboxFeature"); });
++    QString error;
++    LibraryFeature* feature = nullptr;
++    if (!m_pLibraryWidget || !m_pSidebarWidget || source == m_sidebarSources.end()) {
++        error = tr("Library or native source is unavailable.");
++    } else {
++        const auto selectedSource = *source;
++        feature = selectedSource.feature;
++        if (!feature && selectedSource.create) {
++            feature = selectedSource.create();
++            addFeature(feature);
++            feature->bindLibraryWidget(m_pLibraryWidget, m_pSidebarKeyboard);
++            feature->bindSidebarWidget(m_pSidebarWidget);
++            emit setTrackTableFont(m_trackTableFont);
++            emit setTrackTableRowHeight(m_iTrackTableRowHeight);
++        }
++        if (feature) {
++            m_pConfig->setValue(selectedSource.preference, true);
++            applySidebarSourceVisibility();
++        } else {
++            error = tr("Native source could not be initialized.");
++        }
++    }
++    if (!error.isEmpty()) {
++        QTimer::singleShot(0, receiver, [completion = std::move(completion), error] { completion(error); });
++        return {};
++    }
++    const QPointer<Library> owner(this);
++    return static_cast<RekordboxFeature*>(feature)->openRemovableDeviceAsync(
++            volume.value("mount").toObject().value("path").toString(),
++            QString::fromStdString(observed.revision), QString::fromStdString(observed.database), receiver,
++            [owner, completion = std::move(completion)](QString result) {
++                if (!owner) {
++                    return;
++                }
++                if (result.isEmpty()) {
++                    ControlObject::set(ConfigKey("[MixPi]", "sample_load"), 0);
++                    ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
++                    ControlObject::set(ConfigKey("[Tab]", "library"), 1);
++                }
++                completion(result);
++            });
+ }
+ 
+ void Library::showSidebarSourcesMenu() {
+diff --git a/src/library/library.h b/src/library/library.h
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -177,6 +177,8 @@
+     void showSidebarSourcesMenu();
+     QPointer<QMenu> m_pSidebarSourcesMenu;
+     QString openRemovableSource(const QJsonObject& volume);
++    std::function<void()> openRemovableSourceAsync(const QJsonObject& volume,
++            QObject* receiver, std::function<void(QString)> completion);
+     QList<SidebarSource> m_sidebarSources;
+     QPointer<WLibrarySidebar> m_pSidebarWidget;
+     QPointer<KeyboardEventFilter> m_pSidebarKeyboard;
+diff --git a/src/library/mixpicontrolleddialog.h b/src/library/mixpicontrolleddialog.h
+--- a/src/library/mixpicontrolleddialog.h
++++ b/src/library/mixpicontrolleddialog.h
+@@ -9,12 +9,16 @@
+ #include <QVBoxLayout>
+ 
+ #include "library/mixpicontrolledmedia.h"
++#include "library/mixpimediadialog.h"
+ 
+ class MixpiControlledDialog final : public QDialog {
+   public:
+-    MixpiControlledDialog(MixpiControlledMedia* operation, bool mount, QWidget* parent)
+-            : QDialog(parent), m_operation(operation), m_mount(mount) {
++    MixpiControlledDialog(MixpiControlledMedia* operation, bool mount, QWidget* parent,
++            QString selectedToken = {})
++            : QDialog(parent), m_operation(operation), m_mount(mount),
++              m_preselectedToken(std::move(selectedToken)) {
+         setAttribute(Qt::WA_DeleteOnClose);
++        MixpiMediaDialog::configure(this);
+         setWindowModality(Qt::WindowModal);
+         setWindowTitle(mount ? tr("LOAD — mount a physical USB disk") : tr("EJECT — one physical USB disk"));
+         resize(740, 380);
+@@ -36,6 +40,9 @@
+         for (auto* button : {m_refresh, m_begin, m_cancel, m_commit, m_volumes, close}) {
+             button->setAutoDefault(false);
+             button->setMinimumHeight(44);
++            if (button == close) {
++                actions->addStretch();
++            }
+             actions->addWidget(button);
+         }
+         layout->addLayout(actions);
+@@ -102,11 +109,25 @@
+             }
+             m_list->setCurrentRow(-1);
+             m_list->clearSelection();
++            int selectedRow = -1;
++            int matches = 0;
++            for (int row = 0; row < m_list->count(); ++row) {
++                if (!m_preselectedToken.isEmpty() &&
++                        m_list->item(row)->data(Qt::UserRole).toString() == m_preselectedToken) {
++                    selectedRow = row;
++                    ++matches;
++                }
++            }
++            if (matches == 1) {
++                m_list->setCurrentRow(selectedRow);
++            }
++            m_preselectedToken.clear();
+         }
+         updateActions();
+     }
+     MixpiControlledMedia* m_operation;
+     bool m_mount;
++    QString m_preselectedToken;
+     QJsonArray m_inventory;
+     QLabel* m_status;
+     QListWidget* m_list;
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -27,10 +27,11 @@
+ #include "library/rekordbox/sourceidentity.h"
+ #include "library/media/copyservice.h"
+ #include "library/mixpicontrolleddialog.h"
++#include "library/mixpimediadialog.h"
+ 
+ class MixpiMedia final : public QObject {
+   public:
+-    using OpenSource = std::function<QString(const QJsonObject&)>;
++    using OpenSource = MixpiMediaDialog::OpenSource;
+ 
+     MixpiMedia(QObject* owner, std::function<QWidget*()> parent, OpenSource openSource,
+             std::function<void()> refreshSources = {})
+@@ -130,12 +131,12 @@
+     }
+ 
+   private:
+-    void showControlled(bool mount) {
++    void showControlled(bool mount, const QString& token = {}) {
+         if (!m_controlled) {
+             m_controlled = MixpiControlledMedia::openProduction();
+             m_controlled->setCompletionHandler(this, m_refreshSources);
+         }
+-        auto* dialog = new MixpiControlledDialog(m_controlled, mount, m_parent());
++        auto* dialog = new MixpiControlledDialog(m_controlled, mount, m_parent(), token);
+         m_dialog = dialog;
+         connect(dialog, &QDialog::accepted, this, [this] {
+             m_dialog = nullptr;
+@@ -188,138 +189,34 @@
+         process->start(QStringLiteral("/usr/bin/python3"), {helper()});
+     }
+ 
+-    static QString description(const QJsonObject& entry, bool eject) {
+-        const QString capacity = QString::number(entry.value("size").toDouble() / 1073741824.0, 'f', 1) + " GiB";
+-        if (!eject) {
+-            return entry.value("label").toString() + " · " + capacity + "\n" +
+-                    entry.value("discriminator").toString();
+-        }
+-        QStringList volumes;
+-        for (const auto& value : entry.value("volumes").toArray()) {
+-            const auto volume = value.toObject();
+-            volumes.append(volume.value("label").toString() + " — " +
+-                    volume.value("discriminator").toString());
+-        }
+-        return capacity + " · disk " + entry.value("device").toString() +
+-                " · generation " + entry.value("diskseq").toString() + " · EJECT BLOCKED\n" +
+-                (volumes.isEmpty() ? QStringLiteral("No mounted whole-volume source") : volumes.join("\n"));
+-    }
+-
+-    void show(bool eject) {
++    void show(bool) {
+         if (m_dialog) {
+             m_dialog->raise();
++            m_dialog->activateWindow();
+             return;
+         }
+         auto* parent = m_parent();
+         if (!parent || m_available->get() != 1) {
+             return;
+         }
+-        if (eject || (m_controlled && m_controlled->locked())) {
++        if (m_controlled && m_controlled->locked()) {
+             showControlled(false);
+             return;
+         }
+-        auto* dialog = new QDialog(parent);
+-        dialog->setAttribute(Qt::WA_DeleteOnClose);
+-        dialog->setWindowTitle(eject ? tr("EJECT — choose physical USB drive") : tr("LOAD — choose USB volume"));
+-        dialog->setMinimumSize(650, 320);
+-        dialog->setWindowModality(Qt::WindowModal);
++        auto* dialog = new MixpiMediaDialog(parent,
++                [this](MixpiMediaDialog::Receive receive) { observe(std::move(receive)); },
++                m_openSource,
++                [this](bool mount, QString token) {
++                    m_dialog = nullptr;
++                    showControlled(mount, token);
++                }, m_opened);
+         m_dialog = dialog;
+-        auto* layout = new QVBoxLayout(dialog);
+-        auto* status = new QLabel(tr("Choose explicitly. Playback and files are unchanged."), dialog);
+-        status->setTextFormat(Qt::PlainText);
+-        status->setWordWrap(true);
+-        layout->addWidget(status);
+-        auto* list = new QListWidget(dialog);
+-        list->setStyleSheet("QListWidget::item { min-height: 56px; }");
+-        layout->addWidget(list);
+-        auto* actions = new QHBoxLayout;
+-        auto* refresh = new QPushButton(tr("Refresh"), dialog);
+-        auto* accept = new QPushButton(eject ? tr("Check selected drive") : tr("Load selected source"), dialog);
+-        auto* cancel = new QPushButton(tr("Cancel"), dialog);
+-        auto* mount = new QPushButton(tr("Mount USB…"), dialog);
+-        for (auto* button : {refresh, accept, mount, cancel}) {
+-            button->setMinimumHeight(48);
+-            button->setAutoDefault(false);
+-            actions->addWidget(button);
+-        }
+-        layout->addLayout(actions);
+-        accept->setEnabled(false);
+-        connect(mount, &QPushButton::clicked, dialog, [this, dialog] {
+-            dialog->close();
+-            m_dialog = nullptr;
+-            showControlled(true);
+-        });
+-        connect(cancel, &QPushButton::clicked, dialog, &QDialog::reject);
+-        connect(list, &QListWidget::currentItemChanged, dialog,
+-                [accept](QListWidgetItem* current) { accept->setEnabled(current != nullptr); });
+-        const QPointer<QDialog> guard(dialog);
+-        auto reload = [this, guard, list, status, accept, refresh, eject] {
+-            list->clear();
+-            accept->setEnabled(false);
+-            refresh->setEnabled(false);
+-            status->setText(tr("Observing connected physical USB media…"));
+-            observe([guard, list, status, refresh, eject](const QJsonObject& snapshot) {
+-                if (!guard || !guard->isVisible()) {
+-                    return;
+-                }
+-                refresh->setEnabled(true);
+-                if (snapshot.contains("error")) {
+-                    status->setText(snapshot.value("error").toString());
+-                    return;
+-                }
+-                for (const auto& value : entries(snapshot, eject)) {
+-                    const auto entry = value.toObject();
+-                    auto* item = new QListWidgetItem(description(entry, eject), list);
+-                    item->setData(Qt::UserRole, entry.value("token").toString());
+-                }
+-                list->setCurrentRow(-1);
+-                list->clearSelection();
+-                status->setText(list->count() ? tr("Select one entry. Identity is checked again before dispatch.") :
+-                                              tr("No eligible physical USB media. Internal copies and system disks are excluded."));
+-            });
+-        };
+-        connect(refresh, &QPushButton::clicked, dialog, reload);
+-        connect(accept, &QPushButton::clicked, dialog,
+-                [this, guard, list, status, accept, refresh, eject] {
+-                    if (!list->currentItem()) {
+-                        return;
+-                    }
+-                    const QString token = list->currentItem()->data(Qt::UserRole).toString();
+-                    list->setEnabled(false);
+-                    accept->setEnabled(false);
+-                    refresh->setEnabled(false);
+-                    status->setText(tr("Rechecking the exact selected device and all its partitions…"));
+-                    observe([this, guard, list, status, refresh, token, eject](const QJsonObject& snapshot) {
+-                        if (!guard || !guard->isVisible()) {
+-                            return;
+-                        }
+-                        list->setEnabled(true);
+-                        list->setCurrentRow(-1);
+-                        refresh->setEnabled(true);
+-                        const auto entry = resolve(snapshot, token, eject);
+-                        if (entry.isEmpty()) {
+-                            list->clear();
+-                            status->setText(tr("Selection invalidated: media changed or observation failed. Refresh and choose again."));
+-                            return;
+-                        }
+-                        if (eject) {
+-                            status->setText(entry.value("reason").toString());
+-                            return;
+-                        }
+-                        const QString error = m_openSource(entry);
+-                        if (!error.isEmpty()) {
+-                            status->setText(error);
+-                            return;
+-                        }
+-                        guard->accept();
+-                    });
+-                });
+         dialog->show();
+-        reload();
+     }
+ 
+     std::function<QWidget*()> m_parent;
+     OpenSource m_openSource;
++    std::shared_ptr<QSet<QString>> m_opened = std::make_shared<QSet<QString>>();
+     std::function<void()> m_refreshSources;
+     QScopedPointer<ControlObject> m_available;
+     QScopedPointer<ControlPushButton> m_load;
+diff --git a/src/library/mixpimediadialog.h b/src/library/mixpimediadialog.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/mixpimediadialog.h
+@@ -0,0 +1,301 @@
++#pragma once
++
++#include <QComboBox>
++#include <QDialog>
++#include <QHBoxLayout>
++#include <QJsonArray>
++#include <QJsonObject>
++#include <QLabel>
++#include <QListWidget>
++#include <QPointer>
++#include <QPushButton>
++#include <QSet>
++#include <QVBoxLayout>
++#include <functional>
++#include <memory>
++
++class MixpiMediaDialog final : public QDialog {
++  public:
++    using Receive = std::function<void(QJsonObject)>;
++    using Observe = std::function<void(Receive)>;
++    using Cancel = std::function<void()>;
++    using OpenSource = std::function<Cancel(const QJsonObject&, QObject*, std::function<void(QString)>)>;
++    using Controlled = std::function<void(bool, QString)>;
++
++    static void configure(QDialog* dialog) {
++        dialog->setObjectName("MixpiMediaDialog");
++        auto font = dialog->font();
++        font.setPixelSize(17);
++        dialog->setFont(font);
++        dialog->setStyleSheet("QDialog#MixpiMediaDialog { background:#111923; color:#e6edf4; }"
++                "#MixpiMediaDialog QLabel { color:#e6edf4; }"
++                "#MixpiMediaDialog QListWidget, #MixpiMediaDialog QComboBox { background:#182535; color:#e6edf4; border:1px solid #47586b; }"
++                "#MixpiMediaDialog QListWidget::item { min-height:56px; }"
++                "#MixpiMediaDialog QListWidget::item:selected { background:#234d70; }"
++                "#MixpiMediaDialog QComboBox QAbstractItemView { background:#182535; color:#e6edf4; selection-background-color:#234d70; }"
++                "#MixpiMediaDialog QPushButton { background:#253344; color:#edf3fa; border:1px solid #68798c; border-radius:2px; padding:6px 12px; }"
++                "#MixpiMediaDialog QPushButton:disabled { color:#7d8996; border-color:#394656; }"
++                "#MixpiMediaDialog QPushButton:focus { border:2px solid #b9dd64; }");
++    }
++
++    MixpiMediaDialog(QWidget* parent, Observe observe, OpenSource open,
++            Controlled controlled, std::shared_ptr<QSet<QString>> opened)
++            : QDialog(parent), m_observe(std::move(observe)), m_open(std::move(open)),
++              m_controlled(std::move(controlled)), m_opened(std::move(opened)) {
++        configure(this);
++        setAttribute(Qt::WA_DeleteOnClose);
++        setWindowTitle(tr("Load / Eject"));
++        setWindowModality(Qt::WindowModal);
++        setMinimumSize(650, 320);
++        resize(740, 380);
++        auto* layout = new QVBoxLayout(this);
++        m_list = new QListWidget(this);
++        m_list->setObjectName("mediaDrives");
++        m_list->setAccessibleName(tr("Connected USB drives"));
++        layout->addWidget(m_list);
++        m_volumes = new QComboBox(this);
++        m_volumes->setObjectName("mediaVolumes");
++        m_volumes->setAccessibleName(tr("Source volume"));
++        m_volumes->setMinimumHeight(44);
++        m_volumes->setPlaceholderText(tr("Choose a volume"));
++        layout->addWidget(m_volumes);
++        m_status = new QLabel(this);
++        m_status->setObjectName("mediaStatus");
++        m_status->setTextFormat(Qt::PlainText);
++        m_status->setWordWrap(true);
++        layout->addWidget(m_status);
++        auto* actions = new QHBoxLayout;
++        m_refresh = new QPushButton(tr("Refresh"), this);
++        m_load = new QPushButton(tr("Load"), this);
++        m_mount = new QPushButton(tr("Mount…"), this);
++        m_eject = new QPushButton(tr("Eject…"), this);
++        m_close = new QPushButton(tr("Close"), this);
++        m_load->setObjectName("mediaLoad");
++        m_mount->setObjectName("mediaMount");
++        m_eject->setObjectName("mediaEject");
++        m_refresh->setObjectName("mediaRefresh");
++        m_close->setObjectName("mediaClose");
++        for (auto* button : {m_refresh, m_load, m_mount, m_eject, m_close}) {
++            button->setAutoDefault(false);
++            button->setMinimumHeight(44);
++        }
++        for (auto* button : {m_refresh, m_load, m_mount, m_eject}) {
++            actions->addWidget(button);
++        }
++        actions->addStretch();
++        actions->addWidget(m_close);
++        layout->addLayout(actions);
++        connect(m_close, &QPushButton::clicked, this, &QDialog::reject);
++        connect(this, &QDialog::finished, this, [this] { cancelPending(); });
++        connect(m_refresh, &QPushButton::clicked, this, [this] { reload(); });
++        connect(m_list, &QListWidget::currentItemChanged, this, [this] { selectDrive(); });
++        connect(m_volumes, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
++            cancelPending();
++            updateActions();
++        });
++        connect(m_load, &QPushButton::clicked, this, [this] { dispatch(false, false); });
++        connect(m_mount, &QPushButton::clicked, this, [this] { dispatch(true, false); });
++        connect(m_eject, &QPushButton::clicked, this, [this] { dispatch(false, true); });
++        reload();
++        m_close->setFocus(Qt::OtherFocusReason);
++    }
++
++    ~MixpiMediaDialog() override { cancelPending(); }
++
++    static QJsonObject findDrive(const QJsonObject& snapshot, const QString& token) {
++        if (token.isEmpty() || snapshot.contains("error") || snapshot.value("version").toInt() != 1 ||
++                !snapshot.value("drives").isArray()) {
++            return {};
++        }
++        QJsonObject found;
++        for (const auto& value : snapshot.value("drives").toArray()) {
++            const auto drive = value.toObject();
++            if (drive.value("token").toString() == token) {
++                if (!found.isEmpty() || !drive.value("volumes").isArray()) {
++                    return {};
++                }
++                found = drive;
++            }
++        }
++        return found;
++    }
++
++  private:
++    void cancelPending() {
++        ++m_generation;
++        m_loading = false;
++        if (m_cancel) {
++            auto cancel = std::move(m_cancel);
++            m_cancel = {};
++            cancel();
++        }
++    }
++
++    QString driveToken() const {
++        return m_list->currentItem() ? m_list->currentItem()->data(Qt::UserRole).toString() : QString();
++    }
++
++    void updateActions() {
++        const auto drive = findDrive(m_snapshot, driveToken());
++        const bool mounted = !drive.value("volumes").toArray().isEmpty();
++        m_volumes->setVisible(mounted && m_volumes->count() > 1);
++        m_load->setVisible(mounted);
++        m_load->setEnabled(mounted && m_volumes->currentIndex() >= 0 && !m_loading);
++        m_load->setText(m_opened->contains(m_volumes->currentData().toString()) ? tr("Open again") : tr("Load"));
++        m_mount->setVisible(!drive.isEmpty() && !mounted);
++        m_mount->setEnabled(!m_loading);
++        m_eject->setEnabled(!drive.isEmpty() && !m_loading);
++    }
++
++    void selectDrive() {
++        cancelPending();
++        m_volumes->clear();
++        const auto drive = findDrive(m_snapshot, driveToken());
++        for (const auto& value : drive.value("volumes").toArray()) {
++            const auto volume = value.toObject();
++            m_volumes->addItem(volume.value("label").toString() + " — " +
++                            volume.value("mount").toObject().value("path").toString(),
++                    volume.value("token").toString());
++        }
++        m_volumes->setCurrentIndex(m_volumes->count() == 1 ? 0 : -1);
++        m_status->setText(drive.isEmpty() ? tr("Select a drive.") :
++                tr("Load opens the native source. Eject requires the reviewed media service; keep the drive connected until confirmed."));
++        updateActions();
++    }
++
++    void reload() {
++        cancelPending();
++        m_snapshot = {};
++        m_list->clear();
++        m_volumes->clear();
++        updateActions();
++        m_refresh->setEnabled(false);
++        m_status->setText(tr("Checking connected USB drives…"));
++        const auto generation = m_generation;
++        const QPointer<MixpiMediaDialog> guard(this);
++        m_observe([guard, generation](QJsonObject snapshot) {
++            if (!guard || guard->m_generation != generation) {
++                return;
++            }
++            guard->m_refresh->setEnabled(true);
++            if (snapshot.contains("error") || snapshot.value("version").toInt() != 1 ||
++                    !snapshot.value("drives").isArray()) {
++                guard->m_status->setText(snapshot.value("error").toString(tr("Media inventory unavailable.")));
++                return;
++            }
++            guard->m_snapshot = snapshot;
++            for (const auto& value : snapshot.value("drives").toArray()) {
++                const auto drive = value.toObject();
++                const auto token = drive.value("token").toString();
++                if (findDrive(snapshot, token).isEmpty()) {
++                    continue;
++                }
++                QStringList names;
++                QStringList paths;
++                bool opened = false;
++                for (const auto& source : drive.value("volumes").toArray()) {
++                    const auto volume = source.toObject();
++                    names.append(volume.value("label").toString());
++                    paths.append(volume.value("mount").toObject().value("path").toString());
++                    opened = opened || guard->m_opened->contains(volume.value("token").toString());
++                }
++                const QString state = opened ? tr("Opened this session") :
++                        names.isEmpty() ? tr("Not mounted") : tr("Available");
++                const QString text = (names.isEmpty() ? tr("USB drive") : names.join(" / ")) +
++                        " · " + QString::number(drive.value("size").toDouble() / 1073741824.0, 'f', 1) +
++                        " GiB · " + state + "\n" +
++                        (paths.isEmpty() ? QString() : paths.join(" / ") + " · ") +
++                        drive.value("device").toString();
++                auto* item = new QListWidgetItem(text, guard->m_list);
++                item->setData(Qt::UserRole, token);
++            }
++            guard->m_list->setCurrentRow(-1);
++            guard->m_list->clearSelection();
++            guard->m_status->setText(guard->m_list->count() ? tr("Select a drive.") : tr("No eligible USB drives. Internal copies and system disks are excluded."));
++        });
++    }
++
++    void dispatch(bool mount, bool eject) {
++        const auto token = driveToken();
++        const auto volumeToken = m_volumes->currentData().toString();
++        if (token.isEmpty()) {
++            return;
++        }
++        cancelPending();
++        m_loading = true;
++        updateActions();
++        m_status->setText(tr("Rechecking the exact selected drive…"));
++        const auto generation = m_generation;
++        const QPointer<MixpiMediaDialog> guard(this);
++        m_observe([guard, generation, token, volumeToken, mount, eject](QJsonObject snapshot) {
++            if (!guard || guard->m_generation != generation || !guard->isVisible()) {
++                return;
++            }
++            const auto drive = findDrive(snapshot, token);
++            if (drive.isEmpty() || (mount && !drive.value("volumes").toArray().isEmpty())) {
++                guard->m_loading = false;
++                guard->m_status->setText(tr("Selected drive changed or observation failed. Refresh and choose again."));
++                guard->updateActions();
++                return;
++            }
++            if (mount || eject) {
++                const auto controlled = guard->m_controlled;
++                guard->reject();
++                controlled(mount, token);
++                return;
++            }
++            QJsonObject selected;
++            for (const auto& value : drive.value("volumes").toArray()) {
++                const auto volume = value.toObject();
++                if (volume.value("token").toString() == volumeToken && !volumeToken.isEmpty()) {
++                    if (!selected.isEmpty()) {
++                        guard->m_loading = false;
++                        guard->m_status->setText(tr("Ambiguous source identity. Refresh and choose again."));
++                        guard->updateActions();
++                        return;
++                    }
++                    selected = volume;
++                }
++            }
++            if (selected.isEmpty()) {
++                guard->m_loading = false;
++                guard->m_status->setText(tr("Selected volume changed. Refresh and choose again."));
++                guard->updateActions();
++                return;
++            }
++            guard->m_status->setText(tr("Opening the selected source… Close cancels pending discovery."));
++            guard->m_cancel = guard->m_open(selected, guard,
++                    [guard, generation, volumeToken](QString error) {
++                        if (!guard || guard->m_generation != generation || !guard->isVisible()) {
++                            return;
++                        }
++                        guard->m_cancel = {};
++                        guard->m_loading = false;
++                        if (!error.isEmpty()) {
++                            guard->m_status->setText(error);
++                            guard->updateActions();
++                            return;
++                        }
++                        guard->m_opened->insert(volumeToken);
++                        guard->accept();
++                    });
++        });
++    }
++
++    Observe m_observe;
++    OpenSource m_open;
++    Controlled m_controlled;
++    std::shared_ptr<QSet<QString>> m_opened;
++    Cancel m_cancel;
++    quint64 m_generation = 0;
++    bool m_loading = false;
++    QJsonObject m_snapshot;
++    QListWidget* m_list;
++    QComboBox* m_volumes;
++    QLabel* m_status;
++    QPushButton* m_refresh;
++    QPushButton* m_load;
++    QPushButton* m_mount;
++    QPushButton* m_eject;
++    QPushButton* m_close;
++};
+diff --git a/src/library/rekordbox/pendingselection.h b/src/library/rekordbox/pendingselection.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/rekordbox/pendingselection.h
+@@ -0,0 +1,77 @@
++#pragma once
++
++#include <QElapsedTimer>
++#include <QObject>
++#include <QPointer>
++#include <QString>
++#include <QTimer>
++#include <functional>
++#include <optional>
++
++namespace mixxx::rekordbox {
++
++class PendingSelection final : public QObject {
++  public:
++    using Step = std::function<std::optional<QString>()>;
++    using Completion = std::function<void(QString)>;
++
++    PendingSelection(QObject* parent, QObject* receiver, Step step,
++            Completion completion, int timeoutMs = 15000)
++            : QObject(parent), m_receiver(receiver), m_step(std::move(step)),
++              m_completion(std::move(completion)), m_timeoutMs(timeoutMs) {
++        m_elapsed.start();
++        m_timer.setInterval(50);
++        connect(&m_timer, &QTimer::timeout, this, [this] { poll(); });
++        if (receiver) {
++            connect(receiver, &QObject::destroyed, this, [this] { cancel(); });
++        }
++        m_timer.start();
++        QTimer::singleShot(0, this, [this] { poll(); });
++    }
++
++    void cancel() {
++        m_timer.stop();
++        m_completion = {};
++        m_step = {};
++        deleteLater();
++    }
++
++  private:
++    void poll() {
++        if (!m_receiver || !m_step || !m_completion) {
++            cancel();
++            return;
++        }
++        const QPointer<PendingSelection> guard(this);
++        const auto step = m_step;
++        auto result = m_elapsed.elapsed() >= m_timeoutMs
++                ? std::optional<QString>(tr("Source discovery timed out. Refresh and choose again."))
++                : step();
++        if (!guard) {
++            return;
++        }
++        if (!m_receiver || !m_completion) {
++            cancel();
++            return;
++        }
++        if (!result) {
++            return;
++        }
++        auto completion = std::move(m_completion);
++        m_step = {};
++        m_timer.stop();
++        deleteLater();
++        if (m_receiver) {
++            completion(*result);
++        }
++    }
++
++    QPointer<QObject> m_receiver;
++    Step m_step;
++    Completion m_completion;
++    int m_timeoutMs;
++    QTimer m_timer;
++    QElapsedTimer m_elapsed;
++};
++
++}
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -1544,6 +1544,75 @@
+     return tr("Selected Rekordbox source is not current. Discovery requested; choose it again after refresh.");
+ }
+ 
++std::function<void()> RekordboxFeature::openRemovableDeviceAsync(const QString& path,
++        const QString& mountRevision, const QString& databaseRevision, QObject* receiver,
++        mixxx::rekordbox::PendingSelection::Completion completion) {
++    if (m_pendingSelection) {
++        m_pendingSelection->cancel();
++    }
++    const auto observed = mixxx::rekordbox::inspectSource(path.toStdString());
++    QString initialError;
++    const auto admission = mixxx::media::acquireUnknown(mixxx::media::Producer::Import);
++    if (!admission) {
++        initialError = tr("Media is draining; source selection rejected.");
++    } else if (observed.database.empty() || observed.revision != mountRevision.toStdString() ||
++            observed.database != databaseRevision.toStdString()) {
++        initialError = tr("Selected Rekordbox generation or database path changed; choose again.");
++    } else if (mixxx::rekordbox::cachedSourceRow(m_pSidebarModel->getRootItem(), path,
++                       databaseRevision) < 0 || m_deviceDiscoveryActive || m_trackImportActive ||
++            m_deviceRefreshPending) {
++        m_requestedMounts.insert(path, mountRevision);
++        requestDeviceRefresh();
++    }
++    auto* operation = new mixxx::rekordbox::PendingSelection(this, receiver,
++            [this, path, mountRevision, databaseRevision, initialError]() -> std::optional<QString> {
++                if (!initialError.isEmpty()) {
++                    return initialError;
++                }
++                const auto current = mixxx::rekordbox::inspectSource(path.toStdString());
++                if (current.revision != mountRevision.toStdString() ||
++                        current.database != databaseRevision.toStdString() || current.database.empty()) {
++                    return tr("Selected device or database changed; no source was opened.");
++                }
++                if (m_deviceRefreshPending || m_deviceDiscoveryActive || m_trackImportActive) {
++                    return std::nullopt;
++                }
++                const int row = mixxx::rekordbox::cachedSourceRow(
++                        m_pSidebarModel->getRootItem(), path, databaseRevision);
++                if (row < 0) {
++                    return tr("Selected source was not found after discovery. Refresh and choose again.");
++                }
++                const auto mediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Import);
++                if (!mediaUse) {
++                    return tr("Media is draining; source selection rejected.");
++                }
++                auto* item = m_pSidebarModel->getRootItem()->child(row);
++                const bool needsImport = item->getData().toList().value(1).toString() == IS_RECORDBOX_DEVICE;
++                const auto index = m_pSidebarModel->index(row, 0);
++                activateChild(index);
++                if (needsImport &&
++                        (!m_trackImportActive || m_pImportingDevice != item || !m_importMediaUse)) {
++                    return tr("Source import could not be admitted; no LOAD mode was changed.");
++                }
++                const auto confirmed = mixxx::rekordbox::inspectSource(path.toStdString());
++                const auto admittedUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Import);
++                if (!admittedUse || m_deviceRefreshPending ||
++                        confirmed.revision != mountRevision.toStdString() ||
++                        confirmed.database != databaseRevision.toStdString()) {
++                    return tr("Source changed or admission was revoked; choose again.");
++                }
++                emit featureSelect(this, index);
++                return QString();
++            }, std::move(completion));
++    m_pendingSelection = operation;
++    const QPointer<mixxx::rekordbox::PendingSelection> guard(operation);
++    return [guard] {
++        if (guard) {
++            guard->cancel();
++        }
++    };
++}
++
+ void RekordboxFeature::activate() {
+     qDebug() << "RekordboxFeature::activate()";
+     m_showDeviceLoading = true;
+diff --git a/src/library/rekordbox/rekordboxfeature.h b/src/library/rekordbox/rekordboxfeature.h
+--- a/src/library/rekordbox/rekordboxfeature.h
++++ b/src/library/rekordbox/rekordboxfeature.h
+@@ -24,6 +24,7 @@
+ 
+ #pragma once
+ #include "library/media/mediause.h"
++#include "library/rekordbox/pendingselection.h"
+ 
+ #include <QFuture>
+ #include <QFutureWatcher>
+@@ -72,6 +73,9 @@
+ 
+     TreeItemModel* sidebarModel() const override;
+     QString openRemovableDevice(const QString& path, const QString& mountRevision);
++    std::function<void()> openRemovableDeviceAsync(const QString& path,
++            const QString& mountRevision, const QString& databaseRevision, QObject* receiver,
++            mixxx::rekordbox::PendingSelection::Completion completion);
+     void refreshRemovableSources() { requestDeviceRefresh(); }
+ 
+   public slots:
+@@ -89,6 +93,7 @@
+     void refreshDevices();
+     void finishDeviceRefresh();
+     QMap<QString, QString> m_requestedMounts;
++    QPointer<mixxx::rekordbox::PendingSelection> m_pendingSelection;
+ #ifdef __LINUX__
+     QTimer m_devicePollTimer;
+ #endif

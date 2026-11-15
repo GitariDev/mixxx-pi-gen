@@ -1,0 +1,472 @@
+diff --git a/src/library/rekordbox/importoperation.h b/src/library/rekordbox/importoperation.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/rekordbox/importoperation.h
+@@ -0,0 +1,26 @@
++#pragma once
++
++#include <atomic>
++#include <stdexcept>
++
++namespace mixxx::rekordbox {
++
++class ImportOperation final {
++  public:
++    void cancel() { m_cancelled.store(true); }
++    bool cancelled() const { return m_cancelled.load(); }
++    void checkpoint() const {
++        if (cancelled()) {
++            throw std::runtime_error("Rekordbox import cancelled");
++        }
++    }
++
++    bool finished = false;
++    bool succeeded = false;
++    bool showOnFinish = true;
++
++  private:
++    std::atomic<bool> m_cancelled{false};
++};
++
++}
+diff --git a/src/library/rekordbox/pendingselection.h b/src/library/rekordbox/pendingselection.h
+--- a/src/library/rekordbox/pendingselection.h
++++ b/src/library/rekordbox/pendingselection.h
+@@ -14,11 +14,13 @@
+   public:
+     using Step = std::function<std::optional<QString>()>;
+     using Completion = std::function<void(QString)>;
++    using Cancellation = std::function<void()>;
+ 
+     PendingSelection(QObject* parent, QObject* receiver, Step step,
+-            Completion completion, int timeoutMs = 15000)
++            Completion completion, int timeoutMs = 15000, Cancellation cancellation = {})
+             : QObject(parent), m_receiver(receiver), m_step(std::move(step)),
+-              m_completion(std::move(completion)), m_timeoutMs(timeoutMs) {
++              m_completion(std::move(completion)), m_timeoutMs(timeoutMs),
++              m_cancellation(std::move(cancellation)) {
+         m_elapsed.start();
+         m_timer.setInterval(50);
+         connect(&m_timer, &QTimer::timeout, this, [this] { poll(); });
+@@ -29,7 +31,10 @@
+         QTimer::singleShot(0, this, [this] { poll(); });
+     }
+ 
++    ~PendingSelection() override { cancelWork(); }
++
+     void cancel() {
++        cancelWork();
+         m_timer.stop();
+         m_completion = {};
+         m_step = {};
+@@ -37,6 +42,14 @@
+     }
+ 
+   private:
++    void cancelWork() {
++        auto cancellation = std::move(m_cancellation);
++        m_cancellation = {};
++        if (cancellation) {
++            cancellation();
++        }
++    }
++
+     void poll() {
+         if (!m_receiver || !m_step || !m_completion) {
+             cancel();
+@@ -57,6 +70,11 @@
+         if (!result) {
+             return;
+         }
++        if (!result->isEmpty()) {
++            cancelWork();
++        } else {
++            m_cancellation = {};
++        }
+         auto completion = std::move(m_completion);
+         m_step = {};
+         m_timer.stop();
+@@ -72,6 +90,7 @@
+     int m_timeoutMs;
+     QTimer m_timer;
+     QElapsedTimer m_elapsed;
++    Cancellation m_cancellation;
+ };
+ 
+ }
+diff --git a/src/library/rekordbox/rekordboxfeature.h b/src/library/rekordbox/rekordboxfeature.h
+--- a/src/library/rekordbox/rekordboxfeature.h
++++ b/src/library/rekordbox/rekordboxfeature.h
+@@ -25,6 +25,7 @@
+ #pragma once
+ #include "library/media/mediause.h"
+ #include "library/rekordbox/pendingselection.h"
++#include "library/rekordbox/importoperation.h"
+ 
+ #include <QFuture>
+ #include <QFutureWatcher>
+@@ -33,6 +34,7 @@
+ #include <QTimer>
+ #include <QtConcurrentRun>
+ #include <fstream>
++#include <memory>
+ 
+ #include "library/baseexternallibraryfeature.h"
+ #include "library/baseexternalplaylistmodel.h"
+@@ -101,6 +103,7 @@
+     bool m_deviceDiscoveryActive = false;
+     bool m_deviceResultsDeferred = false;
+     bool m_trackImportActive = false;
++    std::shared_ptr<mixxx::rekordbox::ImportOperation> m_importOperation;
+     mixxx::media::Lease m_importMediaUse;
+     mixxx::media::Lease m_discoveryMediaUse;
+     bool m_deviceRefreshPending = false;
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -416,6 +416,7 @@
+ 
+     if (!query.exec()) {
+         LOG_FAILED_QUERY(query);
++        throw std::runtime_error("Could not insert Rekordbox track");
+     }
+ 
+     int trackID = -1;
+@@ -428,6 +429,7 @@
+     if (!finderQuery.exec()) {
+         LOG_FAILED_QUERY(finderQuery)
+                 << "rbID:" << rbID;
++        throw std::runtime_error("Could not find Rekordbox track");
+     }
+ 
+     if (finderQuery.next()) {
+@@ -442,6 +444,7 @@
+         LOG_FAILED_QUERY(queryInsertIntoDevicePlaylistTracks)
+                 << "trackID:" << trackID
+                 << "position:" << audioFilesCount;
++        throw std::runtime_error("Could not insert Rekordbox device track");
+     }
+ }
+ 
+@@ -454,9 +457,12 @@
+         QMap<uint32_t, QMap<uint32_t, uint32_t>>& playlistTreeMap,
+         QMap<uint32_t, QMap<uint32_t, uint32_t>>& playlistTrackMap,
+         const QString& playlistPath,
+-        const QString& device);
+-
+-QString parseDeviceDB(mixxx::DbConnectionPoolPtr dbConnectionPool, TreeItem* deviceItem) {
++        const QString& device,
++        const std::shared_ptr<mixxx::rekordbox::ImportOperation>& operation);
++
++QString parseDeviceDB(mixxx::DbConnectionPoolPtr dbConnectionPool, TreeItem* deviceItem,
++        const std::shared_ptr<mixxx::rekordbox::ImportOperation>& operation) {
++    operation->checkpoint();
+     QString devicePath = deviceItem->getData().toList()[0].toString();
+ #ifdef __LINUX__
+     const auto observed = mixxx::rekordbox::inspectSource(devicePath.toStdString());
+@@ -493,6 +499,10 @@
+     thisThread->setPriority(QThread::LowPriority);
+ 
+     ScopedTransaction transaction(database);
++    if (!transaction.active()) {
++        throw std::runtime_error("Could not start Rekordbox import transaction");
++    }
++    operation->checkpoint();
+ 
+     QSqlQuery query(database);
+     query.prepare("INSERT INTO " + kRekordboxLibraryTable +
+@@ -507,6 +517,9 @@
+ 
+     // Create a playlist for all the tracks on a device
+     int playlistID = createDevicePlaylist(database, devicePath);
++    if (playlistID == kInvalidPlaylistId) {
++        throw std::runtime_error("Could not create Rekordbox device playlist");
++    }
+ 
+     QSqlQuery queryInsertIntoDevicePlaylistTracks(database);
+     queryInsertIntoDevicePlaylistTracks.prepare(
+@@ -523,7 +536,9 @@
+     std::ifstream ifs(dbPath.toStdString(), std::ifstream::binary);
+     kaitai::kstream ks(&ifs);
+ 
++    operation->checkpoint();
+     rekordbox_pdb_t rekordboxDB = rekordbox_pdb_t(&ks);
++    operation->checkpoint();
+ 
+     // There are other types of tables (eg. COLOR), these are the only ones we are
+     // interested at the moment. Perhaps when/if
+@@ -556,17 +571,23 @@
+     bool folderOrPlaylistFound = false;
+ 
+     for (int tableOrderIndex = 0; tableOrderIndex < totalTables; tableOrderIndex++) {
++        operation->checkpoint();
+         for (const auto& table : *rekordboxDB.tables()) {
++            operation->checkpoint();
+             if (table->type() == tableOrder[tableOrderIndex]) {
+                 uint16_t lastIndex = table->last_page()->index();
+                 rekordbox_pdb_t::page_ref_t* currentRef = table->first_page();
+ 
+                 while (true) {
++                    operation->checkpoint();
+                     rekordbox_pdb_t::page_t* page = currentRef->body();
++                    operation->checkpoint();
+ 
+                     if (page->is_data_page()) {
+                         for (const auto& rowgroup : *page->row_groups()) {
++                            operation->checkpoint();
+                             for (const auto& rowRef : *rowgroup->rows()) {
++                                operation->checkpoint();
+                                 if (rowRef->present()) {
+                                     switch (tableOrder[tableOrderIndex]) {
+                                     case rekordbox_pdb_t::PAGE_TYPE_KEYS: {
+@@ -667,12 +688,17 @@
+                 playlistTreeMap,
+                 playlistTrackMap,
+                 devicePath,
+-                device);
++                device,
++                operation);
+     }
+ 
+     qDebug() << "Found: " << audioFilesCount << " audio files in Rekordbox device " << device;
+ 
+-    transaction.commit();
++    operation->checkpoint();
++    if (!transaction.commit()) {
++        database.rollback();
++        throw std::runtime_error("Could not commit Rekordbox import");
++    }
+ 
+     return devicePath;
+ }
+@@ -686,10 +712,13 @@
+         QMap<uint32_t, QMap<uint32_t, uint32_t>>& playlistTreeMap,
+         QMap<uint32_t, QMap<uint32_t, uint32_t>>& playlistTrackMap,
+         const QString& playlistPath,
+-        const QString& device) {
++        const QString& device,
++        const std::shared_ptr<mixxx::rekordbox::ImportOperation>& operation) {
++    operation->checkpoint();
+     for (uint32_t childIndex = 0;
+             childIndex < (uint32_t)playlistTreeMap[parentID].size();
+             childIndex++) {
++        operation->checkpoint();
+         uint32_t childID = playlistTreeMap[parentID][childIndex];
+         if (childID == 0) {
+             continue;
+@@ -713,7 +742,7 @@
+         if (!queryInsertIntoPlaylist.exec()) {
+             LOG_FAILED_QUERY(queryInsertIntoPlaylist)
+                     << "currentPath" << currentPath;
+-            return;
++            throw std::runtime_error("Could not insert Rekordbox playlist");
+         }
+ 
+         QSqlQuery idQuery(database);
+@@ -723,7 +752,7 @@
+         if (!idQuery.exec()) {
+             LOG_FAILED_QUERY(idQuery)
+                     << "currentPath" << currentPath;
+-            return;
++            throw std::runtime_error("Could not find Rekordbox playlist");
+         }
+ 
+         int playlistID = kInvalidPlaylistId;
+@@ -742,6 +771,7 @@
+             for (uint32_t trackIndex = 1; trackIndex <=
+                     static_cast<uint32_t>(playlistTrackMap[childID].size());
+                     trackIndex++) {
++                operation->checkpoint();
+                 uint32_t rbTrackID = playlistTrackMap[childID][trackIndex];
+ 
+                 int trackID = -1;
+@@ -755,7 +785,7 @@
+                     LOG_FAILED_QUERY(finderQuery)
+                             << "rbTrackID:" << rbTrackID
+                             << "device:" << device;
+-                    return;
++                    throw std::runtime_error("Could not find Rekordbox playlist track");
+                 }
+ 
+                 if (finderQuery.next()) {
+@@ -772,7 +802,7 @@
+                             << "trackID:" << trackID
+                             << "trackIndex:" << trackIndex;
+ 
+-                    return;
++                    throw std::runtime_error("Could not insert Rekordbox playlist track");
+                 }
+             }
+         }
+@@ -787,7 +817,8 @@
+                     playlistTreeMap,
+                     playlistTrackMap,
+                     currentPath,
+-                    device);
++                    device,
++                    operation);
+         }
+     }
+ }
+@@ -1393,8 +1424,18 @@
+ }
+ 
+ RekordboxFeature::~RekordboxFeature() {
++    if (m_pendingSelection) {
++        m_pendingSelection->cancel();
++    }
++    if (m_importOperation) {
++        m_importOperation->cancel();
++    }
+     m_devicesFuture.waitForFinished();
+     m_tracksFuture.waitForFinished();
++    if (m_pImportingDevice) {
++        m_pImportingDevice->removeChildren(0, m_pImportingDevice->childRows());
++    }
++    m_importMediaUse.reset();
+ 
+     // Drop temporary Rekordbox database tables on shutdown
+     QSqlDatabase database = m_pTrackCollection->database();
+@@ -1580,8 +1621,9 @@
+         m_requestedMounts.insert(path, mountRevision);
+         requestDeviceRefresh();
+     }
++    const auto ownedImport = std::make_shared<std::shared_ptr<mixxx::rekordbox::ImportOperation>>();
+     auto* operation = new mixxx::rekordbox::PendingSelection(this, receiver,
+-            [this, path, mountRevision, databaseRevision, initialError]() -> std::optional<QString> {
++            [this, path, mountRevision, databaseRevision, initialError, ownedImport]() -> std::optional<QString> {
+                 if (!initialError.isEmpty()) {
+                     return initialError;
+                 }
+@@ -1590,6 +1632,14 @@
+                         current.database != databaseRevision.toStdString() || current.database.empty()) {
+                     return tr("Selected device or database changed; no source was opened.");
+                 }
++                if (*ownedImport) {
++                    if (!(*ownedImport)->finished) {
++                        return std::nullopt;
++                    }
++                    if (!(*ownedImport)->succeeded || (*ownedImport)->cancelled()) {
++                        return tr("Source import failed or was cancelled. Refresh and choose again.");
++                    }
++                }
+                 if (m_deviceRefreshPending || m_deviceDiscoveryActive || m_trackImportActive) {
+                     return std::nullopt;
+                 }
+@@ -1605,10 +1655,17 @@
+                 auto* item = m_pSidebarModel->getRootItem()->child(row);
+                 const bool needsImport = item->getData().toList().value(1).toString() == IS_RECORDBOX_DEVICE;
+                 const auto index = m_pSidebarModel->index(row, 0);
+-                activateChild(index);
++                if (needsImport) {
++                    activateChild(index);
++                }
+                 if (needsImport &&
+                         (!m_trackImportActive || m_pImportingDevice != item || !m_importMediaUse)) {
+                     return tr("Source import could not be admitted; no LOAD mode was changed.");
++                }
++                if (needsImport) {
++                    *ownedImport = m_importOperation;
++                    (*ownedImport)->showOnFinish = false;
++                    return std::nullopt;
+                 }
+                 const auto confirmed = mixxx::rekordbox::inspectSource(path.toStdString());
+                 const auto admittedUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Import);
+@@ -1617,9 +1674,14 @@
+                         confirmed.database != databaseRevision.toStdString()) {
+                     return tr("Source changed or admission was revoked; choose again.");
+                 }
++                activateChild(index);
+                 emit featureSelect(this, index);
+                 return QString();
+-            }, std::move(completion));
++            }, std::move(completion), 15000, [ownedImport] {
++                if (*ownedImport) {
++                    (*ownedImport)->cancel();
++                }
++            });
+     m_pendingSelection = operation;
+     const QPointer<mixxx::rekordbox::PendingSelection> guard(operation);
+     return [guard] {
+@@ -1697,14 +1759,23 @@
+             return;
+         }
+         m_trackImportActive = true;
++        m_importOperation = std::make_shared<mixxx::rekordbox::ImportOperation>();
+         m_pImportingDevice = item;
+         // Set the marker before launching the worker, which reads this data.
+         data[1] = QVariant(IS_NOT_RECORDBOX_DEVICE);
+         item->setData(QVariant(data));
+         m_tracksFuture = QtConcurrent::run([pool = static_cast<Library*>(parent())->dbConnectionPool(),
+-                                                 item, mediaUse = m_importMediaUse]() mutable {
++                                                 item, mediaUse = m_importMediaUse,
++                                                 operation = m_importOperation]() mutable {
+             auto workUse = std::move(mediaUse);
+-            return parseDeviceDB(pool, item);
++            try {
++                return parseDeviceDB(pool, item, operation);
++            } catch (const std::exception& error) {
++                qWarning() << "Rekordbox import stopped:" << error.what();
++            } catch (...) {
++                qWarning() << "Rekordbox import stopped by an unknown parser error";
++            }
++            return QString();
+         });
+         m_tracksFutureWatcher.setFuture(m_tracksFuture);
+     } else {
+@@ -1823,6 +1894,10 @@
+ 
+ void RekordboxFeature::onTracksFound() {
+     qDebug() << "onTracksFound";
++    if (!m_trackImportActive || !m_pImportingDevice) {
++        return;
++    }
++    const auto operation = m_importOperation;
+ 
+     QString devicePlaylist;
+     try {
+@@ -1830,12 +1905,13 @@
+     } catch (const std::exception& e) {
+         qWarning() << "Failed to load Rekordbox database:" << e.what();
+     }
++    if (operation->cancelled()) {
++        devicePlaylist.clear();
++    }
+ #ifdef __LINUX__
+     auto imported = m_pImportingDevice->getData().toList();
+     const auto observed = mixxx::rekordbox::inspectSource(imported.value(0).toString().toStdString());
+     if (observed.database.empty() || imported.value(2).toString().toStdString() != observed.database) {
+-        QSqlDatabase database = m_pTrackCollection->database();
+-        clearDeviceTables(database, m_pImportingDevice);
+         imported[2] = QVariant(QString());
+         m_pImportingDevice->setData(QVariant(imported));
+         devicePlaylist.clear();
+@@ -1843,6 +1919,9 @@
+     }
+ #endif
+     if (devicePlaylist.isEmpty()) {
++        QSqlDatabase database = m_pTrackCollection->database();
++        clearDeviceTables(database, m_pImportingDevice);
++        m_pImportingDevice->removeChildren(0, m_pImportingDevice->childRows());
+         // A failed import must remain selectable for a later retry. Discovery
+         // was deferred, so the TreeItem is still alive even after an unplug.
+         auto data = m_pImportingDevice->getData().toList();
+@@ -1850,6 +1929,9 @@
+         m_pImportingDevice->setData(QVariant(data));
+     }
+     m_pImportingDevice = nullptr;
++    operation->succeeded = !devicePlaylist.isEmpty();
++    operation->finished = true;
++    m_importOperation.reset();
+     m_trackImportActive = false;
+     m_importMediaUse.reset();
+     // Also process queued removals after a failed import (the catch below).
+@@ -1865,7 +1947,7 @@
+     });
+     m_pSidebarModel->triggerRepaint();
+ 
+-    if (devicePlaylist.isEmpty()) {
++    if (devicePlaylist.isEmpty() || !operation->showOnFinish) {
+         return;
+     }
+ 

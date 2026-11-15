@@ -29,12 +29,13 @@ def add_missing(source, section, defaults):
 
 
 def seed(config):
-    existed = config.exists()
+    existed = os.path.lexists(config)
     source = config.read_text() if existed else ""
     result = add_missing(source, "Library", {
         "RowHeight": "34", "Font": "Sans Serif,-1,17,5,50,0,0,0,0,0"})
     if not existed:
         result = add_missing(result, "Config", {"ResizableSkin": "Pioneered"})
+        result = add_missing(result, "Library", {"MixPiBootstrapLibrary": "1"})
     if result == source:
         return
     config.parent.mkdir(parents=True, exist_ok=True)

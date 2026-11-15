@@ -171,10 +171,10 @@ index 6b6b387..cb7e5b8 100644
  
 diff --git a/src/sources/removabletrackcache.h b/src/sources/removabletrackcache.h
 new file mode 100644
-index 0000000..8dd8d46
+index 0000000..f0c178b
 --- /dev/null
 +++ b/src/sources/removabletrackcache.h
-@@ -0,0 +1,291 @@
+@@ -0,0 +1,407 @@
 +#pragma once
 +
 +#include <QDir>
@@ -194,7 +194,10 @@ index 0000000..8dd8d46
 +
 +#ifdef Q_OS_LINUX
 +#include <sys/stat.h>
++#include <sys/inotify.h>
 +#include <sys/vfs.h>
++#include <cerrno>
++#include <cstring>
 +#include <unistd.h>
 +#endif
 +
@@ -203,6 +206,96 @@ index 0000000..8dd8d46
 +// File bytes, not decoded audio. Only reader/analyzer workers call acquire().
 +// Header-only so this optional Pi patch needs no build-system changes.
 +class RemovableTrackCache {
++#ifdef Q_OS_LINUX
++    // Notifications are a change proof independent of inode/timestamp reuse.
++    // These descriptors watch inodes but never hold original media files open.
++    struct ChangeProof {
++        int fd = -1;
++        int directoryWatch = -1;
++        QByteArray name;
++        QByteArray companion;
++        bool stale = false;
++        ~ChangeProof() {
++            if (fd >= 0) {
++                ::close(fd);
++            }
++        }
++        bool arm(const QString& original, bool wavpack) {
++            fd = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
++            if (fd < 0) {
++                return false;
++            }
++            const QFileInfo info(original);
++            name = QFile::encodeName(info.fileName());
++            companion = wavpack ? name + 'c' : QByteArray();
++            const auto parent = QFile::encodeName(info.absolutePath());
++            constexpr uint32_t changes = IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE |
++                    IN_DELETE_SELF | IN_MOVE_SELF | IN_UNMOUNT;
++            directoryWatch = ::inotify_add_watch(fd, parent.constData(),
++                    changes | IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_ONLYDIR);
++            const auto native = QFile::encodeName(original);
++            if (directoryWatch < 0 ||
++                    ::inotify_add_watch(fd, native.constData(), changes) < 0) {
++                return false;
++            }
++            if (wavpack) {
++                const QByteArray correction = native + 'c';
++                if (::inotify_add_watch(fd, correction.constData(), changes) < 0 &&
++                        errno != ENOENT) {
++                    return false;
++                }
++            }
++            return unchanged();
++        }
++        bool unchanged() {
++            if (stale || fd < 0) {
++                return false;
++            }
++            alignas(struct inotify_event) char buffer[4096];
++            // Bound work even if an unrelated writer floods the directory.
++            for (int batch = 0; batch < 64; ++batch) {
++                const auto count = ::read(fd, buffer, sizeof(buffer));
++                if (count < 0 && errno == EINTR) {
++                    continue;
++                }
++                if (count < 0 && errno == EAGAIN) {
++                    return !stale;
++                }
++                if (count <= 0) {
++                    stale = true;
++                    return false;
++                }
++                size_t offset = 0;
++                while (offset < static_cast<size_t>(count)) {
++                    if (static_cast<size_t>(count) - offset < sizeof(struct inotify_event)) {
++                        stale = true;
++                        return false;
++                    }
++                    const auto* event = reinterpret_cast<const struct inotify_event*>(buffer + offset);
++                    const size_t length = sizeof(*event) + event->len;
++                    if (length > static_cast<size_t>(count) - offset) {
++                        stale = true;
++                        return false;
++                    }
++                    // Overflow and watch loss invalidate forever, even after drain.
++                    if ((event->mask & (IN_Q_OVERFLOW | IN_IGNORED | IN_UNMOUNT |
++                                               IN_DELETE_SELF | IN_MOVE_SELF)) ||
++                            event->wd != directoryWatch || event->len == 0 ||
++                            (std::memchr(event->name, '\0', event->len) == nullptr) ||
++                            name == event->name || (!companion.isEmpty() && companion == event->name)) {
++                        stale = true;
++                    }
++                    offset += length;
++                }
++                if (stale) {
++                    return false;
++                }
++            }
++            stale = true;
++            return false;
++        }
++    };
++#endif
 +  public:
 +    struct Entry {
 +        QString path;
@@ -211,6 +304,7 @@ index 0000000..8dd8d46
 +#ifdef Q_OS_LINUX
 +        struct stat identity {};
 +        struct stat correctionIdentity {};
++        std::shared_ptr<ChangeProof> proof;
 +#endif
 +        ~Entry() {
 +            QFile::remove(path);
@@ -379,19 +473,23 @@ index 0000000..8dd8d46
 +        struct stat identity {};
 +        const auto native = QFile::encodeName(original);
 +        const bool exists = ::stat(native.constData(), &identity) == 0;
++        const bool missing = !exists && (errno == ENOENT || errno == ENOTDIR);
 +        // WavPack hybrid tracks use a companion .wvc file. Preserve it rather
 +        // than silently falling back to lossy decoding from just the .wv.
 +        struct stat correctionIdentity {};
 +        const QString correction = original + QLatin1Char('c');
 +        const auto nativeCorrection = QFile::encodeName(correction);
-+        const bool hasCorrection = sourceInfo.suffix().compare(
-+                                           QStringLiteral("wv"), Qt::CaseInsensitive) == 0 &&
++        const bool wavpack = sourceInfo.suffix().compare(
++                QStringLiteral("wv"), Qt::CaseInsensitive) == 0;
++        bool hasCorrection = wavpack &&
 +                ::stat(nativeCorrection.constData(), &correctionIdentity) == 0;
++        const bool correctionKnown = !wavpack || hasCorrection || errno == ENOENT;
 +        const auto key = original.toStdString();
 +        auto found = m_entries.find(key);
 +        if (found != m_entries.end()) {
 +            auto entry = found->second.lock();
-+            if (entry && (!exists || (sameFile(entry->identity, identity) &&
++            const bool unchanged = entry && entry->proof->unchanged();
++            if (entry && (missing || (exists && correctionKnown && unchanged && sameFile(entry->identity, identity) &&
 +                                            entry->hasCorrection == hasCorrection &&
 +                                            (!hasCorrection || sameFile(entry->correctionIdentity,
 +                                                                       correctionIdentity))))) {
@@ -407,6 +505,18 @@ index 0000000..8dd8d46
 +            }
 +        }
 +        if (!create) {
++            return {};
++        }
++        // Arm before taking the identities used for copying. Directory events
++        // cover name replacement and a previously absent WavPack companion;
++        // inode watches also cover writes through another hard link.
++        auto proof = std::make_shared<ChangeProof>();
++        if (!exists || !proof->arm(original, wavpack) ||
++                ::stat(native.constData(), &identity) != 0) {
++            return {};
++        }
++        hasCorrection = wavpack && ::stat(nativeCorrection.constData(), &correctionIdentity) == 0;
++        if ((wavpack && !hasCorrection && errno != ENOENT) || !proof->unchanged()) {
 +            return {};
 +        }
 +        const qint64 size = identity.st_size;
@@ -453,6 +563,12 @@ index 0000000..8dd8d46
 +        entry->identity = identity;
 +        entry->hasCorrection = hasCorrection;
 +        entry->correctionIdentity = correctionIdentity;
++        entry->proof = std::move(proof);
++        // Last operation before publication: all copy/companion changes must
++        // be absent. Later events stay queued for the next reuse check.
++        if (!entry->proof->unchanged()) {
++            return {};
++        }
 +        copy.setAutoRemove(false);
 +        correctionCopy.setAutoRemove(false);
 +        m_entries[key] = entry;

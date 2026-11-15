@@ -1,0 +1,160 @@
+#include "library/media/mediauseregistry.h"
+#include "library/media/transferstatus.h"
+#include <cassert>
+#include <chrono>
+#include <iostream>
+#include <sstream>
+#include <thread>
+#include <unistd.h>
+
+using namespace mixxx::media;
+
+class RequestFixture {
+  public:
+    @CLIENT_STRUCTS@
+    Binding current{"old-generation", "source", std::make_shared<int>(1)};
+    Lease m_startup;
+    TransferHistory m_transfers;
+    Binding resolve(Path&, bool) { return current; }
+    @PRODUCTION_SNAPSHOT@
+    @PRODUCTION_HEX@
+    @PRODUCTION_REQUEST@
+};
+
+void historyCases() {
+    TransferHistory history;
+    const TransferHistory::Key oldDrive{"generation-A", "source-A"};
+    const TransferHistory::Key replacement{"generation-B", "source-A"};
+    const TransferHistory::Key otherSource{"generation-A", "source-B"};
+    assert(!history.snapshot(oldDrive).valid);
+    assert(!history.begin({}));
+    assert(!history.begin({{"", "source"}}));
+    assert(!history.begin({{std::string(8193, 'x'), "source"}}));
+    const auto first = history.begin({oldDrive, oldDrive});
+    assert(first);
+    assert(history.snapshot(oldDrive).activeJobs == 1);
+    assert(!history.snapshot(replacement).valid);
+    assert(!history.snapshot(otherSource).valid);
+    assert(!history.finish(first, "verified"));
+    for (const std::string malformed : {"", "-1", "+1", "00", "01", "1.5", "nan", "100", "99999999999", "1\n", " 1"}) {
+        assert(!history.update(first, "copying", malformed));
+    }
+    assert(!history.update(first, "finished", "10"));
+    assert(!history.update(first, "copying", std::string("1\0", 2)));
+    assert(history.update(first, "copying", "20"));
+    assert(!history.update(first, "verifying", "19"));
+    assert(history.snapshot(oldDrive).progress == 20);
+    assert(history.update(first, "verifying", "20"));
+    assert(history.update(first, "copying", "21"));
+    assert(!history.finish(first, "verified"));
+    assert(history.update(first, "verifying", "99"));
+    assert(history.snapshot(oldDrive).status == TransferOutcome::Running);
+    assert(history.finish(first, "verified"));
+    assert(history.snapshot(oldDrive).progress == 100);
+    assert(history.snapshot(oldDrive).status == TransferOutcome::Verified);
+    history.interrupt(first);
+    assert(history.snapshot(oldDrive).status == TransferOutcome::Verified);
+    assert(!history.finish(first, "failed"));
+    assert(!history.update(first, "copying", "99"));
+
+    const auto second = history.begin({replacement});
+    assert(history.update(second, "copying", "41"));
+    history.interrupt(second);
+    const auto interrupted = history.snapshot(replacement);
+    assert(interrupted.valid && !interrupted.progressValid && interrupted.progress == 41);
+    assert(interrupted.status == TransferOutcome::Interrupted);
+    assert(history.snapshot(oldDrive).status == TransferOutcome::Verified);
+    assert(!history.finish(second, "verified"));
+    const auto retry = history.begin({replacement});
+    assert(history.snapshot(replacement).job == retry);
+    assert(history.finish(retry, "cancelled"));
+    assert(history.snapshot(replacement).status == TransferOutcome::Cancelled);
+    const auto failure = history.begin({replacement});
+    assert(history.finish(failure, "failed"));
+    assert(history.snapshot(replacement).status == TransferOutcome::Failed);
+
+    const auto active = history.begin({replacement});
+    const auto newer = history.begin({replacement});
+    assert(history.snapshot(replacement).activeJobs == 2);
+    assert(history.finish(newer, "failed"));
+    assert(history.snapshot(replacement).job == active);
+    assert(history.snapshot(replacement).activeJobs == 1);
+    assert(history.finish(active, "cancelled"));
+    assert(history.snapshot(replacement).job == newer);
+    assert(history.snapshot(replacement).activeJobs == 0);
+
+    TransferHistory bounded;
+    for (std::size_t index = 0; index < TransferHistory::Capacity; ++index) {
+        assert(bounded.begin({{"retained", std::to_string(index)}}));
+    }
+    assert(!bounded.begin({oldDrive}));
+    assert(bounded.finish(2, "failed"));
+    assert(bounded.begin({oldDrive}));
+    assert(!bounded.snapshot({"retained", "1"}).valid);
+    assert(bounded.snapshot({"retained", "0"}).status == TransferOutcome::Running);
+    std::thread reader([&] {
+        for (int iteration = 0; iteration < 1000; ++iteration) bounded.snapshot(oldDrive);
+    });
+    for (int iteration = 0; iteration < 1000; ++iteration) bounded.interrupt(1);
+    reader.join();
+    std::cout << "PASS bounded history, exact generations, monotonic integers, terminals, concurrent snapshots\n";
+}
+
+void requestCases() {
+    RequestFixture service;
+    RequestFixture::Client admission{};
+    assert(service.request(admission, "TRANSFER_BEGIN\n1") == "DENIED");
+    assert(service.request(admission, "BEGIN\nR/source").find("OK\n") == 0);
+    assert(!service.m_transfers.snapshot({"old-generation", "source"}).valid);
+    assert(service.request(admission, "CHECK") == "OK");
+    assert(service.request(admission, "FINISH") == "OK");
+    assert(!service.m_transfers.snapshot({"old-generation", "source"}).valid);
+    assert(!service.transferStatus(service.current).valid);
+
+    RequestFixture::Client job{};
+    assert(service.request(job, "BEGIN\nR/source").find("OK\n") == 0);
+    assert(service.request(job, "TRANSFER_BEGIN\n1") == "OK\nTRANSFER:1");
+    assert(service.request(job, "TRANSFER_BEGIN\n1") == "DENIED");
+    assert(service.request(job, "FINISH") == "DENIED");
+    assert(service.request(job, "CANCEL") == "DENIED");
+    assert(service.request(job, "TRANSFER_END\nverified") == "DENIED");
+    assert(!job.leases.empty());
+    assert(service.request(job, "TRANSFER\nverifying\n99") == "OK");
+    assert(service.request(job, "TRANSFER\ncopying\n98") == "DENIED");
+    assert(service.request(job, "TRANSFER\ncopying\n99\n") == "DENIED");
+    auto drain = registry().beginDrain("old-generation");
+    assert(!drain.snapshot().locallyIdle());
+    assert(service.request(job, "CHECK") == "OK");
+    assert(service.request(job, "TRANSFER_END\nverified") == "OK");
+    assert(service.transferStatus(service.current).status == TransferOutcome::Verified);
+    assert(!drain.snapshot().locallyIdle());
+    assert(service.request(job, "TRANSFER_END\nfailed") == "DENIED");
+    assert(service.request(job, "FINISH") == "OK");
+    std::weak_ptr<void> descriptor = service.current.descriptor;
+    service.current.descriptor.reset();
+    assert(descriptor.expired());
+    assert(service.transferStatus(service.current).status == TransferOutcome::Verified);
+    service.current.descriptor = std::make_shared<int>(2);
+    assert(drain.snapshot().locallyIdle());
+    drain.cancel();
+
+    RequestFixture::Client lost{};
+    assert(service.request(lost, "BEGIN\nR/source").find("OK\n") == 0);
+    assert(service.request(lost, "TRANSFER_BEGIN\n1") == "OK\nTRANSFER:1");
+    service.current.generation = "replacement";
+    assert(service.request(lost, "TRANSFER\nverifying\n99") == "DENIED");
+    assert(service.request(lost, "TRANSFER_END\nverified") == "DENIED");
+    service.m_transfers.interrupt(lost.transfer);
+    assert(service.m_transfers.snapshot({"old-generation", "source"}).status == TransferOutcome::Interrupted);
+    assert(!service.m_transfers.snapshot({"replacement", "source"}).valid);
+    auto lostDrain = registry().beginDrain("old-generation");
+    assert(!lostDrain.snapshot().locallyIdle());
+    lost.leases.clear();
+    assert(lostDrain.snapshot().locallyIdle());
+    std::cout << "PASS extracted production requests, read-only admissions, checked bindings, retained leases\n";
+}
+
+int main() {
+    historyCases();
+    requestCases();
+}

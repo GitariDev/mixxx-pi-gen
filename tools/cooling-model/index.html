@@ -1,0 +1,2067 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DJ Box Cooling Model</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a deck-style console. Readout strip on top, a sticky control rail on the left,
+   drawings and charts on the right, wiring and assumptions underneath.
+   Palette and type follow docs/design/DESIGN.md (dark DJ panels, amber accent). */
+:root {
+  --bg: #101216; --panel: #1b2027; --control: #272e38; --line: #343c48;
+  --fg: #f4f6f8; --muted: #b7c1cd; --faint: #8592a1;
+  --accent: #ffbb55; --accent-ink: #101216; --accent-text: #ffbb55; --focus: #75cfff;
+  --good: #79dfac; --caution: #ffd166; --serious: #ffa05c; --critical: #ff8f8f;
+  --s-layout: #3987e5; --s-base: #d95926; --s-meas: #9085e9;
+  --air-in: #5fb0ff; --air-out: #ff9a5c;
+  --cardboard: #a5835a; --cardboard-fill: rgba(165, 131, 90, .12); --pcb: #2c8a57; --metal: #c9d1db;
+  --screen: #05070a; --hub: #4a5361; --heat1: #6d5228; --heat2: #b9842f; --heat3: #ffbb55;
+  --pin5: #ff8f8f; --pin33: #ffd166; --ping: #59626f; --pinio: #3a4250;
+  --font-body: "DejaVu Sans", Verdana, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "DejaVu Sans Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #eef1f4; --panel: #ffffff; --control: #e3e8ee; --line: #cbd3dc;
+    --fg: #14181d; --muted: #47515e; --faint: #66717f;
+    --accent: #ffbb55; --accent-ink: #101216; --accent-text: #9a5b00; --focus: #0a6fb3;
+    --good: #1d7a4c; --caution: #8a6200; --serious: #b4530f; --critical: #b3261e;
+    --s-layout: #2a78d6; --s-base: #eb6834; --s-meas: #6250d6;
+    --air-in: #2a78d6; --air-out: #d9541e;
+    --cardboard: #b08655; --cardboard-fill: rgba(176, 134, 85, .14); --pcb: #2f8a57; --metal: #8d98a5;
+    --screen: #1a1d22; --hub: #6a7380; --heat1: #f3d9a8; --heat2: #e0a94f; --heat3: #b9771a;
+    --pin5: #c9372c; --pin33: #b88700; --ping: #2b3138; --pinio: #c3cbd4;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #eef1f4; --panel: #ffffff; --control: #e3e8ee; --line: #cbd3dc;
+  --fg: #14181d; --muted: #47515e; --faint: #66717f;
+  --accent: #ffbb55; --accent-ink: #101216; --accent-text: #9a5b00; --focus: #0a6fb3;
+  --good: #1d7a4c; --caution: #8a6200; --serious: #b4530f; --critical: #b3261e;
+  --s-layout: #2a78d6; --s-base: #eb6834; --s-meas: #6250d6;
+  --air-in: #2a78d6; --air-out: #d9541e;
+  --cardboard: #b08655; --cardboard-fill: rgba(176, 134, 85, .14); --pcb: #2f8a57; --metal: #8d98a5;
+  --screen: #1a1d22; --hub: #6a7380; --heat1: #f3d9a8; --heat2: #e0a94f; --heat3: #b9771a;
+  --pin5: #c9372c; --pin33: #b88700; --ping: #2b3138; --pinio: #c3cbd4;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-body); }
+.page {
+  max-width: 1340px; margin: 0 auto; display: grid; gap: 18px;
+  padding-block: 22px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h1 { font-size: 26px; line-height: 1.15; letter-spacing: -.01em; }
+h2 { font-size: 17px; }
+h3 { font-size: 14px; }
+p { margin: 0; }
+.eyebrow, .k, legend, .lab-up {
+  text-transform: uppercase; letter-spacing: .08em; font-size: 12px; color: var(--muted);
+}
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+a { color: var(--focus); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.top { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: end; justify-content: space-between; }
+.top .lede { max-width: 72ch; color: var(--muted); font-size: 14px; margin-top: 6px; }
+.tag {
+  display: inline-block; font-size: 11px; line-height: 1; padding: 3px 6px; border-radius: 4px;
+  border: 1px dashed var(--faint); color: var(--muted); vertical-align: 1px; margin-left: 6px;
+  text-transform: none; letter-spacing: 0;
+}
+
+.presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.presets button, .btn {
+  min-height: 44px; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--control); color: var(--fg); font: inherit; font-size: 14px; cursor: pointer; text-align: left;
+}
+.presets button small { display: block; color: var(--muted); font-size: 12px; }
+.presets button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.presets button[aria-pressed="true"] small { color: var(--accent-ink); opacity: .8; }
+.btn.quiet { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+
+.readout { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.tile {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; display: grid; gap: 4px; align-content: start; min-width: 0;
+}
+.tile .v { font: 600 28px/1.1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.tile.hero .v { font-size: 38px; }
+.tile .sub { font-size: 13px; color: var(--muted); }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; width: max-content; max-width: 100%;
+  font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor;
+}
+.chip::before { content: ""; width: 7px; height: 7px; background: currentColor; }
+.chip.good { color: var(--good); } .chip.good::before { border-radius: 50%; }
+.chip.caution { color: var(--caution); } .chip.caution::before { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.chip.serious { color: var(--serious); } .chip.serious::before { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.chip.critical { color: var(--critical); } .chip.critical::before { border-radius: 1px; }
+
+.alerts { display: grid; gap: 6px; }
+.alert { font-size: 14px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); display: flex; gap: 10px; }
+.alert b { flex: none; }
+.alert.critical b { color: var(--critical); } .alert.serious b { color: var(--serious); }
+.alert.caution b { color: var(--caution); } .alert.note b { color: var(--focus); }
+
+.work { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1000px) {
+  .work { grid-template-columns: 350px minmax(0, 1fr); align-items: start; }
+  .rail { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); max-height: calc(100vh - 24px); overflow: auto; }
+}
+.rail { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 14px 14px; }
+.rail details { border-bottom: 1px solid var(--line); padding-block: 10px; }
+.rail details:last-child { border-bottom: 0; }
+.rail summary { cursor: pointer; font-weight: 600; font-size: 14px; list-style: none; display: flex; justify-content: space-between; gap: 8px; min-height: 28px; align-items: center; }
+.rail summary::-webkit-details-marker { display: none; }
+.rail summary::after { content: "+"; color: var(--muted); font-family: var(--font-mono); }
+.rail details[open] summary::after { content: "−"; }
+.rail summary .sum-val { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: auto; }
+.grp { display: grid; gap: 10px; padding-top: 8px; }
+.sub-grp { display: grid; gap: 10px; padding: 8px 0 2px 10px; border-left: 2px solid var(--line); }
+.ctl { display: grid; gap: 4px; min-width: 0; border: 0; margin: 0; padding: 0; }
+.ctl > label, .ctl > legend { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); padding: 0; }
+.ctl output { color: var(--fg); font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; min-height: 24px; }
+select, input[type="number"] {
+  font: inherit; font-size: 14px; color: var(--fg); background: var(--control); border: 1px solid var(--line);
+  border-radius: 5px; padding: 6px 8px; min-height: 36px; width: 100%;
+}
+.seg-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.seg-row label { flex: 1 1 auto; position: relative; }
+.seg-row input { position: absolute; opacity: 0; pointer-events: none; }
+.seg-row span {
+  display: block; text-align: center; padding: 7px 8px; border-radius: 5px; border: 1px solid var(--line);
+  background: var(--control); font-size: 13px; cursor: pointer; min-height: 36px; color: var(--fg);
+}
+.seg-row input:checked + span { border-color: var(--accent); color: var(--accent-text); box-shadow: inset 0 -2px 0 var(--accent); }
+.seg-row input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
+.chk { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--fg); cursor: pointer; }
+.chk input { accent-color: var(--accent); width: 18px; height: 18px; margin: 1px 0 0; flex: none; }
+.hint { font-size: 12px; color: var(--faint); }
+
+.views { display: grid; gap: 18px; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px 16px; display: grid; gap: 12px; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; align-items: baseline; }
+.panel-head p { font-size: 13px; color: var(--muted); }
+.drawings { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 760px) { .drawings { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); } }
+figure { margin: 0; display: grid; gap: 6px; min-width: 0; }
+figcaption { font-size: 12px; color: var(--muted); }
+.svgbox { overflow-x: auto; }
+.svgbox svg { display: block; width: 100%; height: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 3px solid; vertical-align: 3px; margin-right: 6px; }
+.legend i.box { width: 12px; height: 12px; border: 2px solid; vertical-align: -1px; }
+
+svg .box { fill: var(--cardboard-fill); stroke: var(--cardboard); stroke-width: 2.5; }
+svg .wall-note { fill: var(--muted); }
+svg .screen { fill: var(--screen); stroke: var(--faint); stroke-width: 1; }
+svg .pcb { fill: var(--pcb); }
+svg .hs { fill: var(--metal); }
+svg .hub { fill: var(--hub); }
+svg .hub-out { fill: none; stroke: var(--hub); stroke-dasharray: 4 3; stroke-width: 1.5; }
+svg .fan { fill: color-mix(in srgb, var(--accent) 28%, transparent); stroke: var(--accent); stroke-width: 1.5; }
+svg .fan-off { fill: none; stroke: var(--faint); stroke-width: 1.5; stroke-dasharray: 3 3; }
+svg .fan-hub { fill: var(--accent); }
+svg .vent { fill: var(--bg); stroke: var(--muted); stroke-width: 1.2; }
+svg .leak { fill: var(--faint); }
+svg .lbl { fill: var(--muted); font-family: var(--font-body); }
+svg .lbl-strong { fill: var(--fg); font-family: var(--font-body); font-weight: 600; }
+svg .dim { stroke: var(--faint); stroke-width: 1; fill: none; }
+svg .air-in { stroke: var(--air-in); fill: none; stroke-linecap: round; }
+svg .air-out { stroke: var(--air-out); fill: none; stroke-linecap: round; }
+svg .air-path { stroke: var(--air-out); fill: none; stroke-linecap: round; stroke-dasharray: 7 6; opacity: .9; }
+svg .stir { stroke: var(--accent); fill: none; stroke-dasharray: 4 4; }
+svg .ah-in path { fill: var(--air-in); } svg .ah-out path { fill: var(--air-out); } svg .ah-stir path { fill: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  svg .air-path { animation: flow 1.2s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -26; } }
+}
+
+.heatbar { display: grid; gap: 8px; }
+.heat-track { position: relative; height: 34px; border-radius: 5px; background: var(--control); overflow: hidden; }
+.heat-seg { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: var(--accent-ink); white-space: nowrap; overflow: hidden; border-right: 2px solid var(--panel); }
+.heat-seg.s1 { background: var(--heat1); color: var(--fg); } .heat-seg.s2 { background: var(--heat2); } .heat-seg.s3 { background: var(--heat3); }
+.heat-axis { position: relative; height: 18px; font-size: 11px; color: var(--faint); }
+.heat-axis span { position: absolute; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+.heat-line { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 2px dashed var(--critical); }
+.heat-line.t75 { border-left-color: var(--faint); }
+.heat-keys { display: grid; gap: 4px 18px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); font-size: 13px; }
+.heat-keys div { display: flex; gap: 8px; align-items: baseline; }
+.heat-keys i { width: 11px; height: 11px; border-radius: 2px; flex: none; transform: translateY(1px); }
+.balance { font-size: 13px; color: var(--muted); }
+
+.chart-wrap { position: relative; }
+.chart-wrap svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-wrap .ax { fill: var(--faint); font-size: 11px; font-family: var(--font-body); font-variant-numeric: tabular-nums; }
+.chart-wrap .grid { stroke: var(--line); stroke-width: 1; }
+.chart-wrap .ref { stroke-width: 1.5; stroke-dasharray: 5 4; }
+.chart-wrap .ref.r80 { stroke: var(--critical); } .chart-wrap .ref.r75 { stroke: var(--faint); }
+.chart-wrap .ref-l { font-size: 11px; font-family: var(--font-body); }
+.chart-wrap .ref-l.r80 { fill: var(--critical); } .chart-wrap .ref-l.r75 { fill: var(--muted); }
+.chart-wrap .ln { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.chart-wrap .ln.dash { stroke-dasharray: 6 4; }
+.chart-wrap .end-l { font-size: 12px; font-family: var(--font-body); fill: var(--fg); }
+.chart-wrap .xhair { stroke: var(--faint); stroke-width: 1; }
+.c-layout { stroke: var(--s-layout); } .c-base { stroke: var(--s-base); } .c-meas { stroke: var(--s-meas); }
+.f-layout { fill: var(--s-layout); } .f-base { fill: var(--s-base); } .f-meas { fill: var(--s-meas); }
+.dotring { stroke: var(--panel); stroke-width: 2; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--control); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 9px; font-size: 12px; min-width: 150px; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+}
+.tip div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.tip i { display: inline-block; width: 10px; height: 3px; margin-right: 6px; vertical-align: 3px; }
+.csv-row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 13px; }
+.csv-row input[type="file"] { font: inherit; font-size: 13px; color: var(--muted); max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tablebox { overflow-x: auto; }
+
+.cmp { display: grid; gap: 6px; }
+.cmp-row { display: grid; grid-template-columns: minmax(120px, 210px) minmax(0, 1fr) 76px; gap: 10px; align-items: center; }
+.cmp-row button {
+  font: inherit; font-size: 13px; text-align: left; background: none; border: 1px solid transparent; color: var(--fg);
+  padding: 6px 8px; border-radius: 5px; cursor: pointer; min-height: 36px;
+}
+.cmp-row button:hover { border-color: var(--line); }
+.cmp-row.active button { border-color: var(--accent); color: var(--accent-text); }
+.cmp-track { position: relative; height: 26px; }
+.cmp-track .rng { position: absolute; top: 9px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--s-layout) 35%, transparent); }
+.cmp-track .dot { position: absolute; top: 6px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--s-layout); border: 2px solid var(--panel); }
+.cmp-track .vl { position: absolute; top: 0; bottom: 0; border-left: 2px dashed var(--critical); }
+.cmp-track .vl.t75 { border-left-color: var(--faint); }
+.cmp-track .base { position: absolute; top: 12px; left: 0; right: 0; border-top: 1px solid var(--line); }
+.cmp-val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; text-align: right; }
+.cmp-axis { position: relative; height: 16px; font-size: 11px; color: var(--faint); }
+.cmp-axis span { position: absolute; transform: translateX(-50%); }
+
+.wiring { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .wiring { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); } }
+.pins svg { width: 100%; max-width: 380px; height: auto; display: block; }
+.pins .pn { font-size: 9px; font-family: var(--font-mono); text-anchor: middle; dominant-baseline: central; }
+.pins .pl { font-size: 10px; font-family: var(--font-body); fill: var(--muted); dominant-baseline: central; }
+.pins .use { font-size: 10px; font-family: var(--font-body); font-weight: 600; dominant-baseline: central; }
+.pins .hdr { fill: var(--control); stroke: var(--line); }
+.steps { display: grid; gap: 8px; margin: 0; padding-left: 20px; font-size: 14px; }
+.steps li::marker { color: var(--muted); }
+.steps .warn { color: var(--critical); }
+pre.code {
+  margin: 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  font: 13px/1.45 var(--font-mono); overflow-x: auto; color: var(--fg);
+}
+.code-row { display: flex; gap: 8px; align-items: stretch; }
+.code-row pre { flex: 1; min-width: 0; }
+.schem svg { width: 100%; max-width: 560px; height: auto; display: block; }
+.schem .w { stroke: var(--fg); stroke-width: 2; fill: none; }
+.schem .t { fill: var(--fg); font-size: 13px; font-family: var(--font-body); }
+.schem .tm { fill: var(--muted); font-size: 12px; font-family: var(--font-body); }
+.schem .dot { fill: var(--fg); }
+.schem .fanbox { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: var(--accent); stroke-width: 2; }
+.schem .diode { fill: var(--fg); }
+.two-col { display: grid; gap: 14px 24px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .two-col { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.prose { display: grid; gap: 8px; font-size: 14px; max-width: 75ch; }
+.prose ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.manual { display: grid; gap: 26px; }
+.part { display: grid; gap: 12px; }
+.part-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 14px; }
+.part:first-child .part-head { border-top: 0; padding-top: 0; }
+.part-head h3 { font-size: 16px; }
+.need { display: flex; flex-wrap: wrap; gap: 6px; }
+.need span { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; color: var(--muted); }
+.steps-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.step { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.step-wide { grid-column: 1 / -1; }
+.step-top { display: flex; gap: 10px; align-items: baseline; }
+.step .num { font: 700 28px/1 var(--font-mono); color: var(--accent-text); min-width: 1.4em; }
+.step h4 { font-size: 15px; margin: 0; text-wrap: balance; }
+.step p { font-size: 14px; }
+.step .check { font-size: 13px; color: var(--muted); }
+/* Drawings sit on white cards, like a printed manual, in both themes. */
+.art { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #fff; }
+.art svg { fill: #1d1f23; display: block; width: 100%; height: auto; }
+footer { color: var(--muted); font-size: 13px; display: grid; gap: 8px; }
+footer ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; max-width: 95ch; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div>
+      <p class="eyebrow">Mix Pi · Raspberry Pi 4 behind the 7" screen in the 6PCS DIAMONDS box</p>
+      <h1>DJ Box Cooling Model</h1>
+      <p class="lede">A lumped heat and airflow model of the box. It is calibrated so the sealed box at idle matches the 67.5 °C read over SSH on 2026-11-08. Every input marked <span class="tag">Unconfirmed</span> is a default waiting on a measurement. Ranges come from re-running the model across every assumption's spread, re-calibrating each time.</p>
+    </div>
+    <p class="small muted" id="calLine"></p>
+  </header>
+
+  <nav class="presets" id="presets" aria-label="Layout presets"></nav>
+
+  <section class="readout" id="readout" aria-live="polite"></section>
+  <div class="alerts" id="alerts"></div>
+
+  <div class="work">
+    <form class="rail" id="controls" autocomplete="off" aria-label="Model inputs"></form>
+
+    <div class="views">
+      <section class="panel" aria-labelledby="h-air">
+        <div class="panel-head">
+          <h2 id="h-air">Air path</h2>
+          <p id="airSummary"></p>
+        </div>
+        <div class="drawings">
+          <figure>
+            <div class="svgbox" id="sideView"></div>
+            <figcaption>Side view from the right. Front (low edge) on the left, back (hinge, high edge) on the right.</figcaption>
+          </figure>
+          <figure>
+            <div class="svgbox" id="topView"></div>
+            <figcaption>Top view through the screen. Back wall at the top.</figcaption>
+          </figure>
+        </div>
+        <div class="legend">
+          <span><i style="border-color: var(--air-in)"></i>Room air in</span>
+          <span><i style="border-color: var(--air-out)"></i>Warm air out and its path</span>
+          <span><i style="border-color: var(--accent); border-top-style: dashed"></i>Air stirred inside</span>
+          <span><i class="box" style="border-color: var(--accent)"></i>Fan</span>
+          <span><i class="box" style="border-color: var(--muted); border-radius: 50%"></i>Vent holes</span>
+          <span><i class="box" style="border-color: var(--faint); border-style: dashed"></i>Fitted fan not spinning</span>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-heat">
+        <div class="panel-head">
+          <h2 id="h-heat">Where the SoC temperature comes from</h2>
+          <p>Each step is a temperature rise on the way from the room to the chip.</p>
+        </div>
+        <div class="heatbar" id="heatBar"></div>
+        <p class="balance" id="balance"></p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-session">
+        <div class="panel-head">
+          <h2 id="h-session">30-minute session</h2>
+          <p id="sessionNote"></p>
+        </div>
+        <div class="legend" id="sessionLegend"></div>
+        <div class="chart-wrap" id="sessionChart"></div>
+        <div class="csv-row">
+          <label for="csvFile" class="muted">Overlay a measured log (CSV from <span class="mono">log-temps.sh</span>, up to two files):</label>
+          <input type="file" id="csvFile" accept=".csv,text/csv,text/plain" multiple>
+          <button type="button" class="btn quiet" id="csvClear" hidden>Remove logs</button>
+        </div>
+        <div class="tablebox" id="csvStats"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-cmp">
+        <div class="panel-head">
+          <h2 id="h-cmp">Layouts compared</h2>
+          <p id="cmpNote">Same load, room and fans. Dot: typical. Bar: likely range. Click a row to load it.</p>
+        </div>
+        <div class="cmp" id="cmp"></div>
+      </section>
+    </div>
+  </div>
+
+  <section class="panel" aria-labelledby="h-wire">
+    <div class="panel-head">
+      <h2 id="h-wire">Wiring</h2>
+      <p>Updates with each fan's power and control choice.</p>
+    </div>
+    <div class="wiring">
+      <div class="pins">
+        <div class="ctl" style="margin-bottom: 10px">
+          <label for="c-dispPins">Display power leads on the header <span class="tag">Unconfirmed: which 5 V pin</span></label>
+          <select id="c-dispPins" data-path="dispPins">
+            <option value="unknown">Not sure (drawn on pins 2 and 6)</option>
+            <option value="2-6">Pin 2 (5 V) and pin 6 (GND)</option>
+            <option value="4-6">Pin 4 (5 V) and pin 6 (GND): "the main two pins"</option>
+            <option value="2-14">Pin 2 (5 V) and pin 14 (GND)</option>
+            <option value="4-14">Pin 4 (5 V) and pin 14 (GND)</option>
+            <option value="2-9">Pin 2 (5 V) and pin 9 (GND)</option>
+            <option value="none">Not on the header</option>
+          </select>
+        </div>
+        <div id="pinSvg"></div>
+      </div>
+      <div class="prose">
+        <h3>Connections for this layout</h3>
+        <ol class="steps" id="wireSteps"></ol>
+        <p class="small"><a href="#build">Step-by-step build manual, with drawings ↓</a></p>
+        <div id="overlayBox"></div>
+        <div class="two-col">
+          <div class="prose">
+            <h3>Temperature-controlled switch</h3>
+            <div class="schem" id="schem"></div>
+            <p class="small muted">Any small NPN works at these currents: BC337, 2N2222 or S8050 (check the pin order on its datasheet). A logic-level MOSFET such as an AO3400 or IRLB8721 also works, with 100 Ω to the gate and 100 kΩ from gate to ground. GPIO12 idles low with a pull-down, so the fan stays off until the overlay loads.</p>
+          </div>
+          <div class="prose">
+            <h3>The 60 mm fan's plug</h3>
+            <ul class="small">
+              <li>A white 2-pin plug is usually JST-XH (2.5 mm pitch) or JST-PH (2.0 mm). Male Dupont pins push snugly into an XH socket, so two male-to-female jumpers make an adapter. PH is too small for them.</li>
+              <li>Without matching parts, cut the plug off. Solder each wire to a female jumper, then insulate the joints with heat-shrink. Red is +.</li>
+              <li><b>12 V fan:</b> it won't start reliably on 5 V. Use a USB 5→12 V boost cable in a <em>hub</em> port with a 5.5 × 2.1 mm barrel-to-screw-terminal adapter. That keeps about 0.3 A off the Pi's 5 V supply.</li>
+              <li><b>5 V fan:</b> use a hub USB port through a USB-to-2-pin lead, or a free header 5 V pin.</li>
+              <li>Air leaves the side with the label and the frame struts. For an exhaust, the label faces out of the box.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-build" id="build">
+    <div class="panel-head">
+      <h2 id="h-build">Build manual</h2>
+      <p>For the measured box (235 × 152 mm, 100 mm back, 57 mm front). Shut the Pi down before touching the header.</p>
+    </div>
+    <div class="manual">
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 1 · Wire the 30 mm fan to the header</h3>
+          <div class="need"><span>Needle or safety pin</span><span>Heat-shrink or electrical tape</span><span>Single-pin housings preferred</span><span>Suitable heat source if using heat-shrink</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step">
+            <div class="step-top"><span class="num">1</span><h4>Shut down and unplug</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Run sudo poweroff, then pull the USB-C lead out of the Pi"><defs><marker id="mb1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <rect x="12" y="12" width="122" height="22" rx="4" fill="#1d1f23"/><text x="20" y="27" fill="#fff" font-family="DejaVu Sans Mono, Menlo, monospace">$ sudo poweroff</text>
+              <rect x="104" y="48" width="124" height="80" rx="6" fill="#2f8a57"/><rect x="150" y="74" width="24" height="24" rx="2" fill="#b4bcc5"/><rect x="188" y="62" width="22" height="16" rx="2" fill="#b4bcc5"/>
+              <circle cx="118" cy="118" r="4" fill="#d9dde2" stroke="#1d1f23"/><text x="126" y="142" font-size="8" fill="#5f6772">green LED stops flashing</text><path d="M124 136 L119 123" stroke="#5f6772"/>
+              <rect x="100" y="90" width="10" height="16" rx="2" fill="#b4bcc5" stroke="#1d1f23"/><rect x="54" y="92" width="28" height="12" rx="3" fill="#3a3f46"/><path d="M54 98 H12" stroke="#1d1f23" stroke-width="3"/>
+              <path d="M98 82 H62" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb1)"/><text x="14" y="74" fill="#e39b28" font-weight="700">unplug USB-C</text>
+            </svg></figure>
+            <p>Run <span class="mono">sudo poweroff</span>. Wait until the green LED stops flashing, then disconnect USB-C and any powered hub or separate display supply. Leave the screen connector in place.</p>
+            <p class="check">Check: no lights on the board.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">2</span><h4>Find the locking tabs</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" role="img" aria-label="Two retention types: lift plastic latch or depress metal tang; identify yours first" font-family="sans-serif" font-size="10" fill="#1d1f23">
+<rect width="240" height="150" fill="white"/>
+<text x="12" y="18">A · Plastic latch: lift gently</text>
+<rect x="34" y="34" width="96" height="32" rx="3" fill="#30343a"/>
+<path d="M132 52H224" stroke="#ce3029" stroke-width="4"/>
+<rect x="47" y="46" width="70" height="9" fill="#b4bcc5"/>
+<path d="M65 34L96 25" stroke="#e39b28" stroke-width="5"/>
+<path d="M102 34V23m-4 4 4-4 4 4" fill="none" stroke="#1d1f23" stroke-width="2"/>
+<text x="12" y="91">B · Metal tang: press inward</text>
+<rect x="34" y="106" width="96" height="32" rx="3" fill="#30343a"/>
+<path d="M132 122H224" stroke="#ce3029" stroke-width="4"/>
+<rect x="47" y="116" width="70" height="9" fill="#b4bcc5"/>
+<path d="M67 116L94 108" stroke="#e39b28" stroke-width="3"/>
+<path d="M95 96V111m-4-4 4 4 4-4" fill="none" stroke="#1d1f23" stroke-width="2"/>
+</svg></figure>
+            <p>Turn the fan's black plug until you see a small window over each pin. Identify what retains the contact: a flexible plastic latch on many Dupont housings, or a metal locking tang on others. Do not assume which type you have.</p>
+            <p class="check">Check: locate the latch before inserting the needle; stop if you cannot identify it.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">3</span><h4>Release each pin</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Release the latch using the method in step 2, then withdraw the contact toward the wire"><defs><marker id="mb3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <rect x="36" y="40" width="96" height="66" rx="5" fill="#2a2d33"/><line x1="36" y1="73" x2="132" y2="73" stroke="#4a4f57" stroke-width="2"/>
+              <rect x="70" y="48" width="22" height="16" rx="2" fill="#4a4f57"/>
+              <rect x="70" y="82" width="22" height="16" rx="2" fill="#b4bcc5"/><path d="M74 95 L88 95 L88 86 Z" fill="#e39b28"/>
+              <path d="M58 8 L80 54" stroke="#1d1f23" stroke-width="2"/><circle cx="57" cy="5" r="2.5" fill="none" stroke="#1d1f23"/>
+              <rect x="146" y="49" width="34" height="14" rx="2" fill="#b4bcc5" stroke="#1d1f23"/><rect x="180" y="51" width="12" height="10" fill="#b4bcc5" stroke="#1d1f23"/>
+              <path d="M192 56 H232" stroke="#d33a2c" stroke-width="4"/><path d="M132 90 H232" stroke="#1d1f23" stroke-width="4"/>
+              <text x="86" y="22" fill="#e39b28" font-weight="700">1 release latch</text>
+              <path d="M150 42 H200" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb3)"/><text x="150" y="35" fill="#e39b28" font-weight="700">2 withdraw</text>
+              <text x="120" y="130" text-anchor="middle" font-size="8" fill="#5f6772">one pin at a time; never force it</text>
+            </svg></figure>
+            <p>Push the wire slightly inward first. For a plastic latch, lift it just enough to free the contact. For a metal tang, depress it through the window. Gently withdraw the wire toward the cable end. Do one contact at a time; never force it.</p>
+            <p class="check">Check: both pins are out and their tabs are still there.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">4</span><h4>Insulate each pin</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Right: sleeve covers the metal up to the tip with the opening clear. Wrong: bare metal showing"><defs><marker id="mb4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <path d="M10 15 l4 4 l8 -9" stroke="#1d7a4c" stroke-width="2.5" fill="none"/><text x="28" y="20" fill="#1d7a4c" font-weight="700">covered to the tip</text>
+              <rect x="40" y="34" width="44" height="16" rx="2" fill="#b4bcc5" stroke="#1d1f23"/><rect x="84" y="36" width="16" height="12" fill="#b4bcc5" stroke="#1d1f23"/><path d="M100 42 H228" stroke="#d33a2c" stroke-width="4"/>
+              <rect x="39" y="30" width="101" height="24" rx="6" fill="#1d1f23" fill-opacity="0.8"/>
+              <path d="M38 42 H18" stroke="#e39b28" stroke-width="2" marker-end="url(#mb4)"/><text x="10" y="66" font-size="8" fill="#5f6772">opening clear</text>
+              <path d="M10 92 l10 10 M20 92 l-10 10" stroke="#c0392b" stroke-width="2.5"/><text x="26" y="101" fill="#c0392b" font-weight="700">bare metal</text>
+              <rect x="40" y="110" width="44" height="16" rx="2" fill="#b4bcc5" stroke="#1d1f23"/><rect x="84" y="112" width="16" height="12" fill="#b4bcc5" stroke="#1d1f23"/><path d="M100 118 H228" stroke="#d33a2c" stroke-width="4"/>
+              <rect x="104" y="112" width="40" height="12" rx="4" fill="#1d1f23" fill-opacity="0.8"/>
+              <text x="40" y="142" font-size="8" fill="#c0392b">can touch pin 1 or 3 and damage the Pi</text>
+            </svg></figure>
+            <p>Prefer separate 1-pin housings that lock around each contact. For a temporary setup, sleeve each contact individually with heat-shrink covering all outer metal while leaving the socket opening clear. Apply heat away from the Pi and cardboard. Tape alone is not a durable gig connector; if insulation or retention is doubtful, wait for jumpers.</p>
+            <p class="check">Check: no metal shows except the opening.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">5</span><h4>Find your pins</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Example only: screen on pins 4 and 6, fan red on pin 2 and black on pin 14; confirm occupied pins first"><rect width="240" height="150" fill="#fff"/>
+              <path d="M28 34 H216" stroke="#1d1f23" stroke-width="2"/><text x="216" y="28" text-anchor="end" font-size="8" fill="#5f6772">board edge</text>
+              <rect x="28" y="52" width="188" height="60" rx="4" fill="#2a2d33" fill-opacity="0.07"/>
+              <g stroke="#1d1f23"><circle cx="44" cy="66" r="9" fill="#f2c4bf"/><circle cx="70" cy="66" r="9" fill="#f2c4bf"/><circle cx="96" cy="66" r="9" fill="#c7cbd1"/><circle cx="122" cy="66" r="9" fill="#fff"/><circle cx="148" cy="66" r="9" fill="#fff"/><circle cx="174" cy="66" r="9" fill="#fff"/><circle cx="200" cy="66" r="9" fill="#c7cbd1"/>
+              <rect x="35" y="89" width="18" height="18" fill="#f7ddb0"/><circle cx="70" cy="98" r="9" fill="#fff"/><circle cx="96" cy="98" r="9" fill="#fff"/><circle cx="122" cy="98" r="9" fill="#fff"/><circle cx="148" cy="98" r="9" fill="#c7cbd1"/><circle cx="174" cy="98" r="9" fill="#fff"/><circle cx="200" cy="98" r="9" fill="#fff"/></g>
+              <g font-size="8" text-anchor="middle"><text x="44" y="69">2</text><text x="70" y="69">4</text><text x="96" y="69">6</text><text x="122" y="69">8</text><text x="148" y="69">10</text><text x="174" y="69">12</text><text x="200" y="69">14</text>
+              <text x="44" y="101">1</text><text x="70" y="101">3</text><text x="96" y="101">5</text><text x="122" y="101">7</text><text x="148" y="101">9</text><text x="174" y="101">11</text><text x="200" y="101">13</text></g>
+              <g font-size="8" text-anchor="middle" fill="#5f6772"><text x="44" y="49">5V</text><text x="70" y="49">5V</text><text x="96" y="49">GND</text><text x="200" y="49">GND</text><text x="44" y="122">3V3</text><text x="148" y="122">GND</text></g>
+              <rect x="58" y="54" width="50" height="24" rx="4" fill="none" stroke="#1d1f23" stroke-width="2.5"/>
+              <circle cx="44" cy="66" r="12.5" fill="none" stroke="#d33a2c" stroke-width="3"/><circle cx="200" cy="66" r="12.5" fill="none" stroke="#1d1f23" stroke-width="3"/>
+              <text x="216" y="122" text-anchor="end" font-size="8" fill="#5f6772">USB ports →</text>
+              <rect x="8" y="135" width="14" height="9" rx="2" fill="none" stroke="#1d1f23" stroke-width="2"/><text x="26" y="143" font-size="8">screen (fixed)</text>
+              <circle cx="100" cy="139.5" r="5" fill="none" stroke="#d33a2c" stroke-width="2.5"/><text x="109" y="143" font-size="8">fan red</text>
+              <circle cx="158" cy="139.5" r="5" fill="none" stroke="#1d1f23" stroke-width="2.5"/><text x="167" y="143" font-size="8">fan black</text>
+            </svg></figure>
+            <p>Example shown: screen on pins 4 + 6; fan red on pin 2, black on pin 14. Actual screen pins remain unconfirmed. Identify pin 1 by its square solder pad at the end farthest from the USB ports; count physical pins, not GPIO numbers. Leave the screen connector untouched.</p>
+            <p class="check">Check: if screen red occupies pin 2, use pin 4 for fan red. If neither 5 V pin is accessible, stop and use an adapter.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">6</span><h4>Push on, then tug</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Push each insulated socket straight down over its header pin"><defs><marker id="mb6" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <rect x="40" y="112" width="160" height="12" rx="2" fill="#2a2d33"/>
+              <rect x="72" y="66" width="4" height="46" fill="#b4bcc5"/><rect x="164" y="66" width="4" height="46" fill="#b4bcc5"/><text x="120" y="98" text-anchor="middle" fill="#5f6772">· · ·</text>
+              <rect x="66" y="40" width="16" height="34" rx="3" fill="#1d1f23" fill-opacity="0.85"/><path d="M74 40 V8" stroke="#d33a2c" stroke-width="4"/>
+              <rect x="158" y="40" width="16" height="34" rx="3" fill="#1d1f23" fill-opacity="0.85"/><path d="M166 40 V8" stroke="#1d1f23" stroke-width="4"/>
+              <path d="M52 32 V60" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb6)"/><path d="M190 32 V60" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb6)"/>
+              <text x="74" y="140" text-anchor="middle" font-size="8">pin 2 (or 4)</text><text x="166" y="140" text-anchor="middle" font-size="8">pin 14</text>
+            </svg></figure>
+            <p>With all power disconnected, seat each insulated socket on its verified pin. Secure the cable to a nearby support so a tug cannot pull the contacts off. Check retention gently; never force a loose or damaged contact.</p>
+            <p class="check">Check: nothing bare touches a neighbouring pin.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">7</span><h4>Power on and check</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="The fan spins and blows air down onto the heatsink"><defs><marker id="mb7" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <rect x="40" y="16" width="76" height="76" rx="8" fill="#f1f3f5" stroke="#1d1f23" stroke-width="2"/><circle cx="78" cy="54" r="30" fill="none" stroke="#1d1f23" stroke-width="1.5"/>
+              <g fill="#5f6772"><ellipse cx="78" cy="36" rx="7" ry="11" transform="rotate(20 78 54)"/><ellipse cx="78" cy="36" rx="7" ry="11" transform="rotate(110 78 54)"/><ellipse cx="78" cy="36" rx="7" ry="11" transform="rotate(200 78 54)"/><ellipse cx="78" cy="36" rx="7" ry="11" transform="rotate(290 78 54)"/></g><circle cx="78" cy="54" r="9" fill="#1d1f23"/>
+              <path d="M122 30 A 40 40 0 0 1 122 78" stroke="#e39b28" stroke-width="2.5" fill="none" marker-end="url(#mb7)"/>
+              <path d="M60 96 V110 M78 96 V110 M96 96 V110" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb7)"/>
+              <rect x="44" y="132" width="68" height="6" fill="#b4bcc5"/><g fill="#b4bcc5"><rect x="46" y="114" width="5" height="18"/><rect x="57" y="114" width="5" height="18"/><rect x="68" y="114" width="5" height="18"/><rect x="79" y="114" width="5" height="18"/><rect x="90" y="114" width="5" height="18"/><rect x="101" y="114" width="5" height="18"/></g>
+              <text x="138" y="50">spins within</text><text x="138" y="62">a few seconds</text><text x="124" y="118" font-size="8">air onto the heatsink,</text><text x="124" y="129" font-size="8">label towards the board</text>
+            </svg></figure>
+            <p>Secure the fan clear of the board and loose wires before restoring power. Check that it starts. Use its airflow arrow or feel the flow; the label side is only a usual guide. Disconnect power again before mounting or adjusting it.</p>
+            <p class="check">Check: if it doesn't spin, power off and check red is on 5 V and black on pin 14.</p>
+          </li>
+        </ol>
+      </div>
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 2 · Later: mount the 30 mm fan over the heatsink</h3>
+          <div class="need"><span>M2.5 male-female standoff kit</span><span>Small screwdriver</span><span>Ruler</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step">
+            <div class="step-top"><span class="num">8</span><h4>Measure the stack</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Standoff length is the heatsink height plus a 5 to 10 mm gap plus the 7 mm fan"><rect width="240" height="150" fill="#fff"/>
+              <rect x="16" y="118" width="208" height="7" fill="#2f8a57"/><text x="20" y="140" font-size="8" fill="#5f6772">Pi board</text>
+              <rect x="60" y="112" width="44" height="6" fill="#b4bcc5"/><g fill="#b4bcc5"><rect x="62" y="94" width="4" height="18"/><rect x="70" y="94" width="4" height="18"/><rect x="78" y="94" width="4" height="18"/><rect x="86" y="94" width="4" height="18"/><rect x="94" y="94" width="4" height="18"/></g>
+              <rect x="20" y="56" width="200" height="5" fill="#2a2d33"/><rect x="54" y="61" width="56" height="10" rx="2" fill="#f1f3f5" stroke="#1d1f23" stroke-width="1.5"/>
+              <rect x="186" y="61" width="10" height="57" fill="#c9a24a" stroke="#1d1f23"/><text x="191" y="50" text-anchor="middle" font-size="8">standoff ≈ h + 15</text>
+              <path d="M44 94 V118 M40 94 H48 M40 118 H48" stroke="#1d1f23"/><text x="36" y="110" text-anchor="end" font-weight="700">h</text>
+              <path d="M44 72 V93" stroke="#e39b28" stroke-width="2" stroke-dasharray="3 2"/>
+              <text x="114" y="69" font-size="8">fan, 7 mm</text><text x="114" y="87" font-size="8" fill="#e39b28">gap 5–10 mm</text>
+            </svg></figure>
+            <p>Measure the tallest heatsink (h). Measure the fan thickness too (7 mm is an assumption). The support height must allow the heatsink height + 5–10 mm clear air gap + any fan thickness below the lid; account for the actual bracket.</p>
+            <p class="check">Check: h + 15 mm is only an example; confirm clearance and matching lid holes before buying.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">9</span><h4>Fit standoffs and the lid</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Exploded stack: screen, existing standoffs, Pi, new standoffs, lid with fan, screws"><rect width="240" height="150" fill="#fff"/>
+              <path d="M56 20 V126 M184 20 V126" stroke="#5f6772" stroke-dasharray="3 3"/>
+              <rect x="50" y="24" width="12" height="4" fill="#5f6772"/><rect x="53" y="28" width="6" height="10" fill="#8d98a5"/><rect x="178" y="24" width="12" height="4" fill="#5f6772"/><rect x="181" y="28" width="6" height="10" fill="#8d98a5"/>
+              <rect x="30" y="44" width="180" height="5" fill="#2a2d33"/><rect x="100" y="49" width="40" height="8" fill="#f1f3f5" stroke="#1d1f23"/><text x="120" y="40" text-anchor="middle" font-size="8">lid with fan</text>
+              <rect x="52" y="62" width="8" height="28" fill="#c9a24a" stroke="#1d1f23"/><rect x="54" y="90" width="4" height="6" fill="#8a7a50"/><rect x="180" y="62" width="8" height="28" fill="#c9a24a" stroke="#1d1f23"/><rect x="182" y="90" width="4" height="6" fill="#8a7a50"/><text x="120" y="80" text-anchor="middle" font-size="8">new M2.5 standoffs</text>
+              <rect x="36" y="100" width="168" height="8" fill="#2f8a57"/><text x="120" y="120" text-anchor="middle" font-size="8">Pi board</text>
+              <rect x="52" y="110" width="8" height="16" fill="#c9a24a"/><rect x="180" y="110" width="8" height="16" fill="#c9a24a"/>
+              <rect x="20" y="126" width="200" height="12" rx="2" fill="#1d1f23"/><text x="120" y="135" text-anchor="middle" font-size="8" fill="#fff">screen (face down on a towel)</text>
+            </svg></figure>
+            <p>When ready to change the mount, disconnect all power. If the lid holes and existing threads match, swap the Pi's screws for standoffs one at a time, so the Pi stays on the screen. Screw the lid on top with the fan over the SoC, offset about 5 mm. The fan's label faces the board.</p>
+            <p class="check">Check: the fan clears the heatsinks, and the hub on the floor below.</p>
+          </li>
+        </ol>
+      </div>
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 3 · Mount the 60 mm fan and cut the outlet</h3>
+          <div class="need"><span>60 mm fan guard</span><span>4 × M3 × 35 mm screws, nuts, washers</span><span>Craft knife</span><span>Ruler and pencil</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step">
+            <div class="step-top"><span class="num">10</span><h4>Mark the back wall</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Back wall: a 57 mm circle centred 67 mm above the floor, with four screw holes on a 50 mm square"><rect width="240" height="150" fill="#fff"/>
+              <rect x="10" y="26" width="221" height="94" fill="#e8d3b0" stroke="#b08655" stroke-width="2"/><path d="M10 26 H231" stroke="#1d1f23" stroke-width="3" stroke-dasharray="6 3"/><text x="12" y="20" font-size="8">hinge (top edge)</text>
+              <path d="M4 120 H237" stroke="#1d1f23" stroke-width="2.5"/>
+              <circle cx="120" cy="57" r="26.8" fill="#fff" stroke="#e39b28" stroke-width="2" stroke-dasharray="5 3"/><text x="120" y="60" text-anchor="middle" font-weight="700">Ø57</text>
+              <g fill="#1d1f23"><circle cx="96.5" cy="33.5" r="2.2"/><circle cx="143.5" cy="33.5" r="2.2"/><circle cx="96.5" cy="80.5" r="2.2"/><circle cx="143.5" cy="80.5" r="2.2"/></g>
+              <path d="M96.5 92 H143.5 M96.5 88 V96 M143.5 88 V96" stroke="#1d1f23"/><text x="120" y="105" text-anchor="middle" font-size="8">50</text>
+              <path d="M178 120 V57 M174 57 H182 M174 120 H182" stroke="#1d1f23"/><text x="186" y="92" font-size="8">67 mm</text>
+              <text x="120" y="138" text-anchor="middle" font-size="8">centre on the SoC heatsink; check with the lid shut</text>
+            </svg></figure>
+            <p>Close the lid and find the SoC heatsink's position from outside. Use the actual fan as a template. The drawing assumes a 57 mm opening, a 67 mm centre height and 50 mm hole spacing; verify these against the fan and closed lid before cutting.</p>
+            <p class="check">Check: the circle stays below the hinge.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">11</span><h4>Cut, then fit it outside</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Section: guard, then fan, then the cardboard wall; screws from outside, nuts inside; label faces into the box"><defs><marker id="mb11" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <text x="12" y="16" font-size="8" fill="#5f6772">outside</text><text x="228" y="16" text-anchor="end" font-size="8" fill="#5f6772">inside the box</text>
+              <rect x="132" y="20" width="5" height="34" fill="#b08655"/><rect x="132" y="106" width="5" height="34" fill="#b08655"/>
+              <path d="M90 50 V110" stroke="#5f6772" stroke-width="2.5"/><path d="M86 60 H94 M86 72 H94 M86 84 H94 M86 96 H94" stroke="#5f6772"/>
+              <rect x="96" y="50" width="36" height="60" rx="3" fill="#f1f3f5" stroke="#1d1f23" stroke-width="2"/><rect x="127" y="70" width="4" height="20" fill="#e39b28"/>
+              <path d="M84 58 H150 M84 102 H150" stroke="#8d98a5" stroke-width="2.5"/><rect x="80" y="54" width="4" height="8" fill="#5f6772"/><rect x="80" y="98" width="4" height="8" fill="#5f6772"/><rect x="140" y="54" width="6" height="8" fill="#5f6772"/><rect x="140" y="98" width="6" height="8" fill="#5f6772"/>
+              <path d="M14 70 H66 M14 90 H66" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb11)"/><text x="16" y="62" font-size="8" fill="#e39b28" font-weight="700">air in</text>
+              <path d="M152 80 H222" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb11)"/>
+              <text x="146" y="44" font-size="8">label faces in</text><path d="M150 46 L131 72" stroke="#1d1f23"/>
+              <text x="66" y="132" font-size="8">guard · fan · wall · nuts</text>
+            </svg></figure>
+            <p>Remove the electronics from the cutting area. Cut on a backing board, then make the verified screw holes. Reinforce the cardboard with washers or backing plates. Stack guard, fan and wall from the outside, with the fan's label facing into the box. Screws go in from outside, nuts inside.</p>
+            <p class="check">Check: the blades spin freely and the lid still opens.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">12</span><h4>Cut the outlet</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Front wall: two rows of six 15 mm holes with centres 15 and 35 mm above the floor"><rect width="240" height="150" fill="#fff"/>
+              <text x="10" y="56" font-size="8">front (low) wall, 57 mm tall</text>
+              <rect x="8" y="64" width="223" height="54" fill="#e8d3b0" stroke="#b08655" stroke-width="2"/><path d="M2 118 H238" stroke="#1d1f23" stroke-width="2.5"/>
+              <g fill="#fff" stroke="#1d1f23"><circle cx="72.5" cy="103.75" r="7.1"/><circle cx="91.5" cy="103.75" r="7.1"/><circle cx="110.5" cy="103.75" r="7.1"/><circle cx="129.5" cy="103.75" r="7.1"/><circle cx="148.5" cy="103.75" r="7.1"/><circle cx="167.5" cy="103.75" r="7.1"/>
+              <circle cx="72.5" cy="84.75" r="7.1"/><circle cx="91.5" cy="84.75" r="7.1"/><circle cx="110.5" cy="84.75" r="7.1"/><circle cx="129.5" cy="84.75" r="7.1"/><circle cx="148.5" cy="84.75" r="7.1"/><circle cx="167.5" cy="84.75" r="7.1"/></g>
+              <path d="M196 118 V103.75 M192 103.75 H200 M214 118 V84.75 M210 84.75 H218" stroke="#1d1f23"/><text x="199" y="100" font-size="8">15</text><text x="217" y="81" font-size="8">35</text>
+              <text x="120" y="138" text-anchor="middle" font-size="8">or one 100 × 20 mm slot, 10 mm up</text>
+            </svg></figure>
+            <p>Low on the front wall, cut two rows of six 15 mm holes, with centres 15 mm and 35 mm above the floor. One 100 × 20 mm slot works too.</p>
+            <p class="check">Check: about 20 cm² open, roughly the size of the fan.</p>
+          </li>
+        </ol>
+      </div>
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 4 · Power the 60 mm fan</h3>
+          <div class="need"><span>USB 5→9 V boost cable, 5.5 × 2.1 mm</span><span>Barrel-to-screw-terminal adapter</span><span>Scissors or wire strippers</span><span>Small screwdriver</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step">
+            <div class="step-top"><span class="num">13</span><h4>Cut and strip</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Cut the white plug off and strip 5 mm from each wire"><rect width="240" height="150" fill="#fff"/>
+              <rect x="10" y="56" width="20" height="22" rx="2" fill="#f4f4f4" stroke="#1d1f23"/><path d="M30 62 H196" stroke="#d33a2c" stroke-width="4"/><path d="M30 72 H196" stroke="#1d1f23" stroke-width="4"/>
+              <path d="M46 44 V92" stroke="#e39b28" stroke-width="2" stroke-dasharray="4 3"/>
+              <circle cx="38" cy="20" r="5" fill="none" stroke="#1d1f23" stroke-width="2"/><circle cx="54" cy="20" r="5" fill="none" stroke="#1d1f23" stroke-width="2"/><path d="M41 24 L50 40 M51 24 L42 40" stroke="#1d1f23" stroke-width="2"/>
+              <text x="52" y="104" font-size="8" fill="#e39b28">cut off the white plug</text>
+              <path d="M196 62 H212 M196 72 H212" stroke="#c8873a" stroke-width="3"/><path d="M196 86 H212 M196 82 V90 M212 82 V90" stroke="#1d1f23"/><text x="204" y="100" text-anchor="middle" font-size="8">5 mm</text>
+              <text x="204" y="50" text-anchor="middle" font-size="8">strip, twist</text>
+            </svg></figure>
+            <p>Cut the white plug off the fan lead. Strip 5 mm from each wire and twist the strands tight.</p>
+            <p class="check">Check: no stray strands.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">14</span><h4>Connect to a hub port</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Hub port, USB boost cable set to 9 V, barrel plug, screw terminal with red to plus and black to minus, fan"><rect width="240" height="150" fill="#fff"/>
+              <rect x="6" y="42" width="40" height="30" rx="3" fill="#2a2d33"/><text x="26" y="86" text-anchor="middle" font-size="8">hub port</text>
+              <rect x="46" y="52" width="12" height="10" fill="#b4bcc5" stroke="#1d1f23"/><path d="M58 57 H74" stroke="#1d1f23" stroke-width="3"/>
+              <rect x="74" y="46" width="36" height="22" rx="4" fill="#fff" stroke="#e39b28" stroke-width="2"/><text x="92" y="61" text-anchor="middle" font-weight="700">9 V</text><text x="92" y="84" text-anchor="middle" font-size="8">boost cable</text>
+              <path d="M110 57 H128" stroke="#1d1f23" stroke-width="3"/><rect x="128" y="52" width="12" height="10" rx="2" fill="#5f6772"/>
+              <rect x="140" y="44" width="36" height="28" rx="3" fill="#2a2d33"/><circle cx="152" cy="58" r="5" fill="#b4bcc5" stroke="#1d1f23"/><circle cx="166" cy="58" r="5" fill="#b4bcc5" stroke="#1d1f23"/>
+              <text x="152" y="38" text-anchor="middle" font-weight="700">+</text><text x="166" y="38" text-anchor="middle" font-weight="700">−</text>
+              <path d="M152 72 V98 H206" stroke="#d33a2c" stroke-width="3" fill="none"/><path d="M166 72 V88 H206" stroke="#1d1f23" stroke-width="3" fill="none"/>
+              <rect x="206" y="70" width="30" height="30" rx="4" fill="#f1f3f5" stroke="#1d1f23" stroke-width="2"/><circle cx="221" cy="85" r="10" fill="none" stroke="#1d1f23"/>
+              <text x="120" y="128" text-anchor="middle" font-size="8">red → +, black → −, tighten, tug</text>
+            </svg></figure>
+            <p>Put red into + and black into − on the screw terminal; tighten and tug. Push the barrel plug into the adapter and the USB end into a hub port. Set the voltage before connecting. This is a 12 V rated fan: 9 V is an optional noise experiment, not a guaranteed starting voltage. Check adapter polarity and repeated starts; use rated 12 V if it stalls. Size the boost cable and powered hub for at least 2.64 W output plus startup margin (about 0.62 A at 5 V at 85% efficiency, before startup).</p>
+            <p class="check">Check: the hub has its own supply; no 9 V or 12 V connection goes to the Pi header.</p>
+          </li>
+          <li class="step">
+            <div class="step-top"><span class="num">15</span><h4>Check the airflow</h4></div>
+            <figure class="art"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" font-family="DejaVu Sans, Verdana, sans-serif" font-size="9" role="img" aria-label="Air comes in through the fan on the back wall, crosses the Pi and leaves through the low front holes"><defs><marker id="mb15" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#e39b28"/></marker></defs><rect width="240" height="150" fill="#fff"/>
+              <polygon points="30,124 167,124 167,34 30,73" fill="#e8d3b0" fill-opacity="0.5" stroke="#b08655" stroke-width="2"/>
+              <path d="M60 64.5 L150 38.8" stroke="#1d1f23" stroke-width="5"/>
+              <rect x="120" y="48" width="30" height="5" fill="#2f8a57" transform="rotate(-16 135 50)"/><text x="122" y="66" font-size="8">Pi</text>
+              <rect x="168" y="37" width="22" height="54" rx="3" fill="#f1f3f5" stroke="#1d1f23" stroke-width="2"/>
+              <path d="M228 54 H196 M228 74 H196" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb15)"/>
+              <path d="M164 62 C 120 60, 80 96, 40 112" stroke="#e39b28" stroke-width="2.5" stroke-dasharray="6 4" fill="none" marker-end="url(#mb15)"/>
+              <rect x="27" y="104" width="6" height="14" fill="#fff" stroke="#b08655"/><path d="M26 112 H6" stroke="#e39b28" stroke-width="2.5" marker-end="url(#mb15)"/>
+              <text x="228" y="46" text-anchor="end" font-size="8" fill="#e39b28" font-weight="700">air in</text><text x="4" y="100" font-size="8" fill="#e39b28" font-weight="700">air out</text>
+              <text x="100" y="142" text-anchor="middle" font-size="8">feel air leaving the front holes</text>
+            </svg></figure>
+            <p>With the hub on, the fan pulls room air in at the back, across the Pi. Hold a hand to the front holes: you should feel air coming out.</p>
+            <p class="check">Check: if air goes the wrong way, the fan is backwards. Flip it.</p>
+          </li>
+        </ol>
+      </div>
+
+      <div class="part">
+        <div class="part-head">
+          <h3>Part 5 · Test it</h3>
+          <div class="need"><span>Mac on the same Wi-Fi</span><span>Two tracks you play at gigs</span></div>
+        </div>
+        <ol class="steps-grid">
+          <li class="step step-wide">
+            <div class="step-top"><span class="num">16</span><h4>Log a 30-minute session</h4></div>
+            <pre class="code">mkdir -p deploy/cooling-YYYYMMDD
+ssh -4 -o BatchMode=yes -i ~/.ssh/mixpi_ed25519 -o HostKeyAlias=mixxxpi.local \
+  pi@192.168.68.56 'bash -s -- 1800 10' &lt; tools/cooling-model/log-temps.sh \
+  &gt; deploy/cooling-YYYYMMDD/after-intake.csv</pre>
+            <p>Start the logger and two-deck playback together, with the box closed. When it finishes, drop the CSV on the 30-minute chart above to compare it with the model.</p>
+            <p class="check">Pass: peak under 75 °C, throttle flags 0x0, no dropouts heard. The model expects about 40 °C.</p>
+          </li>
+        </ol>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-ass">
+    <div class="panel-head">
+      <h2 id="h-ass">Assumptions</h2>
+      <button type="button" class="btn quiet" id="resetParams">Reset assumptions</button>
+    </div>
+    <p class="small muted">Edit a value to change the typical case; its range scales with it. The fitted board-to-air value is the one number tuned to the 67.5 °C reading.</p>
+    <div class="tablebox" id="assTable"></div>
+    <div class="two-col">
+      <div class="tablebox" id="loadTable"></div>
+      <div class="tablebox" id="fanTable"></div>
+    </div>
+  </section>
+
+  <footer>
+    <h2 style="color: var(--fg)">What the model leaves out</h2>
+    <ul>
+      <li>Box air is treated as fully mixed. In the real box the hottest air pools under the slant around the Pi, so a high vent or exhaust right beside the Pi helps a little more than shown.</li>
+      <li>One calibration point fixes one number. How the 42 K rise splits between box air and the heatsink depends on the wall assumptions, which is why the ranges are wide.</li>
+      <li>Fan curves are straight lines through typical figures. The 60 mm label gives only 12 V and 0.22 A, so its airflow and noise are typical for that size and current.</li>
+      <li>Above 80 °C the Pi slows its CPU. It would then sit near 80–85 °C while Mixxx loses CPU time, so a figure above 80 °C means "throttles" rather than a temperature you would read.</li>
+      <li>Intake air reaching the heatsink is taken at box-air temperature. A jet straight from an intake fan would be a little cooler.</li>
+    </ul>
+    <p>Source: <span class="mono">tools/cooling-model/index.html</span> in the mixxx-pi-gen repo. Plan and test protocol: <span class="mono">docs/ideas/COOLING-PLAN.md</span>.</p>
+  </footer>
+</div>
+
+<script>
+// ---------- Model engine: pure functions, no DOM ----------
+// Units: geometry in mm on the page, SI inside the solver (m, m³/s, W, K, Pa).
+const CP = 1006, GRAV = 9.81;
+const rhoAt = T => 353.05 / (T + 273.15);
+const SCREEN_AREA = 0.165 * 0.100;           // generic 7" DSI module front, m²
+const SOFT_THROTTLE = 80, HARD_LIMIT = 85, TARGET = 75;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+// Every assumption, with its range and where it came from. The range feeds the
+// uncertainty band; editing a value scales its range with it.
+const PARAMS = [
+  { k: 'pBase', grp: 'Heat sources', label: 'Pi board power with the CPU idle (1.5 GHz performance governor, Wi-Fi, USB 3 chip)', v: 2.6, lo: 2.2, hi: 3.0, u: 'W', basis: 'Typical Pi 4 bench figures; estimate' },
+  { k: 'pCore', grp: 'Heat sources', label: 'Extra power per fully busy core at 1.5 GHz', v: 0.85, lo: 0.65, hi: 1.05, u: 'W', basis: 'Pi 4 reaches about 6.4 W with 4 busy cores; estimate' },
+  { k: 'pGpu', grp: 'Heat sources', label: 'V3D GPU drawing the waveforms', v: 0.4, lo: 0.2, hi: 0.8, u: 'W', basis: 'Unconfirmed' },
+  { k: 'pCopy', grp: 'Heat sources', label: 'Copy or SSH backup: SD, USB and Wi-Fi activity', v: 0.5, lo: 0.3, hi: 0.8, u: 'W', basis: 'Estimate' },
+  { k: 'iDisp', grp: 'Heat sources', label: 'Display current from the 5 V header', v: 0.35, lo: 0.25, hi: 0.5, u: 'A', basis: 'Generic 7" DSI panel; unconfirmed' },
+  { k: 'fDispIn', grp: 'Heat sources', label: 'Share of display heat that ends up inside the box', v: 0.35, lo: 0.2, hi: 0.6, u: '×', basis: 'Estimate: the driver board and backlight face the cut-out' },
+  { k: 'pHub', grp: 'Heat sources', label: 'USB hub self-heating when it sits inside', v: 0.6, lo: 0.3, hi: 1.2, u: 'W', basis: 'Estimate for a 7-port hub with LEDs' },
+  { k: 'rInt', grp: 'Pi board', label: 'SoC die to heatsink and board surface', v: 2.0, lo: 1.0, hi: 3.0, u: 'K/W', basis: 'Package lid plus stick-on thermal pad; estimate' },
+  { k: 'gF1', grp: 'Pi board', label: 'Forced-air conductance at 1 m/s (scales with speed^0.6)', v: 0.23, lo: 0.15, hi: 0.32, u: 'W/K', basis: 'Fitted to published Pi 4 + heatsink + fan results (≈ 4.5 K/W at 2.5 m/s)' },
+  { k: 'gScr', grp: 'Pi board', label: 'Pi to room through the standoffs and the screen', v: 0.04, lo: 0.02, hi: 0.08, u: 'W/K', basis: 'Estimate' },
+  { k: 'tapeGain', grp: 'Pi board', label: 'Board convection with the masking tape removed', v: 1.08, lo: 1.0, hi: 1.15, u: '×', basis: 'Estimate; calibration was with the tape on' },
+  { k: 'hIn', grp: 'Enclosure', label: 'Inside wall film coefficient, still air', v: 2.5, lo: 1.5, hi: 4, u: 'W/m²K', basis: 'Natural convection in a closed box' },
+  { k: 'hOut', grp: 'Enclosure', label: 'Outside wall film coefficient (convection + radiation)', v: 8, lo: 6, hi: 10, u: 'W/m²K', basis: 'Still room air, matte cardboard' },
+  { k: 'kCard', grp: 'Enclosure', label: 'Corrugated cardboard conductivity', v: 0.065, lo: 0.05, hi: 0.08, u: 'W/mK', basis: 'Handbook range' },
+  { k: 'tCard', grp: 'Enclosure', label: 'Cardboard thickness', v: 3, lo: 2, hi: 5, u: 'mm', basis: 'From photos; unmeasured' },
+  { k: 'kCase', grp: 'Enclosure', label: 'Printed wall conductivity (PETG)', v: 0.2, lo: 0.15, hi: 0.25, u: 'W/mK', basis: 'Datasheet range' },
+  { k: 'tCase', grp: 'Enclosure', label: 'Printed wall thickness', v: 2.4, lo: 2.0, hi: 3.0, u: 'mm', basis: 'Design choice' },
+  { k: 'floorF', grp: 'Enclosure', label: 'Floor heat loss share (box sits on the hi-fi)', v: 0.3, lo: 0.1, hi: 0.6, u: '×', basis: 'Estimate' },
+  { k: 'aLeak', grp: 'Enclosure', label: 'Existing leaks: cable holes and lid gaps', v: 3, lo: 1, hi: 6, u: 'cm²', basis: 'From photos; unmeasured' },
+  { k: 'cd', grp: 'Enclosure', label: 'Discharge coefficient of a punched hole', v: 0.6, lo: 0.5, hi: 0.7, u: '×', basis: 'Sharp-edged orifice' },
+  { k: 'fanQx', grp: 'Fans', label: 'Fan airflow against the typical figure for its size', v: 1, lo: 0.75, hi: 1.2, u: '×', basis: 'Unknown models; typical-spec spread' },
+  { k: 'fanPx', grp: 'Fans', label: 'Fan pressure against the typical figure for its size', v: 1, lo: 0.7, hi: 1.3, u: '×', basis: 'Unknown models; typical-spec spread' },
+  { k: 'cBoard', grp: 'Warm-up', label: 'Heat capacity: Pi, heatsinks, part of the screen', v: 45, lo: 30, hi: 70, u: 'J/K', basis: 'Mass estimate' },
+  { k: 'cBox', grp: 'Warm-up', label: 'Heat capacity: box air, inner cardboard, hub', v: 250, lo: 120, hi: 450, u: 'J/K', basis: 'Mass estimate' },
+  { k: 'supplyA', grp: 'Power budget', label: 'Pi supply rating', v: 3.0, lo: 3.0, hi: 3.0, u: 'A', basis: 'Pi 4 needs 5.1 V / 3 A; the hub port feeding it is unmeasured' },
+];
+
+// Busy CPU cores per scenario (whole Pi): [typical, low, high]. Measured on 2026-11-08:
+// idle 7 % / 5.3 % of four cores (software GL / V3D); two decks from SD 34.5–41 % / 12 %;
+// two decks while writing to SD 39 % / 14.5 % (deploy/gpu-test-20261108). Ranges allow
+// for longer sets, busier screens and an SSH copy, which those 30–60 s runs did not cover.
+const LOADS = {
+  idle: { label: 'Idle', long: 'Mixxx open, nothing playing', sw: [0.3, 0.25, 0.4], gpu: [0.21, 0.15, 0.3], gpuUse: 0.1, copy: false },
+  decks: { label: 'Two decks', long: 'Two decks playing, keylock on', sw: [1.4, 1.2, 1.8], gpu: [0.5, 0.3, 0.7], gpuUse: 1, copy: false },
+  copy: { label: 'Two decks + copy', long: 'Two decks plus a copy or SSH backup', sw: [1.6, 1.4, 2.2], gpu: [0.6, 0.5, 1.0], gpuUse: 1, copy: true },
+};
+
+// Fan 2's label gives 12 V, 0.22 A and a 24 mm frame; airflow, pressure and noise
+// are typical for a 60 × 25 mm fan at that current. Fan 1 is typical for a 30 × 7 mm case fan.
+const FAN_SPECS = {
+  small: { size: 30, thick: 7, vr: 5, ir: 0.12, q: 1.4, p: 25, dba: 26, vs: 2.8 },
+  big5: { size: 60, thick: 25, vr: 5, ir: 0.18, q: 6.5, p: 25, dba: 28, vs: 2.8 },
+  big12: { size: 60, thick: 25, vr: 12, ir: 0.22, q: 11, p: 55, dba: 37, vs: 7 },
+  big24: { size: 60, thick: 25, vr: 24, ir: 0.07, q: 8.5, p: 35, dba: 30, vs: 13 },
+};
+
+const SUPPLIES = {
+  hdr5: { v: 5.05, rail: 'pi', label: '5 V from the Pi header' },
+  hdr33: { v: 3.3, rail: 'pi33', label: '3.3 V from the Pi header' },
+  hub5: { v: 5.0, rail: 'hub', label: '5 V from a hub USB port' },
+  boost9Hub: { v: 9, rail: 'hubBoost', label: '9 V boost cable on a hub port' },
+  boostHub: { v: 12, rail: 'hubBoost', label: '12 V boost cable on a hub port' },
+  boostPi: { v: 12, rail: 'piBoost', label: '12 V boost cable on a Pi USB port' },
+};
+
+function nominalParams(over = {}) {
+  const P = {};
+  for (const p of PARAMS) P[p.k] = over[p.k] ?? p.v;
+  P.uLoad = null;
+  return P;
+}
+
+function mulberry32(a) {
+  return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+function tri(u, lo, mode, hi) {
+  if (hi <= lo) return mode;
+  const F = (mode - lo) / (hi - lo);
+  return u < F ? lo + Math.sqrt(u * (hi - lo) * (mode - lo)) : hi - Math.sqrt((1 - u) * (hi - lo) * (hi - mode));
+}
+// Deterministic draws, so the band does not flicker between renders.
+function sampleParams(n, over = {}) {
+  const rnd = mulberry32(20261108), out = [];
+  for (let i = 0; i < n; i++) {
+    const P = {};
+    for (const p of PARAMS) {
+      const v = over[p.k] ?? p.v, s = p.v ? v / p.v : 1;
+      P[p.k] = tri(rnd(), Math.min(p.lo * s, v), v, Math.max(p.hi * s, v));
+    }
+    P.uLoad = rnd();
+    out.push(P);
+  }
+  return out;
+}
+
+function busyCores(P, load, renderer) {
+  const [m, lo, hi] = LOADS[load][renderer];
+  return P.uLoad == null ? m : tri(P.uLoad, lo, m, hi);
+}
+function boardPower(P, load, renderer) {
+  const L = LOADS[load];
+  return P.pBase + busyCores(P, load, renderer) * P.pCore
+    + (renderer === 'gpu' ? L.gpuUse * P.pGpu : 0) + (L.copy ? P.pCopy : 0);
+}
+
+// ---------- Geometry ----------
+// x: left → right (0..L), y: front (low side) → back (high side, hinge), z: floor → up.
+function geometry(d) {
+  const Hf = d.Hf != null ? clamp(d.Hf, 20, d.H) : Math.max(30, d.H - d.D * Math.tan(d.slant * Math.PI / 180));
+  const th = Math.atan2(d.H - Hf, d.D);
+  const slantLen = d.D / Math.cos(th);
+  const L = d.L / 1000, D = d.D / 1000, H = d.H / 1000, F = Hf / 1000;
+  return {
+    L: d.L, D: d.D, H: d.H, Hf, th, slantDeg: th * 180 / Math.PI, slantLen, Havg: (d.H + Hf) / 2,
+    aFloor: L * D, aWalls: L * H + L * F + D * (H + F) + L * slantLen / 1000,
+    vol: L * D * (H + F) / 2,
+  };
+}
+const wallLen = (gm, w) => (w === 'front' || w === 'back') ? gm.L : gm.D;
+function wallTop(gm, w, along) {
+  if (w === 'back') return gm.H;
+  if (w === 'front') return gm.Hf;
+  return gm.Hf + (gm.H - gm.Hf) * clamp(along, 0, gm.D) / gm.D;
+}
+function wallPoint(gm, w, along, z) {
+  if (w === 'front') return { x: along, y: 0, z, n: { x: 0, y: 1, z: 0 } };
+  if (w === 'back') return { x: along, y: gm.D, z, n: { x: 0, y: -1, z: 0 } };
+  if (w === 'left') return { x: 0, y: along, z, n: { x: 1, y: 0, z: 0 } };
+  return { x: gm.L, y: along, z, n: { x: -1, y: 0, z: 0 } };
+}
+// Place an opening of a given size on a wall; report whether it fits.
+function placeOnWall(gm, w, alongPct, z, size) {
+  const len = wallLen(gm, w);
+  const along = clamp(len * alongPct / 100, size / 2, Math.max(size / 2, len - size / 2));
+  const top = wallTop(gm, w, along);
+  const fits = top >= size + 4;
+  const zc = clamp(z, size / 2 + 2, Math.max(size / 2 + 2, top - size / 2 - 2));
+  return { ...wallPoint(gm, w, along, zc), fits, top, along };
+}
+// The Pi hangs under the slant, components facing into the box.
+function piPlace(gm, st) {
+  const s = clamp(st.piS, 30, Math.max(30, gm.slantLen - 30));
+  const x = clamp(gm.L / 2 + st.piX, 44, Math.max(44, gm.L - 44));
+  const y = gm.D - s * Math.cos(gm.th), z = gm.H - s * Math.sin(gm.th);
+  const n = { x: 0, y: Math.sin(gm.th), z: -Math.cos(gm.th) };
+  return { s, x, y, z, n, hs: { x, y: y + 12 * n.y, z: z + 12 * n.z } };
+}
+
+// ---------- Fans ----------
+function fanSpec(st, i, over) {
+  const base = i === 0 ? FAN_SPECS.small : FAN_SPECS['big' + st.fans[1].rated];
+  return { ...base, ...(over && over[i] || {}) };
+}
+// Brushless DC fan on a given voltage: speed roughly linear in voltage above
+// a small offset, pressure ∝ speed², noise +50·log10(speed).
+function fanElectrical(spec, supplyKey, P) {
+  const V = SUPPLIES[supplyKey].v;
+  const over = V > spec.vr * 1.15;
+  const starts = V >= spec.vs && !over;
+  const s = starts ? clamp((V - 0.15 * spec.vr) / (0.85 * spec.vr), 0, 1.15) : 0;
+  return {
+    V, s, over, running: s > 0, marginal: starts && V < spec.vs * 1.15,
+    I: over ? 0 : starts ? spec.ir * Math.pow(V / spec.vr, 1.4) : spec.ir * 0.25 * V / spec.vr,
+    q: spec.q * 1e-3 * s * P.fanQx, p: Math.max(1e-6, spec.p * s * s * P.fanPx),
+    dba: s > 0 ? spec.dba + 50 * Math.log10(s) : null,
+  };
+}
+// Impinging fan: the hub shadows the heatsink at small gaps; the jet spreads at large ones.
+const gapFactor = (g, D) => 0.85 * (1 - Math.exp(-g / 4)) * Math.min(1, 1.5 * D / g);
+
+// ---------- Airflow through the box ----------
+function buildOpenings(gm, st, fanRun, P) {
+  const ops = [], leak = P.aLeak * 1e-4;
+  const add = (o, pt) => ops.push({ ...o, x: pt.x, y: pt.y, z: pt.z, n: pt.n, zm: pt.z / 1000 });
+  add({ kind: 'hole', a: leak * 0.25, tag: 'leak' }, wallPoint(gm, 'left', gm.D * 0.5, 20));
+  add({ kind: 'hole', a: leak * 0.25, tag: 'leak' }, wallPoint(gm, 'right', gm.D * 0.5, 20));
+  add({ kind: 'hole', a: leak * 0.5, tag: 'leak' }, wallPoint(gm, 'front', gm.L * 0.5, gm.Hf - 5));
+  for (const g of ['low', 'high']) {
+    const v = st.vents[g];
+    if (!(v.n > 0)) continue;
+    const pt = placeOnWall(gm, v.wall, v.along, v.z, v.d);
+    add({ kind: 'hole', a: v.n * Math.PI / 4 * (v.d / 1000) ** 2, tag: 'vent-' + g }, pt);
+  }
+  st.fans.forEach((f, i) => {
+    if (f.mount !== 'wall') return;
+    const fr = fanRun[i], size = fr.spec.size;
+    const pt = placeOnWall(gm, f.wall, f.along, f.z, size);
+    if (fr.on && fr.el.running)
+      add({ kind: 'fan', i, dir: f.dir === 'intake' ? 1 : -1, q: fr.el.q, p: fr.el.p, D: size / 1000, tag: 'fan' }, pt);
+    else add({ kind: 'hole', a: 0.35 * (size / 1000) ** 2, tag: 'idle-fan', i }, pt);  // a stopped fan is a hole
+  });
+  return ops;
+}
+
+function opInflow(o, pr, P, rm) {
+  if (o.kind === 'hole') { const q = P.cd * o.a * Math.sqrt(2 * Math.abs(pr) / rm); return pr > 0 ? -q : q; }
+  if (o.dir > 0) return clamp(o.q * (1 - pr / o.p), 0, 1.5 * o.q);
+  return -clamp(o.q * (1 + pr / o.p), 0, 1.5 * o.q);
+}
+// Inside-minus-outside pressure at height z is p0 + (ρa − ρb)·g·z (stack effect).
+// Find p0 so the flows balance; fans follow a straight-line curve.
+function solveFlow(ops, Tb, Ta, P) {
+  const ra = rhoAt(Ta), rb = rhoAt(Tb), dr = ra - rb, rm = (ra + rb) / 2;
+  const net = p0 => { let s = 0; for (const o of ops) s += opInflow(o, p0 + dr * GRAV * o.zm, P, rm); return s; };
+  let lo = -400, hi = 400;
+  for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2; if (net(m) > 0) lo = m; else hi = m; }
+  const p0 = (lo + hi) / 2;
+  let qin = 0;
+  const q = ops.map(o => { const v = opInflow(o, p0 + dr * GRAV * o.zm, P, rm); if (v > 0) qin += v; return v; });
+  return { q: qin, per: q, p0 };
+}
+
+const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+const norm = a => Math.sqrt(dot(a, a));
+function segDist(p, a, b) {
+  const ab = sub(b, a), t = clamp(dot(sub(p, a), ab) / Math.max(1e-9, dot(ab, ab)), 0, 1);
+  return norm(sub(p, { x: a.x + ab.x * t, y: a.y + ab.y * t, z: a.z + ab.z * t }));
+}
+function centroid(ops, w) {
+  let s = 0, x = 0, y = 0, z = 0;
+  ops.forEach((o, k) => { if (w[k] > 0) { s += w[k]; x += o.x * w[k]; y += o.y * w[k]; z += o.z * w[k]; } });
+  return s > 0 ? { x: x / s, y: y / s, z: z / s } : null;
+}
+
+// Air speed over the SoC heatsink, m/s, from each mechanism (added in quadrature).
+function heatsinkSpeed(gm, st, pi, fanRun, ops, fl) {
+  const parts = { heatsinkFan: 0, wallFan: 0, throughFlow: 0 };
+  st.fans.forEach((f, i) => {
+    const fr = fanRun[i];
+    if (f.mount !== 'heatsink' || !fr.on || !fr.el.running) return;
+    const D = fr.spec.size / 1000, v0 = 0.75 * fr.el.q / (0.589 * D * D);
+    const v = v0 * gapFactor(f.gap, fr.spec.size) * (f.push ? 1 : 0.6);
+    parts.heatsinkFan = Math.hypot(parts.heatsinkFan, v);
+  });
+  ops.forEach((o, k) => {
+    if (o.kind !== 'fan') return;
+    const qf = Math.abs(fl.per[k]), v0 = qf / (0.589 * o.D * o.D);
+    const rel = sub(pi.hs, o); const r3 = { x: rel.x / 1000, y: rel.y / 1000, z: rel.z / 1000 };
+    let v = 0;
+    if (o.dir > 0) {               // intake: a jet that carries
+      const x = dot(r3, o.n);
+      if (x > 0) {
+        const r = norm(sub(r3, { x: o.n.x * x, y: o.n.y * x, z: o.n.z * x }));
+        const b = o.D / 2 + 0.2 * x;
+        v = v0 * Math.min(1, 4 * o.D / x) * Math.exp(-((r / b) ** 2));
+      }
+    } else {                       // exhaust: a sink that only pulls close by
+      const d = Math.max(o.D / 2, norm(r3));
+      v = Math.min(v0, qf / (2 * Math.PI * d * d));
+    }
+    parts.wallFan = Math.hypot(parts.wallFan, v);
+  });
+  if (fl.q > 1e-6) {
+    const a = centroid(ops, fl.per.map(q => Math.max(0, q)));
+    const b = centroid(ops, fl.per.map(q => Math.max(0, -q)));
+    if (a && b) {
+      const Across = (gm.L / 1000) * (gm.Havg / 1000);
+      const d = segDist(pi.hs, a, b) / 1000;
+      parts.throughFlow = fl.q / (0.5 * Across) * Math.exp(-((d / 0.08) ** 2));
+      parts.path = { a, b };
+    }
+  }
+  const v = Math.hypot(parts.heatsinkFan, parts.wallFan, parts.throughFlow);
+  return { v, parts };
+}
+
+function wallUA(gm, P, enclosure, vInt) {
+  const hIn = Math.cbrt(P.hIn ** 3 + (6 * Math.pow(Math.max(0, vInt), 0.8)) ** 3);
+  const rWall = enclosure === 'printed' ? (P.tCase / 1000) / P.kCase : (P.tCard / 1000) / P.kCard;
+  const U = 1 / (1 / hIn + rWall + 1 / P.hOut);
+  return { UA: U * (gm.aWalls + gm.aFloor * P.floorF), hIn };
+}
+
+// ---------- Steady state for a fixed fan on/off pattern ----------
+function fanRunState(st, P, fanOver, gpioOn) {
+  return st.fans.map((f, i) => {
+    const spec = fanSpec(st, i, fanOver);
+    const el = fanElectrical(spec, f.supply, P);
+    const fitted = f.mount !== 'none';
+    const on = fitted && (f.control === 'always' || gpioOn);
+    return { spec, el, fitted, on, i };
+  });
+}
+
+function solveSteady(ctx, P, Gnat, Pboard, fanRun) {
+  const { gm, st, Ta, enclosure } = ctx;
+  const pi = piPlace(gm, st);
+  const Pdisp = 5 * P.iDisp;
+  const Ts = Ta + Pdisp * (1 - P.fDispIn) / (SCREEN_AREA * P.hOut);
+  let Pfan = 0, Qstir = 0;
+  st.fans.forEach((f, i) => {
+    const fr = fanRun[i];
+    if (!fr.on || fr.el.over) return;
+    const w = fr.el.V * fr.el.I;
+    Pfan += f.mount === 'heatsink' ? w : 0.5 * w;
+    if (f.mount === 'heatsink' && fr.el.running) Qstir += 0.75 * fr.el.q;
+  });
+  const Pother = Pdisp * P.fDispIn + (st.hubInside ? P.pHub : 0) + Pfan;
+  const Across = (gm.L / 1000) * (gm.Havg / 1000);
+  const Gn = Gnat * (st.tape ? 1 : P.tapeGain);
+  const gF = P.gF1 * (st.tape ? 0.85 : 1);
+  const ops = buildOpenings(gm, st, fanRun, P);
+  let Tb = Ta + 8, r = null;
+  for (let it = 0; it < 80; it++) {
+    const fl = solveFlow(ops, Tb, Ta, P);
+    const hsV = heatsinkSpeed(gm, st, pi, fanRun, ops, fl);
+    const w = wallUA(gm, P, enclosure, (Qstir + fl.q) / Across);
+    const Gv = rhoAt(Ta) * CP * fl.q, Gba = w.UA + Gv;
+    const Gf = gF * Math.pow(hsV.v, 0.6);
+    const Gc = Math.cbrt(Gn ** 3 + Gf ** 3);
+    const a11 = Gc + P.gScr, a12 = -Gc, b1 = Pboard + P.gScr * Ts;
+    const a21 = -Gc, a22 = Gc + Gba, b2 = Pother + Gba * Ta;
+    const det = a11 * a22 - a12 * a21;
+    const Tbd = (b1 * a22 - a12 * b2) / det, TbN = (a11 * b2 - a21 * b1) / det;
+    r = { Tbd, Tb: TbN, fl, hsV, UA: w.UA, hIn: w.hIn, Gv, Gba, Gc, Gn, Gf, Pother, Pfan, Ts, ops, pi, Qstir };
+    if (Math.abs(TbN - Tb) < 1e-4) break;
+    Tb = 0.5 * Tb + 0.5 * TbN;
+  }
+  r.Tj = r.Tbd + Pboard * P.rInt;
+  r.Pboard = Pboard;
+  r.toScreen = P.gScr * (r.Tbd - Ts);
+  r.toBox = r.Gc * (r.Tbd - r.Tb);
+  return r;
+}
+
+// ---------- Calibration: a closed-box idle reading ----------
+// Sealed cardboard box, no fans, hub inside, idle. Default: 2026-11-08 13:02,
+// software GL with the tape on; the renderer and tape state are inputs.
+function calibrationState(st) {
+  return {
+    ...st, enclosure: 'cardboard', hubInside: true, tape: st.cal.tape !== false,
+    fans: st.fans.map(f => ({ ...f, mount: 'none' })),
+    vents: { low: { ...st.vents.low, n: 0 }, high: { ...st.vents.high, n: 0 } },
+  };
+}
+function calibrate(st, P, fanOver) {
+  const cst = calibrationState(st);
+  const ctx = { gm: geometry(st.dims.cardboard), st: cst, Ta: st.cal.amb, enclosure: 'cardboard' };
+  const Pb = boardPower(P, 'idle', st.cal.renderer || 'sw');
+  const fr = fanRunState(cst, P, fanOver, false);
+  const f = G => solveSteady(ctx, P, G, Pb, fr).Tj - st.cal.T;
+  let lo = Math.log(0.004), hi = Math.log(4), flag = null;
+  if (f(Math.exp(hi)) > 0) flag = 'hot';           // box air alone would exceed the reading
+  else if (f(Math.exp(lo)) < 0) flag = 'cold';
+  if (!flag) for (let k = 0; k < 36; k++) { const m = (lo + hi) / 2; if (f(Math.exp(m)) > 0) lo = m; else hi = m; }
+  const G = flag === 'hot' ? Math.exp(hi) : flag === 'cold' ? Math.exp(lo) : Math.exp((lo + hi) / 2);
+  const base = solveSteady(ctx, P, G, Pb, fr);
+  return { Gnat: G, flag, base };
+}
+
+// ---------- Full evaluation, including GPIO on/off control ----------
+function evaluate(st, P, Gnat, fanOver, loadKey) {
+  const enclosure = st.enclosure;
+  const gm = geometry(st.dims[enclosure]);
+  const ctx = { gm, st, Ta: st.ambient, enclosure };
+  const load = loadKey || st.load;
+  const Pb = boardPower(P, load, st.renderer);
+  const anyGpio = st.fans.some(f => f.mount !== 'none' && f.control === 'gpio');
+  let res, regime = null, duty = 1;
+  const runOn = fanRunState(st, P, fanOver, true);
+  if (!anyGpio) res = solveSteady(ctx, P, Gnat, Pb, runOn);
+  else {
+    const runOff = fanRunState(st, P, fanOver, false);
+    const off = solveSteady(ctx, P, Gnat, Pb, runOff);
+    const on = solveSteady(ctx, P, Gnat, Pb, runOn);
+    const thr = st.gpio.thr, low = thr - st.gpio.hyst;
+    if (off.Tj < thr) { res = off; regime = 'off'; duty = 0; }
+    else if (on.Tj > low) { res = on; regime = 'on'; }
+    else {
+      const mid = thr - st.gpio.hyst / 2;
+      duty = clamp((off.Tj - mid) / Math.max(1e-6, off.Tj - on.Tj), 0, 1);
+      const mix = (a, b) => b + (a - b) * duty;
+      res = { ...on, Tj: mid, Tb: mix(on.Tb, off.Tb), Tbd: mid - Pb * P.rInt, fl: { ...on.fl, q: mix(on.fl.q, off.fl.q) } };
+      regime = 'cycle';
+    }
+  }
+  // 5 V current budget
+  const rails = { piBoard: Pb / 5.0, display: P.iDisp, piFans: 0, piUsb: 0, hub: 0 };
+  let dbaSum = 0, anyNoise = false;
+  st.fans.forEach((f, i) => {
+    const fr = runOn[i];
+    if (!fr.fitted || fr.el.over) return;
+    const d = f.control === 'gpio' ? duty : 1;
+    const I = fr.el.I * d, rail = SUPPLIES[f.supply].rail;
+    if (rail === 'pi') rails.piFans += I;
+    else if (rail === 'pi33') rails.piFans += I * 3.3 / (5 * 0.85);
+    else if (rail === 'hub') rails.hub += I;
+    else if (rail === 'hubBoost') rails.hub += fr.el.V * I / (5 * 0.82);
+    else if (rail === 'piBoost') rails.piUsb += fr.el.V * I / (5 * 0.82);
+    if (fr.el.running && d > 0) {
+      const L = fr.el.dba + (f.mount === 'heatsink' ? -4 : 0);
+      dbaSum += Math.pow(10, L / 10); anyNoise = true;
+    }
+  });
+  rails.piTotal = rails.piBoard + rails.display + rails.piFans + rails.piUsb;
+  return {
+    ...res, gm, Pboard: Pb, load, regime, duty, runOn, rails,
+    noise: anyNoise ? 10 * Math.log10(dbaSum) : null,
+    ach: res.fl.q * 60 / gm.vol,
+  };
+}
+
+// ---------- Warm-up: idle steady state, then the session load from t = 0 ----------
+function simulate(st, P, Gnat, fanOver, loadKey, minutes) {
+  const enclosure = st.enclosure;
+  const gm = geometry(st.dims[enclosure]);
+  const ctx = { gm, st, Ta: st.ambient, enclosure };
+  const start = evaluate(st, P, Gnat, fanOver, 'idle');
+  const Pb = boardPower(P, loadKey, st.renderer);
+  const pi = piPlace(gm, st);
+  const anyGpio = st.fans.some(f => f.mount !== 'none' && f.control === 'gpio');
+  let gpioOn = anyGpio ? start.Tj >= st.gpio.thr - st.gpio.hyst / 2 : true;
+  let Tbd = start.Tj - start.Pboard * P.rInt, Tb = start.Tb;
+  const Pdisp = 5 * P.iDisp, Ts = ctx.Ta + Pdisp * (1 - P.fDispIn) / (SCREEN_AREA * P.hOut);
+  const Across = (gm.L / 1000) * (gm.Havg / 1000);
+  const Gn = Gnat * (st.tape ? 1 : P.tapeGain), gF = P.gF1 * (st.tape ? 0.85 : 1);
+  const dt = 2, out = [{ t: 0, Tj: Tbd + Pb * P.rInt, Tb }];
+  let cache = null;
+  for (let t = dt; t <= minutes * 60 + 1e-9; t += dt) {
+    const Tj = Tbd + Pb * P.rInt;
+    if (anyGpio) { if (Tj >= st.gpio.thr) gpioOn = true; else if (Tj <= st.gpio.thr - st.gpio.hyst) gpioOn = false; }
+    if (!cache || cache.on !== gpioOn) {
+      const fr = fanRunState(st, P, fanOver, gpioOn);
+      let Pfan = 0, Qstir = 0;
+      st.fans.forEach((f, i) => {
+        if (!fr[i].on || fr[i].el.over) return;
+        const w = fr[i].el.V * fr[i].el.I;
+        Pfan += f.mount === 'heatsink' ? w : 0.5 * w;
+        if (f.mount === 'heatsink' && fr[i].el.running) Qstir += 0.75 * fr[i].el.q;
+      });
+      cache = { on: gpioOn, fr, ops: buildOpenings(gm, st, fr, P), Pother: Pdisp * P.fDispIn + (st.hubInside ? P.pHub : 0) + Pfan, Qstir };
+    }
+    const fl = solveFlow(cache.ops, Tb, ctx.Ta, P);
+    const v = heatsinkSpeed(gm, st, pi, cache.fr, cache.ops, fl).v;
+    const Gc = Math.cbrt(Gn ** 3 + (gF * Math.pow(v, 0.6)) ** 3);
+    const UA = wallUA(gm, P, enclosure, (cache.Qstir + fl.q) / Across).UA;
+    const Gba = UA + rhoAt(ctx.Ta) * CP * fl.q;
+    const dBd = (Pb - Gc * (Tbd - Tb) - P.gScr * (Tbd - Ts)) / P.cBoard;
+    const dB = (Gc * (Tbd - Tb) + cache.Pother - Gba * (Tb - ctx.Ta)) / P.cBox;
+    Tbd += dBd * dt; Tb += dB * dt;
+    if (t % 10 === 0) out.push({ t, Tj: Tbd + Pb * P.rInt, Tb, fan: gpioOn });
+  }
+  return out;
+}
+</script>
+
+<script>
+// ---------- Page ----------
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const LS_KEY = 'mixpi-cooling-model-v3';
+const N_SAMPLES = 32;
+const clone = o => JSON.parse(JSON.stringify(o));
+const f0 = v => Math.round(v).toString();
+const f1 = v => (Math.round(v * 10) / 10).toFixed(1);
+const f2 = v => (Math.round(v * 100) / 100).toFixed(2);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const WALL_NAMES = { front: 'front (low)', back: 'back (high)', left: 'left', right: 'right' };
+const FAN_NAMES = ['Fan 1 · 30 mm', 'Fan 2 · 60 mm'];
+
+const BASE_STATE = {
+  load: 'decks', renderer: 'gpu', ambient: 25,
+  enclosure: 'cardboard',
+  // Measured 2026-11-08: 23.5 cm wide, 15.2 cm deep, 10 cm at the back, 5.7 cm at the front.
+  dims: { cardboard: { L: 235, D: 152, H: 100, Hf: 57 }, printed: { L: 235, D: 152, H: 100, Hf: 57 } },
+  piS: 65, piX: 0, hubInside: true, tape: false,
+  fans: [
+    { mount: 'none', gap: 7, push: true, wall: 'back', z: 95, along: 50, dir: 'exhaust', supply: 'hdr5', control: 'always' },
+    { mount: 'none', gap: 10, push: true, wall: 'back', z: 67, along: 50, dir: 'exhaust', supply: 'boost9Hub', control: 'always', rated: '12' },
+  ],
+  vents: { low: { n: 0, d: 15, wall: 'front', z: 15, along: 50 }, high: { n: 0, d: 12, wall: 'back', z: 80, along: 50 } },
+  gpio: { thr: 60, hyst: 10 }, cal: { T: 67.5, amb: 25, renderer: 'sw', tape: true }, dispPins: '4-6',
+  pOver: {}, fanOver: [{}, {}],
+};
+
+// ---------- Presets ----------
+const vent = (n, d, wall, z, along) => ({ n, d, wall, z, along });
+const dimsOf = s => s.dims[s.enclosure];
+const piAlong = s => Math.round(clamp((dimsOf(s).L / 2 + s.piX) / dimsOf(s).L * 100, 0, 100));
+function bare(s) {
+  s.enclosure = 'cardboard'; s.hubInside = true; s.tape = false;   // tape removed 2026-11-08
+  s.fans.forEach(f => { f.mount = 'none'; });
+  s.vents.low.n = 0; s.vents.high.n = 0;
+}
+function smallOnHeatsink(s) { Object.assign(s.fans[0], { mount: 'heatsink', gap: 7, push: true, supply: 'hdr5', control: 'always' }); }
+// Big fan high on the back wall, centred on the SoC heatsink's height and position.
+function bigOnBack(s, dir) {
+  const aim = Math.round(piPlace(geometry(dimsOf(s)), s).hs.z - 4);
+  Object.assign(s.fans[1], { mount: 'wall', wall: 'back', dir, z: aim, along: piAlong(s), control: 'always', supply: { '5': 'hub5', '12': 'boost9Hub', '24': 'boostHub' }[s.fans[1].rated] });
+  s.vents.low = vent(12, 15, 'front', 15, 50);
+}
+const bigExhaust = s => bigOnBack(s, 'exhaust');
+const PRESETS = [
+  { id: 'sealed', name: 'Sealed box', note: 'As measured', apply: s => bare(s) },
+  { id: 'vents', name: 'Passive vents', note: 'Low front, high back', apply: s => { bare(s); s.vents.low = vent(10, 12, 'front', 15, 50); s.vents.high = vent(10, 12, 'back', dimsOf(s).H - 20, piAlong(s)); } },
+  { id: 'smallHs', name: 'Small fan on heatsink', note: 'Box still sealed', apply: s => { bare(s); smallOnHeatsink(s); } },
+  { id: 'bigExhaust', name: 'Big fan exhaust', note: 'High back, low intake', apply: s => { bare(s); bigExhaust(s); } },
+  { id: 'both', name: 'Both fans', note: 'Heatsink + exhaust', apply: s => { bare(s); bigExhaust(s); smallOnHeatsink(s); } },
+  { id: 'intake', name: 'Intake at the Pi', note: '60 mm blowing in + backup', apply: s => { bare(s); bigOnBack(s, 'intake'); smallOnHeatsink(s); } },
+  { id: 'printed', name: 'Printed case', note: 'Intake at the Pi, hub outside', apply: s => { bare(s); s.enclosure = 'printed'; s.hubInside = false; s.tape = false; bigOnBack(s, 'intake'); smallOnHeatsink(s); s.vents.low = vent(30, 10, 'front', 12, 50); } },
+];
+const LAYOUT_KEYS = ['enclosure', 'hubInside', 'tape', 'fans', 'vents'];
+const layoutSig = s => JSON.stringify(LAYOUT_KEYS.map(k => s[k]));
+function withPreset(s, id) { const c = clone(s); PRESETS.find(p => p.id === id).apply(c); return c; }
+const matchingPreset = s => (PRESETS.find(p => layoutSig(withPreset(s, p.id)) === layoutSig(s)) || {}).id || null;
+
+// ---------- State ----------
+function merge(base, extra) {
+  if (!extra || typeof extra !== 'object' || Array.isArray(base) !== Array.isArray(extra)) return base;
+  for (const k of Object.keys(base)) {
+    if (!(k in extra)) continue;
+    const b = base[k], e = extra[k];
+    if (b && typeof b === 'object' && !Array.isArray(b) && Object.keys(b).length) base[k] = merge(b, e);
+    else if (Array.isArray(b) && Array.isArray(e)) base[k] = b.map((x, i) => (x && typeof x === 'object') ? merge(x, e[i]) : (e[i] ?? x));
+    else if (typeof b === typeof e || (b && typeof b === 'object')) base[k] = e;
+  }
+  return base;
+}
+function loadState() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { saved = null; }
+  const s = withPreset(BASE_STATE, 'intake');
+  return saved ? merge(s, saved) : s;
+}
+let S = loadState();
+function saveState() { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) { /* storage off: fine */ } }
+const realKey = k => k === '@enc' ? S.enclosure : k;
+const getPath = path => path.split('.').reduce((a, k) => a == null ? a : a[realKey(k)], S);
+function setPath(path, v) {
+  const ks = path.split('.').map(realKey); let a = S;
+  for (let i = 0; i < ks.length - 1; i++) a = a[ks[i]];
+  a[ks[ks.length - 1]] = v;
+}
+
+// ---------- Controls ----------
+const cid = path => 'c-' + path.replace(/[.@]/g, '-');
+const UNCONF = '<span class="tag">Unconfirmed</span>';
+function R(path, label, min, max, step, unit, show = '', extra = '') {
+  return `<div class="ctl" data-show="${show}"><label for="${cid(path)}"><span>${label}${extra}</span><output id="${cid(path)}-o" for="${cid(path)}"></output></label>
+  <input type="range" id="${cid(path)}" data-path="${path}" data-unit="${unit}" min="${min}" max="${max}" step="${step}"></div>`;
+}
+function SEG(path, label, opts, show = '') {
+  return `<fieldset class="ctl" data-show="${show}"><legend>${label}</legend><div class="seg-row">${opts.map(([v, t]) =>
+    `<label><input type="radio" name="${cid(path)}" value="${v}" data-path="${path}"><span>${t}</span></label>`).join('')}</div></fieldset>`;
+}
+function SEL(path, label, opts, show = '', extra = '') {
+  return `<div class="ctl" data-show="${show}"><label for="${cid(path)}"><span>${label}${extra}</span></label><select id="${cid(path)}" data-path="${path}">${opts.map(([v, t]) =>
+    `<option value="${v}">${t}</option>`).join('')}</select></div>`;
+}
+function CHK(path, label, show = '') {
+  return `<label class="chk" data-show="${show}"><input type="checkbox" id="${cid(path)}" data-path="${path}"><span>${label}</span></label>`;
+}
+const WALLS = [['back', 'Back (high)'], ['front', 'Front (low)'], ['left', 'Left'], ['right', 'Right']];
+const SUPPLY_OPTS = Object.entries(SUPPLIES).map(([k, v]) => [k, v.label]);
+function fanControls(i) {
+  const p = `fans.${i}`;
+  return `${i === 1 ? SEG(`${p}.rated`, 'Rated voltage (label: 12 V, 0.22 A)', [['5', '5 V'], ['12', '12 V'], ['24', '24 V']]) : ''}
+  ${SEG(`${p}.mount`, 'Mounting', [['none', 'Not fitted'], ['heatsink', 'On heatsink'], ['wall', 'On a wall']])}
+  <div class="sub-grp" data-show="${p}.mount=heatsink">
+    ${R(`${p}.gap`, 'Gap above the SoC heatsink', 3, 25, 1, 'mm')}
+    ${CHK(`${p}.push`, 'Blows onto the heatsink (unticked: pulls air off it)')}
+    <p class="hint">${i === 0 ? 'Screw the case lid to the Pi on M2.5 standoffs, fan facing the heatsinks.' : 'A 60 mm fan over the Pi covers the SoC and RAM heatsinks.'}</p>
+  </div>
+  <div class="sub-grp" data-show="${p}.mount=wall">
+    ${SEL(`${p}.wall`, 'Wall', WALLS)}
+    ${R(`${p}.z`, 'Height of fan centre', 10, 300, 1, 'mm')}
+    ${R(`${p}.along`, 'Position along the wall', 0, 100, 1, '%')}
+    ${SEG(`${p}.dir`, 'Direction', [['exhaust', 'Exhaust (blows out)'], ['intake', 'Intake (blows in)']])}
+  </div>
+  <div data-show="${p}.mount=heatsink,wall" class="grp" style="padding-top: 0">
+    ${SEL(`${p}.supply`, 'Power', SUPPLY_OPTS)}
+    ${SEG(`${p}.control`, 'Switching', [['always', 'Always on'], ['gpio', 'GPIO12 switched']])}
+  </div>`;
+}
+function ventControls(g, name) {
+  const p = `vents.${g}`;
+  return `<div class="grp" style="padding-top: 0"><h3 class="lab-up" style="font-weight: 600">${name}</h3>
+    ${R(`${p}.n`, 'Number of holes', 0, 40, 1, '')}
+    <div class="sub-grp" data-show="${p}.n>0">
+      ${R(`${p}.d`, 'Hole diameter', 3, 25, 1, 'mm')}
+      ${SEL(`${p}.wall`, 'Wall', WALLS)}
+      ${R(`${p}.z`, 'Height of the row', 5, 300, 1, 'mm')}
+      ${R(`${p}.along`, 'Row centre along the wall', 0, 100, 1, '%')}
+    </div></div>`;
+}
+function buildControls() {
+  $('#controls').innerHTML = `
+  <details open><summary>Session <span class="sum-val" id="sum-session"></span></summary><div class="grp">
+    ${SEG('load', 'Load', Object.entries(LOADS).map(([k, v]) => [k, v.label]))}
+    ${SEG('renderer', 'Mixxx drawing', [['gpu', 'V3D GPU (live Pi)'], ['sw', 'Software GL (image build)']])}
+    ${R('ambient', 'Room temperature', 15, 40, 0.5, '°C')}
+  </div></details>
+  <details open><summary>${FAN_NAMES[0]} <span class="sum-val" id="sum-f0"></span></summary><div class="grp">${fanControls(0)}</div></details>
+  <details open><summary>${FAN_NAMES[1]} <span class="sum-val" id="sum-f1"></span></summary><div class="grp">${fanControls(1)}</div></details>
+  <details><summary>Vent holes <span class="sum-val" id="sum-vents"></span></summary><div class="grp">
+    ${ventControls('low', 'Low row (intake side)')}
+    ${ventControls('high', 'High row (outlet side)')}
+    <p class="hint">Either row can sit on any wall; the solver works out which way air goes.</p>
+  </div></details>
+  <details><summary>Enclosure <span class="sum-val" id="sum-box"></span></summary><div class="grp">
+    ${SEG('enclosure', 'Model', [['cardboard', 'Cardboard box'], ['printed', 'Printed case']])}
+    ${R('dims.@enc.L', 'Width, left to right', 120, 450, 1, 'mm')}
+    ${R('dims.@enc.D', 'Depth, front to back', 80, 350, 1, 'mm')}
+    ${R('dims.@enc.H', 'Back (high) wall height', 50, 300, 1, 'mm')}
+    ${R('dims.@enc.Hf', 'Front (low) wall height', 20, 300, 1, 'mm')}
+    <p class="hint" id="frontNote"></p>
+    ${CHK('hubInside', 'USB hub sits inside the box')}
+    ${CHK('tape', 'Masking tape still on the board')}
+  </div></details>
+  <details><summary>Pi position <span class="sum-val" id="sum-pi"></span></summary><div class="grp">
+    ${R('piS', 'Board centre, from the high edge along the slant', 30, 300, 1, 'mm')}
+    ${R('piX', 'Board centre, left or right of middle', -150, 150, 1, 'mm')}
+  </div></details>
+  <details><summary>Fan switching <span class="sum-val" id="sum-gpio"></span></summary><div class="grp">
+    ${R('gpio.thr', 'Fan on at', 45, 80, 1, '°C')}
+    ${R('gpio.hyst', 'Fan off this far below', 3, 20, 1, 'K')}
+    <p class="hint">Applies to fans set to "GPIO12 switched". The overlay's defaults are 55 °C and 10 K.</p>
+  </div></details>
+  <details><summary>Calibration <span class="sum-val" id="sum-cal"></span></summary><div class="grp">
+    ${R('cal.T', 'Idle SoC reading, sealed box', 50, 85, 0.1, '°C')}
+    ${R('cal.amb', 'Room temperature at that reading', 15, 40, 0.5, '°C')}
+    ${SEG('cal.renderer', 'Mixxx drawing at that reading', [['sw', 'Software GL'], ['gpu', 'V3D GPU']])}
+    ${CHK('cal.tape', 'Masking tape was still on the board')}
+    <p class="hint">Default: 2026-11-08 13:02, box closed, before the GPU fix and with the tape on.</p>
+    <p class="hint" id="calCheck"></p>
+  </div></details>`;
+}
+
+function showRule(rule) {
+  if (!rule) return true;
+  const m = rule.match(/^([\w.@]+)(=|>)(.+)$/);
+  const v = getPath(m[1]);
+  if (m[2] === '>') return Number(v) > Number(m[3]);
+  return m[3].split(',').includes(String(v));
+}
+function outputText(path, v) {
+  if (path.endsWith('.along')) {
+    const ks = path.split('.'); const obj = getPath(ks.slice(0, -1).join('.'));
+    const gm = geometry(dimsOf(S)), len = wallLen(gm, obj.wall);
+    return `${f0(len * v / 100)} mm from ${obj.wall === 'front' || obj.wall === 'back' ? 'left' : 'front'}`;
+  }
+  if (path === 'piX') return v === 0 ? 'centred' : `${Math.abs(v)} mm ${v < 0 ? 'left' : 'right'}`;
+  const el = document.getElementById(cid(path));
+  const u = el ? el.dataset.unit : '';
+  const d = Number(el && el.step) < 1 ? 1 : 0;
+  return `${d ? f1(v) : f0(v)}${u ? (u === '°' || u === '%' ? u : ' ' + u) : ''}`;
+}
+function syncControls() {
+  const gm = geometry(dimsOf(S));
+  // Dynamic limits that depend on the box
+  const setMax = (path, max) => { const el = document.getElementById(cid(path)); if (el) el.max = Math.max(Number(el.min) + 1, Math.floor(max)); };
+  S.fans.forEach((f, i) => { const pt = placeOnWall(gm, f.wall, f.along, f.z, fanSpec(S, i, S.fanOver).size); setMax(`fans.${i}.z`, pt.top); });
+  ['low', 'high'].forEach(g => { const v = S.vents[g]; setMax(`vents.${g}.z`, placeOnWall(gm, v.wall, v.along, v.z, v.d).top); });
+  setMax('piS', gm.slantLen - 30);
+  setMax('dims.@enc.Hf', dimsOf(S).H);
+  const px = document.getElementById(cid('piX')); if (px) { const m = Math.max(1, Math.floor(gm.L / 2 - 44)); px.min = -m; px.max = m; }
+  document.querySelectorAll('[data-path]').forEach(el => {
+    const path = el.dataset.path, v = getPath(path);
+    if (el.type === 'radio') el.checked = String(v) === el.value;
+    else if (el.type === 'checkbox') el.checked = !!v;
+    else if (document.activeElement !== el || el.type === 'range') el.value = v;
+    if (el.type === 'range') { const o = document.getElementById(el.id + '-o'); if (o) o.textContent = outputText(path, Number(v)); }
+  });
+  document.querySelectorAll('[data-show]').forEach(el => { el.hidden = !showRule(el.dataset.show); });
+  $('#frontNote').textContent = `The screen face slants at ${f1(gm.slantDeg)}° and is ${f0(gm.slantLen)} mm long.`;
+}
+function onControl(e) {
+  const el = e.target, path = el.dataset && el.dataset.path;
+  if (!path) return;
+  let v = el.type === 'checkbox' ? el.checked : el.value;
+  if (el.type === 'range' || el.type === 'number') v = Number(v);
+  if (path === 'fans.1.rated') S.fanOver[1] = {};
+  setPath(path, v);
+  saveState(); schedule();
+}
+
+// ---------- Calibration and samples (cached) ----------
+let calCache = { key: null };
+const calKey = () => JSON.stringify([S.dims.cardboard, S.cal, S.pOver, S.piS, S.piX]);
+function getCal() {
+  const k = calKey();
+  if (calCache.key !== k) calCache = { key: k, nom: calibrate(S, nominalParams(S.pOver), S.fanOver), samples: null };
+  return calCache;
+}
+function getSamples() {
+  const c = getCal();
+  if (!c.samples) c.samples = sampleParams(N_SAMPLES, S.pOver).map(P => ({ P, Gnat: calibrate(S, P, S.fanOver).Gnat }));
+  return c.samples;
+}
+const pct = (arr, p) => { const a = [...arr].sort((x, y) => x - y); return a[Math.round(p * (a.length - 1))]; };
+function band(st) {
+  const sm = getSamples();
+  const rs = sm.map(({ P, Gnat }) => evaluate(st, P, Gnat, S.fanOver));
+  const pick = f => ({ lo: pct(rs.map(f), 0.1), hi: pct(rs.map(f), 0.9) });
+  return { Tj: pick(r => r.Tj), Tb: pick(r => r.Tb), q: pick(r => r.fl.q), Gnat: { lo: pct(sm.map(s => s.Gnat), 0.1), hi: pct(sm.map(s => s.Gnat), 0.9) } };
+}
+
+// ---------- Status words ----------
+function socStatus(T) { if (T >= SOFT_THROTTLE) return ['critical', 'Throttles']; if (T >= TARGET) return ['serious', 'Near throttle']; if (T >= 65) return ['caution', 'Warm']; return ['good', 'Comfortable']; }
+const chip = ([cls, text]) => `<span class="chip ${cls}">${text}</span>`;
+
+// ---------- Readout ----------
+let bandCache = { key: null, val: null };
+const stateKey = () => JSON.stringify([S, calCache.key]);
+function drawReadout(r) {
+  const b = bandCache.key === stateKey() ? bandCache.val : null;
+  const Ta = S.ambient;
+  const rng = (x, unit = '°C') => !b ? 'working out the range…' : f0(x.lo) === f0(x.hi) ? `likely about ${f0(x.lo)} ${unit}` : `likely ${f0(x.lo)}–${f0(x.hi)} ${unit}`;
+  const margin = SOFT_THROTTLE - r.Tj, worst = b ? SOFT_THROTTLE - b.Tj.hi : null;
+  const mw = worst ?? margin;
+  const marginSt = mw >= 10 ? ['good', 'Safe'] : mw >= 5 ? ['caution', 'Thin'] : mw >= 0 ? ['serious', 'Very thin'] : ['critical', 'None'];
+  const regimeNote = r.regime === 'cycle' ? `Switched fan cycles ${S.gpio.thr - S.gpio.hyst}–${S.gpio.thr} °C, on about ${f0(r.duty * 100)} % of the time.`
+    : r.regime === 'off' ? `Switched fan stays off: the SoC never reaches ${S.gpio.thr} °C.` : r.regime === 'on' ? 'Switched fan runs the whole time.' : '';
+  const rise = r.Tb - Ta;
+  const boxSt = rise < 4 ? ['good', 'Near room'] : rise < 10 ? ['caution', 'Warm box'] : ['serious', 'Heat trap'];
+  const supply = nominalParams(S.pOver).supplyA, load = r.rails.piTotal / supply;
+  const supSt = load < 0.75 ? ['good', 'Within budget'] : load < 0.9 ? ['caution', 'Tight'] : ['critical', 'Over budget'];
+  const noise = r.noise;
+  const noiseSt = noise == null ? ['good', 'Silent'] : noise < 25 ? ['good', 'Quiet'] : noise < 35 ? ['caution', 'Audible when the room is quiet'] : ['serious', 'Noticeable'];
+  const qLs = r.fl.q * 1000;
+  $('#readout').innerHTML = `
+    <div class="tile hero"><span class="k">SoC temperature</span><span class="v">${f0(r.Tj)} °C</span>${chip(socStatus(r.Tj))}
+      <span class="sub">${rng(b && b.Tj)}${regimeNote ? '. ' + regimeNote : ''}</span></div>
+    <div class="tile"><span class="k">Throttle margin</span><span class="v">${margin >= 0 ? f0(margin) + ' K' : 'over by ' + f0(-margin) + ' K'}</span>${chip(marginSt)}
+      <span class="sub">to the 80 °C soft limit${worst != null ? `; worst plausible ${worst >= 0 ? f0(worst) + ' K' : 'over by ' + f0(-worst) + ' K'}` : ''}</span></div>
+    <div class="tile"><span class="k">Box air</span><span class="v">${f0(r.Tb)} °C</span>${chip(boxSt)}
+      <span class="sub">${f1(rise)} K above the room; ${rng(b && b.Tb)}</span></div>
+    <div class="tile"><span class="k">Airflow through the box</span><span class="v">${qLs < 0.95 ? f2(qLs) : f1(qLs)} L/s</span>
+      <span class="sub">${f1(qLs * 2.119)} CFM · ${f1(r.ach)} air changes a minute</span>
+      <span class="sub">Air over the SoC heatsink: ${f2(r.hsV ? r.hsV.v : 0)} m/s</span></div>
+    <div class="tile"><span class="k">5 V current on the Pi supply</span><span class="v">${f2(r.rails.piTotal)} A</span>${chip(supSt)}
+      <span class="sub">of ${f1(supply)} A. Board ${f2(r.rails.piBoard)}, display ${f2(r.rails.display)}, fans ${f2(r.rails.piFans + r.rails.piUsb)}${r.rails.hub > 0 ? `. Hub port: ${f2(r.rails.hub)} A` : ''}</span></div>
+    <div class="tile"><span class="k">Fan noise at 1 m</span><span class="v">${noise == null ? '—' : f0(noise) + ' dBA'}</span>${chip(noiseSt)}
+      <span class="sub">${noise == null ? 'No fan running' : '±5 dB; cheap small fans also whine. Any music covers it.'}</span></div>`;
+  const cal = getCal();
+  $('#calLine').innerHTML = `Fitted board-to-air conductance <span class="mono">${(cal.nom.Gnat).toFixed(3)} W/K</span>${b ? ` (range ${b.Gnat.lo.toFixed(3)}–${b.Gnat.hi.toFixed(3)})` : ''}; open-air Pi 4 with heatsinks ≈ 0.14`;
+}
+
+// ---------- Warnings ----------
+function drawAlerts(r) {
+  const out = [];
+  const gm = r.gm;
+  const cal = getCal();
+  if (cal.nom.flag === 'hot') out.push(['critical', 'Calibration', 'With these assumptions the box air alone would be hotter than the reading. Check the room temperature or the box size.']);
+  if (cal.nom.flag === 'cold') out.push(['critical', 'Calibration', 'The reading is lower than these assumptions allow. Check the room temperature and the power figures.']);
+  S.fans.forEach((f, i) => {
+    if (f.mount === 'none') return;
+    const fr = r.runOn[i], spec = fr.spec, name = FAN_NAMES[i];
+    if (fr.el.over) out.push(['critical', name, `This ${spec.vr} V fan would be over-volted on ${fr.el.V} V and could burn out. Pick a ${spec.vr} V supply.`]);
+    else if (!fr.el.running) out.push(['serious', name, `A ${spec.vr} V fan on ${fr.el.V < 4 ? '3.3' : fr.el.V < 6 ? '5' : '12'} V won't start${f.mount === 'wall' ? ', so it acts as a 60 mm hole in the wall' : ''}.${spec.vr >= 12 ? ' Use the 12 V boost cable.' : ''}`]);
+    else if (fr.el.marginal) out.push(['caution', name, 'Close to its start voltage; it may not start every time.']);
+    if (f.mount === 'wall') {
+      const pt = placeOnWall(gm, f.wall, f.along, f.z, spec.size);
+      if (!pt.fits) out.push(['serious', name, `It doesn't fit on the ${WALL_NAMES[f.wall]} wall: only ${f0(pt.top)} mm tall there.`]);
+      if (f.wall === 'back' || f.wall === 'front') {
+        const yIn = f.wall === 'back' ? gm.D - spec.thick : spec.thick;
+        const roof = gm.Hf + (gm.H - gm.Hf) * yIn / gm.D;
+        if (pt.z + spec.size / 2 > roof - 1) out.push(['note', name, `Mount it on the outside of the wall. Inside, its ${spec.thick} mm frame would hit the slanted lid (${f0(roof)} mm high there).`]);
+      }
+      const k = r.ops.findIndex(o => o.kind === 'fan' && o.i === i);
+      if (k >= 0 && fr.el.running && Math.abs(r.fl.per[k]) < 0.45 * fr.el.q) out.push(['caution', name, `Choked: it moves ${f1(Math.abs(r.fl.per[k]) * 1000)} of a possible ${f1(fr.el.q * 1000)} L/s. Add more ${f.dir === 'exhaust' ? 'intake' : 'outlet'} holes, roughly as much open area as the fan face.`]);
+    }
+    if (f.supply === 'boostPi') out.push(['caution', name, 'The boost cable draws from the Pi\'s USB ports, which share 1.2 A. A hub port keeps it off the Pi.']);
+  });
+  const running = S.fans.some((f, i) => f.mount !== 'none' && r.runOn[i].el.running);
+  if (running && r.fl.q < 0.5e-3) out.push(['note', 'Stirring only', `Nothing carries air out of the box. The fan helps the heatsink shed heat into the box air, but the box still has to lose all ${f1(r.Pboard + r.Pother)} W through its walls, so the box air sits ${f0(r.Tb - S.ambient)} K above the room and climbs with every watt.`]);
+  if (!running && r.fl.q < 0.5e-3 && S.vents.low.n + S.vents.high.n === 0) out.push(['note', 'Sealed', 'Heat leaves only through the cardboard and the screen.']);
+  if (r.rails.hub > 0.5) out.push(['caution', 'Hub port', `The boost cable draws about ${f2(r.rails.hub)} A at 5 V. A USB 3 port gives 0.9 A, but a USB 2 port only 0.5 A. Use a USB 3 or charging port.`]);
+  if (r.rails.piTotal > nominalParams(S.pOver).supplyA * 0.9) out.push(['critical', 'Power', 'The Pi\'s 5 V supply is close to its limit. Past gigs had cutouts; move fan power to a hub port.']);
+  if (r.Tj >= SOFT_THROTTLE) out.push(['serious', 'Throttling', 'The Pi would slow its CPU at 80 °C and hover there, so Mixxx would lose CPU time. Expect UI lag or audio dropouts, not this temperature.']);
+  $('#alerts').innerHTML = out.map(([c, t, m]) => `<div class="alert ${c}"><b>${t}</b><span>${m}</span></div>`).join('');
+}
+
+// ---------- Drawings ----------
+const pt2 = (x, y) => `${x.toFixed(1)},${y.toFixed(1)}`;
+function arrowDefs(id) {
+  return `<defs>
+    <marker id="${id}-in" class="ah-in" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="${id}-out" class="ah-out" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="${id}-stir" class="ah-stir" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>`;
+}
+function flowArrows(r, proj, id, sideView) {
+  // Arrows across the wall at each opening that moves a noticeable share of the air.
+  let s = '';
+  const qmax = Math.max(1e-6, ...r.fl.per.map(Math.abs));
+  r.ops.forEach((o, k) => {
+    const q = r.fl.per[k];
+    if (Math.abs(q) < Math.max(0.03e-3, 0.06 * qmax)) return;
+    const [nx, ny] = proj.dir(o.n);
+    const w = 1.2 + 2.6 * Math.sqrt(Math.abs(q) / qmax);
+    const len = 12 + 18 * Math.sqrt(Math.abs(q) / qmax);
+    const [px, py] = proj.p(o);
+    if (Math.hypot(nx, ny) < 0.5) {   // flow points at the viewer: draw a dot
+      s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${(2 + w).toFixed(1)}" style="fill: var(${q > 0 ? '--air-in' : '--air-out'})"/>`;
+      return;
+    }
+    const a = q > 0 ? [px - nx * len, py - ny * len] : [px + nx * 4, py + ny * 4];
+    const b = q > 0 ? [px + nx * 6, py + ny * 6] : [px - nx * len, py - ny * len];
+    s += `<line class="${q > 0 ? 'air-in' : 'air-out'}" x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}" stroke-width="${w.toFixed(1)}" vector-effect="non-scaling-stroke" marker-end="url(#${id}-${q > 0 ? 'in' : 'out'})"/>`;
+  });
+  // Main path from where air enters, past the heatsink, to where it leaves.
+  const path = r.hsV && r.hsV.parts.path;
+  if (path && r.fl.q >= 0.2e-3) {
+    const A = proj.p(path.a), B = proj.p(path.b), H = proj.p(r.pi.hs);
+    const C = [2 * H[0] - (A[0] + B[0]) / 2, 2 * H[1] - (A[1] + B[1]) / 2];
+    const w = 1.5 + 3 * Math.min(1, r.fl.q / 8e-3);
+    s += `<path class="air-path" d="M${pt2(...A)} Q${pt2(...C)} ${pt2(...B)}" stroke-width="${w.toFixed(1)}" vector-effect="non-scaling-stroke" marker-end="url(#${id}-out)"/>`;
+  }
+  // Stirring loop beside a heatsink-mounted fan
+  S.fans.forEach((f, i) => {
+    if (f.mount !== 'heatsink' || !r.runOn[i].on || !r.runOn[i].el.running) return;
+    const c = proj.p(r.pi.hs), [nx, ny] = proj.dir(r.pi.n);
+    const cx = c[0] + nx * (22 + 6 * i), cy = c[1] + ny * (22 + 6 * i), rx = 30 + 6 * i, ry = 11;
+    const ang = Math.atan2(ny, nx) * 180 / Math.PI + 90;
+    s += `<g transform="rotate(${ang.toFixed(1)} ${cx.toFixed(1)} ${cy.toFixed(1)})"><path class="stir" d="M${pt2(cx - rx, cy)} A${rx} ${ry} 0 1 1 ${pt2(cx + rx * 0.7, cy + ry * 0.72)}" stroke-width="1.6" vector-effect="non-scaling-stroke" marker-end="url(#${id}-stir)"/></g>`;
+  });
+  return s;
+}
+function drawSide(r) {
+  const gm = r.gm, pad = 44, top = 26;
+  const W = gm.D + pad * 2, Hh = gm.H + top + 34;
+  const X = y => pad + y, Y = z => top + gm.H - z, fs = Math.max(7, W / 30);
+  const sp = (s, d) => { // along the slant from the high edge, d inward
+    const y = gm.D - s * Math.cos(gm.th) + d * Math.sin(gm.th), z = gm.H - s * Math.sin(gm.th) - d * Math.cos(gm.th);
+    return [X(y), Y(z)];
+  };
+  const poly = (s0, s1, d0, d1) => [[s0, d0], [s1, d0], [s1, d1], [s0, d1]].map(([s, d]) => pt2(...sp(s, d))).join(' ');
+  const pi = r.pi;
+  let g = arrowDefs('sv');
+  g += `<polygon class="box" points="${pt2(X(0), Y(0))} ${pt2(X(gm.D), Y(0))} ${pt2(X(gm.D), Y(gm.H))} ${pt2(X(0), Y(gm.Hf))}" vector-effect="non-scaling-stroke"/>`;
+  // Screen on top of the slant, Pi beneath it
+  const s0 = clamp(pi.s - 52, 0, gm.slantLen), s1 = clamp(pi.s + 52, 0, gm.slantLen);
+  g += `<polygon class="screen" points="${poly(s0, s1, -7, -1)}" vector-effect="non-scaling-stroke"/>`;
+  g += `<polygon class="pcb" points="${poly(pi.s - 28, pi.s + 28, 5, 6.6)}"/>`;
+  g += `<polygon class="hs" points="${poly(pi.s - 9, pi.s + 5, 6.6, 15)}"/><polygon class="hs" points="${poly(pi.s + 8, pi.s + 16, 6.6, 12)}"/>`;
+  // Hub on the floor
+  if (S.hubInside) g += `<rect class="hub" x="${X(gm.D * 0.4 - 22).toFixed(1)}" y="${Y(22).toFixed(1)}" width="45" height="22" rx="3"/><text class="lbl" x="${X(gm.D * 0.4).toFixed(1)}" y="${Y(28).toFixed(1)}" text-anchor="middle" font-size="${fs * 0.85}">hub</text>`;
+  // Vents
+  ['low', 'high'].forEach(k => {
+    const v = S.vents[k]; if (!(v.n > 0)) return;
+    const p = placeOnWall(gm, v.wall, v.along, v.z, v.d);
+    if (v.wall === 'front' || v.wall === 'back') {
+      const x = X(p.y);
+      g += `<rect class="vent" x="${(x - 3).toFixed(1)}" y="${Y(p.z + v.d / 2).toFixed(1)}" width="6" height="${v.d}" rx="3" vector-effect="non-scaling-stroke"/>`;
+    } else for (let j = -1; j <= 1; j++) g += `<circle class="vent" cx="${(X(p.y) + j * v.d * 1.3).toFixed(1)}" cy="${Y(p.z).toFixed(1)}" r="${(v.d / 2).toFixed(1)}" vector-effect="non-scaling-stroke"/>`;
+  });
+  // Fans
+  S.fans.forEach((f, i) => {
+    if (f.mount === 'none') return;
+    const fr = r.runOn[i], size = fr.spec.size, cls = fr.on && fr.el.running ? 'fan' : 'fan-off', th = fr.spec.thick;
+    if (f.mount === 'heatsink') {
+      const d0 = 15 + f.gap;
+      g += `<polygon class="${cls}" points="${poly(pi.s - size / 2, pi.s + size / 2, d0, d0 + th)}" vector-effect="non-scaling-stroke"/>`;
+      const [lx, ly] = sp(pi.s + size / 2 + 4, d0 + th / 2);
+      g += `<text class="lbl-strong" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="${fs}" dominant-baseline="central">Fan ${i + 1}</text>`;
+    } else {
+      const p = placeOnWall(gm, f.wall, f.along, f.z, size);
+      if (f.wall === 'front' || f.wall === 'back') {
+        const x = X(p.y), out = f.wall === 'back' ? 1 : -1;   // drawn on the outside of the wall
+        g += `<rect class="${cls}" x="${(out > 0 ? x + 1 : x - th - 1).toFixed(1)}" y="${Y(p.z + size / 2).toFixed(1)}" width="${th}" height="${size}" rx="2" vector-effect="non-scaling-stroke"/>`;
+        g += `<text class="lbl-strong" x="${(x + out * 4).toFixed(1)}" y="${Y(p.z + size / 2 + 4).toFixed(1)}" font-size="${fs}" text-anchor="${out > 0 ? 'start' : 'end'}">Fan ${i + 1}</text>`;
+      } else {
+        g += `<circle class="${cls}" cx="${X(p.y).toFixed(1)}" cy="${Y(p.z).toFixed(1)}" r="${size / 2}" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>`;
+        g += `<text class="lbl-strong" x="${X(p.y).toFixed(1)}" y="${Y(p.z).toFixed(1)}" font-size="${fs}" text-anchor="middle" dominant-baseline="central">Fan ${i + 1} (${f.wall})</text>`;
+      }
+    }
+  });
+  const proj = { p: o => [X(o.y), Y(o.z)], dir: n => [n.y, -n.z] };
+  g += flowArrows(r, proj, 'sv', true);
+  // Labels and dimensions
+  const [pl, pq] = sp(pi.s, -14);
+  g += `<text class="lbl" x="${pl.toFixed(1)}" y="${pq.toFixed(1)}" font-size="${fs}" text-anchor="middle">screen</text>`;
+  const [ql, qq] = sp(pi.s - 24, 26);
+  g += `<text class="lbl-strong" x="${ql.toFixed(1)}" y="${qq.toFixed(1)}" font-size="${fs}" text-anchor="middle">Pi 4</text>`;
+  g += `<text class="wall-note" x="${X(0).toFixed(1)}" y="${(Y(0) + fs * 1.6).toFixed(1)}" font-size="${fs * 0.9}">front ${f0(gm.Hf)}</text>`;
+  g += `<text class="wall-note" x="${X(gm.D).toFixed(1)}" y="${(Y(0) + fs * 1.6).toFixed(1)}" font-size="${fs * 0.9}" text-anchor="end">back ${f0(gm.H)} mm</text>`;
+  g += `<text class="wall-note" x="${X(gm.D / 2).toFixed(1)}" y="${(Y(0) + fs * 1.6).toFixed(1)}" font-size="${fs * 0.9}" text-anchor="middle">${f0(gm.D)} deep</text>`;
+  if (r.fl.q < 0.2e-3 && !S.fans.some((f, i) => f.mount !== 'none' && r.runOn[i].el.running))
+    g += `<text class="lbl" x="${X(gm.D * 0.45).toFixed(1)}" y="${Y(gm.Hf * 0.62).toFixed(1)}" font-size="${fs}" text-anchor="middle">no air exchange</text>`;
+  $('#sideView').innerHTML = `<svg viewBox="0 0 ${W.toFixed(0)} ${Hh.toFixed(0)}" role="img" aria-label="Side view of the box with the air path">${g}</svg>`;
+}
+function drawTop(r) {
+  const gm = r.gm, pad = 44, top = 50;
+  const W = gm.L + pad * 2, Hh = gm.D + top + 52;
+  const X = x => pad + x, Y = y => top + gm.D - y, fs = Math.max(7, W / 32);
+  const pi = r.pi, cth = Math.cos(gm.th);
+  let g = arrowDefs('tv');
+  g += `<rect class="box" x="${X(0)}" y="${Y(gm.D)}" width="${gm.L}" height="${gm.D}" vector-effect="non-scaling-stroke"/>`;
+  // Screen footprint, Pi, heatsinks, hub
+  const scrH = 100 * cth;
+  g += `<rect class="screen" x="${(X(pi.x) - 82).toFixed(1)}" y="${(Y(pi.y) - scrH / 2).toFixed(1)}" width="164" height="${scrH.toFixed(1)}" opacity=".25" vector-effect="non-scaling-stroke"/>`;
+  if (S.hubInside) {
+    const hx = clamp(gm.L * 0.42, 85, gm.L - 85), hy = clamp(gm.D * 0.38, 25, gm.D - 25);
+    g += `<rect class="hub-out" x="${(X(hx) - 82).toFixed(1)}" y="${(Y(hy) - 22).toFixed(1)}" width="165" height="45" rx="4" vector-effect="non-scaling-stroke"/><text class="lbl" x="${X(hx).toFixed(1)}" y="${(Y(hy) + 16).toFixed(1)}" text-anchor="middle" font-size="${fs * 0.85}">hub on the floor</text>`;
+  }
+  const ph = 56 * cth;
+  g += `<rect class="pcb" x="${(X(pi.x) - 42.5).toFixed(1)}" y="${(Y(pi.y) - ph / 2).toFixed(1)}" width="85" height="${ph.toFixed(1)}" rx="2" opacity=".9"/>`;
+  g += `<rect class="hs" x="${(X(pi.x) - 14).toFixed(1)}" y="${(Y(pi.y) - 7 * cth).toFixed(1)}" width="14" height="${(14 * cth).toFixed(1)}"/><rect class="hs" x="${(X(pi.x) + 4).toFixed(1)}" y="${(Y(pi.y) - 5 * cth).toFixed(1)}" width="10" height="${(10 * cth).toFixed(1)}"/>`;
+  g += `<text class="lbl-strong" x="${(X(pi.x) - 38).toFixed(1)}" y="${(Y(pi.y) - ph / 2 - 4).toFixed(1)}" font-size="${fs}">Pi 4 (under the screen)</text>`;
+  // Vents
+  ['low', 'high'].forEach(k => {
+    const v = S.vents[k]; if (!(v.n > 0)) return;
+    const p = placeOnWall(gm, v.wall, v.along, v.z, v.d);
+    const len = wallLen(gm, v.wall), shown = Math.min(v.n, 14), gap = Math.min(v.d * 1.6, (len - 10) / shown);
+    for (let j = 0; j < shown; j++) {
+      const off = (j - (shown - 1) / 2) * gap;
+      const x = v.wall === 'left' ? 0 : v.wall === 'right' ? gm.L : clamp(p.x + off, 3, gm.L - 3);
+      const y = v.wall === 'front' ? 0 : v.wall === 'back' ? gm.D : clamp(p.y + off, 3, gm.D - 3);
+      g += `<circle class="vent" cx="${X(x).toFixed(1)}" cy="${Y(y).toFixed(1)}" r="${clamp(v.d / 2, 1.5, 6).toFixed(1)}" vector-effect="non-scaling-stroke"/>`;
+    }
+  });
+  // Fans
+  S.fans.forEach((f, i) => {
+    if (f.mount === 'none') return;
+    const fr = r.runOn[i], size = fr.spec.size, cls = fr.on && fr.el.running ? 'fan' : 'fan-off', th = fr.spec.thick;
+    if (f.mount === 'heatsink') {
+      const cx = X(pi.x) - 7, cy = Y(pi.y);
+      g += `<rect class="${cls}" x="${(cx - size / 2).toFixed(1)}" y="${(cy - size * cth / 2).toFixed(1)}" width="${size}" height="${(size * cth).toFixed(1)}" rx="2" vector-effect="non-scaling-stroke"/>`;
+      g += `<circle class="fan-off" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${(size * 0.42 * cth).toFixed(1)}" vector-effect="non-scaling-stroke"/>`;
+      g += `<text class="lbl-strong" x="${(cx + size / 2 + 3).toFixed(1)}" y="${(cy + size * cth / 2 + fs).toFixed(1)}" font-size="${fs}">Fan ${i + 1}</text>`;
+    } else {
+      const p = placeOnWall(gm, f.wall, f.along, f.z, size);
+      const horiz = f.wall === 'front' || f.wall === 'back';
+      const x = horiz ? X(p.x) - size / 2 : (f.wall === 'left' ? X(0) - 3 : X(gm.L) - th + 3);
+      const y = horiz ? (f.wall === 'back' ? Y(gm.D) - th - 1 : Y(0) + 1) : Y(p.y) - size / 2;
+      g += `<rect class="${cls}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${horiz ? size : th}" height="${horiz ? th : size}" rx="2" vector-effect="non-scaling-stroke"/>`;
+      const tx = horiz ? X(p.x) : (f.wall === 'left' ? X(0) + th + 2 : X(gm.L) - th - 2);
+      const ty = horiz ? (f.wall === 'back' ? Y(gm.D) + fs + 2 : Y(0) - 4) : Y(p.y) + size / 2 + fs;
+      g += `<text class="lbl-strong" x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" font-size="${fs}" text-anchor="${horiz ? 'middle' : f.wall === 'left' ? 'start' : 'end'}">Fan ${i + 1}</text>`;
+    }
+  });
+  const proj = { p: o => [X(o.x), Y(o.y)], dir: n => [n.x, -n.y] };
+  g += flowArrows(r, proj, 'tv', false);
+  g += `<text class="wall-note" x="${X(0).toFixed(1)}" y="${(Y(gm.D) - 6).toFixed(1)}" font-size="${fs * 0.9}">back (high edge, hinge)</text>`;
+  g += `<text class="wall-note" x="${X(gm.L / 2).toFixed(1)}" y="${(Y(0) + 44).toFixed(1)}" font-size="${fs * 0.9}" text-anchor="middle">front (low edge) · ${f0(gm.L)} × ${f0(gm.D)} mm</text>`;
+  $('#topView').innerHTML = `<svg viewBox="0 0 ${W.toFixed(0)} ${Hh.toFixed(0)}" role="img" aria-label="Top view of the box with the air path">${g}</svg>`;
+}
+
+// ---------- Heat path ----------
+function drawHeat(r) {
+  const Ta = S.ambient, Tb = r.Tb, Tbd = r.Tbd, Tj = r.Tj;
+  const lo = Math.floor((Ta - 5) / 10) * 10, hi = Math.max(90, Math.ceil((Tj + 5) / 10) * 10);
+  const X = t => (clamp(t, lo, hi) - lo) / (hi - lo) * 100;
+  const seg = (a, b, cls, txt) => b - a > 0.05 ? `<div class="heat-seg ${cls}" style="left:${X(a)}%; width:${Math.max(0, X(b) - X(a))}%">${X(b) - X(a) > 9 ? txt : ''}</div>` : '';
+  const ticks = []; for (let t = lo; t <= hi; t += 10) ticks.push(`<span style="left:${X(t)}%">${t}</span>`);
+  $('#heatBar').innerHTML = `
+    <div class="heat-track">
+      ${seg(Ta, Tb, 's1', `+${f0(Tb - Ta)}`)}${seg(Tb, Tbd, 's2', `+${f0(Tbd - Tb)}`)}${seg(Tbd, Tj, 's3', `+${f0(Tj - Tbd)}`)}
+      <div class="heat-line t75" style="left:${X(TARGET)}%" title="75 °C target"></div>
+      <div class="heat-line" style="left:${X(SOFT_THROTTLE)}%" title="80 °C soft throttle"></div>
+    </div>
+    <div class="heat-axis">${ticks.join('')}</div>
+    <div class="heat-keys">
+      <div><span class="muted">Room</span><span class="mono">${f1(Ta)} °C</span></div>
+      <div><i style="background: var(--heat1)"></i><span>Box air above the room</span><span class="mono">+${f1(Tb - Ta)} K</span></div>
+      <div><i style="background: var(--heat2)"></i><span>Heatsink and board above the box air</span><span class="mono">+${f1(Tbd - Tb)} K</span></div>
+      <div><i style="background: var(--heat3)"></i><span>Chip above its heatsink</span><span class="mono">+${f1(Tj - Tbd)} K</span></div>
+      <div><span class="muted">Dashed lines</span><span>75 °C target, 80 °C throttle</span></div>
+    </div>`;
+  const inBox = r.toBox + r.Pother, walls = r.UA * (Tb - Ta), air = r.Gv * (Tb - Ta);
+  $('#balance').innerHTML = `Heat into the box air: Pi ${f1(r.toBox)} W, display ${f1(5 * nominalParams(S.pOver).iDisp * nominalParams(S.pOver).fDispIn)} W${S.hubInside ? `, hub ${f1(nominalParams(S.pOver).pHub)} W` : ''}${r.Pfan > 0.05 ? `, fan motors ${f1(r.Pfan)} W` : ''}, so ${f1(inBox)} W in all. It leaves through the walls (${f1(walls)} W) and with the air (${f1(air)} W). Another ${f1(r.toScreen)} W goes from the Pi straight out through the screen.`;
+  const total = Tj - Ta || 1;
+  $('#airSummary').textContent = r.fl.q >= 0.5e-3
+    ? `${f1(r.fl.q * 1000)} L/s through the box carries ${f0(air / Math.max(1e-6, walls + air) * 100)} % of the box heat.`
+    : `Box air rise is ${f0((Tb - Ta) / total * 100)} % of the SoC's rise above the room.`;
+}
+
+// ---------- Session chart ----------
+let measured = [];
+function sessionSeries(P, G) {
+  const loadKey = S.load === 'idle' ? 'decks' : S.load;
+  const mine = simulate(S, P, G, S.fanOver, loadKey, 30);
+  const series = [{ name: 'Your layout', cls: 'layout', pts: mine.map(p => [p.t / 60, p.Tj]) }];
+  if (matchingPreset(S) !== 'sealed') {
+    const sealed = withPreset(S, 'sealed');
+    series.push({ name: 'Sealed box', cls: 'base', pts: simulate(sealed, P, G, S.fanOver, loadKey, 30).map(p => [p.t / 60, p.Tj]) });
+  }
+  measured.forEach((m, k) => series.push({ name: m.name, cls: 'meas', dash: k === 1, pts: m.pts }));
+  return { series, loadKey };
+}
+function drawSession(P, G) {
+  const { series, loadKey } = sessionSeries(P, G);
+  $('#sessionNote').textContent = `Idle, then ${LOADS[loadKey].label.toLowerCase()} for 30 minutes with ${S.renderer === 'sw' ? 'software GL' : 'the V3D GPU'}, room at ${f1(S.ambient)} °C.`;
+  $('#sessionLegend').innerHTML = series.map(s => `<span><i class="c-${s.cls}" style="border-top-color: var(--s-${s.cls === 'base' ? 'base' : s.cls === 'meas' ? 'meas' : 'layout'}); ${s.dash ? 'border-top-style: dashed' : ''}"></i>${esc(s.name)}</span>`).join('');
+  lineChart($('#sessionChart'), series);
+}
+function lineChart(host, series) {
+  const W = Math.max(300, host.clientWidth || 640), Hh = 270;
+  const m = { l: 38, r: W < 480 ? 64 : 120, t: 12, b: 30 };
+  const all = series.flatMap(s => s.pts);
+  const xMax = Math.max(30, ...all.map(p => p[0]));
+  const yLo = Math.floor((Math.min(...all.map(p => p[1]), S.ambient + 10) - 3) / 5) * 5;
+  const yHi = Math.max(85, Math.ceil((Math.max(...all.map(p => p[1])) + 2) / 5) * 5);
+  const X = x => m.l + x / xMax * (W - m.l - m.r), Y = y => m.t + (yHi - y) / (yHi - yLo) * (Hh - m.t - m.b);
+  let g = '';
+  const yStep = yHi - yLo > 50 ? 10 : 5;
+  for (let y = yLo; y <= yHi; y += yStep) g += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${Y(y).toFixed(1)}" y2="${Y(y).toFixed(1)}"/><text class="ax" x="${m.l - 6}" y="${Y(y).toFixed(1)}" text-anchor="end" dominant-baseline="central">${y}</text>`;
+  const xStep = xMax > 60 ? 15 : 5;
+  for (let x = 0; x <= xMax + 1e-9; x += xStep) g += `<text class="ax" x="${X(x).toFixed(1)}" y="${Hh - 10}" text-anchor="middle">${x}${x === 0 ? '' : ''}</text>`;
+  g += `<text class="ax" x="${W - m.r}" y="${Hh - 10}" text-anchor="end" dx="${m.r - 4}">min</text>`;
+  g += `<text class="ax" x="${m.l - 6}" y="${m.t - 2}" text-anchor="end">°C</text>`;
+  [[TARGET, 'r75', '75 °C target'], [SOFT_THROTTLE, 'r80', '80 °C throttle']].forEach(([t, c, l]) => {
+    if (t < yLo || t > yHi) return;
+    g += `<line class="ref ${c}" x1="${m.l}" x2="${W - m.r}" y1="${Y(t).toFixed(1)}" y2="${Y(t).toFixed(1)}"/><text class="ref-l ${c}" x="${m.l + 6}" y="${(Y(t) - 5).toFixed(1)}">${l}</text>`;
+  });
+  series.forEach(s => {
+    const d = s.pts.map((p, k) => `${k ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join('');
+    g += `<path class="ln c-${s.cls}${s.dash ? ' dash' : ''}" d="${d}"/>`;
+  });
+  // End labels, nudged apart
+  const ends = series.map(s => { const p = s.pts[s.pts.length - 1]; return { s, y: Y(p[1]), v: p[1], x: X(p[0]) }; }).sort((a, b) => a.y - b.y);
+  for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 15) ends[k].y = ends[k - 1].y + 15;
+  ends.forEach(e => {
+    g += `<circle class="f-${e.s.cls} dotring" cx="${e.x.toFixed(1)}" cy="${Y(e.v).toFixed(1)}" r="4"/>`;
+    g += `<text class="end-l" x="${(W - m.r + 8).toFixed(1)}" y="${e.y.toFixed(1)}" dominant-baseline="central">${W < 480 ? '' : esc(e.s.name.length > 13 ? e.s.name.slice(0, 12) + '…' : e.s.name) + ' '}${f0(e.v)}°</text>`;
+  });
+  g += `<line class="xhair" id="xh" x1="0" x2="0" y1="${m.t}" y2="${Hh - m.b}" visibility="hidden"/><g id="xhDots"></g>`;
+  g += `<rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${Hh - m.t - m.b}" fill="transparent" id="hit"/>`;
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="SoC temperature over a 30-minute session">${g}</svg><div class="tip" hidden></div>`;
+  const svg = host.querySelector('svg'), tip = host.querySelector('.tip'), xh = host.querySelector('#xh'), dots = host.querySelector('#xhDots');
+  const move = ev => {
+    const rect = svg.getBoundingClientRect(), sx = (ev.clientX - rect.left) * W / rect.width;
+    const t = clamp((sx - m.l) / (W - m.l - m.r) * xMax, 0, xMax);
+    xh.setAttribute('x1', X(t)); xh.setAttribute('x2', X(t)); xh.setAttribute('visibility', 'visible');
+    let rows = '', dd = '';
+    series.forEach(s => {
+      let best = s.pts[0]; for (const p of s.pts) if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;
+      if (Math.abs(best[0] - t) > 1) return;
+      rows += `<div><span><i style="background: var(--s-${s.cls === 'base' ? 'base' : s.cls === 'meas' ? 'meas' : 'layout'})"></i>${esc(s.name)}</span><b>${f1(best[1])} °C</b></div>`;
+      dd += `<circle class="f-${s.cls} dotring" cx="${X(best[0]).toFixed(1)}" cy="${Y(best[1]).toFixed(1)}" r="4"/>`;
+    });
+    dots.innerHTML = dd;
+    tip.innerHTML = `<div class="muted"><span>${f1(t)} min</span></div>${rows}`;
+    tip.hidden = false;
+    const px = (X(t) / W) * rect.width;
+    tip.style.left = Math.min(rect.width - tip.offsetWidth - 4, Math.max(0, px + 12)) + 'px';
+    tip.style.top = '8px';
+  };
+  host.querySelector('#hit').addEventListener('pointermove', move);
+  host.querySelector('#hit').addEventListener('pointerleave', () => { tip.hidden = true; xh.setAttribute('visibility', 'hidden'); dots.innerHTML = ''; });
+}
+function parseLog(text, name) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const pts = [], thr = [];
+  if (lines.length && /temp/i.test(lines[0]) && lines[0].includes(',')) {
+    const h = lines[0].split(',').map(x => x.trim().toLowerCase());
+    const it = h.findIndex(x => x === 'elapsed_s' || x === 'elapsed'), iT = h.findIndex(x => x.startsWith('temp')), iH = h.findIndex(x => x.startsWith('throttled'));
+    lines.slice(1).forEach((l, k) => {
+      const c = l.split(','); const T = parseFloat(c[iT]); if (!isFinite(T)) return;
+      const t = it >= 0 ? parseFloat(c[it]) : k * 10; pts.push([t / 60, T]);
+      if (iH >= 0) thr.push(parseInt(c[iH], 16) || 0);
+    });
+  } else lines.forEach(l => { const mm = l.match(/temp=([\d.]+)/); if (mm) pts.push([pts.length * 10 / 60, parseFloat(mm[1])]); });
+  return { name: name.replace(/\.(csv|txt|log)$/i, ''), pts, thr };
+}
+function drawCsvStats() {
+  $('#csvClear').hidden = !measured.length;
+  if (!measured.length) { $('#csvStats').innerHTML = ''; return; }
+  const rows = measured.map(m => {
+    const T = m.pts.map(p => p[1]), end = m.pts.length ? m.pts[m.pts.length - 1][0] : 0;
+    const last = m.pts.filter(p => p[0] >= end - 10).map(p => p[1]);
+    const above = m.pts.filter(p => p[1] >= TARGET).length * (m.pts.length > 1 ? (m.pts[1][0] - m.pts[0][0]) : 1 / 6);
+    const orBits = m.thr.reduce((a, b) => a | b, 0);
+    return `<tr><td>${esc(m.name)}</td><td class="num">${f0(end)} min</td><td class="num">${f1(Math.max(...T))} °C</td><td class="num">${f1(last.reduce((a, b) => a + b, 0) / Math.max(1, last.length))} °C</td><td class="num">${f1(above)} min</td><td class="num mono">${m.thr.length ? '0x' + orBits.toString(16) : 'not logged'}</td></tr>`;
+  }).join('');
+  $('#csvStats').innerHTML = `<table><thead><tr><th>Log</th><th class="num">Length</th><th class="num">Peak</th><th class="num">Mean, last 10 min</th><th class="num">At or above 75 °C</th><th class="num">Throttle flags (OR)</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ---------- Layout comparison ----------
+let cmpCache = { key: null, rows: null };
+function drawCmp(rows) {
+  const active = matchingPreset(S);
+  if (!rows) { $('#cmp').innerHTML = '<p class="muted small">Working out each layout…</p>'; return; }
+  const all = rows.flatMap(r => [r.lo, r.hi, r.Tj]);
+  const lo = Math.floor((Math.min(...all, S.ambient + 10) - 3) / 10) * 10, hi = Math.max(90, Math.ceil((Math.max(...all) + 3) / 10) * 10);
+  const X = t => (clamp(t, lo, hi) - lo) / (hi - lo) * 100;
+  const ticks = []; for (let t = lo; t <= hi; t += 10) ticks.push(`<span style="left:${X(t)}%">${t} °C</span>`);
+  $('#cmp').innerHTML = rows.map(r => `
+    <div class="cmp-row${r.id === active ? ' active' : ''}">
+      <button type="button" data-preset="${r.id || ''}" ${r.id ? '' : 'disabled'} aria-label="${esc(r.name)}: ${f0(r.Tj)} °C, likely ${f0(r.lo)} to ${f0(r.hi)}">${esc(r.name)}</button>
+      <div class="cmp-track">
+        <div class="base"></div>
+        <div class="vl t75" style="left:${X(TARGET)}%"></div><div class="vl" style="left:${X(SOFT_THROTTLE)}%"></div>
+        <div class="rng" style="left:${X(r.lo)}%; width:${Math.max(0.6, X(r.hi) - X(r.lo))}%"></div>
+        <div class="dot" style="left:${X(r.Tj)}%"></div>
+      </div>
+      <div class="cmp-val">${f0(r.Tj)} °C</div>
+    </div>`).join('') + `<div class="cmp-row"><span></span><div class="cmp-axis">${ticks.join('')}</div><span></span></div>`;
+  $('#cmpNote').textContent = `${LOADS[S.load].long}, ${S.renderer === 'sw' ? 'software GL' : 'V3D GPU'}, room ${f1(S.ambient)} °C. Dot: typical. Bar: likely range. Dashed: 75 and 80 °C. Click a row to load it.`;
+}
+function computeCmp() {
+  const sm = getSamples(), Pn = nominalParams(S.pOver), Gn = getCal().nom.Gnat;
+  const rows = [];
+  const active = matchingPreset(S);
+  if (!active) rows.push({ id: null, name: 'Your layout', st: S });
+  PRESETS.forEach(p => rows.push({ id: p.id, name: p.name, st: withPreset(S, p.id) }));
+  return rows.map(r => {
+    const Tj = evaluate(r.st, Pn, Gn, S.fanOver).Tj;
+    const ts = sm.map(({ P, Gnat }) => evaluate(r.st, P, Gnat, S.fanOver).Tj);
+    return { id: r.id, name: r.name, Tj, lo: pct(ts, 0.1), hi: pct(ts, 0.9) };
+  });
+}
+
+// ---------- Wiring ----------
+const PIN_NAMES = { 1: '3V3', 2: '5V', 3: 'GPIO2', 4: '5V', 5: 'GPIO3', 6: 'GND', 7: 'GPIO4', 8: 'GPIO14', 9: 'GND', 10: 'GPIO15', 11: 'GPIO17', 12: 'GPIO18', 13: 'GPIO27', 14: 'GND', 15: 'GPIO22', 16: 'GPIO23', 17: '3V3', 18: 'GPIO24', 19: 'GPIO10', 20: 'GND', 21: 'GPIO9', 22: 'GPIO25', 23: 'GPIO11', 24: 'GPIO8', 25: 'GND', 26: 'GPIO7', 27: 'ID_SD', 28: 'ID_SC', 29: 'GPIO5', 30: 'GND', 31: 'GPIO6', 32: 'GPIO12', 33: 'GPIO13', 34: 'GND', 35: 'GPIO19', 36: 'GPIO16', 37: 'GPIO26', 38: 'GPIO20', 39: 'GND', 40: 'GPIO21' };
+const DISPLAY_PINS = { unknown: [2, 6], '2-6': [2, 6], '4-6': [4, 6], '2-14': [2, 14], '4-14': [4, 14], '2-9': [2, 9], none: null };
+function wiringPlan() {
+  const used = {}, steps = [];
+  const d = DISPLAY_PINS[S.dispPins];
+  const unsure = S.dispPins === 'unknown';
+  if (d) { used[d[0]] = { who: 'Display', role: '5 V', tone: 'disp', unsure }; used[d[1]] = { who: 'Display', role: 'GND', tone: 'disp', unsure }; }
+  const take = c => c.find(p => !used[p]);
+  const fitted = S.fans.map((f, i) => ({ f, i })).filter(x => x.f.mount !== 'none');
+  if (!fitted.length) steps.push({ t: 'No fans fitted in this layout.' });
+  const switched = fitted.filter(x => x.f.control === 'gpio');
+  let gndSw = null;
+  if (switched.length) { used[32] = { who: 'Switch', role: 'GPIO12 → 1 kΩ', tone: 'sw' }; gndSw = take([34, 30, 39, 25]); used[gndSw] = { who: 'Switch', role: 'emitter', tone: 'sw' }; }
+  fitted.forEach(({ f, i }) => {
+    const name = FAN_NAMES[i], sw = f.control === 'gpio', spec = fanSpec(S, i, S.fanOver);
+    const tone = 'f' + i;
+    if (f.supply === 'hdr5' || f.supply === 'hdr33') {
+      const is5 = f.supply === 'hdr5';
+      let v, g;
+      if (is5 && !sw && !used[4] && !used[6]) { v = 4; g = 6; }
+      else { v = take(is5 ? [4, 2] : [1, 17]); g = sw ? null : take(is5 ? [14, 9, 20, 25, 30, 39] : [9, 20, 25, 14, 30, 39]); }
+      if (!v) { steps.push({ who: name, t: `Both ${is5 ? '5 V pins (2 and 4)' : '3.3 V pins (1 and 17)'} are already used. Share one with a stacking jumper, or power this fan from a hub port.`, warn: true }); return; }
+      used[v] = { who: `Fan ${i + 1}`, role: 'red +', tone };
+      if (sw) steps.push({ who: name, t: `Red → pin ${v} (${is5 ? '5' : '3.3'} V). Black → the transistor's collector. Diode across the fan, band towards red.` });
+      else {
+        used[g] = { who: `Fan ${i + 1}`, role: 'black −', tone };
+        steps.push({ who: name, t: v === 4 && g === 6 ? 'Red → pin 4 (5 V), black → pin 6 (GND). The 2-pin plug fits here directly, red on pin 4.' : `Push two male-to-female jumpers into the fan's 2-pin plug: red → pin ${v} (${is5 ? '5' : '3.3'} V), black → pin ${g} (GND).` });
+        if (is5 && !(v === 4 && g === 6) && ((used[6] && used[6].who === 'Display') || (used[4] && used[4].who === 'Display'))) steps.push({ who: name, t: 'The display\'s leads are fixed. Until jumpers arrive, solder the fan to an old USB-A cable (red to red, black to black) and plug it into a hub port instead.' });
+      }
+      if (spec.vr > 6 && is5) steps.push({ who: name, t: `This fan is rated ${spec.vr} V, so it won't start here.`, warn: true });
+    } else if (f.supply === 'hub5') {
+      steps.push({ who: name, t: `USB-A to 2-pin fan lead in a hub port: red to + (VBUS), black to −.${sw ? ' Switched: the black lead goes to the transistor collector; the emitter goes to Pi GND. The USB cables already join the two grounds.' : ''}` });
+    } else {
+      steps.push({ who: name, t: `USB 5→${f.supply === 'boost9Hub' ? 9 : 12} V boost cable in a ${f.supply === 'boostPi' ? 'Pi' : 'hub'} port, then a 5.5 × 2.1 mm barrel-to-screw-terminal adapter. Cut the fan's JST plug off and screw in the bare ends: red to +, black to −. That avoids the plug pitch question.${sw ? ' Switched: the black lead goes to the transistor collector, emitter to Pi GND, diode band to the + side.' : ''}` });
+      if (spec.vr === 5) steps.push({ who: name, t: 'A 5 V fan on 12 V would be over-volted.', warn: true });
+    }
+  });
+  if (switched.length) {
+    steps.push({ who: 'Switch', t: `Pin 32 (GPIO12) → 1 kΩ → NPN base. Emitter → pin ${gndSw} (GND).${switched.length > 1 ? ' One transistor can take both fans if they share a supply voltage; otherwise use a transistor each, both bases fed from GPIO12 through their own 1 kΩ.' : ''}` });
+  }
+  if (d) steps.unshift({ who: 'Display', t: `${unsure ? 'Assumed on' : 'On'} pins ${d[0]} and ${d[1]}.${unsure ? ' Check this against the header photo before wiring.' : ''}` });
+  return { used, steps, switched: switched.length > 0 };
+}
+function drawWiring() {
+  const { used, steps, switched } = wiringPlan();
+  const rowH = 17, top = 26, cxL = 168, cxR = 192, W = 380, Hh = top + rowH * 20 + 20;
+  const toneVar = { disp: '--faint', f0: '--s-layout', f1: '--s-base', sw: '--accent' };
+  let g = `<rect class="hdr" x="${cxL - 13}" y="${top - 12}" width="${cxR - cxL + 26}" height="${rowH * 20 + 6}" rx="4"/>`;
+  g += `<text class="pl" x="${cxL}" y="${top - 20}" text-anchor="middle">odd</text><text class="pl" x="${cxR}" y="${top - 20}" text-anchor="middle">even</text>`;
+  g += `<text class="pl" x="${cxR + 14}" y="${top - 20}">board edge →</text>`;
+  for (let row = 0; row < 20; row++) {
+    [[2 * row + 1, cxL, 'end'], [2 * row + 2, cxR, 'start']].forEach(([p, cx, anchor]) => {
+      const y = top + row * rowH, name = PIN_NAMES[p];
+      const kind = name === '5V' ? '--pin5' : name === '3V3' ? '--pin33' : name === 'GND' ? '--ping' : '--pinio';
+      const u = used[p];
+      g += `<circle cx="${cx}" cy="${y}" r="7" style="fill: var(${kind}); stroke: var(${u ? toneVar[u.tone] : '--line'}); stroke-width: ${u ? 3 : 1}" ${u && u.unsure ? 'stroke-dasharray="3 2"' : ''}/>`;
+      g += `<text class="pn" x="${cx}" y="${y}" style="fill: var(${name === 'GND' ? '--fg' : '--accent-ink'})">${p}</text>`;
+      const lx = anchor === 'end' ? cx - 13 : cx + 13;
+      g += `<text class="pl" x="${lx}" y="${y}" text-anchor="${anchor}">${name}</text>`;
+      if (u) {
+        const ux = anchor === 'end' ? cx - 58 : cx + 58;
+        g += `<text class="use" x="${ux}" y="${y}" text-anchor="${anchor}" style="fill: var(${toneVar[u.tone] === '--faint' ? '--muted' : toneVar[u.tone]})">${esc(u.who)} ${esc(u.role)}${u.unsure ? '?' : ''}</text>`;
+      }
+    });
+  }
+  $('#pinSvg').innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="40-pin header with the pins this layout uses">${g}</svg>
+    <p class="hint">Pin 1 is the square pad at the end nearest the SD card. Even pins sit on the board edge. A 5 V fan can share the display's 5 V and GND rails through different physical pins.</p>`;
+  $('#wireSteps').innerHTML = steps.map(s => `<li class="${s.warn ? 'warn' : ''}">${s.who ? `<b>${esc(s.who)}:</b> ` : ''}${esc(s.t)}</li>`).join('');
+  const line = `dtoverlay=gpio-fan,gpiopin=12,temp=${S.gpio.thr * 1000},hyst=${S.gpio.hyst * 1000}`;
+  $('#overlayBox').innerHTML = switched
+    ? `<div class="prose"><p class="small muted">Add under <span class="mono">[all]</span> in <span class="mono">/boot/firmware/config.txt</span>, then reboot (ask before touching the Pi):</p>
+       <div class="code-row"><pre class="code" id="ovl">${line}</pre><button type="button" class="btn quiet" id="copyOvl">Copy</button></div></div>`
+    : `<p class="small muted">Always-on fans need no config change. A GPIO12-switched fan needs this line in <span class="mono">/boot/firmware/config.txt</span>: <span class="mono">${line}</span></p>`;
+  const cp = $('#copyOvl');
+  if (cp) cp.addEventListener('click', () => {
+    const done = () => { cp.textContent = 'Copied'; setTimeout(() => { cp.textContent = 'Copy'; }, 1500); };
+    const fallback = () => { const sel = getSelection(), rg = document.createRange(); rg.selectNodeContents($('#ovl')); sel.removeAllRanges(); sel.addRange(rg); cp.textContent = 'Selected'; };
+    try { navigator.clipboard.writeText(line).then(done, fallback); } catch (e) { fallback(); }
+  });
+}
+function drawSchematic() {
+  // Low-side NPN switch with a flyback diode across the fan.
+  $('#schem').innerHTML = `<svg viewBox="0 0 520 250" role="img" aria-label="Fan switched by an NPN transistor from GPIO12">
+    <text class="t" x="20" y="28">+5 V (pin 4)</text>
+    <path class="w" d="M120 24 H300 V50"/><path class="w" d="M300 24 H420 V70"/>
+    <rect class="fanbox" x="270" y="50" width="60" height="50" rx="4"/><text class="t" x="300" y="80" text-anchor="middle">FAN</text>
+    <text class="tm" x="262" y="66" text-anchor="end">red</text><text class="tm" x="262" y="96" text-anchor="end">black</text>
+    <path class="w" d="M408 70 H432"/><path class="diode" d="M408 100 L432 100 L420 72 z"/><path class="w" d="M420 100 V130 H300"/><path class="w" d="M408 70 H432"/>
+    <text class="tm" x="442" y="80">diode</text><text class="tm" x="442" y="96">band up</text><text class="tm" x="442" y="112">1N4148 / 1N400x</text>
+    <path class="w" d="M300 100 V150"/><circle class="dot" cx="300" cy="130" r="3.5"/>
+    <text class="tm" x="308" y="146">C</text>
+    <circle cx="300" cy="172" r="24" style="fill: none; stroke: var(--fg); stroke-width: 2"/>
+    <path class="w" d="M288 160 V184"/><path class="w" d="M288 166 L300 152"/><path class="w" d="M288 178 L300 192"/><path class="diode" d="M300 192 L291 189 L296 183 z"/>
+    <path class="w" d="M300 192 V222"/><text class="tm" x="308" y="208">E</text>
+    <text class="t" x="300" y="242" text-anchor="middle">GND (pin 34)</text><path class="w" d="M286 224 H314"/>
+    <path class="w" d="M120 172 H160"/><rect x="160" y="164" width="44" height="16" rx="2" style="fill: none; stroke: var(--fg); stroke-width: 2"/>
+    <path class="w" d="M204 172 H288"/><text class="tm" x="182" y="158" text-anchor="middle">1 kΩ</text><text class="tm" x="270" y="166">B</text>
+    <text class="t" x="20" y="168">GPIO12</text><text class="tm" x="20" y="186">(pin 32)</text>
+    <text class="tm" x="340" y="176">NPN: BC337,</text><text class="tm" x="340" y="192">2N2222 or S8050</text>
+  </svg>`;
+}
+
+// ---------- Assumption tables ----------
+function drawAssumptions() {
+  const cal = getCal(), b = bandCache.key === stateKey() ? bandCache.val : null;
+  let html = '<table><thead><tr><th>Assumption</th><th class="num">Value</th><th class="num">Range used</th><th>Basis</th></tr></thead><tbody>';
+  let grp = '';
+  PARAMS.forEach(p => {
+    if (p.grp !== grp) { grp = p.grp; html += `<tr><th colspan="4" style="padding-top: 12px">${esc(grp)}</th></tr>`; }
+    const v = S.pOver[p.k] ?? p.v, s = p.v ? v / p.v : 1;
+    html += `<tr><td>${esc(p.label)}</td><td class="num"><input type="number" step="any" data-param="${p.k}" value="${v}" aria-label="${esc(p.label)}" style="width: 90px; text-align: right"> ${p.u}</td><td class="num">${+(p.lo * s).toPrecision(3)}–${+(p.hi * s).toPrecision(3)}</td><td class="muted">${esc(p.basis)}</td></tr>`;
+  });
+  html += `<tr><th colspan="4" style="padding-top: 12px">Fitted</th></tr><tr><td>Board and heatsinks to box air, still air (tape on)</td><td class="num mono">${cal.nom.Gnat.toFixed(3)} W/K</td><td class="num">${b ? b.Gnat.lo.toFixed(3) + '–' + b.Gnat.hi.toFixed(3) : '…'}</td><td class="muted">Tuned so the sealed box at idle (${S.cal.renderer === 'gpu' ? 'V3D' : 'software GL'}, tape ${S.cal.tape ? 'on' : 'off'}) reads ${f1(S.cal.T)} °C with the room at ${f1(S.cal.amb)} °C. An open-air Pi 4 with heatsinks is about 0.14 W/K; the downward-facing board and the tape lower it here.</td></tr>`;
+  $('#assTable').innerHTML = html + '</tbody></table>';
+  const lt = Object.values(LOADS).map(L => `<tr><td>${L.long}</td><td class="num">${L.sw[0]} (${L.sw[1]}–${L.sw[2]})</td><td class="num">${L.gpu[0]} (${L.gpu[1]}–${L.gpu[2]})</td><td class="num">${f1(boardPower(nominalParams(S.pOver), Object.keys(LOADS).find(k => LOADS[k] === L), 'sw'))} / ${f1(boardPower(nominalParams(S.pOver), Object.keys(LOADS).find(k => LOADS[k] === L), 'gpu'))} W</td></tr>`).join('');
+  $('#loadTable').innerHTML = `<table><thead><tr><th>Scenario</th><th class="num">Busy cores, software GL</th><th class="num">Busy cores, GPU fix</th><th class="num">Board power</th></tr></thead><tbody>${lt}</tbody></table>
+    <p class="hint" style="margin-top: 6px">Typical values are measured on 2026-11-08: idle over SSH, two decks in 30–60 s runs before and after the GPU fix (deploy/gpu-test-20261108). The wider ranges allow for a long set and an SSH copy until the 30-minute logged test.</p>`;
+  const fr = [0, 1].map(i => {
+    const sp = fanSpec(S, i, S.fanOver);
+    const cell = (k, step) => `<td class="num"><input type="number" step="${step}" data-fan="${i}" data-key="${k}" value="${sp[k]}" style="width: 70px; text-align: right" aria-label="${FAN_NAMES[i]} ${k}"></td>`;
+    return `<tr><td>${FAN_NAMES[i]}, ${sp.vr} V${i === 1 && S.fans[1].rated === '12' ? ', label 0.22 A' : ''} ${UNCONF}</td>${cell('ir', 0.01)}${cell('q', 0.1)}${cell('p', 1)}${cell('dba', 1)}${cell('vs', 0.1)}</tr>`;
+  }).join('');
+  $('#fanTable').innerHTML = `<table><thead><tr><th>Fan (typical for its size)</th><th class="num">A</th><th class="num">L/s free</th><th class="num">Pa max</th><th class="num">dBA</th><th class="num">Starts at V</th></tr></thead><tbody>${fr}</tbody></table>
+    <p class="hint" style="margin-top: 6px">1 L/s ≈ 2.1 CFM. The 60 mm label gives only volts and amps; airflow, pressure, noise and start voltage are typical for a 60 × 25 mm fan drawing 0.22 A. The small fan sits in a perforated lid, so the model uses 75 % of its free flow.</p>`;
+}
+
+// ---------- Presets bar ----------
+function drawPresets() {
+  const active = matchingPreset(S);
+  $('#presets').innerHTML = PRESETS.map(p => `<button type="button" data-preset="${p.id}" aria-pressed="${p.id === active}">${esc(p.name)}<small>${esc(p.note)}</small></button>`).join('');
+}
+function applyPreset(id) { PRESETS.find(p => p.id === id).apply(S); saveState(); schedule(); }
+
+// ---------- Calibration check against the September peak ----------
+function drawCalCheck(P, G) {
+  const st = withPreset(S, 'sealed'); st.ambient = S.cal.amb; st.renderer = 'sw';
+  const sim = simulate(st, P, G, S.fanOver, 'copy', 3);
+  $('#calCheck').textContent = `Check: sealed box, idle then 3 min of two decks plus a backup reaches ${f1(sim[sim.length - 1].Tj)} °C in the model. The 2026-09-22 log peaked at 76.4 °C after about 3 minutes of the same load, probably in this box with the room temperature unknown.`;
+}
+
+function drawSummaries(r) {
+  const sum = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+  sum('sum-session', `${LOADS[S.load].label}, ${S.renderer === 'sw' ? 'SW GL' : 'GPU'}, ${f1(S.ambient)} °C`);
+  S.fans.forEach((f, i) => sum('sum-f' + i, f.mount === 'none' ? 'not fitted' : f.mount === 'heatsink' ? 'on heatsink' : `${f.dir}, ${f.wall}`));
+  const vn = S.vents.low.n + S.vents.high.n;
+  sum('sum-vents', vn ? `${vn} holes` : 'none');
+  const d = dimsOf(S); sum('sum-box', `${S.enclosure === 'printed' ? 'printed' : 'cardboard'} ${d.L}×${d.D}×${d.H}`);
+  sum('sum-pi', `${f0(r.pi.s)} mm down the slant`);
+  sum('sum-gpio', `${S.gpio.thr} °C / −${S.gpio.hyst} K`);
+  sum('sum-cal', `${f1(S.cal.T)} °C at ${f1(S.cal.amb)} °C`);
+}
+
+// ---------- Render loop ----------
+let raf = 0, refineTimer = 0;
+function schedule() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); }
+function render() {
+  syncControls();
+  drawPresets();
+  const P = nominalParams(S.pOver), cal = getCal();
+  const r = evaluate(S, P, cal.nom.Gnat, S.fanOver);
+  drawReadout(r); drawAlerts(r); drawSide(r); drawTop(r); drawHeat(r);
+  drawSession(P, cal.nom.Gnat); drawCsvStats(); drawWiring(); drawSummaries(r); drawCalCheck(P, cal.nom.Gnat);
+  if (!document.activeElement || !document.activeElement.matches('#assTable input, #fanTable input')) drawAssumptions();
+  const key = stateKey();
+  if (cmpCache.key === key) drawCmp(cmpCache.rows); else drawCmp(cmpCache.rows);
+  clearTimeout(refineTimer);
+  if (bandCache.key !== key || cmpCache.key !== key) refineTimer = setTimeout(() => {
+    bandCache = { key, val: band(S) };
+    cmpCache = { key, rows: computeCmp() };
+    drawReadout(evaluate(S, nominalParams(S.pOver), getCal().nom.Gnat, S.fanOver));
+    drawCmp(cmpCache.rows);
+    if (!document.activeElement || !document.activeElement.matches('#assTable input, #fanTable input')) drawAssumptions();
+  }, 160);
+}
+
+// ---------- Wire up ----------
+buildControls();
+drawSchematic();
+$('#controls').addEventListener('input', onControl);
+$('#controls').addEventListener('change', onControl);
+$('#c-dispPins').addEventListener('change', onControl);
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-preset]');
+  if (b && b.dataset.preset) applyPreset(b.dataset.preset);
+});
+$('#assTable').addEventListener('change', e => {
+  const k = e.target.dataset.param; if (!k) return;
+  const v = parseFloat(e.target.value), def = PARAMS.find(p => p.k === k).v;
+  if (!isFinite(v) || v <= 0) { e.target.value = S.pOver[k] ?? def; return; }
+  if (v === def) delete S.pOver[k]; else S.pOver[k] = v;
+  saveState(); schedule();
+});
+$('#fanTable').addEventListener('change', e => {
+  const i = e.target.dataset.fan, k = e.target.dataset.key; if (i == null) return;
+  const v = parseFloat(e.target.value);
+  if (!isFinite(v) || v <= 0) return;
+  S.fanOver[i] = { ...S.fanOver[i], [k]: v };
+  saveState(); schedule();
+});
+$('#resetParams').addEventListener('click', () => { S.pOver = {}; S.fanOver = [{}, {}]; saveState(); drawAssumptionsForce(); });
+function drawAssumptionsForce() { schedule(); setTimeout(drawAssumptions, 0); }
+$('#csvFile').addEventListener('change', async e => {
+  const files = [...e.target.files].slice(0, 2);
+  measured = [];
+  const readText = f => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsText(f); });
+  for (const f of files) { try { const m = parseLog(await readText(f), f.name); if (m.pts.length) measured.push(m); } catch (err) { /* unreadable file: skip */ } }
+  if (files.length && !measured.length) $('#csvStats').innerHTML = '<p class="small" style="color: var(--critical)">No temperatures found. Expect a CSV with elapsed_s and temp_c columns, or lines like temp=67.2\'C.</p>';
+  schedule();
+});
+$('#csvClear').addEventListener('click', () => { measured = []; $('#csvFile').value = ''; schedule(); });
+let rw = 0; addEventListener('resize', () => { clearTimeout(rw); rw = setTimeout(schedule, 120); });
+render();
+})();
+</script>
+</body>
+</html>

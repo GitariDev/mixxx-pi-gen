@@ -1,0 +1,76 @@
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -3,6 +3,7 @@
+ #include <algorithm>
++#include <stdexcept>
+ 
+ #include <mp3guessenc.h>
+ #include <rekordbox_anlz.h>
+ #include <rekordbox_pdb.h>
+ 
+@@ -10,6 +11,7 @@
+ #include <QDateTime>
++#include <QFileInfo>
+ #include <QMap>
+ #include <QMessageBox>
+ #include <QSettings>
+ #include <QString>
+ #include <QTextCodec>
+@@ -875,16 +877,30 @@
+         int timingOffset,
+         bool ignoreCues,
+         const QString& anlzPath) {
+-    if (!QFile(anlzPath).exists()) {
++    if (!QFileInfo(anlzPath).isFile()) {
+         return;
+     }
+ 
+     qDebug() << "Rekordbox ANLZ path:" << anlzPath << " for: " << track->getTitle();
+ 
+     std::ifstream ifs(anlzPath.toStdString(), std::ifstream::binary);
++    if (!ifs.is_open()) {
++        qWarning() << "Cannot open Rekordbox analysis:" << anlzPath;
++        return;
++    }
+     kaitai::kstream ks(&ifs);
+ 
+-    rekordbox_anlz_t anlz = rekordbox_anlz_t(&ks);
++    std::unique_ptr<rekordbox_anlz_t> parsed;
++    try {
++        parsed = std::make_unique<rekordbox_anlz_t>(&ks);
++    } catch (const std::runtime_error& error) {
++        qWarning() << "Cannot parse Rekordbox analysis:" << anlzPath << error.what();
++        return;
++    } catch (const std::length_error& error) {
++        qWarning() << "Invalid Rekordbox analysis length:" << anlzPath << error.what();
++        return;
++    }
++    auto& anlz = *parsed;
+ 
+     const double sampleRateKhz = sampleRate / 1000.0;
+ 
+diff --git a/lib/kaitai/kaitai/kaitaistream.cpp b/lib/kaitai/kaitai/kaitaistream.cpp
+--- a/lib/kaitai/kaitai/kaitaistream.cpp
++++ b/lib/kaitai/kaitai/kaitaistream.cpp
+@@ -469,13 +469,18 @@
+ // ========================================================================
+ 
+ std::string kaitai::kstream::read_bytes(std::streamsize len) {
+-    std::vector<char> result(len);
+-
+     // NOTE: streamsize type is signed, negative values are only *supposed* to not be used.
+     // https://en.cppreference.com/w/cpp/io/streamsize
+     if (len < 0) {
+         throw std::runtime_error("read_bytes: requested a negative amount");
+     }
++
++    const uint64_t position = pos();
++    const uint64_t length = size();
++    if (position > length || static_cast<uint64_t>(len) > length - position) {
++        throw std::runtime_error("read_bytes: requested bytes beyond end of stream");
++    }
++    std::vector<char> result(len);
+ 
+     if (len > 0) {
+         m_io->read(&result[0], len);

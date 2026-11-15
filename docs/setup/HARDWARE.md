@@ -15,6 +15,8 @@ visible.
 | Speaker | Harman Kardon speaker | Badge is visible. The exact Onyx Studio generation is unconfirmed from these angles. |
 | Portable power | USB power bank | Display reads about 44% in one photo. Brand, capacity, and supported output profile are unconfirmed. |
 | Music/system storage | USB flash drive(s) | USB boot and removable music were used in recent setup work; exact current role of each attached drive must be labelled physically. |
+| Enclosure | Cardboard glassware box ("6PCS DIAMONDS") with the screen on a slanted top | 2026-11-08 photos; user measured 235 mm wide, 152 mm deep, 100 mm at the back (hinged, high) wall and 57 mm at the front (about 16°). The Pi hangs under the slant near the back edge, components facing in; a 7-port powered hub with per-port switches lies on the floor. Only a few cable holes. |
+| Cooling | Stick-on aluminium heatsinks on the SoC, RAM and USB controller | 2026-11-08 photos. The masking tape around them was removed that day. Two fans in hand, not fitted: a 30 mm 5 V fan in a Pi 4 case lid (single 2-pin Dupont housing) and a 60 × 24 mm fan labelled 12 V 0.22 A (white 2-pin housing, pitch unknown). See the [cooling plan](../ideas/COOLING-PLAN.md). |
 
 ## Visible assembly
 
@@ -23,6 +25,7 @@ visible.
 - The Pi is exposed; fit a stable stand/enclosure before mobile use so cables cannot lever against the USB-C, micro-HDMI, DSI, or GPIO connections.
 - Cable congestion is already significant. Label both ends of `POWER`, `BOOT`, `MUSIC`, `CONTROLLER`, `MASTER`, and `HEADPHONES` cables.
 - A loose cooling fan/heatsink solution appears in the work area, but installation is not confirmed.
+- **2026-11-08:** the Pi and display now sit in a cardboard box with the screen on the slanted top; see Enclosure above. The box protects the connectors but traps heat.
 
 ## Power and cooling notes
 
@@ -41,6 +44,25 @@ visible.
 - The display and a **5 V** fan can use different physical pins on the same 5 V/GND rails: 5 V on physical pin 2 or 4; ground on a ground pin such as 6, 9, 14, 20, 25, 30, 34, or 39.
 - Never use a normal 3.3 V GPIO output as a fan power source.
 - Run at least a 30-minute two-deck test with the controller, display, boot storage, and audio connected before treating a power arrangement as performance-ready.
+- **Cooling, 2026-11-08:** idle in the closed box read 66.2–67.6 °C at 1.5 GHz
+  with software GL and `throttled=0x0`. After the GPU fix it read 61.8–63.3 °C
+  (box state **Unconfirmed**). With V3D, the calibrated model puts the sealed
+  box at about 73 °C for two decks and 80 °C with a copy.
+- **Fan plan:** the [cooling plan](../ideas/COOLING-PLAN.md) mounts the 60 mm fan
+  outside the back wall at the SoC heatsink's height, blowing in. It runs from a
+  hub port through a USB 5→9 V boost cable (about 0.32 A, nothing from the Pi).
+  The 30 mm fan sits on the heatsink as the backup, on header pins 2 and 14
+  through jumpers, because the display's fixed leads have pins 4 and 6.
+
+### Cooling test log
+
+One row per 30-minute two-deck run, logged with
+[`tools/cooling-model/log-temps.sh`](../../tools/cooling-model/log-temps.sh)
+(procedure in the [cooling plan](../ideas/COOLING-PLAN.md#beforeafter-test)).
+
+| Date | Layout | Room °C | Peak °C | Mean last 10 min °C | Throttle flags | Log |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-08 13:02 | Sealed box, idle, software GL, tape on (not a run) | 25 (user default) | 67.6 | — | 0x0 | SSH spot check |
 
 ## Questions to resolve
 
@@ -49,7 +71,7 @@ visible.
 - Exact Harman Kardon model and whether audio is wired, USB, or Bluetooth.
 - Separate headphone-cue listening check, beyond the saved Starlight routing.
 - Which controller will replace/upgrade the Starlight and whether it will provide the primary audio interface.
-- Final fan model, voltage, current draw, and mounting direction.
+- Which 5 V header pin the display uses, the SoC heatsink's height in the closed box, and a closed-box idle reading with V3D; see the [cooling plan](../ideas/COOLING-PLAN.md#open-questions).
 
 ## Connection policy
 

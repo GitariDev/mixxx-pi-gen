@@ -1,0 +1,326 @@
+#include "mediauseregistry.h"
+#include <atomic>
+#include <cassert>
+#include <future>
+#include <functional>
+#include <iostream>
+#include <optional>
+#include <sstream>
+#include <thread>
+#include <vector>
+
+using mixxx::media::Binding;
+using mixxx::media::Lease;
+using mixxx::media::MediaUseRegistry;
+using mixxx::media::Producer;
+
+struct QString {
+    std::string value;
+    QString() = default;
+    QString(const char* text) : value(text) {}
+    std::string toStdString() const { return value; }
+};
+std::ostream& operator<<(std::ostream& output, const QString& value) { return output << value.value; }
+struct Track {
+    QString path;
+    QString getLocation() const { return path; }
+    int getId() const { return 1; }
+    void updateStreamInfoFromSource(int) {}
+};
+using TrackPointer = std::shared_ptr<Track>;
+namespace mixxx::media {
+    std::string generationSuffix;
+    inline Binding observePath(const std::string& path) {
+        return {path + generationSuffix, "mount", {}};
+    }
+    PRODUCTION_ACQUIRE_PATH
+}
+struct AtomicFlag {
+    std::atomic<int> value{0};
+    void storeRelease(int next) { value.store(next); }
+};
+auto lockMutex(std::mutex* mutex) { return std::unique_lock<std::mutex>(*mutex); }
+#define emit
+const char* tr(const char* message) { return message; }
+struct CachingReaderWorker {
+    std::mutex m_newTrackMutex;
+    TrackPointer m_pNewTrack;
+    Lease m_pendingMediaUse;
+    AtomicFlag m_newTrackAvailable;
+    int failures = 0;
+    int wakes = 0;
+    void trackLoadFailed(TrackPointer, const char*) { ++failures; }
+    void workReady() { ++wakes; }
+    void newTrack(TrackPointer);
+};
+PRODUCTION_NEW_TRACK
+
+struct Logger { std::ostringstream stream; std::ostream& debug() { return stream; }
+    std::ostream& warning() { return stream; } } kLogger;
+struct AnalyzerTrack {
+    TrackPointer track;
+    Lease mediaUse;
+    TrackPointer getTrack() const { return track; }
+};
+struct Queue {
+    std::optional<AnalyzerTrack> value;
+    bool try_emplace(AnalyzerTrack&& track) {
+        if (value) return false;
+        value.emplace(std::move(track));
+        return true;
+    }
+};
+struct AnalyzerThread {
+    Queue m_nextTrack;
+    int wakes = 0;
+    void wake() { ++wakes; }
+    bool submitNextTrack(const AnalyzerTrack&);
+};
+PRODUCTION_ANALYSIS_SUBMIT
+
+#include "sources/audiosourcetrackproxy.h"
+
+#define VERIFY_OR_DEBUG_ASSERT(condition) if (!(condition))
+struct SoundSourceProxy {
+    enum class RamCacheMode { Original, Existing, Create };
+    TrackPointer m_pTrack;
+    mixxx::RemovableTrackCache::Lease m_ramCache;
+    Lease m_mediaUse;
+    mixxx::AudioSourcePointer m_pSoundSource;
+    SoundSourceProxy(TrackPointer track, RamCacheMode mode, Lease inherited)
+            : m_pTrack(std::move(track)),
+              m_ramCache(mode == RamCacheMode::Original ? nullptr : std::make_shared<int>(1)),
+              m_mediaUse(mixxx::media::acquirePath(m_pTrack->getLocation().toStdString(),
+                      Producer::Decoder, std::move(inherited))),
+              m_pSoundSource(std::make_shared<mixxx::AudioSource>()) {}
+    bool openSoundSource(const mixxx::AudioSource::OpenParams&) { return m_mediaUse && !m_ramCache; }
+    mixxx::AudioSourcePointer openAudioSource(const mixxx::AudioSource::OpenParams&);
+};
+PRODUCTION_AUDIO_OPEN
+
+std::ostream& qDebug() { return kLogger.debug(); }
+namespace QIODevice { const int WriteOnly = 1; const int Unbuffered = 2; }
+namespace QFileDevice { const int NoError = 0; }
+namespace QDataStream { const int Ok = 0; }
+struct FakeFile {
+    int descriptor = -1;
+    bool fail = false;
+    bool flushFails = false;
+    int handle() const { return descriptor; }
+    void setFileName(QString) {}
+    bool open(int) { if (fail) return false; descriptor = 1; return true; }
+    void close() { descriptor = -1; }
+    bool flush() { return !flushFails; }
+    int error() const { return QFileDevice::NoError; }
+    const char* errorString() const { return "fake error"; }
+};
+struct FakeEncoder { std::function<void()> onFlush; void flush() { onFlush(); } };
+struct FakeStream {
+    void setDevice(FakeFile*) {}
+    void resetStatus() {}
+    int status() const { return QDataStream::Ok; }
+};
+struct EngineRecord {
+    Lease m_recordingMediaUse;
+    FakeFile m_file, m_cueFile;
+    QString m_fileName;
+    FakeStream m_dataStream;
+    bool m_recordingError = false;
+    std::unique_ptr<FakeEncoder> m_pEncoder;
+    bool fileOpen() { return m_file.handle() != -1; }
+    bool openFile();
+    void closeFile();
+    void closeCueFile();
+};
+PRODUCTION_RECORD_OPEN
+PRODUCTION_RECORD_CLOSE
+PRODUCTION_CUE_CLOSE
+
+namespace mixxx { struct FileInfo { QString fileName() const { return "synthetic"; } }; }
+template<typename Key, typename Value> struct QMap {
+    struct Iterator {
+        int position;
+        Value value;
+        const Value* operator->() const { return &value; }
+        const Value& operator*() const { return value; }
+        Key key() const { return "synthetic"; }
+        bool operator!=(const Iterator& other) const { return position != other.position; }
+        void operator++() { ++position; }
+    };
+    Iterator constBegin() const { return {0, {}}; }
+    Iterator constEnd() const { return {1, {}}; }
+    int size() const { return 1; }
+};
+QMap<QString, mixxx::FileInfo> createCopylist(int) { return {}; }
+struct StopFlag { bool value = false; bool loadAcquire() const { return value; } };
+struct TrackExportWorker {
+    Lease m_mediaUse;
+    QString m_errorMessage;
+    int m_tracks = 0;
+    StopFlag m_bStop;
+    std::function<void()> onCopy;
+    int cancels = 0;
+    void progress(QString, int, int) {}
+    void canceled() { ++cancels; }
+    void copyFile(const mixxx::FileInfo&, QString) { onCopy(); }
+    void run();
+};
+PRODUCTION_EXPORT_RUN
+
+int main() {
+    MediaUseRegistry registry;
+    const Binding first{"boot/ns/device/diskseq1", "mount1", {}};
+    const Binding replacement{"boot/ns/device/diskseq2", "mount1", {}};
+    auto pending = registry.acquire(first, Producer::Load);
+    auto draining = registry.beginDrain(first.generation);
+    assert(draining && !draining.snapshot().locallyIdle());
+    assert(!registry.acquire(first, Producer::Decoder));
+    assert(!registry.acquire({}, Producer::Metadata));
+    assert(!registry.beginDrain(first.generation));
+    assert(registry.acquire(replacement, Producer::Load));
+    auto worker = pending;
+    pending.reset();
+    assert(!draining.snapshot().locallyIdle());
+    worker.reset();
+    assert(draining.snapshot().locallyIdle());
+    draining.cancel();
+    assert(registry.acquire(first, Producer::Load));
+    assert(!registry.beginDrain(""));
+    assert(!registry.acquire({"only-generation", "", {}}, Producer::Load));
+
+    for (auto producer : {Producer::Import, Producer::Discovery, Producer::Browser,
+                 Producer::Metadata, Producer::Recording, Producer::Copy}) {
+        auto scope = registry.acquire({}, producer);
+        auto drain = registry.beginDrain(first.generation);
+        assert(!drain.snapshot().locallyIdle());
+        auto completion = scope;
+        scope.reset();
+        assert(!drain.snapshot().locallyIdle());
+        completion.reset();
+        assert(drain.snapshot().locallyIdle());
+    }
+
+    std::promise<void> acquired;
+    std::promise<void> release;
+    auto releaseFuture = release.get_future();
+    std::thread producer([&] {
+        auto lease = registry.acquire(first, Producer::Analysis);
+        assert(lease);
+        acquired.set_value();
+        releaseFuture.wait();
+    });
+    acquired.get_future().wait();
+    auto interleaved = registry.beginDrain(first.generation);
+    assert(!interleaved.snapshot().locallyIdle());
+    assert(!registry.acquire(first, Producer::Load));
+    release.set_value();
+    producer.join();
+    assert(interleaved.snapshot().locallyIdle());
+    interleaved.cancel();
+
+    auto track = std::make_shared<Track>(Track{QString{"drive-A"}});
+    auto other = std::make_shared<Track>(Track{QString{"drive-B"}});
+    CachingReaderWorker reader;
+    reader.newTrack(track);
+    auto drainA = mixxx::media::registry().beginDrain("drive-A");
+    assert(!drainA.snapshot().locallyIdle());
+    reader.newTrack(track);
+    assert(reader.failures == 0 && reader.wakes == 2 && reader.m_pNewTrack == track);
+    assert(!reader.m_pendingMediaUse && drainA.snapshot().locallyIdle());
+    reader.newTrack(other);
+    assert(drainA.snapshot().locallyIdle());
+    auto drainB = mixxx::media::registry().beginDrain("drive-B");
+    assert(!drainB.snapshot().locallyIdle());
+    reader.newTrack(nullptr);
+    assert(drainB.snapshot().locallyIdle());
+    drainA.cancel();
+    drainB.cancel();
+
+    AnalyzerThread analyzer;
+    assert(analyzer.submitNextTrack({track, {}}));
+    assert(!analyzer.submitNextTrack({other, {}}));
+    auto analysisDrain = mixxx::media::registry().beginDrain("drive-A");
+    auto unusedDrain = mixxx::media::registry().beginDrain("drive-B");
+    assert(!analysisDrain.snapshot().locallyIdle() && unusedDrain.snapshot().locallyIdle());
+    assert(!analyzer.submitNextTrack({track, {}}));
+    auto current = std::move(analyzer.m_nextTrack.value);
+    analyzer.m_nextTrack.value.reset();
+    assert(!analysisDrain.snapshot().locallyIdle());
+    current.reset();
+    assert(analysisDrain.snapshot().locallyIdle());
+    analysisDrain.cancel();
+    unusedDrain.cancel();
+
+    auto decoderUse = mixxx::media::registry().acquire({"drive-A", "mount", {}}, Producer::Decoder);
+    bool destroyed = false;
+    auto decoder = std::make_shared<mixxx::AudioSource>(&destroyed);
+    auto audio = mixxx::AudioSourceTrackProxy::create(track, decoder, {}, decoderUse);
+    auto decoderDrain = mixxx::media::registry().beginDrain("drive-A");
+    decoderUse.reset();
+    decoder.reset();
+    audio->close();
+    assert(!decoderDrain.snapshot().locallyIdle() && !destroyed);
+    audio.reset();
+    assert(destroyed && decoderDrain.snapshot().locallyIdle());
+    decoderDrain.cancel();
+    mixxx::AudioSourcePointer fallback;
+    {
+        auto originalUse = mixxx::media::registry().acquire({"drive-A", "mount", {}}, Producer::Load);
+        SoundSourceProxy cached(track, SoundSourceProxy::RamCacheMode::Create, originalUse);
+        auto fallbackDrain = mixxx::media::registry().beginDrain("drive-A");
+        originalUse.reset();
+        fallback = cached.openAudioSource({});
+        assert(fallback && !fallbackDrain.snapshot().locallyIdle());
+    }
+    auto fallbackDrain = mixxx::media::registry().beginDrain("drive-A");
+    assert(!fallbackDrain.snapshot().locallyIdle());
+    fallback.reset();
+    assert(fallbackDrain.snapshot().locallyIdle());
+    fallbackDrain.cancel();
+    {
+        auto originalUse = mixxx::media::acquirePath("drive-A", Producer::Load);
+        SoundSourceProxy cached(track, SoundSourceProxy::RamCacheMode::Create, originalUse);
+        mixxx::media::generationSuffix = "replacement";
+        assert(!cached.openAudioSource({}));
+        mixxx::media::generationSuffix.clear();
+    }
+    {
+        bool closedBeforeIdle = false;
+        auto pinDrain = registry.beginDrain("pinned");
+        pinDrain.cancel();
+        auto pin = std::shared_ptr<int>(new int(1), [&](int* value) {
+            auto drain = registry.beginDrain("pinned");
+            closedBeforeIdle = !drain.snapshot().locallyIdle();
+            delete value;
+        });
+        auto ownership = registry.acquire({"pinned", "mount", pin}, Producer::Load);
+        pin.reset();
+        ownership.reset();
+        assert(closedBeforeIdle);
+    }
+    for (bool flushFails : {false, true}) {
+        EngineRecord recording;
+        recording.m_pEncoder = std::make_unique<FakeEncoder>();
+        assert(recording.openFile());
+        recording.m_cueFile.descriptor = 2;
+        recording.m_file.flushFails = flushFails;
+        auto drain = mixxx::media::registry().beginDrain("recording-target");
+        recording.m_pEncoder->onFlush = [&] { assert(!drain.snapshot().locallyIdle()); };
+        recording.closeFile();
+        assert(recording.m_recordingError == flushFails);
+        assert(!drain.snapshot().locallyIdle());
+        recording.closeCueFile();
+        assert(drain.snapshot().locallyIdle());
+        assert(!recording.openFile());
+    }
+    for (bool cancel : {false, true}) {
+        TrackExportWorker exporter;
+        exporter.m_mediaUse = mixxx::media::acquireUnknown(Producer::Copy);
+        auto drain = mixxx::media::registry().beginDrain("copy-target");
+        exporter.onCopy = [&] { assert(!drain.snapshot().locallyIdle()); exporter.m_bStop.value = cancel; };
+        exporter.run();
+        assert(drain.snapshot().locallyIdle());
+        assert(exporter.cancels == int(cancel));
+    }
+    std::cout << "PASS production native registry interleavings, pending load replacement/rejection/unload, analysis admission/full queue, audio proxy destruction, original fallback generation, recording flush/cue close, export completion/cancel\n";
+}

@@ -15,11 +15,14 @@ import fcntl
 import glob
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -51,7 +54,167 @@ class Cancelled(TransferError):
     pass
 
 
+_admission = threading.local()
+
+
+class CopyAdmission:
+    def __init__(self, paths, directory=None):
+        self.paths = paths
+        self.directory = Path(directory) if directory is not None else Path(f"/run/user/{os.getuid()}/mixpi-copy")
+        self.connection = None
+        self.guard = None
+        self.active = False
+        self.mutex = threading.Lock()
+        self.stopped = threading.Event()
+        self.worker = None
+        self.transfer = False
+        self.transfer_ended = False
+        self.report_broken = False
+
+    def report(self, message, expected="OK"):
+        try:
+            if self.exchange(message) != expected:
+                raise TransferError("Invalid native transfer response; same-build reporting is required")
+        except BaseException:
+            self.report_broken = True
+            self.stopped.set()
+            raise
+
+    def start_transfer(self):
+        self.report("TRANSFER_BEGIN\n1", "OK\nTRANSFER:1")
+        self.transfer = True
+
+    def transfer_progress(self, phase, progress):
+        self.report(f"TRANSFER\n{phase}\n{progress}")
+
+    def finish_transfer(self, outcome):
+        self.report("TRANSFER_END\n" + outcome)
+        self.transfer_ended = True
+
+    def exchange(self, message):
+        with self.mutex:
+            self.connection.sendall(message.encode())
+            response = self.connection.recv(16384).decode()
+            if response != "OK" and not response.startswith("OK\n"):
+                raise TransferError("Native copy admission denied; no unguarded transfer is allowed.")
+            return response
+
+    def check(self, path=None):
+        if not self.active:
+            return
+        try:
+            if self.exchange("CHECK" if path is None else "CHECK\n" + os.path.abspath(path)) != "OK":
+                raise TransferError("Invalid native copy response")
+        except Exception:
+            os._exit(74)
+
+    def watch(self):
+        while not self.stopped.wait(0.1):
+            self.check()
+
+    def __enter__(self):
+        directory = self.directory
+        try:
+            for component in reversed((directory, *directory.parents)):
+                if not stat.S_ISDIR(component.lstat().st_mode):
+                    raise TransferError("Unsafe native admission directory component")
+            info = directory.stat()
+            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise TransferError("Unsafe native admission directory")
+            self.guard = os.open(directory / "sessions.lock", os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+            info = os.fstat(self.guard)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+                raise TransferError("Unsafe native admission guard")
+            fcntl.flock(self.guard, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            self.connection = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            self.connection.settimeout(2)
+            self.connection.connect(str(directory / "control"))
+            peer_pid, peer_uid, _ = struct.unpack("3i", self.connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            peer_namespace = os.stat(f"/proc/{peer_pid}/ns/mnt")
+            own_namespace = os.stat("/proc/self/ns/mnt")
+            if peer_uid != os.getuid() or (peer_namespace.st_dev, peer_namespace.st_ino) != (own_namespace.st_dev, own_namespace.st_ino):
+                raise TransferError("Native admission peer is outside the supported user/namespace")
+            lines = []
+            for mode, path in self.paths:
+                path = os.path.abspath(path)
+                if mode not in ("R", "W") or any(character in path for character in "\n\r\0"):
+                    raise TransferError("Invalid admission path")
+                lines.append(mode + path)
+            request = "BEGIN\n" + "\n".join(lines)
+            if not 1 <= len(lines) <= 6 or len(request.encode()) >= 16384:
+                raise TransferError("Copy admission request is too large")
+            self.proofs = self.exchange(request).splitlines()[1:]
+            if len(self.proofs) != len(lines):
+                raise TransferError("Incomplete native admission proof")
+            self.active = True
+            self.previous = getattr(_admission, "current", None)
+            _admission.current = self
+            self.worker = threading.Thread(target=self.watch, daemon=True)
+            self.worker.start()
+            return self
+        except (OSError, ValueError, TransferError) as error:
+            self.close()
+            raise TransferError(f"Native copy ownership unavailable: {error}") from error
+
+    def close(self):
+        if self.connection is not None:
+            self.connection.close()
+        if self.guard is not None:
+            os.close(self.guard)
+
+    def __exit__(self, kind, error, traceback):
+        self.stopped.set()
+        self.worker.join()
+        try:
+            if not self.report_broken:
+                if self.transfer and not self.transfer_ended:
+                    self.finish_transfer("cancelled" if isinstance(error, Cancelled) else "failed")
+                if self.exchange("CANCEL" if kind else "FINISH") != "OK":
+                    raise TransferError("Invalid native copy completion response")
+        except Exception:
+            if kind is None:
+                raise
+        finally:
+            self.active = False
+            _admission.current = self.previous
+            self.close()
+
+
+class TransferProgress:
+    def __init__(self, admission, callback):
+        self.admission = admission
+        self.callback = callback
+        self.last_fraction = 0.0
+        self.last_report = None
+
+    def update(self, phase, fraction, message):
+        if (phase not in ("copying", "verifying") or isinstance(fraction, bool) or
+                not isinstance(fraction, (int, float)) or not math.isfinite(fraction) or
+                not self.last_fraction <= fraction <= 1):
+            raise TransferError("Invalid or regressing transfer progress")
+        self.last_fraction = fraction
+        report = (phase, min(99, int(fraction * 100)))
+        if report != self.last_report:
+            self.admission.transfer_progress(*report)
+            self.last_report = report
+        self.callback(fraction, message)
+
+
+def transfer_progress(progress, phase, fraction, message):
+    if isinstance(progress, TransferProgress):
+        progress.update(phase, fraction, message)
+    else:
+        progress(fraction, message)
+
+
+def admission_check(path=None):
+    current = getattr(_admission, "current", None)
+    if current is not None:
+        current.check(path)
+
+
 def check_cancel(cancel):
+    admission_check()
     if cancel is not None and cancel.is_set():
         raise Cancelled("Copy cancelled. USB files are unchanged.")
 
@@ -104,6 +267,7 @@ def mounted_drives(data=None):
 
 def checked_directory(path, create=False):
     """Refuse symlink components, including symlinks to apparently safe paths."""
+    admission_check(path)
     path = Path(os.path.abspath(path))
     current = Path(path.anchor)
     for part in path.parts[1:]:
@@ -145,9 +309,13 @@ def open_relative(root_fd, relative):
     current = os.dup(root_fd)
     try:
         for part in parts[:-1]:
+            if getattr(_admission, "current", None) is not None:
+                admission_check(Path(os.readlink(f"/proc/self/fd/{current}")) / part)
             next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current)
             os.close(current)
             current = next_fd
+        if getattr(_admission, "current", None) is not None:
+            admission_check(Path(os.readlink(f"/proc/self/fd/{current}")) / parts[-1])
         descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=current)
         with os.fdopen(descriptor, "rb") as handle:
             if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
@@ -233,6 +401,17 @@ def readiness_error(plan):
 
 def make_plan(source, label, source_id, export_root=None, audio_root=None,
               state_root=None, reserve=RESERVE, cancel=None):
+    paths = [("R", source), ("W", export_root or f"/media/{os.environ.get('USER', 'pi')}"),
+             ("W", audio_root or Path.home() / "Music/Backup"), ("W", state_root or STATE_ROOT)]
+    with CopyAdmission(paths) as admission:
+        plan = _make_plan(source, label, source_id, export_root, audio_root, state_root, reserve, cancel)
+        plan.admission_paths = paths
+        plan.admission_proofs = admission.proofs
+        return plan
+
+
+def _make_plan(source, label, source_id, export_root=None, audio_root=None,
+               state_root=None, reserve=RESERVE, cancel=None):
     source = checked_directory(source)
     export_root = Path(export_root or f"/media/{os.environ.get('USER', 'pi')}")
     audio_root = Path(audio_root or Path.home() / "Music/Backup")
@@ -297,6 +476,14 @@ def hash_file(handle, cancel=None, tick=None):
 
 def verify_existing(plan, cancel, progress):
     checked_directory(plan.destination)
+    completed = 0
+
+    def advance(count):
+        nonlocal completed
+        completed += count
+        transfer_progress(progress, "verifying", 0.99 * completed / max(2 * plan.total, 1),
+                          "Checking existing backup…")
+
     with open_directory(plan.destination) as descriptor, open_directory(plan.source) as source_fd:
         try:
             with open_relative(descriptor, RECEIPT) as handle:
@@ -306,14 +493,15 @@ def verify_existing(plan, cancel, progress):
             checksums = receipt["sha256"]
             if set(checksums) != {entry["path"] for entry in plan.files}:
                 raise TransferError("Existing backup inventory is incomplete; it was not changed.")
-            for number, entry in enumerate(plan.files):
+            for entry in plan.files:
                 check_cancel(cancel)
-                progress(number / len(plan.files), "Checking existing backup…")
+                transfer_progress(progress, "verifying", 0.99 * completed / max(2 * plan.total, 1),
+                                  "Checking existing backup…")
                 with open_relative(descriptor, entry["path"]) as handle:
-                    if os.fstat(handle.fileno()).st_size != entry["size"] or hash_file(handle, cancel) != checksums[entry["path"]]:
+                    if os.fstat(handle.fileno()).st_size != entry["size"] or hash_file(handle, cancel, advance) != checksums[entry["path"]]:
                         raise TransferError("Existing backup failed verification; it was not changed.")
                 with open_relative(source_fd, entry["path"]) as handle:
-                    if identity(os.fstat(handle.fileno())) != entry["identity"] or hash_file(handle, cancel) != checksums[entry["path"]]:
+                    if identity(os.fstat(handle.fileno())) != entry["identity"] or hash_file(handle, cancel, advance) != checksums[entry["path"]]:
                         raise TransferError("USB contents differ from the existing backup; neither was changed.")
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise TransferError(f"Cannot verify existing backup; it was not changed: {error}") from error
@@ -321,6 +509,20 @@ def verify_existing(plan, cancel, progress):
 
 
 def copy_plan(plan, cancel=None, progress=lambda fraction, message: None):
+    if not hasattr(plan, "admission_paths"):
+        raise TransferError("Refresh the copy plan to obtain native ownership")
+    with CopyAdmission(plan.admission_paths) as admission:
+        if admission.proofs != plan.admission_proofs:
+            raise TransferError("Source or destination physical generation changed; refresh the plan")
+        admission.start_transfer()
+        reporter = TransferProgress(admission, progress)
+        result = _copy_plan(plan, cancel, reporter)
+        admission.transfer_progress("verifying", 99)
+        admission.finish_transfer("verified")
+        return result
+
+
+def _copy_plan(plan, cancel=None, progress=lambda fraction, message: None):
     """Stage, checksum-verify and atomically publish; never delete source files."""
     check_cancel(cancel)
     source = checked_directory(plan.source)
@@ -350,6 +552,7 @@ def copy_plan(plan, cancel=None, progress=lambda fraction, message: None):
         stage_parent = checked_directory(state_root / "staging", create=True)
         staging = Path(tempfile.mkdtemp(prefix="copy-", dir=stage_parent))
         for relative in plan.directories:
+            admission_check(staging / validate_relative(relative))
             (staging / validate_relative(relative)).mkdir(mode=0o700, parents=True, exist_ok=True)
         checksums, completed = {}, 0
         with open_directory(source) as source_fd:
@@ -359,6 +562,7 @@ def copy_plan(plan, cancel=None, progress=lambda fraction, message: None):
                 check_cancel(cancel)
                 relative = entry["path"]
                 target = staging / validate_relative(relative)
+                admission_check(target.parent)
                 digest = hashlib.sha256()
                 with open_relative(source_fd, relative) as source_file, target.open("xb") as output:
                     if identity(os.fstat(source_file.fileno())) != entry["identity"]:
@@ -371,20 +575,21 @@ def copy_plan(plan, cancel=None, progress=lambda fraction, message: None):
                         output.write(chunk)
                         digest.update(chunk)
                         completed += len(chunk)
-                        progress(0.8 * completed / max(plan.total, 1), f"Copying {size_text(completed)} / {size_text(plan.total)}")
+                        transfer_progress(progress, "copying", 0.8 * completed / max(plan.total, 1), f"Copying {size_text(completed)} / {size_text(plan.total)}")
                     output.flush()
                     os.fsync(output.fileno())
                     if identity(os.fstat(source_file.fileno())) != entry["identity"]:
                         raise TransferError("USB files changed during transfer. Refresh and try again.")
                 checksums[relative] = digest.hexdigest()
                 os.utime(target, ns=(entry["mtime_ns"], entry["mtime_ns"]))
-        progress(0.8, "Verifying copied files…")
+        transfer_progress(progress, "verifying", 0.8, "Verifying copied files…")
         for index, entry in enumerate(plan.files):
             target = staging / entry["path"]
+            admission_check(target)
             with target.open("rb") as handle:
                 if target.stat().st_size != entry["size"] or hash_file(handle, cancel) != checksums[entry["path"]]:
                     raise TransferError("Copied files failed verification. Nothing was published.")
-            progress(0.8 + 0.19 * (index + 1) / len(plan.files), "Verifying copied files…")
+            transfer_progress(progress, "verifying", 0.8 + 0.19 * (index + 1) / len(plan.files), "Verifying copied files…")
         if inventory(source, cancel, plan.include_roots) != (plan.root_identity, plan.directories, plan.files):
             raise TransferError("USB contents changed during transfer. Nothing was published.")
         with (staging / RECEIPT).open("x") as handle:
@@ -400,7 +605,7 @@ def copy_plan(plan, cancel=None, progress=lambda fraction, message: None):
         staging = None
         with open_directory(destination_root) as descriptor:
             os.fsync(descriptor)
-        progress(1.0, "Copy verified. USB files are unchanged.")
+        transfer_progress(progress, "verifying", 1.0, "Copy verified. USB files are unchanged.")
         return {"status": "copied", "destination": str(plan.destination), "files": len(plan.files)}
     finally:
         if staging is not None:
@@ -446,6 +651,14 @@ def files_in_use(directory):
 
 
 def list_recordings(directory, in_use=None):
+    with CopyAdmission([("W", directory)]) as admission:
+        recordings = _list_recordings(directory, in_use)
+        for recording in recordings:
+            recording["admission_proofs"] = admission.proofs
+        return recordings
+
+
+def _list_recordings(directory, in_use=None):
     """Group each recording with its cue sheet, newest first. No folder means none."""
     directory = Path(directory)
     if not os.path.lexists(directory):
@@ -470,6 +683,13 @@ def list_recordings(directory, in_use=None):
 
 
 def usb_target(drive):
+    with CopyAdmission([("R", drive["source"])]) as admission:
+        target = _usb_target(drive)
+        target["admission_proofs"] = admission.proofs
+        return target
+
+
+def _usb_target(drive):
     """Where recordings would go on a mounted drive. Looks only; writes nothing."""
     mount = checked_directory(drive["source"])
     info = os.statvfs(mount)
@@ -533,7 +753,7 @@ def store_verified(source_fd, usb_fd, destination, entry, cancel, advance):
             if identity(os.fstat(source.fileno())) != entry["identity"]:
                 raise changed
             if existing:
-                expected = hash_file(source, cancel, lambda count: advance(count, f"Checking {name} already on USB"))
+                expected = hash_file(source, cancel, lambda count: advance(count, f"Checking {name} already on USB", "verifying"))
             else:
                 # Left by a move that was interrupted before verification.
                 if os.path.lexists(partial):
@@ -558,7 +778,7 @@ def store_verified(source_fd, usb_fd, destination, entry, cancel, advance):
                 raise changed
         with open_relative(usb_fd, name if existing else partial.name) as stored:
             matches = (os.fstat(stored.fileno()).st_size == entry["size"] and
-                       hash_file(stored, cancel, lambda count: advance(count, f"Verifying {name} on USB")) == expected)
+                       hash_file(stored, cancel, lambda count: advance(count, f"Verifying {name} on USB", "verifying")) == expected)
         if existing:
             if not matches:
                 raise TransferError(f"A different {name} is already on the USB; it was not replaced")
@@ -584,6 +804,22 @@ def require_unchanged(source_fd, recording, moment):
 
 def move_recordings(directory, recordings, target, state_root=None, cancel=None,
                     progress=lambda fraction, message: None):
+    with CopyAdmission([("R", directory), ("R", target["mount"]),
+                        ("W", state_root or STATE_ROOT)]) as admission:
+        if admission.proofs[1:2] != target.get("admission_proofs"):
+            raise TransferError("The selected USB generation changed; refresh the target")
+        if any(recording.get("admission_proofs") != admission.proofs[:1] for recording in recordings):
+            raise TransferError("The recordings generation changed; refresh the list")
+        admission.start_transfer()
+        reporter = TransferProgress(admission, progress)
+        result = _move_recordings(directory, recordings, target, state_root, cancel, reporter)
+        admission.transfer_progress("verifying", 99)
+        admission.finish_transfer("verified")
+        return result
+
+
+def _move_recordings(directory, recordings, target, state_root=None, cancel=None,
+                     progress=lambda fraction, message: None):
     """Copy to USB, verify what the drive holds, then delete each Pi original."""
     moved, lock_fd = [], None
 
@@ -592,7 +828,7 @@ def move_recordings(directory, recordings, target, state_root=None, cancel=None,
     try:
         check_cancel(cancel)
         directory = checked_directory(directory)
-        current = usb_target({"source": target["mount"], "fstype": target["fstype"]})
+        current = _usb_target({"source": target["mount"], "fstype": target["fstype"]})
         if current["device"] != target["device"]:
             raise TransferError("The USB drive changed or was removed")
         unavailable = move_error(recordings, current)
@@ -613,10 +849,10 @@ def move_recordings(directory, recordings, target, state_root=None, cancel=None,
         # Every byte is read twice: once to copy it, once back from the drive.
         total, done = 2 * max(sum(recording["bytes"] for recording in recordings), 1), 0
 
-        def advance(count, message):
+        def advance(count, message, phase="copying"):
             nonlocal done
             done += count
-            progress(0.99 * done / total, message)
+            transfer_progress(progress, phase, 0.99 * done / total, message)
         with open_directory(directory) as source_fd, open_directory(destination) as usb_fd:
             for recording in recordings:
                 require_unchanged(source_fd, recording, "after it was listed")
@@ -624,11 +860,13 @@ def move_recordings(directory, recordings, target, state_root=None, cancel=None,
                     store_verified(source_fd, usb_fd, destination, entry, cancel, advance)
                 sync_directory(usb_fd)
                 require_unchanged(source_fd, recording, "during the move")
+                check_cancel(cancel)
                 for entry in recording["files"]:
+                    admission_check()
                     os.unlink(entry["path"], dir_fd=source_fd)
                 os.fsync(source_fd)
                 moved.append(recording["name"])
-        progress(1.0, "Recordings verified on USB.")
+        transfer_progress(progress, "verifying", 1.0, "Recordings verified on USB.")
         return {"status": "moved", "destination": str(destination), "recordings": len(moved),
                 "files": sum(len(recording["files"]) for recording in recordings),
                 "bytes": sum(recording["bytes"] for recording in recordings)}

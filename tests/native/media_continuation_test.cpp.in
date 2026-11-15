@@ -1,0 +1,521 @@
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QStandardItemModel>
+#include <QThread>
+#include <QVariant>
+#include <cassert>
+#include <iostream>
+#include <map>
+#include <vector>
+
+#include "library/media/mediauseregistry.h"
+#include "library/rekordbox/pendingselection.h"
+#if __has_include("library/rekordbox/importoperation.h")
+#include "library/rekordbox/importoperation.h"
+#define CANCELLATION_ENABLED 1
+#else
+#define CANCELLATION_ENABLED 0
+#endif
+#include "library/mixpimediadialog.h"
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-private-field"
+#endif
+#include "library/mixpicontrolledmedia.h"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+#include "library/mixpicontrolleddialog.h"
+
+struct TreeItem {
+    QVariant data;
+    std::vector<std::unique_ptr<TreeItem>> children;
+    QVariant getData() const { return data; }
+    int childRows() const { return static_cast<int>(children.size()); }
+    TreeItem* child(int row) const { return children.at(row).get(); }
+};
+
+namespace mixxx::rekordbox {
+struct Observation { std::string revision; std::string database; };
+std::map<std::string, Observation> observations;
+Observation inspectSource(const std::string& path) { return observations[path]; }
+PRODUCTION_REVISION
+PRODUCTION_CACHE
+}
+
+const QString IS_RECORDBOX_DEVICE = QStringLiteral("device");
+const QString IS_NOT_RECORDBOX_DEVICE = QStringLiteral("playlist");
+
+struct Sidebar : QStandardItemModel {
+    TreeItem root;
+    TreeItem* getRootItem() { return &root; }
+    void add(const QString& path, const QString& revision) {
+        auto item = std::make_unique<TreeItem>();
+        item->data = QVariantList{path, IS_RECORDBOX_DEVICE, revision};
+        root.children.push_back(std::move(item));
+        appendRow(new QStandardItem(QStringLiteral("Duplicate label")));
+    }
+};
+
+struct RekordboxFeature : QObject {
+    Sidebar sidebar;
+    Sidebar* m_pSidebarModel = &sidebar;
+    QMap<QString, QString> m_requestedMounts;
+    QMap<QString, QString> workerSnapshot;
+    QPointer<mixxx::rekordbox::PendingSelection> m_pendingSelection;
+    mixxx::media::Lease m_importMediaUse;
+#if CANCELLATION_ENABLED
+    std::shared_ptr<mixxx::rekordbox::ImportOperation> m_importOperation;
+#endif
+    mixxx::media::Lease m_discoveryMediaUse;
+    TreeItem* m_pImportingDevice = nullptr;
+    bool m_deviceDiscoveryActive = false;
+    bool m_trackImportActive = false;
+    bool m_deviceRefreshPending = false;
+    bool m_showDeviceLoading = false;
+    bool denyImport = false;
+    QString m_title;
+    int selections = 0;
+    int workers = 0;
+    QString selectedPath;
+    void featureIsLoading(RekordboxFeature*, bool) {}
+    void featureSelect(RekordboxFeature*, const QModelIndex& index) {
+        ++selections;
+        selectedPath = sidebar.root.child(index.row())->getData().toList().value(0).toString();
+    }
+    void activateChild(const QModelIndex& index) {
+        if (denyImport) { return; }
+#if CANCELLATION_ENABLED
+        auto* item = sidebar.root.child(index.row());
+        if (item->getData().toList().value(1).toString() != IS_RECORDBOX_DEVICE) { return; }
+        m_importOperation = std::make_shared<mixxx::rekordbox::ImportOperation>();
+        auto data = item->getData().toList();
+        data[1] = IS_NOT_RECORDBOX_DEVICE;
+        item->data = data;
+#endif
+        m_importMediaUse = mixxx::media::acquireUnknown(mixxx::media::Producer::Import);
+        if (!m_importMediaUse) { return; }
+        m_trackImportActive = true;
+        m_pImportingDevice = sidebar.root.child(index.row());
+    }
+    void finishMockImport() {
+#if CANCELLATION_ENABLED
+        if (m_importOperation) {
+            m_importOperation->succeeded = !m_importOperation->cancelled();
+            m_importOperation->finished = true;
+            m_trackImportActive = false;
+            m_pImportingDevice = nullptr;
+            m_importMediaUse.reset();
+        }
+#endif
+    }
+    void refreshDevices() {
+        if (!m_deviceRefreshPending || m_deviceDiscoveryActive || m_trackImportActive) { return; }
+        m_deviceRefreshPending = false;
+        m_deviceDiscoveryActive = true;
+        workerSnapshot = m_requestedMounts;
+        ++workers;
+    }
+    void requestDeviceRefresh();
+    void finishDeviceRefresh();
+    QString openRemovableDevice(const QString&, const QString&);
+    std::function<void()> openRemovableDeviceAsync(const QString&, const QString&, const QString&,
+            QObject*, mixxx::rekordbox::PendingSelection::Completion);
+};
+
+PRODUCTION_METHODS
+
+int checks = 0;
+void check(bool condition, const char* expression, int line) {
+    if (!condition) { std::cerr << "FAILED line " << line << ": " << expression << "\n"; }
+    assert(condition);
+    ++checks;
+}
+#define require(condition) check((condition), #condition, __LINE__)
+void events(int milliseconds = 80) {
+    QElapsedTimer elapsed;
+    elapsed.start();
+    do {
+        QCoreApplication::processEvents();
+        QThread::msleep(1);
+    } while (elapsed.elapsed() < milliseconds);
+}
+
+void selectionTests(bool holdout) {
+    using namespace mixxx::rekordbox;
+    observations = {{"/media/A", {"mount-a", "db-a"}}, {"/media/B", {"mount-b", "db-b"}}};
+    if (!holdout) {
+        {
+            RekordboxFeature feature;
+            QObject receiver;
+            int completions = 0;
+            auto cancel = feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString error) { require(error.isEmpty()); ++completions; });
+            events();
+            require(feature.workers == 1 && completions == 0 && feature.selections == 0);
+            require(feature.workerSnapshot.value("/media/A") == "mount-a");
+            feature.sidebar.add("/media/A", "db-a");
+            feature.finishDeviceRefresh();
+            events();
+            require(completions == (CANCELLATION_ENABLED ? 0 : 1));
+            require(feature.selections == (CANCELLATION_ENABLED ? 0 : 1) && feature.m_trackImportActive);
+            require(bool(feature.m_importMediaUse));
+            feature.finishMockImport();
+            events();
+            cancel();
+            events();
+            require(completions == 1);
+        }
+        {
+            RekordboxFeature feature;
+            QObject receiver;
+            feature.sidebar.add("/media/A", "db-a");
+            int completions = 0;
+            feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString error) { require(error.isEmpty()); ++completions; });
+            events();
+            feature.finishMockImport();
+            events();
+            require(completions == 1 && feature.workers == 0 && feature.selections == 1);
+        }
+        {
+            RekordboxFeature feature;
+            QObject receiver;
+            int completions = 0;
+            auto cancel = feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString) { ++completions; });
+            cancel();
+            feature.sidebar.add("/media/A", "db-a");
+            feature.finishDeviceRefresh();
+            events();
+            require(completions == 0 && feature.selections == 0);
+        }
+        {
+            QObject receiver;
+            int completions = 0;
+            auto* feature = new RekordboxFeature;
+            feature->openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString) { ++completions; });
+            delete feature;
+            events();
+            require(completions == 0);
+        }
+        {
+            RekordboxFeature feature;
+            auto* receiver = new QObject;
+            int completions = 0;
+            feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", receiver,
+                    [&](QString) { ++completions; });
+            delete receiver;
+            feature.sidebar.add("/media/A", "db-a");
+            feature.finishDeviceRefresh();
+            events();
+            require(completions == 0 && feature.selections == 0);
+        }
+        {
+            RekordboxFeature feature;
+            QObject receiver;
+            int oldCompletions = 0;
+            int currentCompletions = 0;
+            feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString) { ++oldCompletions; });
+            feature.openRemovableDeviceAsync("/media/B", "mount-b", "db-b", &receiver,
+                    [&](QString error) { require(error.isEmpty()); ++currentCompletions; });
+            feature.sidebar.add("/media/A", "db-a");
+            feature.sidebar.add("/media/B", "db-b");
+            feature.finishDeviceRefresh();
+            events();
+            require(oldCompletions == 0 && currentCompletions == 0 && feature.selections == 0);
+            require(feature.workers == 2 && feature.workerSnapshot.contains("/media/B"));
+            feature.finishDeviceRefresh();
+            events();
+            feature.finishMockImport();
+            events();
+            require(currentCompletions == 1 && feature.selectedPath == "/media/B");
+        }
+        {
+            QObject owner;
+            QObject receiver;
+            int completions = 0;
+            new PendingSelection(&owner, &receiver, [] { return std::optional<QString>(); },
+                    [&](QString error) { require(error.contains("timed out")); ++completions; }, 15);
+            events();
+            require(completions == 1);
+        }
+    } else {
+        {
+            QObject parent;
+            auto* receiver = new QObject;
+            int completions = 0;
+            new PendingSelection(&parent, receiver, [&]() -> std::optional<QString> {
+                delete receiver;
+                receiver = nullptr;
+                return QString();
+            }, [&](QString) { ++completions; });
+            events();
+            require(completions == 0 && receiver == nullptr);
+        }
+        for (bool databaseChange : {false, true}) {
+            RekordboxFeature feature;
+            QObject receiver;
+            int completions = 0;
+            feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString error) { require(!error.isEmpty()); ++completions; });
+            observations["/media/A"] = databaseChange ? Observation{"mount-a", "db-new"} : Observation{"mount-new", "db-a"};
+            feature.sidebar.add("/media/A", "db-a");
+            feature.finishDeviceRefresh();
+            events();
+            require(completions == 1 && feature.selections == 0);
+            observations["/media/A"] = {"mount-a", "db-a"};
+        }
+        {
+            RekordboxFeature feature;
+            QObject receiver;
+            feature.m_trackImportActive = true;
+            int completions = 0;
+            feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString error) { require(error.isEmpty()); ++completions; });
+            events();
+            require(feature.workers == 0 && completions == 0 && feature.selections == 0);
+            feature.m_trackImportActive = false;
+            feature.refreshDevices();
+            feature.sidebar.add("/media/A", "db-a");
+            feature.finishDeviceRefresh();
+            events();
+            feature.finishMockImport();
+            events();
+            require(completions == 1 && feature.selections == 1);
+        }
+        {
+            RekordboxFeature feature;
+            QObject receiver;
+            feature.sidebar.add("/media/A", "db-a");
+            feature.denyImport = true;
+            int completions = 0;
+            feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString error) { require(error.contains("admitted")); ++completions; });
+            events();
+            require(completions == 1 && !feature.m_trackImportActive && !feature.m_importMediaUse);
+            require(feature.selections == 0);
+        }
+        {
+            RekordboxFeature feature;
+            QObject receiver;
+            auto drain = mixxx::media::registry().beginDrain("holdout-generation");
+            require(bool(drain));
+            int completions = 0;
+            feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString error) { require(error.contains("draining")); ++completions; });
+            events();
+            require(completions == 1 && feature.selections == 0 && feature.workers == 0);
+        }
+        {
+            RekordboxFeature feature;
+            QObject receiver;
+            int completions = 0;
+            feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString error) { require(error.contains("draining")); ++completions; });
+            feature.sidebar.add("/media/A", "db-a");
+            feature.finishDeviceRefresh();
+            auto drain = mixxx::media::registry().beginDrain("late-drain-generation");
+            require(bool(drain));
+            events();
+            require(completions == 1 && feature.selections == 0);
+        }
+        {
+            RekordboxFeature feature;
+            QObject receiver;
+            feature.m_deviceDiscoveryActive = true;
+            int completions = 0;
+            auto cancel = feature.openRemovableDeviceAsync("/media/A", "mount-a", "db-a", &receiver,
+                    [&](QString) { ++completions; });
+            feature.finishDeviceRefresh();
+            require(feature.m_deviceDiscoveryActive && feature.workerSnapshot.contains("/media/A"));
+            cancel();
+            feature.sidebar.add("/media/A", "db-a");
+            feature.finishDeviceRefresh();
+            events();
+            require(completions == 0 && feature.selections == 0);
+        }
+    }
+}
+
+QJsonObject volume(const QString& token, const QString& path) {
+    return {{"token", token}, {"label", "Guest"}, {"mount", QJsonObject{{"path", path}}}};
+}
+QJsonObject drive(const QString& token, QJsonArray volumes) {
+    return {{"token", token}, {"device", token == "disk-a" ? "8:32" : "8:80"},
+            {"size", 16000000000.0}, {"volumes", volumes}};
+}
+QJsonObject snapshot() {
+    return {{"version", 1}, {"drives", QJsonArray{
+            drive("disk-a", {volume("vol-a", "/media/A")}),
+            drive("disk-b", {volume("vol-b", "/media/B")})}}};
+}
+
+struct DialogFixture {
+    QJsonObject inventory = snapshot();
+    std::vector<MixpiMediaDialog::Receive> probes;
+    std::vector<std::function<void(QString)>> completions;
+    std::shared_ptr<QSet<QString>> opened = std::make_shared<QSet<QString>>();
+    QPointer<MixpiMediaDialog> dialog;
+    int opens = 0;
+    int cancels = 0;
+    int controlled = 0;
+    bool mounting = false;
+    QString selectedToken;
+    bool delayed = false;
+    void create() {
+        dialog = new MixpiMediaDialog(nullptr,
+                [this](auto receive) { if (delayed) { probes.push_back(receive); } else { receive(inventory); } },
+                [this](const QJsonObject& entry, QObject*, auto complete) {
+                    ++opens;
+                    selectedToken = entry.value("token").toString();
+                    completions.push_back(complete);
+                    return [this] { ++cancels; };
+                },
+                [this](bool mount, QString token) { ++controlled; mounting = mount; selectedToken = token; }, opened);
+        dialog->show();
+        events(5);
+    }
+    ~DialogFixture() { if (dialog) { delete dialog; } }
+    QPushButton* button(const char* name) { return dialog->findChild<QPushButton*>(name); }
+    QListWidget* list() { return dialog->findChild<QListWidget*>("mediaDrives"); }
+};
+
+void dialogTests(bool holdout) {
+    if (!holdout) {
+        {
+            DialogFixture fixture;
+            fixture.create();
+            require(fixture.list()->count() == 2);
+            require(!fixture.button("mediaLoad")->isEnabled() && !fixture.button("mediaEject")->isEnabled());
+            fixture.list()->setCurrentRow(0);
+            require(fixture.button("mediaLoad")->isEnabled() && fixture.button("mediaEject")->isEnabled());
+            require(!fixture.button("mediaMount")->isVisible());
+            require(fixture.button("mediaClose")->x() > fixture.button("mediaEject")->x());
+            const auto screenshots = qEnvironmentVariable("MIXXX_MEDIA_TEST_SCREENSHOTS");
+            if (!screenshots.isEmpty()) {
+                require(fixture.dialog->grab().save(screenshots + "/available-740.png"));
+                fixture.dialog->resize(650, 320);
+                events();
+                require(fixture.dialog->grab().save(screenshots + "/available-650.png"));
+            }
+            fixture.button("mediaLoad")->click();
+            require(fixture.opens == 1 && fixture.selectedToken == "vol-a" && fixture.dialog->isVisible());
+            fixture.completions.back()(QString());
+            events();
+            require(fixture.opened->contains("vol-a") && !fixture.dialog);
+        }
+        {
+            DialogFixture fixture;
+            fixture.opened->insert("vol-a");
+            fixture.create();
+            require(fixture.list()->item(0)->text().contains("Opened this session"));
+            fixture.list()->setCurrentRow(0);
+            require(fixture.button("mediaLoad")->text() == "Open again");
+            fixture.button("mediaEject")->click();
+            require(fixture.controlled == 1 && fixture.selectedToken == "disk-a" && !fixture.mounting);
+        }
+        {
+            DialogFixture fixture;
+            fixture.inventory = {{"version", 1}, {"drives", QJsonArray{drive("disk-a", {})}}};
+            fixture.create();
+            fixture.list()->setCurrentRow(0);
+            require(fixture.button("mediaMount")->isVisible() && !fixture.button("mediaLoad")->isVisible());
+            fixture.button("mediaMount")->click();
+            require(fixture.controlled == 1 && fixture.mounting && fixture.selectedToken == "disk-a");
+        }
+        {
+            DialogFixture fixture;
+            fixture.create();
+            fixture.list()->setCurrentRow(0);
+            fixture.button("mediaLoad")->click();
+            fixture.button("mediaClose")->click();
+            fixture.completions.back()(QString());
+            events();
+            require(fixture.cancels == 1 && !fixture.opened->contains("vol-a"));
+        }
+    } else {
+        {
+            DialogFixture fixture;
+            fixture.create();
+            fixture.list()->setCurrentRow(0);
+            fixture.delayed = true;
+            fixture.button("mediaLoad")->click();
+            fixture.list()->setCurrentRow(1);
+            fixture.probes.back()(snapshot());
+            require(fixture.opens == 0);
+        }
+        {
+            DialogFixture fixture;
+            fixture.create();
+            fixture.list()->setCurrentRow(0);
+            fixture.button("mediaLoad")->click();
+            fixture.list()->setCurrentRow(1);
+            fixture.completions.back()(QString());
+            require(fixture.cancels == 1 && !fixture.opened->contains("vol-a") && fixture.dialog->isVisible());
+        }
+        for (bool error : {false, true}) {
+            DialogFixture fixture;
+            fixture.create();
+            fixture.list()->setCurrentRow(0);
+            fixture.inventory = error ? QJsonObject{{"error", "probe failed"}} :
+                    QJsonObject{{"version", 1}, {"drives", QJsonArray{drive("replacement", {volume("other", "/media/A")})}}};
+            fixture.button("mediaLoad")->click();
+            require(fixture.opens == 0 && fixture.controlled == 0);
+        }
+        {
+            DialogFixture fixture;
+            fixture.inventory = {{"version", 1}, {"drives", QJsonArray{drive("disk-a", {
+                    volume("vol-a", "/media/A"), volume("vol-b", "/media/B")})}}};
+            fixture.create();
+            fixture.list()->setCurrentRow(0);
+            auto* volumes = fixture.dialog->findChild<QComboBox*>("mediaVolumes");
+            require(volumes->isVisible() && volumes->currentIndex() == -1 && !fixture.button("mediaLoad")->isEnabled());
+            volumes->setCurrentIndex(1);
+            fixture.button("mediaLoad")->click();
+            require(fixture.opens == 1 && fixture.selectedToken == "vol-b");
+        }
+        {
+            const auto duplicate = drive("disk-a", {});
+            const QJsonObject inventory{{"version", 1}, {"drives", QJsonArray{duplicate, duplicate}}};
+            require(MixpiMediaDialog::findDrive(inventory, "disk-a").isEmpty());
+        }
+        {
+            DialogFixture fixture;
+            fixture.delayed = true;
+            fixture.create();
+            fixture.button("mediaClose")->click();
+            fixture.probes.back()(snapshot());
+            events();
+            require(fixture.opens == 0 && fixture.controlled == 0 && !fixture.dialog);
+        }
+    }
+    {
+        MixpiControlledMedia operation(-1, nullptr);
+        auto* dialog = new MixpiControlledDialog(&operation, false, nullptr, "disk-a");
+        dialog->show();
+        events();
+        require(operation.state() == MixpiControlledMedia::State::Unavailable);
+        require(!operation.message().isEmpty());
+        for (auto* button : dialog->findChildren<QPushButton*>()) {
+            if (button->text().contains("Prepare") || button->text().contains("Eject irreversibly")) {
+                require(!button->isEnabled() || !button->isVisible());
+            }
+        }
+        const auto screenshots = qEnvironmentVariable("MIXXX_MEDIA_TEST_SCREENSHOTS");
+        if (!screenshots.isEmpty()) {
+            require(dialog->grab().save(screenshots + "/eject-off-740.png"));
+        }
+        delete dialog;
+    }
+}
+
+int main(int argc, char** argv) {
+    QApplication application(argc, argv);
+    const bool holdout = application.arguments().contains("holdout");
+    selectionTests(holdout);
+    dialogTests(holdout);
+    std::cout << "PASS " << checks << " real-Qt media " << (holdout ? "holdout" : "regression") << " assertions\n";
+}

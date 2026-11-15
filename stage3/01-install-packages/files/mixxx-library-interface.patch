@@ -1,0 +1,968 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -8,6 +8,8 @@
+ #include <QDir>
+ #include <QMessageBox>
+ #include <QMenu>
++#include "widget/libraryinterface.h"
++#include "library/sourceorder.h"
+ 
+ #include "control/controlobject.h"
+ #include "control/controlpushbutton.h"
+@@ -548,6 +550,8 @@
+             &LibraryFeature::restoreModelState,
+             this,
+             &Library::restoreModelState);
++    applySidebarSourceOrder();
++    applySidebarSourceVisibility();
+ }
+ 
+ void Library::addOptionalSidebarSource(const QString& id,
+@@ -559,6 +563,42 @@
+     if (m_pConfig->getValue(key, true)) {
+         addFeature(create());
+     }
++    applySidebarSourceOrder();
++}
++
++void Library::applySidebarSourceOrder() {
++    QStringList available;
++    for (const auto& source : std::as_const(m_sidebarSources)) {
++        available.append(source.id);
++    }
++    const auto identities = SourceOrder::present(SourceOrder::decode(
++            m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarSourceOrder"))), available);
++    int featureRow = 0;
++    for (int sourceRow = 0; sourceRow < identities.size(); ++sourceRow) {
++        auto source = std::find_if(m_sidebarSources.begin(), m_sidebarSources.end(),
++                [&identities, sourceRow](const SidebarSource& item) {
++                    return item.id == identities.at(sourceRow);
++                });
++        m_sidebarSources.move(std::distance(m_sidebarSources.begin(), source), sourceRow);
++        auto* feature = m_sidebarSources.at(sourceRow).feature;
++        if (!feature) {
++            continue;
++        }
++        const int from = m_features.indexOf(feature);
++        if (from != featureRow) {
++            m_pSidebarModel->moveLibraryFeature(from, featureRow,
++                    [this, from, featureRow] { m_features.move(from, featureRow); });
++        }
++        ++featureRow;
++    }
++}
++
++void Library::saveSidebarSourceOrder(const QStringList& identities) {
++    const ConfigKey key(kConfigGroup, "SidebarSourceOrder");
++    m_pConfig->setValue(key, SourceOrder::encode(SourceOrder::mergePresent(
++            SourceOrder::decode(m_pConfig->getValueString(key)), identities)));
++    applySidebarSourceOrder();
++    applySidebarSourceVisibility();
+ }
+ 
+ void Library::applySidebarSourceVisibility() {
+@@ -579,7 +619,12 @@
+     }
+     // Recover from hand-edited settings which hide every source.
+     if (!firstVisible.isValid() && !m_sidebarSources.isEmpty()) {
+-        m_pConfig->setValue(m_sidebarSources.first().preference, true);
++        const auto fallback = std::find_if(m_sidebarSources.begin(), m_sidebarSources.end(),
++                [](const SidebarSource& source) { return source.feature != nullptr; });
++        if (fallback == m_sidebarSources.end()) {
++            return;
++        }
++        m_pConfig->setValue(fallback->preference, true);
+         applySidebarSourceVisibility();
+         return;
+     }
+@@ -588,6 +633,7 @@
+             m_pSidebarWidget->isRowHidden(defaultIndex.row(), QModelIndex())) {
+         m_pSidebarModel->setDefaultSelection(firstVisible.row());
+     }
++    const bool hiddenContext = LibraryInterface::hasHiddenContext(m_pSidebarWidget);
+     QModelIndex folder = m_pSidebarWidget->rootIndex();
+     while (folder.parent().isValid()) {
+         folder = folder.parent();
+@@ -596,13 +642,8 @@
+         m_pSidebarWidget->returnToSourceRoot();
+     }
+     // Never leave keyboard/controller navigation pointing at a hidden source.
+-    QModelIndex selected = m_pSidebarWidget->currentIndex();
+-    while (selected.parent().isValid()) {
+-        selected = selected.parent();
+-    }
+-    if (selected.isValid() &&
+-            m_pSidebarWidget->isRowHidden(selected.row(), QModelIndex()) &&
+-            firstVisible.isValid()) {
++    if (hiddenContext && firstVisible.isValid()) {
++        m_pSidebarWidget->returnToSourceRoot();
+         m_pSidebarWidget->selectIndex(firstVisible);
+         m_pSidebarModel->clicked(firstVisible);
+     }
+@@ -663,26 +704,28 @@
+     if (!m_pSidebarWidget || !m_pLibraryWidget) {
+         return;
+     }
+-    auto* menu = new QMenu(tr("Sources"), m_pSidebarWidget);
++    if (m_pSidebarSourcesMenu && m_pSidebarSourcesMenu->isVisible()) {
++        m_pSidebarSourcesMenu->raise();
++        return;
++    }
++    auto* menu = new LibraryInterface::VisibilityMenu(tr("Sources"), m_pSidebarWidget);
++    m_pSidebarSourcesMenu = menu;
+     menu->setAttribute(Qt::WA_DeleteOnClose);
+-    int visibleCount = 0;
+-    for (const auto& source : std::as_const(m_sidebarSources)) {
+-        if (m_pConfig->getValue(source.preference, true)) {
+-            ++visibleCount;
+-        }
+-    }
++    auto choices = std::make_shared<QList<QCheckBox*>>();
+     for (int i = 0; i < m_sidebarSources.size(); ++i) {
+         const auto& source = m_sidebarSources[i];
+-        auto* action = menu->addAction(source.title);
+-        action->setCheckable(true);
+         const bool visible = m_pConfig->getValue(source.preference, true);
+-        action->setChecked(visible);
+         // Keep one source available; the menu itself remains reachable even
+         // when the sidebar has been hidden with the Show/Hide button.
+-        action->setEnabled(!visible || visibleCount > 1);
+-        connect(action, &QAction::triggered, this, [this, i](bool enabled) {
++        auto* choice = LibraryInterface::addVisibilityChoice(menu, source.title,
++                visible, [this, identity = source.id, choices](bool enabled) {
+             // Copy the factory before addFeature, which may grow the list.
+-            const auto source = m_sidebarSources.at(i);
++            const auto found = std::find_if(m_sidebarSources.begin(), m_sidebarSources.end(),
++                    [&identity](const SidebarSource& item) { return item.id == identity; });
++            if (found == m_sidebarSources.end()) {
++                return;
++            }
++            const auto source = *found;
+             m_pConfig->setValue(source.preference, enabled);
+             if (enabled && !source.feature && source.create) {
+                 auto* feature = source.create();
+@@ -694,9 +737,38 @@
+                 emit setSelectedClick(m_editMetadataSelectedClick);
+             }
+             applySidebarSourceVisibility();
++            LibraryInterface::protectLastVisible(*choices);
+         });
+-    }
+-    menu->popup(m_pLibraryWidget->mapToGlobal(QPoint(0, 0)));
++        choices->append(choice);
++    }
++    LibraryInterface::protectLastVisible(*choices);
++    QStringList sourceIds;
++    QStringList sourceTitles;
++    for (const auto& source : std::as_const(m_sidebarSources)) {
++        sourceIds.append(source.id);
++        sourceTitles.append(source.title);
++    }
++    LibraryInterface::addSourceOrder(menu, sourceIds, sourceTitles,
++            [this](const QStringList& identities) { saveSidebarSourceOrder(identities); });
++    menu->addSeparator();
++    auto* defaults = menu->addMenu(tr("Default source"));
++    connect(defaults, &QMenu::aboutToShow, defaults, [this, defaults] {
++        defaults->clear();
++        const QString preferred = m_pConfig->getValueString(
++                ConfigKey(kConfigGroup, "SidebarDefaultSource"));
++        for (const auto& source : std::as_const(m_sidebarSources)) {
++            auto* action = defaults->addAction(source.title);
++            action->setCheckable(true);
++            action->setChecked(source.id == preferred);
++            action->setEnabled(source.feature && m_pConfig->getValue(source.preference, true));
++            connect(action, &QAction::triggered, this, [this, identity = source.id] {
++                m_pConfig->setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), identity);
++                applySidebarSourceVisibility();
++            });
++        }
++    });
++    connect(menu->addAction(tr("Close")), &QAction::triggered, menu, &QMenu::close);
++    menu->popup(m_pSidebarWidget->mapToGlobal(QPoint(0, 0)));
+ }
+ 
+ void Library::onPlayerManagerTrackAnalyzerProgress(
+@@ -765,6 +837,24 @@
+ }
+ 
+ void Library::onSkinLoadFinished() {
++    if (m_pSidebarWidget) {
++        applySidebarSourceVisibility();
++        QStringList identities;
++        QList<bool> visibility;
++        for (auto* feature : std::as_const(m_features)) {
++            identities.append(QString::fromLatin1(feature->metaObject()->className()));
++            visibility.append(!m_pSidebarWidget->isRowHidden(identities.size() - 1, QModelIndex()));
++        }
++        const int preferredRow = LibraryInterface::preferredSourceRow(
++                m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")),
++                identities, visibility);
++        if (preferredRow >= 0) {
++            const auto index = m_pSidebarModel->index(preferredRow, 0);
++            m_pSidebarWidget->selectIndex(index);
++            m_pSidebarModel->clicked(index);
++            return;
++        }
++    }
+     // Enable the default selection when a new skin is loaded.
+     m_pSidebarModel->activateDefaultSelection();
+ }
+diff --git a/src/library/library.h b/src/library/library.h
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -37,6 +37,7 @@
+ class WLibrary;
+ class QAbstractItemModel;
+ class QJsonObject;
++class QMenu;
+ 
+ #ifdef __ENGINEPRIME__
+ namespace mixxx {
+@@ -171,7 +172,10 @@
+             const QString& preference,
+             std::function<LibraryFeature*()> create);
+     void applySidebarSourceVisibility();
++    void applySidebarSourceOrder();
++    void saveSidebarSourceOrder(const QStringList& identities);
+     void showSidebarSourcesMenu();
++    QPointer<QMenu> m_pSidebarSourcesMenu;
+     QString openRemovableSource(const QJsonObject& volume);
+     QList<SidebarSource> m_sidebarSources;
+     QPointer<WLibrarySidebar> m_pSidebarWidget;
+diff --git a/src/library/sidebarmodel.cpp b/src/library/sidebarmodel.cpp
+--- a/src/library/sidebarmodel.cpp
++++ b/src/library/sidebarmodel.cpp
+@@ -80,6 +80,26 @@
+             &QAbstractItemModel::rowsRemoved,
+             this,
+             &SidebarModel::slotRowsRemoved);
++}
++
++bool SidebarModel::moveLibraryFeature(
++        int from, int to, const std::function<void()>& coordinated) {
++    if (from < 0 || to < 0 || from >= m_sFeatures.size() ||
++            to >= m_sFeatures.size() || from == to || !coordinated) {
++        return false;
++    }
++    auto* defaultFeature = m_iDefaultSelectedIndex < static_cast<unsigned>(m_sFeatures.size())
++            ? m_sFeatures.at(m_iDefaultSelectedIndex) : nullptr;
++    if (!beginMoveRows({}, from, from, {}, to > from ? to + 1 : to)) {
++        return false;
++    }
++    m_sFeatures.move(from, to);
++    coordinated();
++    if (defaultFeature) {
++        m_iDefaultSelectedIndex = m_sFeatures.indexOf(defaultFeature);
++    }
++    endMoveRows();
++    return true;
+ }
+ 
+ QModelIndex SidebarModel::getDefaultSelection() {
+diff --git a/src/library/sidebarmodel.h b/src/library/sidebarmodel.h
+--- a/src/library/sidebarmodel.h
++++ b/src/library/sidebarmodel.h
+@@ -5,6 +5,7 @@
+ #include <QModelIndex>
+ #include <QPersistentModelIndex>
+ #include <QVariant>
++#include <functional>
+ 
+ class LibraryFeature;
+ class QTimer;
+@@ -27,6 +28,7 @@
+     ~SidebarModel() override = default;
+ 
+     void addLibraryFeature(LibraryFeature* feature);
++    bool moveLibraryFeature(int from, int to, const std::function<void()>& coordinated);
+     QModelIndex getDefaultSelection();
+     void setDefaultSelection(unsigned int index);
+     void activateDefaultSelection();
+diff --git a/src/library/sourceorder.h b/src/library/sourceorder.h
+new file mode 100644
+--- /dev/null
++++ b/src/library/sourceorder.h
+@@ -0,0 +1,58 @@
++#pragma once
++
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QStringList>
++
++namespace SourceOrder {
++
++inline QStringList decode(const QString& serialized) {
++    QStringList identities;
++    const auto document = QJsonDocument::fromJson(serialized.toUtf8());
++    for (const auto& value : document.array()) {
++        if (value.isString() && !value.toString().isEmpty() &&
++                !identities.contains(value.toString())) {
++            identities.append(value.toString());
++        }
++    }
++    return identities;
++}
++
++inline QStringList reconcile(QStringList preferred, const QStringList& available) {
++    QStringList result;
++    for (const auto& identity : preferred + available) {
++        if (!identity.isEmpty() && !result.contains(identity)) {
++            result.append(identity);
++        }
++    }
++    return result;
++}
++
++inline QString encode(const QStringList& identities) {
++    return QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(
++            reconcile({}, identities))).toJson(QJsonDocument::Compact));
++}
++
++inline QStringList present(const QStringList& preferred, const QStringList& available) {
++    QStringList result;
++    for (const auto& identity : reconcile(preferred, available)) {
++        if (available.contains(identity)) {
++            result.append(identity);
++        }
++    }
++    return result;
++}
++
++inline QStringList mergePresent(QStringList preferred, const QStringList& identities) {
++    const auto reordered = reconcile({}, identities);
++    preferred = reconcile(preferred, reordered);
++    int position = 0;
++    for (auto& identity : preferred) {
++        if (reordered.contains(identity)) {
++            identity = reordered.at(position++);
++        }
++    }
++    return preferred;
++}
++
++} // namespace SourceOrder
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+new file mode 100644
+--- /dev/null
++++ b/src/widget/libraryinterface.h
+@@ -0,0 +1,260 @@
++#pragma once
++
++#include <functional>
++
++#include <QCheckBox>
++#include <QDialog>
++#include <QDialogButtonBox>
++#include <QHeaderView>
++#include <QHBoxLayout>
++#include <QListWidget>
++#include <QKeyEvent>
++#include <QLabel>
++#include <QMenu>
++#include <QMap>
++#include <QPushButton>
++#include <QTreeView>
++#include <QVBoxLayout>
++#include <QWidgetAction>
++
++namespace LibraryInterface {
++
++class VisibilityMenu final : public QMenu {
++  public:
++    using QMenu::QMenu;
++
++  protected:
++    void keyPressEvent(QKeyEvent* event) override {
++        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
++                event->key() == Qt::Key_Space) {
++            auto* action = qobject_cast<QWidgetAction*>(activeAction());
++            auto* choice = action ? qobject_cast<QCheckBox*>(action->defaultWidget()) : nullptr;
++            if (choice) {
++                if (choice->isEnabled()) {
++                    choice->toggle();
++                }
++                event->accept();
++                return;
++            }
++        }
++        QMenu::keyPressEvent(event);
++    }
++};
++
++inline int preferredSourceRow(const QString& identity,
++        const QStringList& identities, const QList<bool>& visible) {
++    const int row = identities.indexOf(identity);
++    return !identity.isEmpty() && row >= 0 && row < visible.size() && visible[row] ? row : -1;
++}
++
++inline QCheckBox* addVisibilityChoice(QMenu* menu, const QString& title,
++        bool checked, std::function<void(bool)> changed) {
++    auto* action = new QWidgetAction(menu);
++    auto* checkbox = new QCheckBox(title, menu);
++    checkbox->setChecked(checked);
++    action->setDefaultWidget(checkbox);
++    menu->addAction(action);
++    QObject::connect(checkbox, &QCheckBox::toggled, menu, std::move(changed));
++    QObject::connect(action, &QAction::triggered, checkbox, [checkbox] {
++        if (checkbox->isEnabled()) {
++            checkbox->toggle();
++        }
++    });
++    return checkbox;
++}
++
++inline QListWidget* addSourceOrder(QMenu* menu, const QStringList& identities,
++        const QStringList& titles, std::function<void(const QStringList&)> changed) {
++    auto* action = new QWidgetAction(menu);
++    auto* container = new QWidget(menu);
++    auto* layout = new QVBoxLayout(container);
++    layout->addWidget(new QLabel(QObject::tr("Source order: drag to reorder"), container));
++    auto* list = new QListWidget(container);
++    list->setObjectName(QStringLiteral("MixpiSourceOrder"));
++    list->setAccessibleName(QObject::tr("Source order; drag or use Up and Down"));
++    list->setDragDropMode(QAbstractItemView::InternalMove);
++    list->setDefaultDropAction(Qt::MoveAction);
++    list->setMaximumHeight(140);
++    for (int position = 0; position < identities.size(); ++position) {
++        auto* item = new QListWidgetItem(titles.value(position), list);
++        item->setData(Qt::UserRole, identities.at(position));
++        item->setFlags(item->flags() & ~Qt::ItemIsDropEnabled);
++    }
++    layout->addWidget(list);
++    auto publish = [list, changed] {
++        QStringList order;
++        for (int row = 0; row < list->count(); ++row) {
++            order.append(list->item(row)->data(Qt::UserRole).toString());
++        }
++        changed(order);
++    };
++    QObject::connect(list->model(), &QAbstractItemModel::rowsMoved, list, publish);
++    auto* buttons = new QHBoxLayout;
++    for (int direction : {-1, 1}) {
++        auto* button = new QPushButton(direction < 0 ? QObject::tr("Up") : QObject::tr("Down"), container);
++        buttons->addWidget(button);
++        QObject::connect(button, &QPushButton::clicked, list, [list, direction, publish] {
++            const int from = list->currentRow();
++            const int to = from + direction;
++            if (from < 0 || to < 0 || to >= list->count()) {
++                return;
++            }
++            list->insertItem(to, list->takeItem(from));
++            list->setCurrentRow(to);
++            publish();
++        });
++    }
++    layout->addLayout(buttons);
++    action->setDefaultWidget(container);
++    menu->addAction(action);
++    return list;
++}
++
++inline void protectLastVisible(const QList<QCheckBox*>& choices) {
++    int visible = 0;
++    for (auto* choice : choices) {
++        visible += choice->isChecked() ? 1 : 0;
++    }
++    for (auto* choice : choices) {
++        choice->setEnabled(!choice->isChecked() || visible > 1);
++    }
++}
++
++inline bool hasHiddenContext(QTreeView* view) {
++    auto hidden = [view](QModelIndex index) {
++        if (!index.isValid()) {
++            return false;
++        }
++        while (index.parent().isValid()) {
++            index = index.parent();
++        }
++        return view->isRowHidden(index.row(), QModelIndex());
++    };
++    if (hidden(view->rootIndex()) || hidden(view->currentIndex())) {
++        return true;
++    }
++    if (view->selectionModel()) {
++        for (const auto& index : view->selectionModel()->selectedIndexes()) {
++            if (hidden(index)) {
++                return true;
++            }
++        }
++    }
++    return false;
++}
++
++inline void initialColumns(QHeaderView* header, const QList<int>& preferred,
++        const QList<int>& available) {
++    if (preferred.isEmpty()) {
++        return;
++    }
++    int position = 0;
++    for (int column : preferred) {
++        if (column >= 0 && available.contains(column)) {
++            header->moveSection(header->visualIndex(column), position++);
++        }
++    }
++    for (int column : available) {
++        header->setSectionHidden(column, !preferred.contains(column));
++    }
++}
++
++inline void rememberColumnWidths(QHeaderView* header, QMap<int, int>* widths) {
++    QObject::connect(header, &QHeaderView::sectionResized, header,
++            [widths](int column, int, int width) {
++                if (width > 0) {
++                    widths->insert(column, width);
++                }
++            });
++}
++
++inline QDialog* arrangeColumns(QHeaderView* header, const QList<int>& available,
++        std::function<void()> save) {
++    if (auto* existing = header->findChild<QDialog*>(
++                QStringLiteral("MixpiColumnArrangement"), Qt::FindDirectChildrenOnly);
++            existing && existing->isVisible()) {
++        existing->raise();
++        existing->activateWindow();
++        return existing;
++    }
++    auto* dialog = new QDialog(header);
++    dialog->setObjectName(QStringLiteral("MixpiColumnArrangement"));
++    dialog->setWindowModality(Qt::WindowModal);
++    dialog->setAttribute(Qt::WA_DeleteOnClose);
++    dialog->setWindowTitle(QObject::tr("Arrange columns"));
++    auto* layout = new QVBoxLayout(dialog);
++    auto* list = new QListWidget(dialog);
++    list->setDragDropMode(QAbstractItemView::InternalMove);
++    for (int position = 0; position < header->count(); ++position) {
++        const int column = header->logicalIndex(position);
++        if (!available.contains(column)) {
++            continue;
++        }
++        auto* item = new QListWidgetItem(
++                header->model()->headerData(column, Qt::Horizontal).toString(), list);
++        item->setData(Qt::UserRole, column);
++        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
++        item->setCheckState(header->isSectionHidden(column) ? Qt::Unchecked : Qt::Checked);
++    }
++    layout->addWidget(list);
++    auto apply = [header, list, save] {
++        int visible = 0;
++        for (int row = 0; row < list->count(); ++row) {
++            visible += list->item(row)->checkState() == Qt::Checked ? 1 : 0;
++        }
++        if (!visible && list->count()) {
++            list->currentItem() ? list->currentItem()->setCheckState(Qt::Checked)
++                                : list->item(0)->setCheckState(Qt::Checked);
++            return;
++        }
++        for (int row = 0; row < list->count(); ++row) {
++            auto* item = list->item(row);
++            const int column = item->data(Qt::UserRole).toInt();
++            header->moveSection(header->visualIndex(column), row);
++            header->setSectionHidden(column, item->checkState() != Qt::Checked);
++        }
++        save();
++    };
++    QObject::connect(list, &QListWidget::itemChanged, dialog, apply);
++    QObject::connect(list->model(), &QAbstractItemModel::rowsMoved, dialog, apply);
++    auto* movement = new QHBoxLayout;
++    for (int direction : {-1, 1}) {
++        auto* button = new QPushButton(direction < 0 ? QObject::tr("Up") : QObject::tr("Down"), dialog);
++        movement->addWidget(button);
++        QObject::connect(button, &QPushButton::clicked, dialog, [list, direction, apply] {
++            const int row = list->currentRow();
++            const int destination = row + direction;
++            if (row >= 0 && destination >= 0 && destination < list->count()) {
++                auto* item = list->takeItem(row);
++                list->insertItem(destination, item);
++                list->setCurrentItem(item);
++                apply();
++            }
++        });
++    }
++    layout->addLayout(movement);
++    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
++    QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
++    layout->addWidget(buttons);
++    dialog->resize(360, 360);
++    dialog->show();
++    return dialog;
++}
++
++inline QMenu* actionsMenu(QWidget* parent, QMenu* decks, QMenu* original,
++        std::function<void()> arrange) {
++    auto* menu = new QMenu(parent);
++    menu->setAttribute(Qt::WA_DeleteOnClose);
++    auto* load = menu->addMenu(QObject::tr("Load"));
++    load->setEnabled(decks && decks->isEnabled());
++    if (decks) {
++        load->addActions(decks->actions());
++    }
++    QObject::connect(menu->addAction(QObject::tr("Arrange columns")),
++            &QAction::triggered, menu, std::move(arrange));
++    menu->addSeparator();
++    menu->addMenu(original)->setText(QObject::tr("Original full menu"));
++    return menu;
++}
++
++}
+diff --git a/src/widget/wtrackmenu.h b/src/widget/wtrackmenu.h
+--- a/src/widget/wtrackmenu.h
++++ b/src/widget/wtrackmenu.h
+@@ -109,6 +109,9 @@
+     // This has been done on purpose to ensure menu doesn't popup without loaded track(s).
+     void popup(const QPoint& pos, QAction* at = nullptr);
+     void slotShowDlgTrackInfo();
++    QMenu* deckLoadMenu() const {
++        return m_pDeckMenu.get();
++    }
+     // Library management
+     void slotRemoveFromDisk();
+     const QString getDeckGroup() const;
+diff --git a/src/widget/wtracktableview.cpp b/src/widget/wtracktableview.cpp
+--- a/src/widget/wtracktableview.cpp
++++ b/src/widget/wtracktableview.cpp
+@@ -28,6 +28,7 @@
+ #include "util/time.h"
+ #include "widget/wtrackmenu.h"
+ #include "widget/wtracktableviewheader.h"
++#include "widget/libraryinterface.h"
+ 
+ namespace {
+ 
+@@ -289,11 +290,6 @@
+         // due to database schema evolution we gonna hide all columns that may
+         // contain a potential large number of NULL values.  This will hide the
+         // key column by default unless the user brings it to front
+-        if (pNewTrackModel->isColumnHiddenByDefault(i) &&
+-                !header->hasPersistedHeaderState()) {
+-            //qDebug() << "Hiding column" << i;
+-            horizontalHeader()->hideSection(i);
+-        }
+     }
+ 
+     if (m_sorting) {
+@@ -372,6 +368,9 @@
+ }
+ 
+ void WTrackTableView::initTrackMenu() {
++    if (m_pLibraryActions) {
++        m_pLibraryActions->close();
++    }
+     auto* pTrackModel = getTrackModel();
+     DEBUG_ASSERT(pTrackModel);
+ 
+@@ -532,16 +531,13 @@
+     VERIFY_OR_DEBUG_ASSERT(m_pTrackMenu.get()) {
+         initTrackMenu();
+     }
+-    if (show == m_pTrackMenu->isVisible()) {
++    if (show == (m_pTrackMenu->isVisible() ||
++                        (m_pLibraryActions && m_pLibraryActions->isVisible()))) {
+         emit trackMenuVisible(show);
+         return;
+     }
+     if (show) {
+         const auto selectedIndices = selectionModel()->selectedIndexes();
+-        if (selectedIndices.isEmpty()) {
+-            // If selection is empty, contextMenuEvent() won't work anyway.
+-            return;
+-        }
+ 
+         // Show at current index if it's valid. When using only a controller for
+         // for track selection, there's only on row selected.
+@@ -551,7 +547,7 @@
+         // Else show at cursor position.
+         QPoint evPos;
+         const auto currIdx = currentIndex();
+-        if (currIdx.isValid()) {
++        if (currIdx.isValid() && !selectedIndices.isEmpty()) {
+             if (selectedIndices.contains(currIdx)) {
+                 evPos = visualRect(currIdx).center();
+             } else {
+@@ -578,8 +574,11 @@
+         } else {
+             evPos = QCursor::pos();
+         }
+-        showTrackMenu(evPos, indexAt(evPos));
++        showTrackMenu(evPos, indexAt(viewport()->mapFromGlobal(evPos)));
+     } else {
++        if (m_pLibraryActions) {
++            m_pLibraryActions->close();
++        }
+         m_pTrackMenu->close();
+     }
+ }
+@@ -599,15 +598,30 @@
+     }
+     // Update track indices in context menu
+     const QModelIndexList indices = getSelectedRows();
+-    if (indices.isEmpty()) {
+-        return;
+-    }
+-    m_pTrackMenu->loadTrackModelIndices(indices);
++    m_pTrackMenu->setEnabled(!indices.isEmpty());
++    if (!indices.isEmpty()) {
++        m_pTrackMenu->loadTrackModelIndices(indices);
++    }
+     m_pTrackMenu->setTrackPropertyName(columnNameOfIndex(index));
+ 
+     saveCurrentIndex();
+ 
+-    m_pTrackMenu->popup(pos);
++    if (m_pLibraryActions) {
++        m_pLibraryActions->close();
++    }
++    m_pLibraryActions = LibraryInterface::actionsMenu(this,
++            indices.isEmpty() ? nullptr : m_pTrackMenu->deckLoadMenu(),
++            m_pTrackMenu.get(), [this] {
++                auto* header = qobject_cast<WTrackTableViewHeader*>(horizontalHeader());
++                if (header) {
++                    header->showColumnArrangement();
++                }
++            });
++    connect(m_pLibraryActions, &QMenu::aboutToHide, this, [this] {
++        emit trackMenuVisible(false);
++    });
++    m_pLibraryActions->popup(pos);
++    emit trackMenuVisible(true);
+     // WTrackmenu emits restoreCurrentViewStateOrIndex() on hide if required
+ }
+ 
+diff --git a/src/widget/wtracktableview.h b/src/widget/wtracktableview.h
+--- a/src/widget/wtracktableview.h
++++ b/src/widget/wtracktableview.h
+@@ -1,4 +1,5 @@
+ #pragma once
++#include <QPointer>
+ 
+ #include <QAbstractItemModel>
+ #include <QSortFilterProxyModel>
+@@ -17,6 +18,7 @@
+ class DlgTrackInfo;
+ class ExternalTrackCollection;
+ class Library;
++class QMenu;
+ class WTrackMenu;
+ 
+ class WTrackTableView : public WLibraryTableView {
+@@ -172,6 +174,7 @@
+ 
+     // Context menu container
+     parented_ptr<WTrackMenu> m_pTrackMenu;
++    QPointer<QMenu> m_pLibraryActions;
+ 
+     const double m_backgroundColorOpacity;
+     QColor m_focusBorderColor;
+diff --git a/src/widget/wtracktableviewheader.cpp b/src/widget/wtracktableviewheader.cpp
+--- a/src/widget/wtracktableviewheader.cpp
++++ b/src/widget/wtracktableviewheader.cpp
+@@ -3,12 +3,14 @@
+ #include <QCheckBox>
+ #include <QContextMenuEvent>
+ #include <QWidgetAction>
++#include <QSignalBlocker>
+ 
+ #include "library/trackmodel.h"
+ #include "moc_wtracktableviewheader.cpp"
+ #include "util/math.h"
+ #include "util/parented_ptr.h"
+ #include "widget/wmenucheckbox.h"
++#include "widget/libraryinterface.h"
+ 
+ #define WTTVH_MINIMUM_SECTION_SIZE 20
+ 
+@@ -130,6 +132,7 @@
+         QWidget* pParent)
+         : QHeaderView(orientation, pParent),
+           m_menu(tr("Show or hide columns."), this) {
++    LibraryInterface::rememberColumnWidths(this, &m_hiddenColumnSizes);
+ }
+ 
+ void WTrackTableViewHeader::contextMenuEvent(QContextMenuEvent* pEvent) {
+@@ -207,11 +210,7 @@
+         // due to database schema evolution we gonna hide all columns that may
+         // contain a potential large number of NULL values.  Here we uncheck
+         // the items that are hidden by default (e.g., key column).
+-        if (!hasPersistedHeaderState() && pTrackModel->isColumnHiddenByDefault(i)) {
+-            pCheckBox->setChecked(false);
+-        } else {
+-            pCheckBox->setChecked(!isSectionHidden(i));
+-        }
++        pCheckBox->setChecked(!isSectionHidden(i));
+ 
+         auto pAction = make_parented<QWidgetAction>(this);
+         pAction->setDefaultWidget(pCheckBox.get());
+@@ -281,6 +280,44 @@
+             resizeSection(i, header_size);
+         }
+     }
++    auto* trackModel = getTrackModel();
++    if (!trackModel) {
++        return;
++    }
++    QList<int> available;
++    for (int column = 0; column < count(); ++column) {
++        if (!trackModel->isColumnInternal(column)) {
++            available.append(column);
++            setSectionHidden(column, trackModel->isColumnHiddenByDefault(column));
++        }
++    }
++    const int title = trackModel->fieldIndex(QStringLiteral("title"));
++    if (title >= 0) {
++        LibraryInterface::initialColumns(this,
++                {title, trackModel->fieldIndex(QStringLiteral("artist")),
++                        trackModel->fieldIndex(QStringLiteral("bpm")),
++                        trackModel->fieldIndex(QStringLiteral("key"))}, available);
++    }
++}
++
++void WTrackTableViewHeader::showColumnArrangement() {
++    auto* trackModel = getTrackModel();
++    if (!trackModel) {
++        return;
++    }
++    QList<int> available;
++    for (int column = 0; column < count(); ++column) {
++        if (!trackModel->isColumnInternal(column)) {
++            available.append(column);
++        }
++    }
++    LibraryInterface::arrangeColumns(this, available, [this] {
++        for (auto choice = m_columnCheckBoxes.begin(); choice != m_columnCheckBoxes.end(); ++choice) {
++            const QSignalBlocker blocker(choice.value());
++            choice.value()->setChecked(!isSectionHidden(choice.key()));
++        }
++        saveHeaderState();
++    });
+ }
+ 
+ bool WTrackTableViewHeader::hasPersistedHeaderState() {
+diff --git a/src/widget/wtracktableviewheader.h b/src/widget/wtracktableviewheader.h
+--- a/src/widget/wtracktableviewheader.h
++++ b/src/widget/wtracktableviewheader.h
+@@ -64,6 +64,7 @@
+     void saveHeaderState();
+     void restoreHeaderState();
+     void loadDefaultHeaderState();
++    void showColumnArrangement();
+      /** returns false if the header state is stored in the database (on first time usgae) **/
+     bool hasPersistedHeaderState();
+ 
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -475,10 +475,10 @@
+ 
+     connect(m_pLibraryControl,
+             &LibraryControl::showHideTrackMenu,
+-            pTrackTableView,
+-            &WTrackTableView::slotShowHideTrackMenu);
+-    connect(pTrackTableView,
+-            &WTrackTableView::trackMenuVisible,
++            m_pLibraryWidget,
++            &WLibrary::slotShowHideTrackMenu);
++    connect(m_pLibraryWidget,
++            &WLibrary::trackMenuVisible,
+             m_pLibraryControl,
+             &LibraryControl::slotUpdateTrackMenuControl);
+ 
+diff --git a/src/widget/wlibrary.h b/src/widget/wlibrary.h
+--- a/src/widget/wlibrary.h
++++ b/src/widget/wlibrary.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <QMap>
++#include <QPointer>
+ #include <QStackedWidget>
+ #include <QString>
+ 
+@@ -57,6 +58,7 @@
+ 
+   signals:
+     FocusWidget setLibraryFocus(FocusWidget newFocus);
++    void trackMenuVisible(bool visible);
+ 
+   public slots:
+     // Show the view registered with the given name. Does nothing if the current
+@@ -67,12 +69,17 @@
+     void pasteFromSidebar();
+ 
+     void search(const QString&);
++    void slotShowHideTrackMenu(bool show);
+ 
+   protected:
+     bool event(QEvent* pEvent) override;
+     void keyPressEvent(QKeyEvent* event) override;
+ 
+   private:
++    void updateTrackMenuView();
++    QPointer<WTrackTableView> m_pTrackMenuView;
++    QMetaObject::Connection m_trackMenuVisibilityConnection;
++    QMetaObject::Connection m_trackMenuDestroyedConnection;
+     QT_RECURSIVE_MUTEX m_mutex;
+     QMap<QString, QWidget*> m_viewMap;
+     double m_trackTableBackgroundColorOpacity;
+diff --git a/src/widget/wlibrary.cpp b/src/widget/wlibrary.cpp
+--- a/src/widget/wlibrary.cpp
++++ b/src/widget/wlibrary.cpp
+@@ -15,6 +15,8 @@
+           m_mutex(QT_RECURSIVE_MUTEX_INIT),
+           m_trackTableBackgroundColorOpacity(kDefaultTrackTableBackgroundColorOpacity),
+           m_bShowButtonText(true) {
++    connect(this, &QStackedWidget::currentChanged, this,
++            [this](int) { updateTrackMenuView(); });
+ }
+ 
+ void WLibrary::setup(const QDomNode& node, const SkinContext& context) {
+@@ -104,6 +106,9 @@
+ 
+ WTrackTableView* WLibrary::getCurrentTrackTableView() const {
+     QWidget* pCurrent = currentWidget();
++    if (!pCurrent) {
++        return nullptr;
++    }
+     WTrackTableView* pTracksView = qobject_cast<WTrackTableView*>(pCurrent);
+     if (!pTracksView) {
+         // This view is not a tracks view, but possibly a special library view
+@@ -113,6 +118,38 @@
+     return pTracksView; // might still be nullptr
+ }
+ 
++// Only the current library view owns the Actions control. Resolve again on each
++// request because nested views can recreate their table without changing pages.
++void WLibrary::updateTrackMenuView() {
++    auto* table = getCurrentTrackTableView();
++    if (m_pTrackMenuView == table) {
++        return;
++    }
++    if (m_pTrackMenuView && m_pTrackMenuView->model()) {
++        m_pTrackMenuView->slotShowHideTrackMenu(false);
++    }
++    disconnect(m_trackMenuVisibilityConnection);
++    disconnect(m_trackMenuDestroyedConnection);
++    m_pTrackMenuView = table;
++    if (table) {
++        m_trackMenuVisibilityConnection = connect(table,
++                &WTrackTableView::trackMenuVisible,
++                this, &WLibrary::trackMenuVisible);
++        m_trackMenuDestroyedConnection = connect(table, &QObject::destroyed,
++                this, [this] { emit trackMenuVisible(false); });
++    }
++    emit trackMenuVisible(false);
++}
++
++void WLibrary::slotShowHideTrackMenu(bool show) {
++    updateTrackMenuView();
++    if (m_pTrackMenuView && m_pTrackMenuView->model()) {
++        m_pTrackMenuView->slotShowHideTrackMenu(show);
++    } else {
++        emit trackMenuVisible(false);
++    }
++}
++
+ bool WLibrary::isTrackInCurrentView(const TrackId& trackId) {
+     // qDebug() << "WLibrary::isTrackInCurrentView" << trackId;
+     VERIFY_OR_DEBUG_ASSERT(trackId.isValid()) {

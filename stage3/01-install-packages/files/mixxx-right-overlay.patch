@@ -1,0 +1,95 @@
+diff --git a/src/widget/wwidgetgroup.cpp b/src/widget/wwidgetgroup.cpp
+--- a/src/widget/wwidgetgroup.cpp
++++ b/src/widget/wwidgetgroup.cpp
+@@ -9,6 +9,7 @@
+ #include "skin/legacy/skincontext.h"
+ #include "util/debug.h"
+ #include "widget/wpixmapstore.h"
++#include "widget/wrightoverlaylayout.h"
+ 
+ WWidgetGroup::WWidgetGroup(QWidget* pParent)
+         : QFrame(pParent),
+@@ -126,6 +127,8 @@
+             pLayout = new QVBoxLayout();
+         } else if (layout == "horizontal") {
+             pLayout = new QHBoxLayout();
++        } else if (layout == "right-overlay") {
++            pLayout = new WRightOverlayLayout();
+         } else if (layout == "stacked") {
+             auto* pStackedLayout = new QStackedLayout();
+             pStackedLayout->setStackingMode(QStackedLayout::StackAll);
+diff --git a/src/widget/wrightoverlaylayout.h b/src/widget/wrightoverlaylayout.h
+new file mode 100644
+--- /dev/null
++++ b/src/widget/wrightoverlaylayout.h
+@@ -0,0 +1,70 @@
++#pragma once
++
++#include <QLayout>
++#include <QList>
++#include <QWidget>
++
++class WRightOverlayLayout final : public QLayout {
++  public:
++    ~WRightOverlayLayout() override {
++        while (auto* item = takeAt(0)) {
++            delete item;
++        }
++    }
++
++    void addItem(QLayoutItem* item) override {
++        m_items.append(item);
++        if (m_items.size() == 2 && item->widget()) {
++            m_sidebarWidth = qMax(item->widget()->minimumWidth(), item->sizeHint().width());
++            item->widget()->setMinimumWidth(0);
++        }
++        invalidate();
++    }
++
++    int count() const override {
++        return m_items.size();
++    }
++
++    QLayoutItem* itemAt(int index) const override {
++        return index >= 0 && index < count() ? m_items.at(index) : nullptr;
++    }
++
++    QLayoutItem* takeAt(int index) override {
++        return index >= 0 && index < count() ? m_items.takeAt(index) : nullptr;
++    }
++
++    QSize sizeHint() const override {
++        return baseSize(false);
++    }
++
++    QSize minimumSize() const override {
++        return baseSize(true);
++    }
++
++    void setGeometry(const QRect& rectangle) override {
++        QLayout::setGeometry(rectangle);
++        const QRect content = contentsRect();
++        if (auto* base = itemAt(0)) {
++            base->setGeometry(content);
++        }
++        if (auto* item = itemAt(1)) {
++            if (auto* sidebar = item->widget()) {
++                const int width = qMin(m_sidebarWidth, qMax(0, content.width()));
++                sidebar->setGeometry(content.right() - width + 1,
++                        content.top(), width, qMax(0, content.height()));
++                sidebar->raise();
++            }
++        }
++    }
++
++  private:
++    QSize baseSize(bool minimum) const {
++        const auto margins = contentsMargins();
++        const auto* base = itemAt(0);
++        const QSize size = base ? (minimum ? base->minimumSize() : base->sizeHint()) : QSize(0, 0);
++        return size + QSize(margins.left() + margins.right(), margins.top() + margins.bottom());
++    }
++
++    QList<QLayoutItem*> m_items;
++    int m_sidebarWidth = 290;
++};

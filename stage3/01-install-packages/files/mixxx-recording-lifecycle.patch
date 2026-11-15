@@ -1,0 +1,125 @@
+diff --git a/src/engine/sidechain/enginerecord.cpp b/src/engine/sidechain/enginerecord.cpp
+--- a/src/engine/sidechain/enginerecord.cpp
++++ b/src/engine/sidechain/enginerecord.cpp
+@@ -128,7 +128,7 @@
+             if (m_bCueIsEnabled) {
+                 closeCueFile();
+             }
+-            emit isRecording(false, false);
++            emit isRecording(false, m_recordingError);
+         }
+     } else if (recordingStatus == RECORD_READY) {
+         // If we are ready for recording, i.e, the output file has been selected, we
+@@ -174,6 +174,12 @@
+             if (m_bCueIsEnabled) {
+                 closeCueFile();
+             }
++            if (m_recordingError) {
++                Event::end(tag);
++                m_pRecReady->set(RECORD_OFF);
++                emit isRecording(false, true);
++                return;
++            }
+         }
+         updateFromPreferences();  // Update file location from preferences.
+         if (openFile()) {
+@@ -216,6 +222,15 @@
+         // write a file stream and emit bytesRecorded.
+         m_pEncoder->encodeBuffer(pBuffer, iBufferSize);
+ 
++        if (m_recordingError) {
++            m_pRecReady->set(RECORD_OFF);
++            Event::end(tag);
++            closeFile();
++            closeCueFile();
++            emit isRecording(false, true);
++            return;
++        }
++
+         //Writing cueLine before updating the time counter since we prefer to be ahead
+         //rather than late.
+         if (m_bCueIsEnabled && metaDataHasChanged()) {
+@@ -276,16 +291,28 @@
+ // Encoder calls this method to write compressed audio
+ void EngineRecord::write(const unsigned char *header, const unsigned char *body,
+                          int headerLen, int bodyLen) {
+-    if (!fileOpen()) {
++    if (!fileOpen() || m_recordingError) {
+         return;
+     }
+     // Relevant for OGG
+     if (headerLen > 0) {
+-        m_dataStream.writeRawData((const char*) header, headerLen);
++        const auto written = m_dataStream.writeRawData((const char*) header, headerLen);
++        if (written > 0) {
++            emit bytesRecorded(written);
++        }
++        if (written != headerLen) {
++            m_recordingError = true;
++            return;
++        }
+     }
+     // Always write body
+-    m_dataStream.writeRawData((const char*) body, bodyLen);
+-    emit bytesRecorded((headerLen+bodyLen));
++    const auto written = m_dataStream.writeRawData((const char*) body, bodyLen);
++    if (written > 0) {
++        emit bytesRecorded(written);
++    }
++    if (written != bodyLen) {
++        m_recordingError = true;
++    }
+ 
+ }
+ // Encoder calls this method to write compressed audio
+@@ -300,7 +327,9 @@
+     if (!fileOpen()) {
+         return;
+     }
+-    m_dataStream.device()->seek(static_cast<qint64>(pos));
++    if (!m_dataStream.device()->seek(static_cast<qint64>(pos))) {
++        m_recordingError = true;
++    }
+ }
+ // These are not used for streaming, but the interface requires them
+ int EngineRecord::filelen() {
+@@ -324,7 +353,7 @@
+     // We can use a QFile to write compressed audio.
+     if (m_pEncoder) {
+         m_file.setFileName(m_fileName);
+-        if (!m_file.open(QIODevice::WriteOnly)) {
++        if (!m_file.open(QIODevice::WriteOnly | QIODevice::Unbuffered)) {
+             qDebug() << "EngineRecord::openFile() failed for"
+                      << m_fileName
+                      << m_file.errorString();
+@@ -332,6 +361,8 @@
+         }
+         if (m_file.handle() != -1) {
+             m_dataStream.setDevice(&m_file);
++            m_dataStream.resetStatus();
++            m_recordingError = false;
+         }
+     } else {
+         return false;
+@@ -392,6 +423,10 @@
+             m_pEncoder->flush();
+             m_pEncoder.reset();
+         }
++        if (!m_file.flush() || m_file.error() != QFileDevice::NoError ||
++                m_dataStream.status() != QDataStream::Ok) {
++            m_recordingError = true;
++        }
+         m_file.close();
+     }
+     if (m_cueFile.handle() == -1) {
+diff --git a/src/engine/sidechain/enginerecord.h b/src/engine/sidechain/enginerecord.h
+--- a/src/engine/sidechain/enginerecord.h
++++ b/src/engine/sidechain/enginerecord.h
+@@ -73,6 +73,7 @@
+     QFile m_file;
+     QFile m_cueFile;
+     QDataStream m_dataStream;
++    bool m_recordingError = false;
+ 
+     PollingControlProxy m_sampleRateControl;
+     ControlProxy* m_pRecReady;

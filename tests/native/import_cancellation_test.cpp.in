@@ -1,0 +1,537 @@
+#include <QCoreApplication>
+#include <QAbstractItemModel>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFutureWatcher>
+#include <QMap>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QSqlRecord>
+#include <QThread>
+#include <QTimer>
+#include <QtConcurrentRun>
+#include <QStringDecoder>
+#include <condition_variable>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <thread>
+#include <rekordbox_pdb.h>
+#include "library/treeitem.h"
+#include "library/queryutil.h"
+#include "util/color/rgbcolor.h"
+#include "library/media/mediauseregistry.h"
+#include "library/rekordbox/importoperation.h"
+#include "library/rekordbox/pendingselection.h"
+
+std::mutex gateMutex;
+std::condition_variable gateCondition;
+QString gatePhase;
+bool gateReached = false;
+bool gateReleased = false;
+void testBarrier(const char* phase) {
+    std::unique_lock<std::mutex> lock(gateMutex);
+    if (gatePhase != phase) return;
+    gateReached = true;
+    gateCondition.notify_all();
+    gateCondition.wait(lock, [] { return gateReleased; });
+}
+void releaseWorker() {
+    std::lock_guard<std::mutex> lock(gateMutex);
+    gateReleased = true;
+    gateCondition.notify_all();
+}
+void require(bool condition, const char* message) {
+    if (!condition) {
+        releaseWorker();
+        throw std::runtime_error(message);
+    }
+}
+void setGate(const QString& phase) {
+    std::lock_guard<std::mutex> lock(gateMutex);
+    gatePhase = phase;
+    gateReached = false;
+    gateReleased = false;
+}
+bool reached() {
+    std::lock_guard<std::mutex> lock(gateMutex);
+    return gateReached;
+}
+#ifndef BASELINE
+void testCheckpoint(const std::shared_ptr<mixxx::rekordbox::ImportOperation>& operation,
+        const char* phase) {
+    testBarrier(phase);
+    operation->checkpoint();
+}
+#endif
+void events(int milliseconds = 80) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < milliseconds) {
+        QCoreApplication::processEvents();
+        QThread::msleep(1);
+    }
+}
+template<typename Predicate> void until(Predicate predicate, const char* message) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!predicate() && timer.elapsed() < 5000) events(2);
+    require(predicate(), message);
+}
+namespace mixxx {
+using DbConnectionPoolPtr = std::shared_ptr<QString>;
+thread_local QString workerConnection;
+struct DbConnectionPooler {
+    explicit DbConnectionPooler(const DbConnectionPoolPtr& path) {
+        workerConnection = QStringLiteral("worker-%1").arg(quintptr(QThread::currentThreadId()));
+        auto database = QSqlDatabase::addDatabase("QSQLITE", workerConnection);
+        database.setDatabaseName(*path);
+        if (!database.open()) throw std::runtime_error("worker SQLite open failed");
+        QSqlQuery query(database);
+        if (!query.exec("PRAGMA foreign_keys=ON")) throw std::runtime_error("worker SQLite pragma failed");
+    }
+    ~DbConnectionPooler() {
+        QSqlDatabase::database(workerConnection).close();
+        QSqlDatabase::removeDatabase(workerConnection);
+    }
+};
+QSqlDatabase DbConnectionPooled(const DbConnectionPoolPtr&) {
+    return QSqlDatabase::database(workerConnection);
+}
+struct FileInfo { explicit FileInfo(const QString&) {} };
+}
+namespace Sandbox { bool askForAccess(mixxx::FileInfo*) { return true; } }
+QString fromUtf16LeString(const std::string& text) {
+    QStringDecoder decoder(QStringDecoder::Utf16LE);
+    return decoder(QByteArray::fromStdString(text));
+}
+const QString kRekordboxLibraryTable = "rekordbox_library";
+const QString kRekordboxPlaylistsTable = "rekordbox_playlists";
+const QString kRekordboxPlaylistTracksTable = "rekordbox_playlist_tracks";
+const QString kPdbPath = "PIONEER/rekordbox/export.pdb";
+const QString kPLaylistPathDelimiter = "-->";
+constexpr int kInvalidPlaylistId = -1;
+const QString IS_RECORDBOX_DEVICE = "::isRecordboxDevice::";
+const QString IS_NOT_RECORDBOX_DEVICE = "::isNotRecordboxDevice::";
+namespace mixxx::rekordbox {
+struct Observation { std::string revision; std::string database; };
+QMap<QString, Observation> observations;
+Observation inspectSource(const std::string& path) { return observations.value(QString::fromStdString(path)); }
+PRODUCTION_MATCHERS
+}
+namespace mixxx::media {
+Lease acquirePath(const std::string& path, Producer producer) {
+    return registry().acquire({path, path, {}}, producer);
+}
+}
+PRODUCTION_PARSER
+
+struct Sidebar : QAbstractItemModel {
+    TreeItem root;
+    TreeItem* getRootItem() { return &root; }
+    QModelIndex index(int row, int column, const QModelIndex& parent = {}) const override {
+        if (parent.isValid() || row < 0 || row >= root.childRows()) return {};
+        return createIndex(row, column, root.child(row));
+    }
+    QModelIndex parent(const QModelIndex&) const override { return {}; }
+    int rowCount(const QModelIndex& parent = {}) const override { return parent.isValid() ? 0 : root.childRows(); }
+    int columnCount(const QModelIndex& = {}) const override { return 1; }
+    QVariant data(const QModelIndex&, int = Qt::DisplayRole) const override { return {}; }
+    void triggerRepaint() {}
+    TreeItem* add(const QString& path) {
+        const QString revision = "db:" + path;
+        return root.appendChild(path, QVariantList{path, IS_RECORDBOX_DEVICE, revision});
+    }
+};
+struct Collection {
+    QString name;
+    QSqlDatabase database() { return QSqlDatabase::database(name); }
+};
+struct PlaylistModel {
+    QString playlist;
+    void setPlaylist(const QString& path) { playlist = path; }
+};
+struct Library : QObject {
+    mixxx::DbConnectionPoolPtr pool;
+    explicit Library(QString path) : pool(std::make_shared<QString>(path)) {}
+    mixxx::DbConnectionPoolPtr dbConnectionPool() { return pool; }
+};
+struct RekordboxFeature : QObject {
+    explicit RekordboxFeature(Library* library, const QString& name) : QObject(library) {
+        collection.name = name;
+        connect(&m_tracksFutureWatcher, &QFutureWatcher<QString>::finished, this,
+                [this] { onTracksFound(); });
+    }
+    ~RekordboxFeature() override;
+    Sidebar sidebar;
+    Collection collection;
+    PlaylistModel playlist;
+    Sidebar* m_pSidebarModel = &sidebar;
+    Collection* m_pTrackCollection = &collection;
+    PlaylistModel* m_pRekordboxPlaylistModel = &playlist;
+    QPointer<mixxx::rekordbox::PendingSelection> m_pendingSelection;
+    std::shared_ptr<mixxx::rekordbox::ImportOperation> m_importOperation;
+    mixxx::media::Lease m_importMediaUse;
+    TreeItem* m_pImportingDevice = nullptr;
+    bool m_deviceDiscoveryActive = false;
+    bool m_trackImportActive = false;
+    bool m_deviceRefreshPending = false;
+    bool m_deviceResultsDeferred = false;
+    QMap<QString, QString> m_requestedMounts;
+    QFuture<QString> m_tracksFuture;
+    QFutureWatcher<QString> m_tracksFutureWatcher;
+    QFuture<QList<TreeItem*>> m_devicesFuture;
+    int selections = 0;
+    int displays = 0;
+    void requestDeviceRefresh() { m_deviceRefreshPending = true; }
+    void refreshDevices() { m_deviceRefreshPending = false; }
+    void onRekordboxDevicesFound() { m_deviceResultsDeferred = false; }
+    void featureSelect(RekordboxFeature*, const QModelIndex&) { ++selections; }
+    void showTrackModel(PlaylistModel*) { ++displays; }
+    void activateChild(const QModelIndex&);
+    void onTracksFound();
+    std::function<void()> openRemovableDeviceAsync(const QString&, const QString&, const QString&,
+            QObject*, mixxx::rekordbox::PendingSelection::Completion);
+};
+PRODUCTION_METHODS
+
+int count(QSqlDatabase database, const QString& table, const QString& path = {}) {
+    QSqlQuery query(database);
+    QString sql = "SELECT count(*) FROM " + table;
+    if (!path.isEmpty()) sql += " WHERE device=:device";
+    query.prepare(sql);
+    if (!path.isEmpty()) query.bindValue(":device", path);
+    require(query.exec() && query.next(), "SQLite count query failed");
+    return query.value(0).toInt();
+}
+struct Trial {
+    Library library;
+    QString name;
+    QSqlDatabase database;
+    std::unique_ptr<RekordboxFeature> feature;
+    QString first;
+    QString second;
+    TreeItem* device;
+    TreeItem* neighbor;
+    explicit Trial(const QString& home, int serial)
+            : library(home + "/db-" + QString::number(serial) + ".sqlite"),
+              name("main-" + QString::number(serial)), first(home + "/A"), second(home + "/B") {
+        database = QSqlDatabase::addDatabase("QSQLITE", name);
+        database.setDatabaseName(*library.pool);
+        require(database.open(), "main SQLite open failed");
+        require(createLibraryTable(database, kRekordboxLibraryTable) &&
+                createPlaylistsTable(database, kRekordboxPlaylistsTable) &&
+                createPlaylistTracksTable(database, kRekordboxPlaylistTracksTable), "schema failed");
+        mixxx::rekordbox::observations[first] = {"mount:" + first.toStdString(), "db:" + first.toStdString()};
+        mixxx::rekordbox::observations[second] = {"mount:" + second.toStdString(), "db:" + second.toStdString()};
+        feature = std::make_unique<RekordboxFeature>(&library, name);
+        device = feature->sidebar.add(first);
+        neighbor = feature->sidebar.add(second);
+        setGate("none");
+        feature->activateChild(feature->sidebar.index(1, 0));
+        until([&] { return !feature->m_trackImportActive; }, "neighbor worker failed to finish");
+        require(neighbor->childRows() == 1 && count(database, kRekordboxLibraryTable, second) == 1,
+                "real PDB neighbor import must create track and playlist tree");
+        feature->selections = feature->displays = 0;
+    }
+    ~Trial() {
+        releaseWorker();
+        feature.reset();
+        database.close();
+        database = {};
+        QSqlDatabase::removeDatabase(name);
+    }
+    std::function<void()> open(QObject* receiver, int* completions, bool* success = nullptr) {
+        return feature->openRemovableDeviceAsync(first, "mount:" + first, "db:" + first, receiver,
+                [completions, success](QString error) {
+                    ++*completions;
+                    if (success) *success = error.isEmpty();
+                });
+    }
+    void checkClean() {
+        require(!feature->m_trackImportActive && !feature->m_pImportingDevice &&
+                !feature->m_importMediaUse, "finished callback must release node and lease");
+        require(count(database, kRekordboxLibraryTable, first) == 0 &&
+                count(database, kRekordboxPlaylistsTable) == 2 &&
+                count(database, kRekordboxPlaylistTracksTable) == 2,
+                "cancelled rows/links/playlists must be absent; neighbor must survive");
+        require(device->childRows() == 0 && neighbor->childRows() == 1,
+                "post-worker cleanup must remove partial children only on owned device");
+        require(device->getData().toList()[1].toString() == IS_RECORDBOX_DEVICE,
+                "cancelled import must restore retry marker");
+        require(feature->selections == 0 && feature->displays == 0, "cancel must not select or display late");
+    }
+};
+
+int main(int argc, char** argv) {
+    QCoreApplication application(argc, argv);
+    const QString home = QString::fromLocal8Bit(argv[1]);
+    require(QSqlDatabase::isDriverAvailable("QSQLITE"), "Qt SQLite plugin unavailable");
+    std::cout << "QUALIFIED Qt " << qVersion() << " QSQLITE real Kaitai PDB, SQLite, TreeItem, QtConcurrent\n";
+#ifdef BASELINE
+    Trial trial(home, 0);
+    QObject receiver;
+    int completions = 0;
+    setGate("after-commit");
+    auto cancel = trial.open(&receiver, &completions);
+    until(reached, "baseline worker never reached postcommit barrier");
+    std::cout << "BASELINE admission completions=" << completions << " (expected 0)\n";
+    cancel();
+    releaseWorker();
+    until([&] { return !trial.feature->m_trackImportActive; }, "baseline worker stuck");
+    std::cout << "BASELINE after Close rows=" << count(trial.database, kRekordboxLibraryTable, trial.first)
+              << " late_displays=" << trial.feature->displays << " (expected 0,0)\n";
+    return completions == 0 && trial.feature->displays == 0 ? 0 : 1;
+#else
+    int serial = 0;
+    const bool holdout = argc > 2 && QString::fromLocal8Bit(argv[2]) == "holdout";
+    const QStringList phases = holdout ? QStringList{"row", "tree-track", "after-commit"} :
+            QStringList{"start", "transaction", "before-parse", "after-parse", "table-order", "table",
+                    "before-page", "after-page", "row-group", "row", "tree", "tree-child", "tree-track", "precommit", "after-commit"};
+    for (const auto& phase : phases) {
+        Trial trial(home, ++serial);
+        QObject receiver;
+        int completions = 0;
+        setGate(phase);
+        auto cancel = trial.open(&receiver, &completions);
+        until(reached, "worker did not reach requested checkpoint");
+        require(completions == 0 && trial.feature->selections == 0, "worker admission must not complete LOAD");
+        auto operation = trial.feature->m_importOperation;
+        if (phase == "tree-track" || phase == "precommit" || phase == "after-commit") {
+            require(trial.device->childRows() == 1, "fixture must reach an actual partially built TreeItem");
+        }
+        {
+        auto drain = mixxx::media::registry().beginDrain(trial.first.toStdString());
+        cancel();
+        require(operation->cancelled(), "Close must cancel its running parser");
+        require(!drain.snapshot().locallyIdle() && trial.feature->m_pImportingDevice == trial.device,
+                "Close must retain import lease and node while worker still running");
+        releaseWorker();
+        trial.feature->m_tracksFuture.waitForFinished();
+        require(count(trial.database, kRekordboxLibraryTable, trial.first) ==
+                        (phase == "after-commit" ? 1 : 0),
+                "worker transaction rollback must precede callback cleanup; postcommit result must remain until cleanup");
+        if (phase == "tree-track" || phase == "precommit" || phase == "after-commit") {
+            require(trial.device->childRows() == 1, "partial tree cannot be reclaimed before worker finished callback");
+        }
+        require(!drain.snapshot().locallyIdle(), "worker termination alone must not release callback-owned lease");
+        until([&] { return !trial.feature->m_trackImportActive; }, "cancel callback missing");
+        require(drain.snapshot().locallyIdle() && operation->finished && !operation->succeeded,
+                "finished reconciliation releases lease and rejects cancelled result");
+        trial.checkClean();
+        require(completions == 0, "Close must suppress completion callback");
+        }
+        setGate("none");
+        bool success = false;
+        trial.open(&receiver, &completions, &success);
+        until([&] { return completions == 1; }, "same-source retry must finish");
+        require(success && trial.device->childRows() == 1 &&
+                count(trial.database, kRekordboxLibraryTable, trial.first) == 1 &&
+                trial.feature->selections == 1 && trial.feature->displays == 1,
+                "retry must commit once, build once and select only after worker completion");
+        std::cout << "PASS Close phase=" << phase.toStdString() << " rollback/cleanup, ownership, isolation, retry\n";
+    }
+    for (const QString failure : {"track-sql", "tree-sql", "commit-sql", "malformed-pdb", "missing-pdb"}) {
+        Trial trial(home, ++serial);
+        QObject receiver;
+        QSqlQuery query(trial.database);
+        if (failure == "track-sql") {
+            require(query.exec("CREATE TRIGGER reject_track BEFORE INSERT ON rekordbox_library "
+                    "BEGIN SELECT RAISE(ABORT, 'test track failure'); END"), "track failure trigger failed");
+        }
+        if (failure == "tree-sql") {
+            require(query.exec("CREATE TRIGGER reject_tree BEFORE INSERT ON rekordbox_playlists "
+                    "WHEN instr(NEW.name, '-->') > 0 BEGIN SELECT RAISE(ABORT, 'test tree failure'); END"),
+                    "tree failure trigger failed");
+        }
+        if (failure == "commit-sql") {
+            require(query.exec("CREATE TABLE commit_guard (id INTEGER PRIMARY KEY, parent INTEGER "
+                    "REFERENCES commit_guard(id) DEFERRABLE INITIALLY DEFERRED)"), "commit guard schema failed");
+            require(query.exec("CREATE TRIGGER reject_commit AFTER INSERT ON rekordbox_playlists "
+                    "WHEN instr(NEW.name, '-->') > 0 BEGIN INSERT INTO commit_guard VALUES(1, 999); END"),
+                    "commit failure trigger failed");
+        }
+        const QString pdbPath = trial.first + "/" + kPdbPath;
+        QFile pdb(pdbPath);
+        require(pdb.open(QIODevice::ReadOnly), "fixture read failed");
+        const auto original = pdb.readAll();
+        pdb.close();
+        if (failure == "malformed-pdb") {
+            require(pdb.open(QIODevice::WriteOnly | QIODevice::Truncate), "malformed fixture open failed");
+            pdb.write("truncated");
+            pdb.close();
+        }
+        if (failure == "missing-pdb") require(pdb.rename(pdbPath + ".hidden"), "fixture rename failed");
+        setGate("none");
+        int completions = 0;
+        bool success = true;
+        trial.open(&receiver, &completions, &success);
+        until([&] { return completions == 1; }, "failed import must finish with error, not hang");
+        require(!success, "failed parser/SQL/commit must not report LOAD success");
+        trial.checkClean();
+        if (failure == "track-sql") require(query.exec("DROP TRIGGER reject_track"), "track trigger cleanup failed");
+        if (failure == "tree-sql") require(query.exec("DROP TRIGGER reject_tree"), "tree trigger cleanup failed");
+        if (failure == "commit-sql") {
+            require(query.exec("DROP TRIGGER reject_commit"), "commit trigger cleanup failed");
+            require(count(trial.database, "commit_guard") == 0, "failed commit transaction must roll back guard row");
+        }
+        if (failure == "malformed-pdb") {
+            require(pdb.open(QIODevice::WriteOnly | QIODevice::Truncate), "fixture restore failed");
+            pdb.write(original);
+            pdb.close();
+        }
+        if (failure == "missing-pdb") require(pdb.rename(pdbPath), "fixture restore rename failed");
+        success = false;
+        trial.open(&receiver, &completions, &success);
+        until([&] { return completions == 2; }, "failed-import retry must finish");
+        require(success && trial.device->childRows() == 1, "failed-import retry must rebuild tree exactly once");
+        std::cout << "PASS failure=" << failure.toStdString() << " rollback, partial-tree cleanup, no LOAD success, retry\n";
+    }
+    for (const QString reason : {"receiver", "supersession", "timeout", "owner"}) {
+        Trial trial(home, ++serial);
+        auto receiver = std::make_unique<QObject>();
+        int completions = 0;
+        setGate("tree-track");
+        trial.open(receiver.get(), &completions);
+        until(reached, "lifecycle worker never reached partial tree");
+        auto operation = trial.feature->m_importOperation;
+        if (reason == "receiver") receiver.reset();
+        if (reason == "supersession") {
+            auto cancelOther = trial.feature->openRemovableDeviceAsync(trial.second,
+                    "mount:" + trial.second, "db:" + trial.second, receiver.get(), [](QString) {});
+            cancelOther();
+        }
+        if (reason == "timeout") events(15100);
+        if (reason == "owner") {
+            std::thread releaser([operation] {
+                QElapsedTimer timer;
+                timer.start();
+                while (!operation->cancelled() && timer.elapsed() < 2000) QThread::msleep(1);
+                releaseWorker();
+            });
+            trial.feature.reset();
+            releaser.join();
+            require(operation->cancelled(), "feature destructor must request cancel before waiting");
+            std::cout << "PASS owner destructor cancels before wait and joins actual worker\n";
+            continue;
+        }
+        require(operation->cancelled(), "lifecycle event must cancel request-owned worker");
+        releaseWorker();
+        until([&] { return !trial.feature->m_trackImportActive; }, "lifecycle callback missing");
+        trial.checkClean();
+        require(completions == (reason == "timeout" ? 1 : 0), "lifecycle completion count incorrect");
+        std::cout << "PASS " << reason.toStdString() << " cancels already-running partial-tree worker\n";
+    }
+    {
+        Trial trial(home, ++serial);
+        QObject receiver;
+        int oldCompletions = 0;
+        int newCompletions = 0;
+        bool success = false;
+        setGate("tree-track");
+        trial.open(&receiver, &oldCompletions);
+        until(reached, "supersession worker did not build partial tree");
+        auto operation = trial.feature->m_importOperation;
+        trial.feature->openRemovableDeviceAsync(trial.second, "mount:" + trial.second,
+                "db:" + trial.second, &receiver, [&](QString error) {
+                    ++newCompletions;
+                    success = error.isEmpty();
+                });
+        events();
+        require(operation->cancelled() && oldCompletions == 0 && newCompletions == 0,
+                "superseding source must wait for cancelled worker reconciliation");
+        releaseWorker();
+        until([&] { return newCompletions == 1; }, "superseding cached source did not finish");
+        require(success && oldCompletions == 0 && trial.device->childRows() == 0 &&
+                trial.feature->selections == 1 && trial.feature->displays == 1 &&
+                trial.feature->playlist.playlist == trial.second &&
+                count(trial.database, kRekordboxLibraryTable, trial.first) == 0 &&
+                count(trial.database, kRekordboxLibraryTable, trial.second) == 1,
+                "only replacement source may display; cancelled source must be cleaned");
+        std::cout << "PASS supersession selects replacement only after old worker cleanup\n";
+    }
+    if (holdout) {
+        for (const QString timing : {"finished-before-callback", "identity-error", "late-drain"}) {
+            Trial trial(home, ++serial);
+            QObject receiver;
+            int completions = 0;
+            bool success = true;
+            setGate("after-commit");
+            auto cancel = trial.open(&receiver, &completions, &success);
+            until(reached, "reserved postcommit barrier missing");
+            auto operation = trial.feature->m_importOperation;
+            if (timing == "identity-error") {
+                mixxx::rekordbox::observations[trial.first].database = "replaced";
+                events();
+                require(operation->cancelled() && completions == 1 && !success,
+                        "identity failure while running must cancel its own worker");
+            }
+            releaseWorker();
+            trial.feature->m_tracksFuture.waitForFinished();
+            require(trial.feature->m_trackImportActive && !operation->finished,
+                    "worker termination must not masquerade as callback reconciliation");
+            if (timing == "finished-before-callback") cancel();
+            if (timing == "late-drain") {
+                auto drain = mixxx::media::registry().beginDrain(trial.first.toStdString());
+                until([&] { return completions == 1; }, "late drain must report selection error");
+                require(!success && trial.feature->selections == 0 && trial.feature->displays == 0,
+                        "draining admission must not complete LOAD or display cached result");
+            } else {
+                until([&] { return !trial.feature->m_trackImportActive; }, "reserved callback missing");
+                trial.checkClean();
+                require(completions == (timing == "identity-error" ? 1 : 0),
+                        "reserved cancellation must not create late completion");
+            }
+            std::cout << "PASS reserved timing=" << timing.toStdString() << " no late selection\n";
+        }
+    }
+    {
+        QObject receiver;
+        int cancellations = 0;
+        int completions = 0;
+        auto owner = std::make_unique<QObject>();
+        new mixxx::rekordbox::PendingSelection(owner.get(), &receiver,
+                [] { return std::optional<QString>(); }, [&](QString) { ++completions; },
+                15000, [&] { ++cancellations; });
+        owner.reset();
+        events();
+        require(cancellations == 1 && completions == 0, "parent destruction must invoke owned cancellation exactly once");
+        QObject successOwner;
+        new mixxx::rekordbox::PendingSelection(&successOwner, &receiver,
+                [] { return std::optional<QString>(QString()); }, [&](QString) { ++completions; },
+                15000, [&] { ++cancellations; });
+        events();
+        require(cancellations == 1 && completions == 1, "successful completion must disarm cancellation before deferred deletion");
+        QObject errorOwner;
+        new mixxx::rekordbox::PendingSelection(&errorOwner, &receiver,
+                [] { return std::optional<QString>(QStringLiteral("test error")); },
+                [&](QString) { ++completions; }, 15000, [&] { ++cancellations; });
+        events();
+        require(cancellations == 2 && completions == 2, "error completion must invoke owned cancellation exactly once");
+        std::cout << "PASS PendingSelection parent destruction/error hooks and success disarming\n";
+    }
+    {
+        Trial trial(home, ++serial);
+        QObject receiver;
+        setGate("row");
+        trial.feature->activateChild(trial.feature->sidebar.index(0, 0));
+        until(reached, "sidebar worker did not run");
+        auto operation = trial.feature->m_importOperation;
+        auto cancelOther = trial.feature->openRemovableDeviceAsync(trial.second,
+                "mount:" + trial.second, "db:" + trial.second, &receiver, [](QString) {});
+        events();
+        cancelOther();
+        require(!operation->cancelled(), "pending cancellation must not cancel unrelated sidebar import");
+        releaseWorker();
+        until([&] { return !trial.feature->m_trackImportActive; }, "sidebar completion missing");
+        require(trial.feature->displays == 1 && trial.device->childRows() == 1,
+                "direct sidebar import must retain normal completion behavior");
+        std::cout << "PASS direct sidebar behavior and unrelated pending-request isolation\n";
+    }
+    std::cout << "GREEN actual import cancellation suite\n";
+#endif
+}

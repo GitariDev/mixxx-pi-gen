@@ -9,6 +9,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from media_copy_fakes import ScratchAdmission
 
 SCRIPT = Path(__file__).resolve().parents[1] / "stage3/02-desktop/files/bin/mixpi-media"
 loader = importlib.machinery.SourceFileLoader("mixpi_media_recordings", str(SCRIPT))
@@ -22,6 +23,9 @@ FIRST, SECOND = "2026-10-09_20h00m00s", "2026-10-10_21h05m33s"
 
 class RecordingsMoveTests(unittest.TestCase):
     def setUp(self):
+        admission = patch.object(media, "CopyAdmission", ScratchAdmission)
+        admission.start()
+        self.addCleanup(admission.stop)
         self.temp = tempfile.TemporaryDirectory()
         # macOS /var is a symlink; fixture paths must use their physical path.
         self.root = Path(self.temp.name).resolve()
@@ -194,7 +198,7 @@ class RecordingsMoveTests(unittest.TestCase):
         self.assertNotIn("over 4 GiB", media.move_error(huge, self.target(fstype="exfat", free=0)))
         before = self.tree(self.folder)
         with self.assertRaisesRegex(media.TransferError, "Not enough USB space.*still on the Pi"):
-            with patch.object(media, "usb_target", return_value=self.target(free=0)):
+            with patch.object(media, "_usb_target", return_value=self.target(free=0)):
                 self.move()
         self.assertEqual(self.tree(self.folder), before)
         self.assertFalse(self.saved.exists())

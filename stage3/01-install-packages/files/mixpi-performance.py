@@ -21,6 +21,9 @@ NAVIGATION_STYLE = '''/* MixPi native navigation */
     border-radius: 2px;
 }
 '''
+# One time string (elapsed or remaining, PositionDisplay 0/1) plus the full
+# BPM, rate and paired key fit a 400 px deck half (F-5, owner decision 1).
+DECK_STAT_WIDTHS = {'time': 120, 'bpm': 100, 'rate': 60, 'key': 120}
 WAVE_INFO_SIZE = '100f,0me'
 WAVE_KEY_SIZE = '92f,36f'
 LOOPS = [('1/32', '0.03125'), ('1/16', '0.0625'), ('1/8', '0.125'),
@@ -137,13 +140,14 @@ def deck_info(channel, compact=False):
                  [label(str(channel), '28f,28f', 'MixpiDeckNumber'), title])
     info = group('MixpiDeckInfo', size='400me,28f' if compact else '400me,82f', children=[head])
     if not compact:
+        widths = DECK_STAT_WIDTHS
         stats = group('MixpiDeckStats', 'horizontal', '0me,54f', [
-            typed('NumberPos', channel, '112me,54f', 'MixpiTime', NumberOfDigits=6),
-            typed('NumberBpm', channel, '76me,54f', 'MixpiBpm'),
-            typed('NumberRate', channel, '60me,54f', 'MixpiRate', NumberOfDigits=1),
+            typed('NumberPos', channel, f"{widths['time']}me,54f", 'MixpiTime', NumberOfDigits=6),
+            typed('NumberBpm', channel, f"{widths['bpm']}me,54f", 'MixpiBpm'),
+            typed('NumberRate', channel, f"{widths['rate']}me,54f", 'MixpiRate', NumberOfDigits=1),
         ])
         connection(stats.find('Children/NumberBpm'), f'[Channel{channel}],visual_bpm', write=False)
-        key = typed('Key', channel, '140me,54f', 'MixpiKey', PairedNotation='true')
+        key = typed('Key', channel, f"{widths['key']}me,54f", 'MixpiKey', PairedNotation='true')
         connection(key, f'[Channel{channel}],visual_key', write=False)
         add(stats, key)
         add(info, stats)

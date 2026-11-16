@@ -428,6 +428,23 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(row.findtext('ObjectName'), 'MixpiWaveRow')
             self.assertEqual(row.find('Children/Visual').findtext('Size'), '0me,0me')
 
+    def test_deck_readouts_fit_one_time_string_in_a_deck_half(self):
+        # Owner decision 1: one time (elapsed, tap for remaining). On the Pi at
+        # 21 px, "-14:41.23" is 88 px wide and "125.50" fits the 100 px BPM cell.
+        stats = [g for g in self.root.findall('.//WidgetGroup')
+                 if g.findtext('ObjectName') == 'MixpiDeckStats']
+        self.assertEqual(len(stats), 4)  # Decks and Sampler, both decks
+        for group in stats:
+            widths = {child.findtext('ObjectName'): int(child.findtext('Size').split('me,')[0])
+                      for child in group.find('Children')}
+            self.assertEqual(widths, {'MixpiTime': 120, 'MixpiBpm': 100, 'MixpiRate': 60, 'MixpiKey': 120})
+            self.assertLessEqual(sum(widths.values()), 400)
+            for child in group.find('Children'):
+                self.assertTrue(child.findtext('Size').endswith('me,54f'))
+            self.assertEqual(group.find('Children/NumberPos').findtext('NumberOfDigits'), '6')
+        style = (self.skin/'style.qss').read_text()
+        self.assertIn('#MixpiTime, #MixpiRate, #MixpiKey { color: #f4f6fa; font-size: 21px; }', style)
+
     def test_overlay_probe_is_explicit_and_repeatable(self):
         SKIN.build(self.skin, 'overlay')
         overlay = ET.parse(self.skin/'skin.xml').getroot()

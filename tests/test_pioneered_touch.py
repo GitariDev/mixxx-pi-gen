@@ -38,8 +38,25 @@ class TouchDefaultsTests(unittest.TestCase):
         self.assertEqual(set(line for line in self.config.read_text().splitlines() if line), {
             "[Library]", "RowHeight 34", "Font Sans Serif,-1,17,5,50,0,0,0,0,0",
             "[Config]", "ResizableSkin Pioneered", "hide_menubar 1", "show_menubar_hint 0",
-            "MixPiBootstrapLibrary 1"})
+            "MixPiBootstrapLibrary 1", "[Controls]", "PositionDisplay 0"})
         self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
+
+    def test_position_display_is_seeded_for_new_profiles_only(self):
+        DEFAULTS["seed"](self.config)
+        self.assertIn("[Controls]\nPositionDisplay 0\n", self.config.read_text())
+        for source in ("[Controls]\nPositionDisplay 2\nRateDir 1\n",
+                       "[Controls]\nPositionDisplay 1\n",
+                       "[Controls]\nRateDir 1\n",
+                       "[Config]\nLocale en_US\n"):
+            with self.subTest(source=source):
+                self.config.write_text(source)
+                DEFAULTS["seed"](self.config)
+                result = self.config.read_text()
+                self.assertEqual(result.count("PositionDisplay"), source.count("PositionDisplay"))
+                if "PositionDisplay" in source:
+                    position = next(line for line in source.splitlines() if line.startswith("PositionDisplay"))
+                    self.assertIn(position + "\n", result)
+                self.assertNotIn("PositionDisplay 0", result.replace(source, ""))
 
     def test_saved_choices_and_unrelated_settings_are_preserved(self):
         self.config.parent.mkdir()

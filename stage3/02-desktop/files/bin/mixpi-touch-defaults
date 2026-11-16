@@ -39,6 +39,8 @@ def seed(config):
         result = add_missing(result, "Config", {"ResizableSkin": "Pioneered",
                                                 "hide_menubar": "1", "show_menubar_hint": "0"})
         result = add_missing(result, "Library", {"MixPiBootstrapLibrary": "1"})
+        # Elapsed time only; a tap on the readout shows the remaining time.
+        result = add_missing(result, "Controls", {"PositionDisplay": "0"})
     if result == source:
         return
     config.parent.mkdir(parents=True, exist_ok=True)

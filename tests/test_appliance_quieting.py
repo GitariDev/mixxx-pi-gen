@@ -52,6 +52,22 @@ class ApplianceQuietingTier1Tests(unittest.TestCase):
             with self.subTest(unit=unit):
                 self.assertIsNone(re.search(rf'(mask|disable)[^\n]*{unit}', script))
 
+    def test_udiskie_mounts_without_popups(self):
+        # Option B: USB mounts showed udiskie pop-ups over the decks.
+        starts = [line for line in code_lines(I3) if line.startswith('exec') and 'udiskie' in line]
+        self.assertEqual(len(starts), 1, starts)
+        words = re.search(r'exec udiskie([^\']*)', starts[0])[1].split()
+        self.assertIn('--no-notify', words)
+        self.assertIn('--tray', words)  # eject and mount menu kept
+        for option in ('-n', '--notify', '-N', '-A', '--no-automount', '-T', '--no-tray', '-s',
+                       '--smart-tray'):
+            with self.subTest(option=option):
+                self.assertNotIn(option, words)
+        # No shipped udiskie config file can turn notifications back on.
+        for path in session_files():
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                self.assertNotIn('udiskie', [part.lower() for part in path.parts])
+
 
 if __name__ == '__main__':
     unittest.main()

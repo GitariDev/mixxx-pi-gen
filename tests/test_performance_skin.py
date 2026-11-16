@@ -378,6 +378,22 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(strip.findtext('Connection/Transform/IsEqual'), str(channel))
             self.assertIsNotNone(strip.find('Connection/Transform/Not'))
 
+    def test_deck_waveforms_use_the_eos_info_column(self):
+        # F-4 A/B decision: restore the 100 px EOS column (700 px waveforms).
+        infos = [g for g in self.root.findall('.//WidgetGroup')
+                 if g.findtext('ObjectName') == 'MixpiWaveInfo']
+        self.assertEqual(len(infos), 2)
+        for channel, info in enumerate(infos, 1):
+            self.assertEqual(info.findtext('Size'), '100f,0me')
+            key = info.find('Children/Key')
+            self.assertEqual(key.findtext('ObjectName'), 'MixpiWaveKey')
+            self.assertEqual(key.findtext('Size'), '92f,36f')
+            self.assertEqual(key.findtext('PairedNotation'), 'true')
+            self.assertEqual(key.findtext('Channel'), str(channel))
+            row = next(g for g in self.root.findall('.//WidgetGroup') if info in list(g.find('Children')))
+            self.assertEqual(row.findtext('ObjectName'), 'MixpiWaveRow')
+            self.assertEqual(row.find('Children/Visual').findtext('Size'), '0me,0me')
+
     def test_overlay_probe_is_explicit_and_repeatable(self):
         SKIN.build(self.skin, 'overlay')
         overlay = ET.parse(self.skin/'skin.xml').getroot()

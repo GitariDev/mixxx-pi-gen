@@ -21,6 +21,8 @@ NAVIGATION_STYLE = '''/* MixPi native navigation */
     border-radius: 2px;
 }
 '''
+WAVE_INFO_SIZE = '100f,0me'
+WAVE_KEY_SIZE = '92f,36f'
 LOOPS = [('1/32', '0.03125'), ('1/16', '0.0625'), ('1/8', '0.125'),
          ('1/4', '0.25'), ('1/2', '0.5'), ('1', '1'), ('2', '2'), ('4', '4'),
          ('8', '8'), ('16', '16'), ('32', '32'), ('64', '64')]
@@ -449,9 +451,11 @@ def build(skin, loop_display='focus'):
     waves=group('MixpiWaveforms')
     for ch in (1,2):
         v=concrete(visual,ch);fixed_size(v,'0me,0me')
-        key=typed('Key',ch,'132f,36f','MixpiWaveKey',PairedNotation='true')
+        # EOS width (F-4 A/B, 2026-11-16): the 100 px column gives a 700 px
+        # waveform at the same CPU, frame rate and px per beat as 136 px.
+        key=typed('Key',ch,WAVE_KEY_SIZE,'MixpiWaveKey',PairedNotation='true')
         connection(key,f'[Channel{ch}],visual_key',write=False)
-        info=group('MixpiWaveInfo',size='136f,0me',children=[label(f'DECK {ch}'),key])
+        info=group('MixpiWaveInfo',size=WAVE_INFO_SIZE,children=[label(f'DECK {ch}'),key])
         add(waves,group('MixpiWaveRow','horizontal',children=[info,v]))
     visible = '<IsEqual>0</IsEqual>' if loop_display == 'focus' else '<IsEqual>3</IsEqual><Not/>'
     connection(waves, '[MixPi],loop_deck', transform=visible, bind='visible')

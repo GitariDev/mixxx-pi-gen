@@ -1,0 +1,21 @@
+diff --git a/src/widget/wnumberpos.cpp b/src/widget/wnumberpos.cpp
+index ddf137a..50128ff 100644
+--- a/src/widget/wnumberpos.cpp
++++ b/src/widget/wnumberpos.cpp
+@@ -34,12 +34,12 @@ void WNumberPos::mousePressEvent(QMouseEvent* pEvent) {
+     bool leftClick = pEvent->buttons() & Qt::LeftButton;
+ 
+     if (leftClick) {
+-        // Cycle through display modes
++        // MixPi: a tap toggles elapsed <-> remaining only. A tap never
++        // selects the wide "elapsed and remaining" mode; a saved "both"
++        // setting goes to elapsed, the single-time default.
+         if (m_displayMode == TrackTime::DisplayMode::ELAPSED) {
+             m_displayMode = TrackTime::DisplayMode::REMAINING;
+-        } else if (m_displayMode == TrackTime::DisplayMode::REMAINING) {
+-            m_displayMode = TrackTime::DisplayMode::ELAPSED_AND_REMAINING;
+-        } else if (m_displayMode == TrackTime::DisplayMode::ELAPSED_AND_REMAINING) {
++        } else {
+             m_displayMode = TrackTime::DisplayMode::ELAPSED;
+         }
+ 

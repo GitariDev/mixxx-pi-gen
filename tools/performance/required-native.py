@@ -26,6 +26,7 @@ REQUIRED_TESTS = (
     'test_library_interface',
     'test_recording_lifecycle',
     'test_key_widget',
+    'test_position_display',
     'test_initial_library.InitialLibraryNativeTests',
     'test_effect_placeholder',
     'test_runtime_selection_probe',

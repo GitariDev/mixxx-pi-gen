@@ -23,6 +23,7 @@ MIXXX_PATCHES=(
     mixxx-transfer-display.patch
     mixxx-quiet-scan.patch
     mixxx-preferences-entry.patch
+    mixxx-position-display.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

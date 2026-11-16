@@ -48,6 +48,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-transfer-display.patch",
             "mixxx-quiet-scan.patch",
             "mixxx-preferences-entry.patch",
+            "mixxx-position-display.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():

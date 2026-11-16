@@ -77,7 +77,7 @@ PREREQUISITES = {
     "mixxx-transfer-reporting.patch": ["mixxx-media-selection.patch"],
     "mixxx-transfer-display.patch": ["mixxx-media-activity.patch"],
     "mixxx-preferences-entry.patch": ["mixxx-performance-settings.patch"],
-    "mixxx-dialog-wording.patch": ["mixxx-transfer-display.patch"],
+    "mixxx-dialog-wording.patch": ["mixxx-transfer-display.patch", "mixxx-media-selection.patch"],
     "mixxx-source-tap.patch": ["mixxx-touch-source-navigation.patch"],
     "mixxx-table-columns.patch": ["mixxx-library-interface.patch"],
     "mixxx-touch-dialogs.patch": ["mixxx-library-interface.patch"],

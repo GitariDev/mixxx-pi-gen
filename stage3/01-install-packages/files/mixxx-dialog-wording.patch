@@ -1,3 +1,16 @@
+diff --git a/src/library/mixpicontrolledmedia.h b/src/library/mixpicontrolledmedia.h
+index 0d21f49..81b65b8 100644
+--- a/src/library/mixpicontrolledmedia.h
++++ b/src/library/mixpicontrolledmedia.h
+@@ -333,7 +333,7 @@ class MixpiControlledMedia final : public QObject {
+     QTimer* m_deadline = nullptr;
+     QTimer* m_poll = nullptr;
+     State m_state = State::Unavailable;
+-    QString m_message = tr("Controlled media unavailable: reviewed profile/service required. Keep drive connected.");
++    QString m_message = tr("Eject is not available on this system. Keep the drive connected.");
+     QString m_request;
+     QString m_token;
+     QString m_selectedDescription;
 diff --git a/src/library/mixpimediaactivity.h b/src/library/mixpimediaactivity.h
 index 24333f0..149388d 100644
 --- a/src/library/mixpimediaactivity.h

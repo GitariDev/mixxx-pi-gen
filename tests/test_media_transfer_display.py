@@ -28,10 +28,15 @@ class DialogWordingPatchTests(unittest.TestCase):
                         'Mixxx may still use this drive.', 'No copy has run yet.',
                         'The last copy was interrupted.', 'The last copy result is not available.'):
             self.assertIn(f'QStringLiteral("{wording}")', added)
+        # With controlled media off, Eject opens the controlled dialog in its
+        # unavailable state; its first message now says so in plain words.
+        self.assertIn('tr("Eject is not available on this system. Keep the drive connected.")', added)
+        self.assertNotIn('reviewed profile/service', added)
         for internal in ('clearance', 'retained', 'Unresolved', 'progress unavailable'):
             self.assertNotIn(internal, added)
         self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) ', text, re.MULTILINE)),
-                         ['src/library/mixpimediaactivity.h', 'src/library/mixpimediadialog.h'])
+                         ['src/library/mixpicontrolledmedia.h', 'src/library/mixpimediaactivity.h',
+                          'src/library/mixpimediadialog.h'])
         self.assertNotIn('setEnabled', added)
         self.assertNotIn('m_controlled', added)
 

@@ -10,3 +10,10 @@ ExecStart=/usr/bin/mixxx
 ExecStopPost=/usr/bin/sudo -n /usr/local/sbin/mixpi-maintenance restore
 # Let an already-running apt/dpkg job finish without a startup deadline.
 TimeoutStartSec=infinity
+# A stop, reboot or power-off sends SIGTERM to Mixxx, which then quits as
+# File > Exit does and saves mixxx.cfg and samplers.xml (mixxx-clean-quit.patch;
+# about 1 s on the Pi). SIGKILL follows only if it is not done within 20 s.
+KillMode=control-group
+KillSignal=SIGTERM
+SendSIGKILL=yes
+TimeoutStopSec=20s

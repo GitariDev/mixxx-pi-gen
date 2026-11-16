@@ -1,0 +1,245 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 11afd51..d29d969 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -28,6 +28,9 @@
+ #include "util/console.h"
+ #include "util/logging.h"
+ #include "util/sandbox.h"
++#ifdef __LINUX__
++#include "util/unixsignalquit.h"
++#endif
+ #include "util/versionstore.h"
+ 
+ namespace {
+@@ -54,6 +57,12 @@ constexpr int kPixmapCacheLimitAt100PercentZoom = 32 * 1024; // 32 MByte
+ int runMixxx(MixxxApplication* pApp, const CmdlineArgs& args) {
+     CmdlineArgs::Instance().parseForUserFeedback();
+ 
++#ifdef __LINUX__
++    // MixPi: a service stop, reboot or power-off sends SIGTERM. Installed
++    // first and destroyed last, so no later signal can kill Mixxx mid-save.
++    mixxx::UnixSignalQuit signalQuit;
++#endif
++
+     const auto pCoreServices = std::make_shared<mixxx::CoreServices>(args, pApp);
+ 
+     int exitCode;
+@@ -68,6 +77,13 @@ int runMixxx(MixxxApplication* pApp, const CmdlineArgs& args) {
+         // CoreServices is shut down. Otherwise a debug assertion complaining about
+         // leaked COs may be triggered.
+         MixxxMainWindow mainWindow(pCoreServices);
++#ifdef __LINUX__
++        // The same quit as File > Exit (Ctrl+Q), without the Yes/No prompt
++        // that nobody can answer during a stop.
++        signalQuit.setQuitFunction([&mainWindow](int) {
++            mainWindow.closeWithoutConfirmation();
++        });
++#endif
+         pApp->processEvents();
+         pApp->installEventFilter(&mainWindow);
+ 
+@@ -107,8 +123,14 @@ int runMixxx(MixxxApplication* pApp, const CmdlineArgs& args) {
+             mainWindow.show();
+ 
+             qDebug() << "Running Mixxx";
++#ifdef __LINUX__
++            signalQuit.enable();
++#endif
+             exitCode = pApp->exec();
+         }
++#ifdef __LINUX__
++        signalQuit.finish();
++#endif
+     }
+     return exitCode;
+ }
+diff --git a/src/mixxxmainwindow.cpp b/src/mixxxmainwindow.cpp
+index 322613b..c0b0716 100644
+--- a/src/mixxxmainwindow.cpp
++++ b/src/mixxxmainwindow.cpp
+@@ -1403,7 +1403,7 @@ void MixxxMainWindow::closeEvent(QCloseEvent *event) {
+     // WARNING: We can receive a CloseEvent while only partially
+     // initialized. This is because we call QApplication::processEvents to
+     // render LaunchImage progress in the constructor.
+-    if (!confirmExit()) {
++    if (!m_exitConfirmed && !confirmExit()) {
+         event->ignore();
+         return;
+     }
+@@ -1444,6 +1444,19 @@ void MixxxMainWindow::checkDirectRendering() {
+     }
+ }
+ 
++void MixxxMainWindow::closeWithoutConfirmation() {
++    m_exitConfirmed = true;
++    // As the "Discard any changes and exit Mixxx?" Yes answer.
++    if (m_pPrefDlg && m_pPrefDlg->isVisible()) {
++        m_pPrefDlg->close();
++    }
++    // lastWindowClosed quits too; this also covers a parentless window
++    // that is still visible.
++    if (close()) {
++        QCoreApplication::quit();
++    }
++}
++
+ bool MixxxMainWindow::confirmExit() {
+     bool playing(false);
+     bool playingSampler(false);
+diff --git a/src/mixxxmainwindow.h b/src/mixxxmainwindow.h
+index 512498a..4f66e14 100644
+--- a/src/mixxxmainwindow.h
++++ b/src/mixxxmainwindow.h
+@@ -86,6 +86,9 @@ class MixxxMainWindow : public QMainWindow {
+ 
+     void initializationProgressUpdate(int progress, const QString& serviceName);
+ 
++    /// MixPi: the File > Exit quit for SIGTERM/SIGHUP; skips the Yes/No prompts.
++    void closeWithoutConfirmation();
++
+   private slots:
+     void slotTooltipModeChanged(mixxx::preferences::Tooltips tt);
+ 
+@@ -143,6 +146,7 @@ class MixxxMainWindow : public QMainWindow {
+     const bool m_supportsGlobalMenuBar;
+ #endif
+     bool m_inRebootMixxxView;
++    bool m_exitConfirmed = false;
+ 
+     DlgDeveloperTools* m_pDeveloperToolsDlg;
+ 
+diff --git a/src/util/unixsignalquit.h b/src/util/unixsignalquit.h
+new file mode 100644
+index 0000000..0fe950b
+--- /dev/null
++++ b/src/util/unixsignalquit.h
+@@ -0,0 +1,128 @@
++#pragma once
++
++// MixPi: turn SIGTERM and SIGHUP into the normal quit path.
++//
++// systemd stops the Mix Pi session (service stop, reboot, power-off) with
++// SIGTERM. The default action kills Mixxx at once, so mixxx.cfg and
++// samplers.xml are never written. This follows Qt's documented Unix-signal
++// pattern: the handler only writes one byte to a socketpair, and a
++// QSocketNotifier calls the quit function from the event loop. Only the first
++// request quits; later signals (a second stop, a SIGHUP during shutdown) are
++// logged and ignored. The handlers stay installed until the process exits, so
++// a later signal can never kill Mixxx while it saves.
++
++#include <QSocketNotifier>
++#include <QtDebug>
++#include <cerrno>
++#include <csignal>
++#include <fcntl.h>
++#include <functional>
++#include <memory>
++#include <sys/socket.h>
++#include <unistd.h>
++#include <utility>
++
++namespace mixxx {
++
++class UnixSignalQuit {
++  public:
++    using QuitFunction = std::function<void(int signalNumber)>;
++
++    // Installs the handlers at once. Requests are held in the socket until
++    // enable() runs, so a stop during startup quits as soon as the event
++    // loop runs instead of killing Mixxx half-initialized.
++    UnixSignalQuit() {
++        if (s_fds[0] >= 0) {
++            return; // One process-wide installation.
++        }
++        int fds[2];
++        if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
++            qWarning() << "UnixSignalQuit: socketpair failed, errno" << errno;
++            return;
++        }
++        for (int fd : fds) {
++            ::fcntl(fd, F_SETFD, FD_CLOEXEC);
++            ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
++        }
++        s_fds[0] = fds[0];
++        s_fds[1] = fds[1];
++        for (int signalNumber : {SIGTERM, SIGHUP}) {
++            struct sigaction previous = {};
++            ::sigaction(signalNumber, nullptr, &previous);
++            if (previous.sa_handler == SIG_IGN) {
++                continue; // Keep nohup and similar callers working.
++            }
++            struct sigaction action = {};
++            action.sa_handler = &UnixSignalQuit::handle;
++            sigemptyset(&action.sa_mask);
++            action.sa_flags = SA_RESTART;
++            ::sigaction(signalNumber, &action, nullptr);
++        }
++    }
++
++    UnixSignalQuit(const UnixSignalQuit&) = delete;
++    UnixSignalQuit& operator=(const UnixSignalQuit&) = delete;
++
++    void setQuitFunction(QuitFunction quit) {
++        m_quit = std::move(quit);
++    }
++
++    // Starts delivering requests from the calling thread's event loop.
++    void enable() {
++        if (s_fds[1] < 0 || m_pNotifier) {
++            return;
++        }
++        m_pNotifier = std::make_unique<QSocketNotifier>(s_fds[1], QSocketNotifier::Read);
++        QObject::connect(m_pNotifier.get(),
++                &QSocketNotifier::activated,
++                m_pNotifier.get(),
++                [this] { readRequests(); });
++    }
++
++    // The event loop has ended (by any path): later signals only log.
++    void finish() {
++        m_quitRequested = true;
++        m_quit = nullptr;
++    }
++
++    bool quitRequested() const {
++        return m_quitRequested;
++    }
++
++  private:
++    // Async-signal-safe: write(2) only, errno preserved, no allocation or Qt.
++    static void handle(int signalNumber) {
++        const int savedErrno = errno;
++        const unsigned char byte = static_cast<unsigned char>(signalNumber);
++        // A full socket (EAGAIN) means a request is already pending.
++        [[maybe_unused]] const ssize_t written = ::write(s_fds[0], &byte, 1);
++        errno = savedErrno;
++    }
++
++    void readRequests() {
++        unsigned char bytes[16];
++        ssize_t count;
++        while ((count = ::read(s_fds[1], bytes, sizeof(bytes))) > 0) {
++            for (ssize_t i = 0; i < count; ++i) {
++                const int signalNumber = bytes[i];
++                if (m_quitRequested) {
++                    qInfo() << "Signal" << signalNumber
++                            << "received while Mixxx is already quitting; ignored";
++                    continue;
++                }
++                m_quitRequested = true;
++                qInfo() << "Signal" << signalNumber << "received; quitting Mixxx";
++                if (m_quit) {
++                    m_quit(signalNumber);
++                }
++            }
++        }
++    }
++
++    inline static int s_fds[2] = {-1, -1};
++    QuitFunction m_quit;
++    std::unique_ptr<QSocketNotifier> m_pNotifier;
++    bool m_quitRequested = false;
++};
++
++} // namespace mixxx

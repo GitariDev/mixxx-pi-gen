@@ -6,6 +6,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 import json
+import configparser
 
 ROOT = Path(__file__).resolve().parents[1]
 loader = importlib.machinery.SourceFileLoader('desktop_bar', str(
@@ -112,3 +113,75 @@ class DesktopBarTests(unittest.TestCase):
         with patch.object(BAR, 'command', side_effect=responses):
             with self.assertRaisesRegex(BAR.BarError, 'unique focused'):
                 BAR.observe()
+
+
+class DesktopBarStateReportingTests(unittest.TestCase):
+    """A bar that is failed or restarting is never reported as shown, hidden or available."""
+
+    def test_failed_and_restarting_report_unavailable(self):
+        for state in ('LoadState=loaded\nActiveState=activating\nSubState=start\nMainPID=0',
+                      'LoadState=loaded\nActiveState=activating\nSubState=auto-restart\nMainPID=0',
+                      'LoadState=loaded\nActiveState=failed\nSubState=failed\nMainPID=0',
+                      'LoadState=loaded\nActiveState=deactivating\nSubState=stop-sigterm\nMainPID=7'):
+            with self.subTest(state=state), patch.object(BAR, 'command', return_value=state), \
+                    patch.object(BAR.os, 'geteuid', return_value=1000), \
+                    patch.dict(BAR.os.environ, {'XDG_RUNTIME_DIR': '/run/user/1000',
+                                                'SWAYSOCK': '/run/user/1000/sway.sock'}), \
+                    patch.object(BAR.os, 'getuid', return_value=1000), \
+                    patch('builtins.print') as printed:
+                self.assertEqual(BAR.main(['status']), 1)
+                report = json.loads(printed.call_args.args[0])
+                self.assertIsNone(report['visible'])
+                self.assertTrue(report['error'])
+
+    def test_bar_never_started_after_boot_reports_hidden_and_showable(self):
+        state = 'LoadState=loaded\nActiveState=inactive\nSubState=dead\nMainPID=0'
+        geometry = [json.dumps([{'focused': True, 'output': 'DSI-1', 'rect': {'y': 0}}]),
+                    json.dumps([{'name': 'DSI-1', 'active': True, 'rect': {'y': 0}}])]
+        with patch.object(BAR, 'command', side_effect=[state] + geometry):
+            self.assertEqual(BAR.change('status'), {'visible': False, 'reserved_px': 0, 'error': ''})
+
+
+def code_lines(path):
+    return [line.strip() for line in path.read_text().splitlines()
+            if line.strip() and not line.strip().startswith('#')]
+
+
+class SessionStartStageTests(unittest.TestCase):
+    """F-14: one ordered session start, the bar hidden after boot, no wlr portal."""
+
+    def test_one_ordered_start_line_and_no_waybar_autostart(self):
+        lines = code_lines(ROOT / 'stage3/02-desktop/files/i3.conf')
+        starts = [line for line in lines if 'sway-session' in line]
+        self.assertEqual(starts, [
+            "exec --no-startup-id sh -c 'dbus-update-activation-environment --systemd "
+            "WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE SWAYSOCK; "
+            "exec systemctl --user start sway-session.service'"])
+        self.assertEqual([line for line in lines if 'dbus-update-activation-environment' in line], starts)
+        self.assertEqual([line for line in lines if 'waybar' in line], [])
+
+    def test_image_disables_the_waybar_package_autostart(self):
+        lines = code_lines(ROOT / 'stage3/04-enable-wayland/01-run.sh')
+        self.assertIn('systemctl --global disable waybar.service', lines)
+        # Only the Settings helper (mixpi-desktop-bar) starts the bar.
+        session = list(ROOT.glob('stage*/**/*run.sh')) + list(ROOT.glob('stage*/**/systemd/**/*'))
+        session.append(ROOT / 'stage3/02-desktop/files/i3.conf')
+        for path in session:
+            if path.is_file():
+                with self.subTest(path=str(path.relative_to(ROOT))):
+                    self.assertNotRegex(path.read_text(),
+                                        r'(?m)^[^#\n]*(enable|start)[^\n]*waybar')
+
+    def test_wlr_portal_removed_from_packages_and_portal_config(self):
+        packages = (ROOT / 'stage3/01-install-packages/00-packages').read_text().split()
+        self.assertIn('xdg-desktop-portal', packages)
+        self.assertIn('xdg-desktop-portal-gtk', packages)
+        self.assertNotIn('xdg-desktop-portal-wlr', packages)
+        for path in ROOT.glob('stage*/**/*'):
+            if path.is_file() and path.suffix != '.patch' and '__pycache__' not in path.parts:
+                with self.subTest(path=str(path.relative_to(ROOT))):
+                    self.assertNotIn('xdg-desktop-portal-wlr', path.read_text(errors='replace'))
+        portal = configparser.ConfigParser()
+        portal.optionxform = str
+        portal.read(ROOT / 'stage3/02-desktop/files/xdg-desktop-portal-sway.conf')
+        self.assertEqual(dict(portal['preferred']), {'default': 'gtk'})

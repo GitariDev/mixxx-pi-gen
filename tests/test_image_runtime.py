@@ -60,6 +60,7 @@ class ImageRuntimeTests(unittest.TestCase):
             self.assertIn('/custom/backend', real_unit.read_text())
             portal = self.config / 'xdg-desktop-portal/sway-portals.conf'
             self.assertTrue(portal.is_file())
+            self.assertEqual(portal.read_text(), '[preferred]\ndefault=gtk\n')
 
     def test_kernel_stage_preserves_boot_arguments_and_is_repeatable(self):
         cmdline = self.rootfs / 'boot/firmware/cmdline.txt'

@@ -27,3 +27,10 @@ on_chroot << EOF
     ln -sf /dev/null /home/pi/.config/systemd/user/pulseaudio.service
     ln -sf /dev/null /home/pi/.config/systemd/user/pulseaudio.socket
 EOF
+
+# The top bar starts hidden after boot (owner decision, F-14). The waybar
+# package enables waybar.service for graphical-session.target; undo that.
+# Settings > "Show top bar" starts it on demand (mixpi-desktop-bar).
+on_chroot << EOF
+    systemctl --global disable waybar.service
+EOF

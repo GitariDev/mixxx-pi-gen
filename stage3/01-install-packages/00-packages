@@ -30,4 +30,4 @@ network-manager-gnome
 nautilus
 python3-pip
 libqt6sql6-sqlite qt6-svg-plugins
-xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr
+xdg-desktop-portal xdg-desktop-portal-gtk

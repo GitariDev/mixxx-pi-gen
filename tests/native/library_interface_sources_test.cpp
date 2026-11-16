@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QAbstractItemModelTester>
+#include <QMouseEvent>
 #include <QPersistentModelIndex>
 #include <QPointer>
 #include <QSettings>
@@ -27,10 +28,10 @@ LibraryFeature::LibraryFeature(QString name) : identity(std::move(name)) {
     children.setRootItem(std::move(root));
 }
 
-struct ConfigKey {
-    QString key;
-    ConfigKey(QString group, QString name) : key(group + "/" + name) {}
-};
+#include "preferences/configobject.h"
+#ifndef SOURCE_ORDER_BASELINE
+#include "widget/wlibrarysidebar.h"
+#endif
 struct Settings {
     QSettings settings;
     explicit Settings(const QString& path) : settings(path, QSettings::IniFormat) {}
@@ -104,6 +105,138 @@ void Library::saveSidebarSourceOrder(const QStringList&) {}
 void Library::applySidebarSourceVisibility() {}
 void Library::showSidebarSourcesMenu() {}
 void Library::onSkinLoadFinished() {}
+#endif
+
+#ifndef SOURCE_ORDER_BASELINE
+// F-6 (B3): the real WLibrarySidebar in touch navigation mode, wired to the
+// real SidebarModel by the exact pressed/clicked connects from library.cpp.
+void mouse(QWidget* widget, QEvent::Type type, QPoint position, Qt::MouseButtons buttons) {
+    QMouseEvent event(type, position, widget->mapToGlobal(position),
+            type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
+    QApplication::sendEvent(widget, &event);
+}
+
+void touchSidebarChecks() {
+    SidebarModel model;
+    A a;
+    B b;
+    C c;
+    D d;
+    E e;
+    const QList<LibraryFeature*> features{&a, &b, &c, &d, &e};
+    for (auto* feature : features) {
+        model.addLibraryFeature(feature);
+    }
+    LibraryFeature::shown = nullptr;
+    WLibrarySidebar sidebar;
+    sidebar.setModel(&model);
+    {
+        WLibrarySidebar* pSidebarWidget = &sidebar;
+        SidebarModel* m_pSidebarModel = &model;
+        auto connect = [](auto&&... arguments) { return QObject::connect(arguments...); };
+#include "sidebar_activation_wiring.inc"
+    }
+    QObject::connect(&model, &SidebarModel::selectIndex, &sidebar, &WLibrarySidebar::selectIndex);
+    sidebar.enableTouchNavigation();
+    sidebar.resize(300, 400);
+    sidebar.show();
+    QApplication::processEvents();
+    auto* viewport = sidebar.viewport();
+    auto opened = [&] {
+        int count = 0;
+        for (auto* feature : features) {
+            count += feature->activations;
+        }
+        return count;
+    };
+    auto row = [&](int number) { return model.index(number, 0); };
+    auto centre = [&](const QModelIndex& index) { return sidebar.visualRect(index).center(); };
+    auto highlighted = [&](const QModelIndex& index) {
+        return sidebar.currentIndex() == index &&
+                sidebar.selectionModel()->selectedRows() == QModelIndexList({index});
+    };
+    auto drag = [&](int from, int to, int steps, int pause) {
+        QPoint position = centre(row(from));
+        mouse(viewport, QEvent::MouseButtonPress, position, Qt::LeftButton);
+        const QPoint end = centre(row(to));
+        for (int step = 1; step <= steps; ++step) {
+            position = centre(row(from)) + (end - centre(row(from))) * step / steps;
+            mouse(viewport, QEvent::MouseMove, position, Qt::LeftButton);
+            if (pause) {
+                QTest::qWait(pause);
+            }
+        }
+        mouse(viewport, QEvent::MouseButtonRelease, end, Qt::NoButton);
+        QTest::qWait(350); // past the 300 ms pressed-until-clicked timer
+    };
+    // As after skin load: A is shown and highlighted, nothing opened yet.
+    sidebar.selectIndex(row(0));
+    require(highlighted(row(0)) && opened() == 0, "touch sidebar starts with the shown source highlighted");
+    drag(1, 4, 12, 25);
+    require(opened() == 0 && !LibraryFeature::shown,
+            "touch slow drag from row 1 to row 4 opens no source");
+    require(highlighted(row(0)) && !sidebar.rootIndex().isValid(),
+            "touch slow drag keeps the highlight on the shown source");
+    drag(4, 1, 1, 0);
+    require(opened() == 0 && highlighted(row(0)), "touch fast flick opens nothing and keeps the highlight");
+    mouse(viewport, QEvent::MouseButtonPress, centre(row(2)), Qt::LeftButton);
+    QTest::qWait(400);
+    require(opened() == 0 && highlighted(row(0)), "a held touch press opens nothing");
+    mouse(viewport, QEvent::MouseButtonRelease, centre(row(3)), Qt::NoButton);
+    QTest::qWait(350);
+    require(opened() == 0, "a held press released on another row opens nothing");
+
+    // Keyboard and controller (LibraryControl sends the same key events):
+    // the pinned pressed() path still opens after the 300 ms delay.
+    sidebar.setFocus();
+    QTest::keyClick(&sidebar, Qt::Key_Down);
+    require(opened() == 0, "keyboard Down defers opening to the pressed() timer");
+    QTest::qWait(350);
+    require(b.activations == 1 && opened() == 1 && LibraryFeature::shown == &b && highlighted(row(1)),
+            "keyboard/controller Down opens the next source once through pressed()");
+
+    // A tap: press and release on the same row.
+    mouse(viewport, QEvent::MouseButtonPress, centre(row(3)), Qt::LeftButton);
+    mouse(viewport, QEvent::MouseMove, centre(row(3)) + QPoint(3, 2), Qt::LeftButton);
+    mouse(viewport, QEvent::MouseButtonRelease, centre(row(3)) + QPoint(3, 2), Qt::NoButton);
+    QApplication::processEvents();
+    require(d.activations == 1 && opened() == 2, "touch tap opens the source at once");
+    QTest::qWait(350);
+    const QModelIndex rootD = model.getFeatureRootIndex(&d);
+    require(d.activations == 1 && opened() == 2, "touch tap opens the source exactly once");
+    require(LibraryFeature::shown == &d && highlighted(rootD),
+            "after a tap the selected row equals the shown source");
+    require(sidebar.rootIndex() == rootD, "touch tap still enters the source folder");
+
+    // Rows change under the finger (as on USB hot-plug): open nothing.
+    const QModelIndex child = model.index(0, 0, rootD);
+    const QPoint childPoint = centre(child);
+    mouse(viewport, QEvent::MouseButtonPress, childPoint, Qt::LeftButton);
+    sidebar.returnToSourceRoot();
+    QApplication::processEvents();
+    mouse(viewport, QEvent::MouseButtonRelease, childPoint, Qt::NoButton);
+    QTest::qWait(350);
+    require(opened() == 2 && LibraryFeature::shown == &d,
+            "a press across a source-tree reset opens nothing");
+
+    // Real touch input that Qt turns into mouse events.
+    auto* device = QTest::createTouchDevice();
+    const int before = opened();
+    QTest::touchEvent(&sidebar, device).press(0, viewport->mapTo(&sidebar, centre(row(1))));
+    for (int r = 2; r <= 4; ++r) {
+        QTest::touchEvent(&sidebar, device).move(0, viewport->mapTo(&sidebar, centre(row(r))));
+        QTest::qWait(20);
+    }
+    QTest::touchEvent(&sidebar, device).release(0, viewport->mapTo(&sidebar, centre(row(4))));
+    QTest::qWait(350);
+    require(opened() == before, "synthetic touch drag over three rows opens nothing");
+    QTest::touchEvent(&sidebar, device).press(0, viewport->mapTo(&sidebar, centre(row(2))));
+    QTest::touchEvent(&sidebar, device).release(0, viewport->mapTo(&sidebar, centre(row(2))));
+    QTest::qWait(350);
+    require(c.activations == 1 && opened() == before + 1 && LibraryFeature::shown == &c &&
+                    highlighted(model.getFeatureRootIndex(&c)),
+            "synthetic touch tap opens one source and highlights it");
+}
 #endif
 
 int main(int argc, char** argv) {
@@ -347,6 +480,7 @@ int main(int argc, char** argv) {
     require(view.currentIndex().data().toString() == "E" &&
             settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == "A",
             "actual skin-load hidden default uses visible fallback and retains preference");
+    touchSidebarChecks();
     return failures ? 1 : 0;
 #endif
 }

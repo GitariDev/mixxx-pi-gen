@@ -1,0 +1,216 @@
+diff --git a/src/library/browse/browsetablemodel.cpp b/src/library/browse/browsetablemodel.cpp
+index 77f257d..a52f403 100644
+--- a/src/library/browse/browsetablemodel.cpp
++++ b/src/library/browse/browsetablemodel.cpp
+@@ -155,6 +155,36 @@ BrowseTableModel::BrowseTableModel(QObject* parent,
+     }
+ 
+     setHorizontalHeaderLabels(headerLabels);
++    // Stable, untranslated column names for the saved header state. Without
++    // them every saved column has an empty name and HeaderViewState::
++    // restoreState() maps them all to one entry, so a column goes missing.
++    // The names match the library columns where one exists.
++    const QStringList columnNames{
++            QStringLiteral("preview"),
++            QStringLiteral("filename"),
++            QStringLiteral("artist"),
++            QStringLiteral("title"),
++            QStringLiteral("album"),
++            QStringLiteral("tracknumber"),
++            QStringLiteral("year"),
++            QStringLiteral("genre"),
++            QStringLiteral("composer"),
++            QStringLiteral("comment"),
++            QStringLiteral("duration"),
++            QStringLiteral("bpm"),
++            QStringLiteral("key"),
++            QStringLiteral("filetype"),
++            QStringLiteral("bitrate"),
++            QStringLiteral("location"),
++            QStringLiteral("album_artist"),
++            QStringLiteral("grouping"),
++            QStringLiteral("file_modified_time"),
++            QStringLiteral("file_creation_time"),
++            QStringLiteral("replaygain")};
++    DEBUG_ASSERT(columnNames.size() == NUM_COLUMNS);
++    for (int column = 0; column < columnNames.size(); ++column) {
++        setHeaderData(column, Qt::Horizontal, columnNames.at(column), TrackModel::kHeaderNameRole);
++    }
+     // register the QList<T> as a metatype since we use QueuedConnection below
+     qRegisterMetaType<QList<QList<QStandardItem*>>>(
+             "QList< QList<QStandardItem*>>");
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+index 9186604..17dd4a8 100644
+--- a/src/widget/libraryinterface.h
++++ b/src/widget/libraryinterface.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <algorithm>
+ #include <functional>
+ 
+ #include <QCheckBox>
+@@ -159,6 +160,34 @@ inline void initialColumns(QHeaderView* header, const QList<int>& preferred,
+     }
+ }
+ 
++// The stretch column never gets narrower than this; with many wide columns
++// the table scrolls sideways instead of squeezing it.
++constexpr int kStretchColumnMinimumWidth = 160;
++
++// The given column takes the free width, so the visible columns fill the
++// table. When it is hidden (or there is none), the last visible column
++// stretches instead. All columns stay Interactive: QHeaderView::Stretch
++// would shrink the column to the 20 px minimum section size when the other
++// columns are wide. Call again when the width or another column changes.
++inline void stretchColumn(QHeaderView* header, int column) {
++    const bool fill = column >= 0 && column < header->count() &&
++            !header->isSectionHidden(column);
++    header->setStretchLastSection(!fill);
++    if (!fill) {
++        return;
++    }
++    int others = 0;
++    for (int section = 0; section < header->count(); ++section) {
++        if (section != column && !header->isSectionHidden(section)) {
++            others += header->sectionSize(section);
++        }
++    }
++    const int width = std::max(kStretchColumnMinimumWidth, header->viewport()->width() - others);
++    if (header->sectionSize(column) != width) {
++        header->resizeSection(column, width);
++    }
++}
++
+ inline void rememberColumnWidths(QHeaderView* header, QMap<int, int>* widths) {
+     QObject::connect(header, &QHeaderView::sectionResized, header,
+             [widths](int column, int, int width) {
+diff --git a/src/widget/wtracktableviewheader.cpp b/src/widget/wtracktableviewheader.cpp
+index f807b3e..a89e6a9 100644
+--- a/src/widget/wtracktableviewheader.cpp
++++ b/src/widget/wtracktableviewheader.cpp
+@@ -133,6 +133,12 @@ WTrackTableViewHeader::WTrackTableViewHeader(Qt::Orientation orientation,
+         : QHeaderView(orientation, pParent),
+           m_menu(tr("Show or hide columns."), this) {
+     LibraryInterface::rememberColumnWidths(this, &m_hiddenColumnSizes);
++    // Another column changed width: give the stretch column the rest again.
++    connect(this, &QHeaderView::sectionResized, this, [this](int column) {
++        if (column != stretchColumnIndex()) {
++            updateStretchColumn();
++        }
++    });
+ }
+ 
+ void WTrackTableViewHeader::contextMenuEvent(QContextMenuEvent* pEvent) {
+@@ -233,6 +239,41 @@ void WTrackTableViewHeader::setModel(QAbstractItemModel* pModel) {
+             showSection(i);
+         }
+     }
++    updateStretchColumn();
++}
++
++int WTrackTableViewHeader::stretchColumnIndex() {
++    auto* trackModel = getTrackModel();
++    if (!trackModel) {
++        return -1;
++    }
++    const int column = trackModel->fieldIndex(QStringLiteral("title"));
++    if (column >= 0) {
++        return column;
++    }
++    // Browse models have no SQL field names.
++    return trackModel->columnIndexFromSortColumnId(TrackModel::SortColumnId::Filename);
++}
++
++void WTrackTableViewHeader::updateStretchColumn() {
++    if (m_updatingStretch) {
++        // Resizing the column can resize this header (the table lays out
++        // again). Run once more with the new width instead of dropping it.
++        m_stretchPending = true;
++        return;
++    }
++    m_updatingStretch = true;
++    int passes = 0;
++    do {
++        m_stretchPending = false;
++        LibraryInterface::stretchColumn(this, stretchColumnIndex());
++    } while (m_stretchPending && ++passes < 4);
++    m_updatingStretch = false;
++}
++
++void WTrackTableViewHeader::updateGeometries() {
++    QHeaderView::updateGeometries();
++    updateStretchColumn();
+ }
+ 
+ void WTrackTableViewHeader::saveHeaderState() {
+@@ -297,6 +338,22 @@ void WTrackTableViewHeader::loadDefaultHeaderState() {
+                 {title, trackModel->fieldIndex(QStringLiteral("artist")),
+                         trackModel->fieldIndex(QStringLiteral("bpm")),
+                         trackModel->fieldIndex(QStringLiteral("key"))}, available);
++    } else {
++        // Browse (BrowseTableModel through ProxyTrackModel) has no field
++        // names, so find its columns by sort column id. Preview is hidden.
++        const int filename = trackModel->columnIndexFromSortColumnId(
++                TrackModel::SortColumnId::Filename);
++        if (filename >= 0) {
++            LibraryInterface::initialColumns(this,
++                    {filename,
++                            trackModel->columnIndexFromSortColumnId(
++                                    TrackModel::SortColumnId::Bpm),
++                            trackModel->columnIndexFromSortColumnId(
++                                    TrackModel::SortColumnId::Key),
++                            trackModel->columnIndexFromSortColumnId(
++                                    TrackModel::SortColumnId::Duration)},
++                    available);
++        }
+     }
+ }
+ 
+@@ -316,6 +373,7 @@ void WTrackTableViewHeader::showColumnArrangement() {
+             const QSignalBlocker blocker(choice.value());
+             choice.value()->setChecked(!isSectionHidden(choice.key()));
+         }
++        updateStretchColumn();
+         saveHeaderState();
+     });
+ }
+@@ -363,6 +421,7 @@ void WTrackTableViewHeader::showOrHideColumn(int column) {
+             pCheckBox->setChecked(true);
+         }
+     }
++    updateStretchColumn();
+ }
+ 
+ int WTrackTableViewHeader::getWidthOfHiddenColumn(int column) const {
+diff --git a/src/widget/wtracktableviewheader.h b/src/widget/wtracktableviewheader.h
+index d801299..d2da9fd 100644
+--- a/src/widget/wtracktableviewheader.h
++++ b/src/widget/wtracktableviewheader.h
+@@ -65,11 +65,19 @@ class WTrackTableViewHeader : public QHeaderView {
+     void restoreHeaderState();
+     void loadDefaultHeaderState();
+     void showColumnArrangement();
++    // Title (library) or Filename (Browse) stretches to fill the table.
++    void updateStretchColumn();
++    int stretchColumnIndex();
+      /** returns false if the header state is stored in the database (on first time usgae) **/
+     bool hasPersistedHeaderState();
+ 
+     int getWidthOfHiddenColumn(int column) const;
+ 
++  protected:
++    // Runs when the table lays the header out (also while it is hidden,
++    // when no resize event arrives).
++    void updateGeometries() override;
++
+   private slots:
+     void showOrHideColumn(int);
+ 
+@@ -81,4 +89,6 @@ class WTrackTableViewHeader : public QHeaderView {
+     QMenu m_menu;
+     QMap<int, QCheckBox*> m_columnCheckBoxes;
+     QMap<int, int> m_hiddenColumnSizes;
++    bool m_updatingStretch = false;
++    bool m_stretchPending = false;
+ };

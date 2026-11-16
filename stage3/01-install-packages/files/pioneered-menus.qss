@@ -11,8 +11,10 @@ QMenu QWidget, QMenu QCheckBox, QMenu QLabel {
     color: #ffffff;
     font-size: 17px;
 }
-QMenu::item { padding: 8px 28px 8px 12px; }
-QMenu QCheckBox { min-height: 24px; padding: 6px; spacing: 8px; }
+/* Touch rows: content plus padding is at least 48 px for menu items and
+ * for the checkbox rows inside choosers. */
+QMenu::item { min-height: 32px; padding: 8px 28px 8px 12px; }
+QMenu QCheckBox { min-height: 36px; padding: 6px; spacing: 8px; }
 QMenuBar::item:selected, QMenuBar::item:pressed,
 QMenu::item:selected, QMenu::item:pressed,
 QMenu QCheckBox:hover, QMenu QCheckBox:focus {
@@ -34,3 +36,49 @@ QMenu QCheckBox::indicator:checked {
     border: 2px solid #68baff;
     border-radius: 3px;
 }
+/* Arrange columns dialog (#MixpiColumnArrangement): dark, 17 px text,
+ * list rows and buttons at least 48 px, 28 px check boxes. The rules name
+ * the dialog, its list and its buttons only, so the list's scroll bar keeps
+ * the library scroll bar style. */
+#MixpiColumnArrangement {
+    background-color: #17191f;
+    color: #ffffff;
+    font-size: 17px;
+}
+#MixpiColumnArrangement QListWidget {
+    background-color: #17191f;
+    color: #ffffff;
+    font-size: 17px;
+    border: 1px solid #596171;
+    outline: none;
+}
+#MixpiColumnArrangement QListWidget::item {
+    min-height: 48px;
+    padding: 0px 8px;
+}
+#MixpiColumnArrangement QListWidget::item:selected {
+    background-color: #285a88;
+    color: #ffffff;
+}
+#MixpiColumnArrangement QListWidget::indicator { width: 28px; height: 28px; }
+#MixpiColumnArrangement QListWidget::indicator:unchecked {
+    background-color: #17191f;
+    border: 2px solid #e5e6ea;
+    border-radius: 3px;
+}
+#MixpiColumnArrangement QListWidget::indicator:checked {
+    background-color: #ffffff;
+    border: 2px solid #68baff;
+    border-radius: 3px;
+}
+#MixpiColumnArrangement QPushButton {
+    color: #ffffff;
+    font-size: 17px;
+    min-height: 48px;
+    min-width: 96px;
+    background-color: #2b3038;
+    border: 1px solid #596171;
+    border-radius: 4px;
+    padding: 0px 12px;
+}
+#MixpiColumnArrangement QPushButton:pressed { background-color: #285a88; }

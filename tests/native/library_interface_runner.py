@@ -149,6 +149,8 @@ def main():
         print('COMMAND', repr(command), flush=True)
         subprocess.run(command, check=True, timeout=90)
         environment = qt_environment()
+        # F-9: the native dialog checks load the real installed menu style.
+        environment['MIXPI_MENUS_QSS'] = str(PATCH_DIR / 'pioneered-menus.qss')
         mode = ['baseline'] if args.baseline else ['holdout'] if args.holdout else []
         subprocess.run([str(target / 'test'), *mode], env=environment,
                        check=True, timeout=30)

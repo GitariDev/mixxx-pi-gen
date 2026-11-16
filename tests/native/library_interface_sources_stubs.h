@@ -18,8 +18,10 @@ class LibraryFeature : public QObject {
     QIcon icon() const { return {}; }
     QString iconName() const { return {}; }
     TreeItemModel* sidebarModel() { return &children; }
-    void activate() { ++activations; }
-    void activateChild(const QModelIndex&) { ++activations; }
+    // The source last opened: what the track pane shows.
+    inline static LibraryFeature* shown = nullptr;
+    void activate() { ++activations; shown = this; }
+    void activateChild(const QModelIndex&) { ++activations; shown = this; }
     void onLazyChildExpandation(const QModelIndex&) {}
     void onRightClick(const QPoint&) {}
     void onRightClickChild(const QPoint&, const QModelIndex&) {}

@@ -31,6 +31,7 @@ REQUIRED_TESTS = (
     'test_effect_placeholder',
     'test_runtime_selection_probe',
     'test_performance_settings.NativePerformanceSettingsTests',
+    'test_table_columns',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

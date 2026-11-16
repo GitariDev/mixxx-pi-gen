@@ -35,6 +35,19 @@ class LibraryInterfacePatchTests(unittest.TestCase):
         subprocess.run(['python3', str(ROOT / 'tests/native/library_interface_sources_runner.py'),
                         '--holdout'], check=True, timeout=150)
 
+    @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+    def test_native_sources_touch_checks_fail_without_source_tap(self):
+        # F-6: the same fixture on the stack without mixxx-source-tap.patch
+        # must fail its touch checks (the drag moves the highlight, a held
+        # press opens a source), so the checks detect the field fault.
+        result = subprocess.run(['python3', str(ROOT / 'tests/native/library_interface_sources_runner.py'),
+                                 '--without-source-tap'], capture_output=True, text=True, timeout=150)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAIL touch slow drag keeps the highlight on the shown source', result.stdout)
+        self.assertIn('FAIL a held press released on another row opens nothing', result.stdout)
+        self.assertIn('PASS actual skin-load hidden default uses visible fallback and retains preference',
+                      result.stdout)
+
     def test_full_stack_apply_reverse_restores_pinned_bytes(self):
         with tempfile.TemporaryDirectory(prefix='mixpi-library-interface-stack-') as temporary:
             target = Path(temporary)

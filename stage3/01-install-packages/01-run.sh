@@ -25,6 +25,9 @@ MIXXX_PATCHES=(
     mixxx-preferences-entry.patch
     mixxx-position-display.patch
     mixxx-dialog-wording.patch
+    mixxx-source-tap.patch
+    mixxx-table-columns.patch
+    mixxx-touch-dialogs.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

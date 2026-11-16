@@ -25,10 +25,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--baseline', action='store_true')
     parser.add_argument('--holdout', action='store_true')
+    # Evidence only: the same checks without mixxx-source-tap.patch must fail.
+    parser.add_argument('--without-source-tap', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-source-model-') as temporary:
         target = Path(temporary)
-        reconstruct(target)
+        reconstruct(target, exclude=('mixxx-source-tap.patch',) if args.without_source_tap else ())
         populate_pinned(target, ['src/' + name for name in ('library/treeitem.h', 'library/treeitem.cpp',
                      'library/treeitemmodel.h', 'library/treeitemmodel.cpp',
                      'util/make_const_iterator.h')])
@@ -45,6 +47,51 @@ def main():
             '#pragma once\nstruct CmdlineArgs { static CmdlineArgs& Instance() '
             '{ static CmdlineArgs instance; return instance; } '
             'bool getDeveloper() const { return false; } };\n')
+        for name in ('preferences', 'control', 'widget'):
+            (stubs / name).mkdir(exist_ok=True)
+        (stubs / 'preferences/configobject.h').write_text(
+            '#pragma once\n#include <QString>\nstruct ConfigKey {\n    QString key;\n'
+            '    ConfigKey(QString group, QString name) : key(group + "/" + name) {}\n};\n')
+        # WLibrarySidebar's app-shell dependencies only.
+        (stubs / 'control/controlobject.h').write_text('''#pragma once
+#include <QHash>
+#include <functional>
+#include "preferences/configobject.h"
+#include "util/assert.h"  // reached through control/control.h in the real header
+class ControlObject {
+  public:
+    static ControlObject* getControl(const ConfigKey& key) {
+        static QHash<QString, ControlObject*> controls;
+        auto*& control = controls[key.key];
+        if (!control) { control = new ControlObject; }
+        return control;
+    }
+    void set(double value) { m_value = value; }
+    double get() const { return m_value; }
+    template<typename Receiver, typename Slot>
+    void connectValueChangeRequest(Receiver*, Slot slot) { m_request = slot; }
+    void requestChange(double value) { if (m_request) { m_request(value); } }
+  private:
+    double m_value = 0;
+    std::function<void(double)> m_request;
+};
+''')
+        (stubs / 'widget/wbasewidget.h').write_text(
+            '#pragma once\n#include <QWidget>\nstruct WBaseWidget {\n'
+            '    explicit WBaseWidget(QWidget*) {}\n    virtual ~WBaseWidget() = default;\n'
+            '    void updateTooltip() {}\n};\n')
+        (stubs / 'util/dnd.h').write_text('''#pragma once
+#include <QDropEvent>
+#include <QList>
+#include <QMimeData>
+#include <QUrl>
+namespace mixxx { class FileInfo {}; }
+struct DragAndDropHelper {
+    static QList<mixxx::FileInfo> supportedTracksFromUrls(const QList<QUrl>&, bool, bool) { return {}; }
+};
+''')
+        populate_pinned(target, ['src/util/defs.h', 'src/widget/wlibrarysidebar.h',
+                                 'src/widget/wlibrarysidebar.cpp', 'src/library/library_decl.h'])
         library = (target / 'src/library/library.cpp').read_text()
         signatures = ['void Library::applySidebarSourceOrder()',
                       'void Library::saveSidebarSourceOrder(',
@@ -53,6 +100,10 @@ def main():
                       'void Library::onSkinLoadFinished()']
         (target / 'library_order_methods.h').write_text(
             '\n'.join(method(library, signature) for signature in signatures))
+        # The exact sidebar activation wiring from Library::bindSidebarWidget.
+        start = library.index('    connect(pSidebarWidget,\n            &WLibrarySidebar::pressed,')
+        end = library.index('&SidebarModel::clicked);\n', start) + len('&SidebarModel::clicked);\n')
+        (target / 'sidebar_activation_wiring.inc').write_text(library[start:end])
         if args.baseline:
             preimage = ROOT / 'deploy/recovery-20261111/native-completion-slice/sources/stack-preimage'
             for name in ('sidebarmodel.h', 'sidebarmodel.cpp'):
@@ -62,10 +113,13 @@ def main():
         command += ['-I' + str(stubs), '-I' + str(target / 'src'), '-I' + str(target)]
         if args.baseline:
             command += ['-DSOURCE_ORDER_BASELINE']
-        for header, output in (
-                (target / 'src/library/sidebarmodel.h', target / 'src/library/moc_sidebarmodel.cpp'),
+        mocs = [(target / 'src/library/sidebarmodel.h', target / 'src/library/moc_sidebarmodel.cpp'),
                 (target / 'src/library/treeitemmodel.h', target / 'src/library/moc_treeitemmodel.cpp'),
-                (stubs / 'library/libraryfeature.h', target / 'moc_feature.cpp')):
+                (stubs / 'library/libraryfeature.h', target / 'moc_feature.cpp')]
+        if not args.baseline:
+            mocs.append((target / 'src/widget/wlibrarysidebar.h',
+                         target / 'src/widget/moc_wlibrarysidebar.cpp'))
+        for header, output in mocs:
             subprocess.run([moc_path(), str(header), '-o', str(output)],
                            check=True, timeout=20)
         command += [str(ROOT / 'tests/native/library_interface_sources_test.cpp'),
@@ -73,6 +127,8 @@ def main():
                     str(target / 'src/library/treeitem.cpp'),
                     str(target / 'src/library/treeitemmodel.cpp'),
                     str(target / 'moc_feature.cpp'), '-o', str(target / 'test')]
+        if not args.baseline:
+            command.insert(-2, str(target / 'src/widget/wlibrarysidebar.cpp'))
         for source in sorted(target.rglob('*')):
             if source.is_file():
                 print('INPUT', source.relative_to(target),

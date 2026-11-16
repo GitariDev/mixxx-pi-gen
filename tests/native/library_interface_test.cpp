@@ -1,4 +1,7 @@
 #include <QApplication>
+#include <QFile>
+#include <QFontInfo>
+#include <QImage>
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QStandardItemModel>
@@ -23,6 +26,166 @@ void click(QWidget* widget, QPoint position) {
             Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(widget, &release);
     QApplication::processEvents();
+}
+
+int visibleWidth(const QHeaderView* header) {
+    int width = 0;
+    for (int column = 0; column < header->count(); ++column) {
+        width += header->isSectionHidden(column) ? 0 : header->sectionSize(column);
+    }
+    return width;
+}
+
+QList<int> listOrder(const QListWidget* list) {
+    QList<int> order;
+    for (int row = 0; row < list->count(); ++row) {
+        order.append(list->item(row)->data(Qt::UserRole).toInt());
+    }
+    return order;
+}
+
+void send(QWidget* widget, QEvent::Type type, QPoint position, Qt::MouseButtons buttons) {
+    QMouseEvent event(type, position, widget->mapToGlobal(position),
+            type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
+    QApplication::sendEvent(widget, &event);
+    QApplication::processEvents();
+}
+
+// F-7 width and F-9 touch dialog/menu, with the real pioneered-menus.qss.
+void touchTableChecks() {
+    QStandardItemModel model(10, 6);
+    model.setHorizontalHeaderLabels({"Album", "Key", "Artist", "Last played", "Title", "BPM"});
+    QTableView table;
+    table.setModel(&model);
+    table.show();
+    table.resize(table.width() - table.viewport()->width() + 770, 300);
+    QApplication::processEvents();
+    auto* header = table.horizontalHeader();
+    LibraryInterface::initialColumns(header, {4, 2, 5, 1}, {0, 1, 2, 3, 4, 5});
+    LibraryInterface::stretchColumn(header, 4);
+    QApplication::processEvents();
+    require(table.viewport()->width() == 770 && visibleWidth(header) == 770,
+            "at a 770 px viewport the visible columns fill the table with Title");
+    header->setSectionHidden(4, true);
+    LibraryInterface::stretchColumn(header, 4);
+    QApplication::processEvents();
+    require(header->stretchLastSection() && visibleWidth(header) == 770,
+            "at a 770 px viewport the visible columns fill the table without Title");
+    header->setSectionHidden(4, false);
+    LibraryInterface::stretchColumn(header, 4);
+    QApplication::processEvents();
+    require(!header->stretchLastSection() && visibleWidth(header) == 770,
+            "Title fills the table again when shown");
+    header->resizeSection(2, 700);
+    LibraryInterface::stretchColumn(header, 4);
+    require(header->sectionSize(4) == LibraryInterface::kStretchColumnMinimumWidth,
+            "wide columns never squeeze Title below its minimum width");
+
+    QFile file(qEnvironmentVariable("MIXPI_MENUS_QSS"));
+    require(file.open(QIODevice::ReadOnly), "real pioneered-menus.qss is readable");
+    const QString style = QString::fromUtf8(file.readAll());
+    require(style.contains("#MixpiColumnArrangement"), "pioneered-menus.qss styles the Arrange dialog");
+    // The skin applies its style sheet to the window that hosts the library.
+    QWidget window;
+    window.setStyleSheet(style);
+    auto* layout = new QVBoxLayout(&window);
+    auto* actions = new QPushButton("Actions", &window);
+    actions->setObjectName("LibraryActionsButton");
+    layout->addWidget(actions);
+    QStandardItemModel columns(30, 21);
+    QStringList titles;
+    for (int column = 0; column < 21; ++column) {
+        titles.append(QString("Column %1").arg(column));
+    }
+    columns.setHorizontalHeaderLabels(titles);
+    auto* tracks = new QTableView(&window);
+    tracks->setModel(&columns);
+    layout->addWidget(tracks);
+    window.resize(800, 440);
+    window.show();
+    QApplication::processEvents();
+
+    const QPoint row(10, 10);
+    require(LibraryInterface::actionsMenuPosition(tracks, row) ==
+                    actions->mapToGlobal(QPoint(0, actions->height())),
+            "Actions control opens the menu just under the Actions button");
+    actions->hide();
+    require(LibraryInterface::actionsMenuPosition(tracks, row) == row,
+            "without a visible Actions button the menu keeps the row position");
+    actions->show();
+
+    QList<int> all;
+    for (int column = 0; column < 21; ++column) {
+        all.append(column);
+    }
+    auto* dialog = LibraryInterface::arrangeColumns(tracks->horizontalHeader(), all, [] {});
+    QApplication::processEvents();
+    require(dialog->size() == QSize(520, 400) && dialog->width() <= 780 && dialog->height() <= 420,
+            "Arrange dialog is 520x400, inside the 780x420 float limit");
+    auto* list = dialog->findChild<QListWidget*>();
+    int shortest = 1000;
+    for (int index = 0; index < list->count(); ++index) {
+        shortest = std::min(shortest, list->visualItemRect(list->item(index)).height());
+    }
+    std::cout << "OBSERVE shortest Arrange row " << shortest << " px" << std::endl;
+    require(shortest >= 48, "every Arrange list row is at least 48 px high");
+    QStringList buttonTexts;
+    bool tallButtons = true;
+    for (auto* button : dialog->findChildren<QPushButton*>()) {
+        buttonTexts.append(button->text());
+        tallButtons &= button->height() >= 48;
+        std::cout << "OBSERVE button " << button->text().toStdString() << ' '
+                  << button->height() << " px" << std::endl;
+    }
+    require(buttonTexts.contains("Up") && buttonTexts.contains("Down"), "Up and Down buttons stay");
+    require(tallButtons, "every Arrange button is at least 48 px high");
+    require(QFontInfo(list->font()).pixelSize() == 17, "Arrange list text is 17 px");
+    const QImage image = list->viewport()->grab().toImage();
+    double luminance = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            luminance += qGray(image.pixel(x, y));
+        }
+    }
+    luminance /= image.width() * image.height();
+    std::cout << "OBSERVE Arrange list mean grey " << luminance << std::endl;
+    require(luminance < 80, "Arrange list background is dark in a grabbed image");
+
+    // Drag to reorder stays: it does not fight the scroll bar or a tap.
+    const QList<int> before = listOrder(list);
+    auto* bar = list->verticalScrollBar();
+    require(bar->maximum() > 0, "Arrange list scrolls with 21 columns");
+    const QPoint handle(bar->width() / 2, bar->width() + 4);
+    send(bar, QEvent::MouseButtonPress, handle, Qt::LeftButton);
+    send(bar, QEvent::MouseMove, handle + QPoint(0, 60), Qt::LeftButton);
+    send(bar, QEvent::MouseButtonRelease, handle + QPoint(0, 60), Qt::NoButton);
+    require(bar->value() > 0 && listOrder(list) == before,
+            "dragging the scroll bar scrolls the list and reorders nothing");
+    auto* item = list->itemAt(list->viewport()->rect().center());
+    const QRect rect = list->visualItemRect(item);
+    const QPoint label(rect.right() - 40, rect.center().y());
+    const Qt::CheckState checked = item->checkState();
+    send(list->viewport(), QEvent::MouseButtonPress, label, Qt::LeftButton);
+    send(list->viewport(), QEvent::MouseMove, label + QPoint(4, 3), Qt::LeftButton);
+    send(list->viewport(), QEvent::MouseButtonRelease, label + QPoint(4, 3), Qt::NoButton);
+    require(list->currentItem() == item && listOrder(list) == before && item->checkState() == checked,
+            "a tap that moves a few pixels selects the row and reorders nothing");
+    dialog->close();
+
+    // Menu rows: the Actions menu and the chooser checkbox rows.
+    auto* menu = LibraryInterface::actionsMenu(&window, nullptr, new QMenu("Native", &window), [] {});
+    LibraryInterface::addVisibilityChoice(menu, "Tracks", true, [](bool) {});
+    menu->popup(actions->mapToGlobal(QPoint(0, actions->height())));
+    QApplication::processEvents();
+    int shortestMenuRow = 1000;
+    for (auto* action : menu->actions()) {
+        if (!action->isSeparator()) {
+            shortestMenuRow = std::min(shortestMenuRow, menu->actionGeometry(action).height());
+        }
+    }
+    std::cout << "OBSERVE shortest menu row " << shortestMenuRow << " px" << std::endl;
+    require(shortestMenuRow >= 48, "every menu row is at least 48 px high");
+    menu->close();
 }
 
 int main(int argc, char** argv) {
@@ -235,6 +398,9 @@ int main(int argc, char** argv) {
             "absent or hidden default requests safe fallback without rewriting preference");
     require(LibraryInterface::preferredSourceRow("", {"TracksFeature"}, {true}) == -1,
             "unset default preserves prior deliberate model preference");
+    if (!baseline) {
+        touchTableChecks();
+    }
     if (holdout) {
         tracks.setHeaderData(4, Qt::Horizontal, QString(500, QChar('T')));
         auto* longDialog = LibraryInterface::arrangeColumns(header, {0, 1, 2, 3, 4, 5}, [] {});

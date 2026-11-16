@@ -50,6 +50,9 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-preferences-entry.patch",
             "mixxx-position-display.patch",
             "mixxx-dialog-wording.patch",
+            "mixxx-source-tap.patch",
+            "mixxx-table-columns.patch",
+            "mixxx-touch-dialogs.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -75,6 +78,9 @@ PREREQUISITES = {
     "mixxx-transfer-display.patch": ["mixxx-media-activity.patch"],
     "mixxx-preferences-entry.patch": ["mixxx-performance-settings.patch"],
     "mixxx-dialog-wording.patch": ["mixxx-transfer-display.patch"],
+    "mixxx-source-tap.patch": ["mixxx-touch-source-navigation.patch"],
+    "mixxx-table-columns.patch": ["mixxx-library-interface.patch"],
+    "mixxx-touch-dialogs.patch": ["mixxx-library-interface.patch"],
 }
 
 

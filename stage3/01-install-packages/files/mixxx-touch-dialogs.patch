@@ -1,0 +1,62 @@
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+index 17dd4a8..cacf77d 100644
+--- a/src/widget/libraryinterface.h
++++ b/src/widget/libraryinterface.h
+@@ -197,6 +197,8 @@ inline void rememberColumnWidths(QHeaderView* header, QMap<int, int>* widths) {
+             });
+ }
+ 
++constexpr QSize kColumnArrangementSize(520, 400);
++
+ inline QDialog* arrangeColumns(QHeaderView* header, const QList<int>& available,
+         std::function<void()> save) {
+     if (auto* existing = header->findChild<QDialog*>(
+@@ -265,11 +267,30 @@ inline QDialog* arrangeColumns(QHeaderView* header, const QList<int>& available,
+     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
+     QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+     layout->addWidget(buttons);
+-    dialog->resize(360, 360);
++    // Touch size inside the 780x420 floating-window limit. The skin's
++    // #MixpiColumnArrangement rules give 48 px rows and buttons. Drag to
++    // reorder stays: the scroll bar is its own widget, and a tap that moves
++    // less than the drag distance only selects or checks a row.
++    dialog->resize(kColumnArrangementSize);
+     dialog->show();
+     return dialog;
+ }
+ 
++// Where the track menu opens when the Actions control (the skin's
++// LibraryActionsButton) asks for it: just under the nearest visible button.
++inline QPoint actionsMenuPosition(QWidget* view, QPoint fallback) {
++    for (auto* ancestor = view->parentWidget(); ancestor; ancestor = ancestor->parentWidget()) {
++        const auto buttons = ancestor->findChildren<QWidget*>(
++                QStringLiteral("LibraryActionsButton"));
++        for (auto* button : buttons) {
++            if (button->isVisible()) {
++                return button->mapToGlobal(QPoint(0, button->height()));
++            }
++        }
++    }
++    return fallback;
++}
++
+ inline QMenu* actionsMenu(QWidget* parent, QMenu* decks, QMenu* original,
+         std::function<void()> arrange) {
+     auto* menu = new QMenu(parent);
+diff --git a/src/widget/wtracktableview.cpp b/src/widget/wtracktableview.cpp
+index d890f6a..a7f3948 100644
+--- a/src/widget/wtracktableview.cpp
++++ b/src/widget/wtracktableview.cpp
+@@ -574,7 +574,11 @@ void WTrackTableView::slotShowHideTrackMenu(bool show) {
+         } else {
+             evPos = QCursor::pos();
+         }
+-        showTrackMenu(evPos, indexAt(viewport()->mapFromGlobal(evPos)));
++        // The Actions control opened the menu: unfold it under the visible
++        // Actions button, not over the selected row. A right-click goes
++        // through contextMenuEvent() and keeps the row position.
++        showTrackMenu(LibraryInterface::actionsMenuPosition(this, evPos),
++                indexAt(viewport()->mapFromGlobal(evPos)));
+     } else {
+         if (m_pLibraryActions) {
+             m_pLibraryActions->close();

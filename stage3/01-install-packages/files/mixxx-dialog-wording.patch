@@ -1,0 +1,77 @@
+diff --git a/src/library/mixpimediaactivity.h b/src/library/mixpimediaactivity.h
+index 24333f0..149388d 100644
+--- a/src/library/mixpimediaactivity.h
++++ b/src/library/mixpimediaactivity.h
+@@ -25,29 +25,29 @@ inline QString activityText(const MediaUseRegistry::Snapshot& snapshot) {
+         unresolved = unresolved || snapshot.unknown[index] != 0;
+     }
+     if (unresolved) {
+-        states.append(QStringLiteral("Unresolved media use"));
++        states.append(QStringLiteral("Mixxx may still use this drive."));
+     }
+-    return states.isEmpty() ? QStringLiteral("No tracked use; not eject clearance") :
++    return states.isEmpty() ? QStringLiteral("Mixxx is not using this drive. This does not mean it is safe to remove.") :
+             states.join(QStringLiteral(" / "));
+ }
+ 
+ inline QString transferText(const TransferSnapshot& snapshot) {
+     if (!snapshot.valid) {
+-        return QStringLiteral("No retained transfer result");
++        return QStringLiteral("No copy has run yet.");
+     }
+     if (snapshot.status == TransferOutcome::Interrupted) {
+-        return QStringLiteral("Transfer interrupted; progress unavailable");
++        return QStringLiteral("The last copy was interrupted.");
+     }
+     if (!snapshot.progressValid || snapshot.progress < 0 || snapshot.progress > 100) {
+-        return QStringLiteral("Transfer result unavailable");
++        return QStringLiteral("The last copy result is not available.");
+     }
+     if (snapshot.status == TransferOutcome::Verified) {
+         return snapshot.progress == 100 && snapshot.phase == TransferPhase::Verifying ?
+                 QStringLiteral("Transfer verified by copy worker: 100%") :
+-                QStringLiteral("Transfer result unavailable");
++                QStringLiteral("The last copy result is not available.");
+     }
+     if (snapshot.progress > 99) {
+-        return QStringLiteral("Transfer result unavailable");
++        return QStringLiteral("The last copy result is not available.");
+     }
+     if (snapshot.status == TransferOutcome::Failed || snapshot.status == TransferOutcome::Cancelled) {
+         return (snapshot.status == TransferOutcome::Failed ? QStringLiteral("Transfer failed") :
+@@ -56,7 +56,7 @@ inline QString transferText(const TransferSnapshot& snapshot) {
+     }
+     if (snapshot.status != TransferOutcome::Running || snapshot.activeJobs == 0 ||
+             (snapshot.phase != TransferPhase::Copying && snapshot.phase != TransferPhase::Verifying)) {
+-        return QStringLiteral("Transfer result unavailable");
++        return QStringLiteral("The last copy result is not available.");
+     }
+     auto text = (snapshot.phase == TransferPhase::Copying ? QStringLiteral("Copying: %1%") :
+                         QStringLiteral("Verifying: %1%"))
+diff --git a/src/library/mixpimediadialog.h b/src/library/mixpimediadialog.h
+index 3c685a5..9fc8ea7 100644
+--- a/src/library/mixpimediadialog.h
++++ b/src/library/mixpimediadialog.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <QComboBox>
++#include <QDebug>
+ #include <QDialog>
+ #include <QHBoxLayout>
+ #include <QJsonArray>
+@@ -223,9 +224,11 @@ class MixpiMediaDialog final : public QDialog {
+                         names.isEmpty() ? tr("Not mounted") : tr("Available");
+                 const QString text = (names.isEmpty() ? tr("USB drive") : names.join(" / ")) +
+                         " · " + QString::number(drive.value("size").toDouble() / 1073741824.0, 'f', 1) +
+-                        " GiB · " + state + "\n" +
+-                        (paths.isEmpty() ? QString() : paths.join(" / ") + " · ") +
+-                        drive.value("device").toString();
++                        " GiB · " + state +
++                        (paths.isEmpty() ? QString() : "\n" + paths.join(" / "));
++                // The device number stays in the log, not in the user label.
++                qInfo() << "MixPi Load/Eject drive" << paths << "device"
++                        << drive.value("device").toString();
+                 auto* item = new QListWidgetItem(text, guard->m_list);
+                 item->setData(Qt::UserRole, token);
+                 item->setData(Qt::UserRole + 1, text);

@@ -24,6 +24,7 @@ MIXXX_PATCHES=(
     mixxx-quiet-scan.patch
     mixxx-preferences-entry.patch
     mixxx-position-display.patch
+    mixxx-dialog-wording.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

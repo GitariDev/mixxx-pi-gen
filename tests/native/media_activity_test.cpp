@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
     check(bool(registry.acquire({"generation-a", "source-a", {}}, Producer::Load)),
             "observation does not block admission");
     auto unknown = registry.acquire({}, Producer::Recording);
-    check(activityText(registry.observe("generation-b")).contains("Unresolved media use"),
+    check(activityText(registry.observe("generation-b")).contains("Mixxx may still use this drive."),
             "unknown use visible across generations");
     unknown.reset();
     auto drain = registry.beginDrain("generation-a");
@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
     audio.reset();
     check(drain.snapshot().locallyIdle(), "original drain semantics unchanged");
     drain.cancel();
-    check(activityText(registry.observe("generation-a")) == "No tracked use; not eject clearance",
+    check(activityText(registry.observe("generation-a")) == "Mixxx is not using this drive. This does not mean it is safe to remove.",
             "zero use is not copy success or eject authority");
     check(activityText(registry.observe("generation-b")).contains("Copy/check: 1"),
             "copy admission not represented as transfer completion or percentage");

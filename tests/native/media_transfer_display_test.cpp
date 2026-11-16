@@ -1,4 +1,7 @@
 #include <QApplication>
+#include <QLabel>
+#include <QPushButton>
+#include <QRegularExpression>
 #include <QJsonArray>
 #include <QListWidget>
 #include <QTimer>
@@ -7,8 +10,15 @@
 #include "library/mixpimediadialog.h"
 #include "library/mixpimediaactivity.h"
 
+static QString logged;
+
+static void capture(QtMsgType, const QMessageLogContext&, const QString& message) {
+    logged += message + '\n';
+}
+
 int main(int argc, char** argv) {
     QApplication application(argc, argv);
+    qInstallMessageHandler(capture);
     using namespace mixxx::media;
     int checks = 0;
     int failures = 0;
@@ -25,7 +35,7 @@ int main(int argc, char** argv) {
     auto lease = registry.acquire({"generation-a", "source-a", {}}, Producer::Copy);
     const QJsonObject volume{{"token", "volume-a"}, {"label", "Music"},
             {"mount", QJsonObject{{"path", "/media/fixture-a"}}}};
-    const QJsonObject drive{{"token", "drive-a"}, {"device", "/dev/fixture"},
+    const QJsonObject drive{{"token", "drive-a"}, {"device", "8:0"},
             {"size", 1000000}, {"volumes", QJsonArray{volume}}};
     const QJsonObject snapshot{{"version", 1}, {"drives", QJsonArray{drive}}};
     MixpiMediaDialog dialog(nullptr,
@@ -44,12 +54,33 @@ int main(int argc, char** argv) {
     if (!list || !timer || list->count() != 1) {
         return 1;
     }
+    // F-10: no internal terms and no major:minor device number on any user label.
+    auto userFacing = [&] {
+        bool clean = true;
+        const QRegularExpression deviceNumber(QStringLiteral("\\b\\d+:\\d+\\b"));
+        QStringList texts{dialog.windowTitle()};
+        for (int row = 0; row < list->count(); ++row) texts.append(list->item(row)->text());
+        for (auto* label : dialog.findChildren<QLabel*>()) texts.append(label->text());
+        for (auto* button : dialog.findChildren<QPushButton*>()) texts.append(button->text());
+        for (const auto& value : texts) {
+            clean = clean && !value.contains("clearance", Qt::CaseInsensitive) &&
+                    !value.contains("retained", Qt::CaseInsensitive) &&
+                    !deviceNumber.match(value).hasMatch();
+        }
+        return clean;
+    };
+    check(userFacing(), "idle dialog labels have no internal terms or device number");
+    check(list->item(0)->text().startsWith("Music · 0.0 GiB · Available\n/media/fixture-a\n"),
+            "drive label keeps name, size, state and mount path");
+    check(logged.contains("MixPi Load/Eject drive") && logged.contains("8:0"),
+            "device number stays in the log");
     list->setCurrentRow(0);
+    check(userFacing(), "selected dialog labels have no internal terms or device number");
     check(list->wordWrap(), "long per-drive state wraps instead of clipping");
     auto* selected = list->currentItem();
     auto tick = [&] { QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection); };
     auto text = [&] { return list->item(0)->text(); };
-    check(text().contains("Copy/check: 1") && text().contains("No retained transfer result"),
+    check(text().contains("Copy/check: 1") && text().contains("No copy has run yet."),
             "admission does not imply an actual transfer");
     const auto job = history.begin({{"generation-a", "source-a"}});
     check(job && history.update(job, "copying", "47"), "actual bound progress admitted");
@@ -83,26 +114,27 @@ int main(int argc, char** argv) {
     history.update(interrupted, "copying", "82");
     history.interrupt(interrupted);
     tick();
-    check(text().contains("Transfer interrupted; progress unavailable") && !text().contains("82%"),
+    check(text().contains("The last copy was interrupted.") && !text().contains("82%"),
             "interruption does not present old progress as current");
+    check(userFacing(), "interrupted dialog labels have no internal terms or device number");
     identityValid = false;
     tick();
-    check(text().contains("identity changed") && !text().contains("Transfer interrupted"),
+    check(text().contains("identity changed") && !text().contains("The last copy was interrupted."),
             "identity failure replaces all prior transfer state");
     check(!history.snapshot({"generation-a", "different-source"}).valid &&
                     !history.snapshot({"replacement-generation", "source-a"}).valid,
             "replacement binding cannot inherit history");
     TransferSnapshot invalid{true, true, 1, TransferPhase::Copying, TransferOutcome::Verified, 100, 0};
-    check(transferText(invalid) == "Transfer result unavailable", "wrong verified phase rejected");
+    check(transferText(invalid) == "The last copy result is not available.", "wrong verified phase rejected");
     invalid.phase = TransferPhase::Verifying;
     invalid.progress = 99;
-    check(transferText(invalid) == "Transfer result unavailable", "incomplete verified progress rejected");
+    check(transferText(invalid) == "The last copy result is not available.", "incomplete verified progress rejected");
     invalid.status = TransferOutcome::Running;
     invalid.progress = 100;
     invalid.activeJobs = 1;
-    check(transferText(invalid) == "Transfer result unavailable", "running 100 never success");
+    check(transferText(invalid) == "The last copy result is not available.", "running 100 never success");
     invalid.progress = -1;
-    check(transferText(invalid) == "Transfer result unavailable", "negative progress rejected");
+    check(transferText(invalid) == "The last copy result is not available.", "negative progress rejected");
     if (argc > 1) {
         TransferHistory held;
         const auto old = held.begin({{"old", "old-source"}});
@@ -117,7 +149,7 @@ int main(int argc, char** argv) {
         check(active.activeJobs == TransferHistory::Capacity &&
                         transferText(active).contains("64 active jobs; newest shown"),
                 "holdout concurrent jobs explicitly labeled");
-        check(activityText(registry.observe("unused"), {}).contains("not eject clearance"),
+        check(activityText(registry.observe("unused"), {}).contains("This does not mean it is safe to remove."),
                 "holdout idle and no history never grant removal authority");
     }
     std::cout << checks << " checks, " << failures << " failures\n";

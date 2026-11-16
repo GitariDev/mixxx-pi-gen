@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import tempfile
 import unittest
@@ -11,6 +12,28 @@ from native.library_interface_runner import reconstruct
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+WORDING = ROOT / 'stage3/01-install-packages/files/mixxx-dialog-wording.patch'
+
+
+class DialogWordingPatchTests(unittest.TestCase):
+    """F-10: strings only; the eject gate and controlled media are untouched."""
+
+    def test_new_user_strings_keep_the_safety_meaning(self):
+        text = WORDING.read_text()
+        added = '\n'.join(line[1:] for line in text.splitlines()
+                          if line.startswith('+') and not line.startswith('+++'))
+        for wording in ('Mixxx is not using this drive. This does not mean it is safe to remove.',
+                        'Mixxx may still use this drive.', 'No copy has run yet.',
+                        'The last copy was interrupted.', 'The last copy result is not available.'):
+            self.assertIn(f'QStringLiteral("{wording}")', added)
+        for internal in ('clearance', 'retained', 'Unresolved', 'progress unavailable'):
+            self.assertNotIn(internal, added)
+        self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) ', text, re.MULTILINE)),
+                         ['src/library/mixpimediaactivity.h', 'src/library/mixpimediadialog.h'])
+        self.assertNotIn('setEnabled', added)
+        self.assertNotIn('m_controlled', added)
 
 
 @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')

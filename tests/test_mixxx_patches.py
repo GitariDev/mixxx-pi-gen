@@ -49,6 +49,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-quiet-scan.patch",
             "mixxx-preferences-entry.patch",
             "mixxx-position-display.patch",
+            "mixxx-dialog-wording.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -73,6 +74,7 @@ PREREQUISITES = {
     "mixxx-transfer-reporting.patch": ["mixxx-media-selection.patch"],
     "mixxx-transfer-display.patch": ["mixxx-media-activity.patch"],
     "mixxx-preferences-entry.patch": ["mixxx-performance-settings.patch"],
+    "mixxx-dialog-wording.patch": ["mixxx-transfer-display.patch"],
 }
 
 

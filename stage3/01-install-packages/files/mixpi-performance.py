@@ -233,6 +233,13 @@ def preset(text, key, value, size='0me,48f'):
     return b
 
 
+def preferences_button():
+    # The patched Mixxx opens its Preferences dialog, queued, on a request above 0.
+    b = button('Mixxx preferences…', '[MixPi],show_preferences', push=True)
+    b.find('Connection/ConnectValueToWidget').text = 'false'
+    return b
+
+
 def settings():
     def choices(title, key, items):
         return group('MixpiSetting', 'horizontal', '0me,48f',
@@ -279,7 +286,8 @@ def settings():
         group('MixpiSettingsRow', 'horizontal', '0me,48f', [fps, ahead]),
         group('MixpiSettingsRow', 'horizontal', '0me,48f', [cache,
             label('* Next launch', '0me,48f', 'MixpiSettingLabel')]),
-        preset('Back', '[MixPi],settings_advanced', 0)])
+        group('MixpiSettingsRow', 'horizontal', '0me,48f', [
+            preset('Back', '[MixPi],settings_advanced', 0), preferences_button()])])
     connection(advanced, '[MixPi],settings_advanced', bind='visible')
     panel = group('MixpiSettings', 'stacked', children=[basic, advanced])
     connection(panel,'[MixPi],loop_deck',transform='<IsEqual>3</IsEqual>',bind='visible')

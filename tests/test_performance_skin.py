@@ -226,6 +226,26 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertIn(buttons['Advanced…'], list(basic.iter()))
         self.assertIn(buttons['Back'], list(advanced.iter()))
 
+    def test_advanced_back_and_preferences_share_one_touch_row(self):
+        advanced = next(group for group in SKIN.settings().findall('.//WidgetGroup')
+                        if group.findtext('ObjectName') == 'MixpiSettingsAdvanced')
+        row = next(group for group in advanced.findall('Children/WidgetGroup')
+                   if any(b.findtext('State/Text') == 'Back' for b in group.findall('Children/PushButton')))
+        self.assertEqual(row.findtext('Layout'), 'horizontal')
+        self.assertEqual(row.findtext('Size'), '0me,48f')
+        back, preferences = row.findall('Children/PushButton')
+        self.assertEqual(back.findtext('State/Text'), 'Back')
+        self.assertEqual(preferences.findtext('State/Text'), 'Mixxx preferences…')
+        self.assertEqual(preferences.findtext('LeftClickIsPushButton'), 'true')
+        self.assertEqual(preferences.findtext('Size'), '0me,48f')
+        command, = preferences.findall('Connection')
+        self.assertEqual(command.findtext('ConfigKey'), '[MixPi],show_preferences')
+        self.assertEqual(command.findtext('EmitOnDownPress'), 'true')
+        self.assertEqual(command.findtext('ConnectValueFromWidget'), 'true')
+        self.assertEqual(command.findtext('ConnectValueToWidget'), 'false')
+        self.assertIsNone(command.find('Transform'))
+        self.assertIsNone(command.find('EmitOnPressAndRelease'))
+
     # Controls that Mixxx itself creates as toggling ControlPushButtons. A
     # two-state button on any other control sends 1 on every press (B1).
     REAL_TOGGLES = ('keylock', 'quantize', 'sync_enabled', 'play', 'headSplit', 'enabled')

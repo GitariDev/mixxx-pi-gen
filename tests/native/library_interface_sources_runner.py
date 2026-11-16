@@ -27,10 +27,13 @@ def main():
     parser.add_argument('--holdout', action='store_true')
     # Evidence only: the same checks without mixxx-source-tap.patch must fail.
     parser.add_argument('--without-source-tap', action='store_true')
+    parser.add_argument('--without-bpm-lock-touch', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-source-model-') as temporary:
         target = Path(temporary)
-        reconstruct(target, exclude=('mixxx-source-tap.patch',) if args.without_source_tap else ())
+        exclude = (('mixxx-source-tap.patch',) if args.without_source_tap else ()) + \
+            (('mixxx-bpm-lock-touch.patch',) if args.without_bpm_lock_touch else ())
+        reconstruct(target, exclude=exclude)
         populate_pinned(target, ['src/' + name for name in ('library/treeitem.h', 'library/treeitem.cpp',
                      'library/treeitemmodel.h', 'library/treeitemmodel.cpp',
                      'util/make_const_iterator.h')])
@@ -92,6 +95,23 @@ struct DragAndDropHelper {
 ''')
         populate_pinned(target, ['src/util/defs.h', 'src/widget/wlibrarysidebar.h',
                                  'src/widget/wlibrarysidebar.cpp', 'src/library/library_decl.h'])
+        # The real BPM column delegate chain (bpm_lock check box).
+        delegates = ['bpmdelegate', 'checkboxdelegate', 'tableitemdelegate', 'defaultdelegate']
+        populate_pinned(target, ['src/util/painterscope.h', 'src/util/parented_ptr.h'] +
+                        [f'src/library/tabledelegates/{name}.{suffix}'
+                         for name in delegates for suffix in ('h', 'cpp')])
+        (stubs / 'widget/wtracktableview.h').write_text('''#pragma once
+#include <QColor>
+#include <QTableView>
+// Only what TableItemDelegate reads from the real WTrackTableView.
+class WTrackTableView : public QTableView {
+    Q_OBJECT
+  public:
+    QColor getFocusBorderColor() const { return {}; }
+  signals:
+    void focusBorderColorChanged(QColor color);
+};
+''')
         library = (target / 'src/library/library.cpp').read_text()
         signatures = ['void Library::applySidebarSourceOrder()',
                       'void Library::saveSidebarSourceOrder(',
@@ -119,6 +139,10 @@ struct DragAndDropHelper {
         if not args.baseline:
             mocs.append((target / 'src/widget/wlibrarysidebar.h',
                          target / 'src/widget/moc_wlibrarysidebar.cpp'))
+            mocs.append((stubs / 'widget/wtracktableview.h', target / 'moc_wtracktableview.cpp'))
+            for name in delegates:
+                mocs.append((target / f'src/library/tabledelegates/{name}.h',
+                             target / f'src/library/tabledelegates/moc_{name}.cpp'))
         for header, output in mocs:
             subprocess.run([moc_path(), str(header), '-o', str(output)],
                            check=True, timeout=20)
@@ -129,6 +153,8 @@ struct DragAndDropHelper {
                     str(target / 'moc_feature.cpp'), '-o', str(target / 'test')]
         if not args.baseline:
             command.insert(-2, str(target / 'src/widget/wlibrarysidebar.cpp'))
+            command[-2:-2] = [str(target / 'moc_wtracktableview.cpp')] + [
+                str(target / f'src/library/tabledelegates/{name}.cpp') for name in delegates]
         for source in sorted(target.rglob('*')):
             if source.is_file():
                 print('INPUT', source.relative_to(target),

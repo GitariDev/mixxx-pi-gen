@@ -53,6 +53,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-source-tap.patch",
             "mixxx-table-columns.patch",
             "mixxx-touch-dialogs.patch",
+            "mixxx-bpm-lock-touch.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -81,6 +82,7 @@ PREREQUISITES = {
     "mixxx-source-tap.patch": ["mixxx-touch-source-navigation.patch"],
     "mixxx-table-columns.patch": ["mixxx-library-interface.patch"],
     "mixxx-touch-dialogs.patch": ["mixxx-library-interface.patch"],
+    "mixxx-bpm-lock-touch.patch": ["mixxx-touch-source-navigation.patch"],
 }
 
 

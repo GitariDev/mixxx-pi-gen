@@ -30,6 +30,10 @@ LibraryFeature::LibraryFeature(QString name) : identity(std::move(name)) {
 
 #include "preferences/configobject.h"
 #ifndef SOURCE_ORDER_BASELINE
+#include <QStandardItemModel>
+#include <QTableView>
+
+#include "library/tabledelegates/bpmdelegate.h"
 #include "widget/wlibrarysidebar.h"
 #endif
 struct Settings {
@@ -236,6 +240,97 @@ void touchSidebarChecks() {
     require(c.activations == 1 && opened() == before + 1 && LibraryFeature::shown == &c &&
                     highlighted(model.getFeatureRootIndex(&c)),
             "synthetic touch tap opens one source and highlights it");
+}
+// F-7 follow-up: the real BPMDelegate (CheckboxDelegate) on a BPM cell whose
+// check state is bpm_lock, as in BaseTrackTableModel.
+struct BpmProbe : BPMDelegate {
+    using BPMDelegate::BPMDelegate;
+    bool drawsLock(const QModelIndex& index) const {
+        QStyleOptionViewItem option;
+        initStyleOption(&option, index);
+        return option.features.testFlag(QStyleOptionViewItem::HasCheckIndicator);
+    }
+};
+
+void bpmLockChecks() {
+    QStandardItemModel tracks(3, 2);
+    for (int row = 0; row < 3; ++row) {
+        tracks.setItem(row, 0, new QStandardItem(QString("Track %1").arg(row)));
+        auto* bpm = new QStandardItem("128.0");
+        bpm->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
+        bpm->setCheckState(Qt::Unchecked);
+        tracks.setItem(row, 1, bpm);
+    }
+    int lockChanges = 0;
+    QObject::connect(&tracks, &QStandardItemModel::dataChanged, &tracks,
+            [&](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+                lockChanges += roles.isEmpty() || roles.contains(Qt::CheckStateRole) ? 1 : 0;
+            });
+    QTableView table;
+    table.setModel(&tracks);
+    auto* delegate = new BpmProbe(&table);
+    table.setItemDelegateForColumn(1, delegate);
+    table.resize(400, 200);
+    table.show();
+    QApplication::processEvents();
+    auto* viewport = table.viewport();
+    const QModelIndex cell = tracks.index(1, 1);
+    // Where the pinned code hit-tests the lock: the table's own style.
+    QStyleOptionViewItem option;
+    option.initFrom(&table);
+    option.rect = table.visualRect(cell);
+    option.features = QStyleOptionViewItem::HasCheckIndicator | QStyleOptionViewItem::HasDisplay;
+    option.text = "128.0";
+    const QPoint lockPoint = table.style()->subElementRect(
+            QStyle::SE_ItemViewItemCheckIndicator, &option, &table).center();
+    auto tap = [&](QPoint point) {
+        mouse(viewport, QEvent::MouseButtonPress, point, Qt::LeftButton);
+        mouse(viewport, QEvent::MouseButtonRelease, point, Qt::NoButton);
+        QApplication::processEvents();
+    };
+    auto locked = [&] { return tracks.item(1, 1)->checkState() == Qt::Checked; };
+
+    // Desktop skins (no touch navigation): pinned behaviour, a click on the
+    // lock toggles bpm_lock. This also proves the fixture hits the lock.
+    require(!QCoreApplication::instance()->property("mixpiTouchNavigation").toBool(),
+            "BPM desktop: no touch skin flag before a touch sidebar exists");
+    require(delegate->drawsLock(cell), "BPM desktop: the lock check box is drawn");
+    tap(lockPoint);
+    require(locked() && lockChanges == 1, "BPM desktop: a click on the lock still toggles bpm_lock");
+    tracks.item(1, 1)->setCheckState(Qt::Unchecked);
+    lockChanges = 0;
+
+    {
+        // The touch skin: the real sidebar with TouchNavigation enabled.
+        SidebarModel model;
+        WLibrarySidebar sidebar;
+        sidebar.setModel(&model);
+        sidebar.enableTouchNavigation();
+        require(!delegate->drawsLock(cell), "BPM touch: no lock check box is drawn");
+        tap(lockPoint);
+        tap(lockPoint);
+        tap(lockPoint);
+        tap(table.visualRect(cell).center());
+        mouse(viewport, QEvent::MouseButtonDblClick, lockPoint, Qt::LeftButton);
+        mouse(viewport, QEvent::MouseButtonRelease, lockPoint, Qt::NoButton);
+        table.setCurrentIndex(cell);
+        table.setFocus();
+        QTest::keyClick(&table, Qt::Key_Space);
+        QApplication::processEvents();
+        require(!locked() && lockChanges == 0,
+                "BPM touch: taps at the old lock position, the cell centre, a double tap and Space leave bpm_lock unchanged");
+        // The track menu's Lock BPM changes the track; the model then reports
+        // the new bpm_lock. That path does not go through the delegate.
+        tracks.setData(cell, Qt::Checked, Qt::CheckStateRole);
+        require(locked() && lockChanges == 1, "BPM touch: a lock change from outside the cell (track menu) still applies");
+        tap(lockPoint);
+        require(locked() && lockChanges == 1, "BPM touch: a tap does not unlock a locked track either");
+        tracks.setData(cell, Qt::Unchecked, Qt::CheckStateRole);
+    }
+    QApplication::processEvents();
+    require(!QCoreApplication::instance()->property("mixpiTouchNavigation").toBool() &&
+                    delegate->drawsLock(cell),
+            "BPM: after the touch sidebar is gone (skin change) desktop behaviour returns");
 }
 #endif
 
@@ -480,6 +575,7 @@ int main(int argc, char** argv) {
     require(view.currentIndex().data().toString() == "E" &&
             settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == "A",
             "actual skin-load hidden default uses visible fallback and retains preference");
+    bpmLockChecks();
     touchSidebarChecks();
     return failures ? 1 : 0;
 #endif

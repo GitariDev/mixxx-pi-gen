@@ -1,0 +1,92 @@
+diff --git a/src/library/tabledelegates/bpmdelegate.cpp b/src/library/tabledelegates/bpmdelegate.cpp
+index be287f8..b42baa2 100644
+--- a/src/library/tabledelegates/bpmdelegate.cpp
++++ b/src/library/tabledelegates/bpmdelegate.cpp
+@@ -1,5 +1,6 @@
+ #include "library/tabledelegates/bpmdelegate.h"
+ 
++#include <QCoreApplication>
+ #include <QDoubleSpinBox>
+ #include <QItemEditorCreatorBase>
+ #include <QItemEditorFactory>
+@@ -42,3 +43,33 @@ BPMDelegate::BPMDelegate(QTableView* pTableView)
+ #endif
+     setItemEditorFactory(m_pFactory);
+ }
++
++namespace {
++
++// Set by WLibrarySidebar::enableTouchNavigation() for the skin's lifetime.
++bool touchSkin() {
++    return QCoreApplication::instance() &&
++            QCoreApplication::instance()->property("mixpiTouchNavigation").toBool();
++}
++
++} // namespace
++
++bool BPMDelegate::editorEvent(QEvent* event,
++        QAbstractItemModel* model,
++        const QStyleOptionViewItem& option,
++        const QModelIndex& index) {
++    // QStyledItemDelegate::editorEvent() toggles the check state (bpm_lock)
++    // on a release inside the check indicator, hit-tested with the table's
++    // style, and on Space/Select. Hiding the indicator in QSS cannot stop it.
++    if (touchSkin()) {
++        return false;
++    }
++    return CheckboxDelegate::editorEvent(event, model, option, index);
++}
++
++void BPMDelegate::initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const {
++    CheckboxDelegate::initStyleOption(option, index);
++    if (touchSkin()) {
++        option->features &= ~QStyleOptionViewItem::HasCheckIndicator;
++    }
++}
+diff --git a/src/library/tabledelegates/bpmdelegate.h b/src/library/tabledelegates/bpmdelegate.h
+index f70eeb7..fcbcade 100644
+--- a/src/library/tabledelegates/bpmdelegate.h
++++ b/src/library/tabledelegates/bpmdelegate.h
+@@ -7,6 +7,17 @@ class BPMDelegate : public CheckboxDelegate {
+   public:
+     explicit BPMDelegate(QTableView* pTableView);
+ 
++    // MixxxPi touch skin (sidebar TouchNavigation): no lock check box is
++    // drawn and no click, tap or key on the cell changes bpm_lock. Lock and
++    // Unlock stay in the track menu.
++    bool editorEvent(QEvent* event,
++            QAbstractItemModel* model,
++            const QStyleOptionViewItem& option,
++            const QModelIndex& index) override;
++
++  protected:
++    void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override;
++
+   private:
+     QItemEditorFactory* m_pFactory;
+ };
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index 9129187..cd684ce 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -1,5 +1,6 @@
+ #include "widget/wlibrarysidebar.h"
+ 
++#include <QCoreApplication>
+ #include <QHeaderView>
+ #include <QUrl>
+ #include <QtDebug>
+@@ -54,6 +55,13 @@ void WLibrarySidebar::enableTouchNavigation() {
+             m_touchNavigation->back();
+         }
+     });
++    // The skin asked for touch navigation (<TouchNavigation>true</...>).
++    // Table delegates read this, for example to keep taps off bpm_lock.
++    // A skin change destroys this sidebar and clears it again.
++    QCoreApplication::instance()->setProperty("mixpiTouchNavigation", true);
++    connect(this, &QObject::destroyed, QCoreApplication::instance(), [] {
++        QCoreApplication::instance()->setProperty("mixpiTouchNavigation", QVariant());
++    });
+ }
+ 
+ void WLibrarySidebar::returnToSourceRoot() {

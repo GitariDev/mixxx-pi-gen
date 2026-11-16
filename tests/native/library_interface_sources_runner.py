@@ -32,8 +32,10 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-source-model-') as temporary:
         target = Path(temporary)
+        # mixxx-acceptance-fixes.patch applies on top of bpm-lock-touch.
         exclude = (('mixxx-source-tap.patch',) if args.without_source_tap else ()) + \
-            (('mixxx-bpm-lock-touch.patch',) if args.without_bpm_lock_touch else ()) + \
+            (('mixxx-bpm-lock-touch.patch', 'mixxx-acceptance-fixes.patch')
+             if args.without_bpm_lock_touch else ()) + \
             (('mixxx-acceptance-fixes.patch',) if args.without_acceptance_fixes else ())
         reconstruct(target, exclude=exclude)
         populate_pinned(target, ['src/' + name for name in ('library/treeitem.h', 'library/treeitem.cpp',

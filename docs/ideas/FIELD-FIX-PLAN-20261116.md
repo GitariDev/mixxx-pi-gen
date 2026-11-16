@@ -141,7 +141,7 @@ Item numbers give priority: bugs and owner requests first.
 - **Problem:** `-3:14` and `-2:45` run under the BPM box on Decks and Sampler (shots 00, 24).
 - **Root cause:** `MixpiTime` is 112 px, was 130 px; the key cell is 140 px, was 75 px (GEN `:139-144`). A fresh profile shows elapsed and remaining time (`PositionDisplay 2`, `testcard-mixxx.cfg:70`), about 16 characters at 21 px (`mixpi-performance.qss:19`). The Nov 9 EOS capture shows one time only; the EOS setting is not confirmed. The image no longer installs its `mixxx.cfg` (`stage3/02-desktop/03-run.sh:3`).
 - **Change (GEN `:139-144`, `mixpi-performance.qss:19-21`):** Make the widest mode fit, because a tap on the readout cycles the three modes (PIN `src/widget/wnumberpos.cpp:36-47`). Start from Time `176me`, BPM `76me`, Rate `52me`, Key `96me` (sum 400) and a 19 px time font. Tune on the Pi.
-- **Fallback (owner decision):** if the widest mode cannot fit at 18 px or more, seed `[Controls] PositionDisplay 1` for new profiles in `mixpi-touch-defaults`.
+- **Owner decision (section 4.1):** elapsed only by default, tap toggles to remaining. This replaces the three-mode fit above: size the cell for one time, seed `PositionDisplay 0`, and restrict the tap cycle to two modes.
 - **Acceptance:**
   - Unit: the four minimum widths sum to at most 400; Time is at least 170.
   - Pi: load a track longer than 10 minutes, set the elapsed-and-remaining mode, take shots on Decks and Sampler. Both times, the BPM, the rate and the key are complete. Check key `11B (G♭)` or the longest key in the library.
@@ -307,14 +307,12 @@ Item numbers give priority: bugs and owner requests first.
 - **Risk:** One build means a failed patch blocks the whole batch. Stage 1 and Stage 2 checks must pass before the build.
 - **Size:** L. **Layer:** package build and image.
 
-## 4. Open decisions for the owner
+## 4. Owner decisions (2026-11-16)
 
-1. F-5: keep elapsed and remaining time (plan default), or seed one time only.
-2. F-12: seed Starlight master and headphone routing for new profiles (recommended), or set it by hand once.
-3. F-13 Tier 2: start network, Bluetooth and notification applets only with the top bar.
-4. F-14: top bar visible or hidden after boot.
-
-Work that does not depend on these answers continues.
+1. **F-5:** show elapsed time only. A tap switches to remaining time, and the next tap switches back. Seed `[Controls] PositionDisplay 0` for new profiles only. Limit the tap cycle to elapsed ↔ remaining (the pinned `WNumberPos` cycles three modes); the "both" mode must not appear. The width and font goals still apply to the wider of the two modes.
+2. **F-12:** no routing seed. Audio routing stays as Mixxx sets it. The owner changes it in Preferences (F-2) as equipment changes.
+3. **F-13:** Tier 1 only. Tier 2 is deferred.
+4. **F-14:** top bar hidden after boot. The owner shows it from Settings.
 
 ## 5. Council scoring rubric
 

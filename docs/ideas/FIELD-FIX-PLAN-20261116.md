@@ -248,6 +248,8 @@ Item numbers give priority: bugs and owner requests first.
 
 ## F-12 Headphone/cue output — found (deferred audio handoff)
 
+> **Owner decision (section 4.2): no seed.** Steps 1–2 below are dropped. The only acceptance is that Preferences (F-2) opens Sound Hardware and it is usable by touch, and that nothing in the image writes `soundconfig.xml`.
+
 - **Problem:** The test card routes only Master to the Starlight (`hw:3,0`, 4 channels). Pre-listening is not possible.
 - **Root cause:** The image seeds no `soundconfig.xml`. On first start Mixxx sets the main output only. The docs record EOS as Master 1–2 and Headphones 3–4 at 44.1 kHz (`docs/setup/HARDWARE.md:41`, `docs/ideas/POST-GIG-PLAN.md:15`). An earlier decision says: do not overwrite saved routing (`docs/ideas/FIELD-FIXES-20261111.md:1142-1148`).
 - **Change:**
@@ -276,6 +278,8 @@ Item numbers give priority: bugs and owner requests first.
 - **Size:** M. **Layer:** image/system config.
 
 ## F-14 Failing units: xdg-desktop-portal-wlr and waybar — found
+
+> **Owner decision (section 4.4): top bar hidden after boot; Settings shows it.**
 
 - **Problem:** `xdg-desktop-portal-wlr.service` fails at each boot. `waybar.service` failed twice. Settings still offers "Show top bar".
 - **Root cause (not confirmed; read the journal in Stage 0):**

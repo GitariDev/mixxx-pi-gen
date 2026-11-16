@@ -69,3 +69,19 @@
     background-color: #17191f;
     border-color: #454b57;
 }
+
+/* The BPM lock is not a touch control. Draw no indicator in the BPM column. */
+#LibraryWrapper #LibraryBPMButton::indicator {
+    width: 0px;
+    height: 0px;
+    image: none;
+    border: 0px;
+}
+
+/* One dark selection bar, as the performance pages use; the current-cell
+ * outline takes the same colour, so the selected row has no second frame. */
+#LibraryWrapper WTrackTableView {
+    selection-background-color: #27577d;
+    selection-color: #ffffff;
+    qproperty-focusBorderColor: #27577d;
+}

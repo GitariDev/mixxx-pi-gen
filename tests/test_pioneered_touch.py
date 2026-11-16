@@ -172,6 +172,23 @@ UnrelatedValue preserve this exactly
         self.assertIn("height: 26px;", styles)
         self.assertIn("#Unrelated { color: red; }", styles)
 
+    def test_track_table_hides_bpm_lock_and_uses_one_dark_selection(self):
+        PATCH.apply(self.skin)
+        styles = (self.skin / "style.qss").read_text()
+        block = styles.split(PATCH.STYLE_BEGIN, 1)[1].split(PATCH.STYLE_END, 1)[0]
+        def rule(selector):
+            self.assertEqual(block.count(selector + " {"), 1, selector)
+            return block.split(selector + " {", 1)[1].split("}", 1)[0]
+        indicator = rule("#LibraryWrapper #LibraryBPMButton::indicator")
+        for declaration in ("width: 0px;", "height: 0px;", "image: none;"):
+            self.assertIn(declaration, indicator)
+        table = rule("#LibraryWrapper WTrackTableView")
+        self.assertIn("selection-background-color: #27577d;", table)
+        self.assertIn("selection-color: #ffffff;", table)
+        self.assertIn("qproperty-focusBorderColor: #27577d;", table)
+        # The managed block is last, so it overrides the upstream light selection.
+        self.assertTrue(styles.rstrip().endswith(PATCH.STYLE_END))
+
     def test_sources_menu_remains_reachable_beside_sidebar_toggle(self):
         PATCH.apply(self.skin)
         PATCH.apply(self.skin)

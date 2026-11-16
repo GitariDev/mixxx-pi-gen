@@ -17,12 +17,15 @@ PATCH = RUNNER.PATCH_DIR / 'mixxx-quiet-scan.patch'
 
 
 class QuietScanPatchTests(unittest.TestCase):
-    def test_patch_is_last_and_only_changes_the_scanner_dialog(self):
+    def test_patch_is_twentieth_and_only_changes_the_scanner_dialog(self):
         names = subprocess.check_output(
             ['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
              '--mixxx-print-patches'], text=True).split()
-        self.assertEqual(names[-1], 'mixxx-quiet-scan.patch')
-        self.assertEqual(len(names), 20)
+        self.assertEqual(names.index('mixxx-quiet-scan.patch'), 19)
+        # Later patches leave the scanner dialog to this patch.
+        patch_dir = PATCH.parent
+        for later in names[20:]:
+            self.assertNotIn('libraryscannerdlg', (patch_dir / later).read_text(), later)
         # The scan itself (LibraryScanner, tasks, DAO) is left untouched.
         self.assertEqual(re.findall(r'^diff --git a/(\S+) b/\S+$', PATCH.read_text(), re.MULTILINE),
                          ['src/library/scanner/libraryscannerdlg.cpp',

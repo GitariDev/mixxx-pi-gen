@@ -470,12 +470,18 @@ def build(skin, loop_display='focus'):
     for ch in (1,2):
         add(summaries, summary(ch, overview, visual, loop_display))
         key=f'[Channel{ch}]'
+        # Tracks shows LOAD and CUE; the other tabs keep CUE and ▶. LOAD sends
+        # press and release like the sampler pads, and is off while the deck plays.
+        load=button('LOAD',f'{key},LoadSelectedTrack',momentary=True)
+        connection(load,f'{key},play',transform='<Not/>',bind='enabled')
+        connection(load,'[Tab],library',bind='visible')
+        play=button('▶',f'{key},play',name='MixpiPlay')
+        connection(play,'[Tab],library',transform='<Not/>',bind='visible')
         row=group('MixpiDeckButtons','horizontal','0me,52f',[
             button('KEY',f'{key},keylock'),button('Q',f'{key},quantize'),
             button('SYNC',f'{key},sync_enabled'),
             button('LOOP','[MixPi],loop_deck',transform=f'<IsEqual>{ch}</IsEqual>',push=True),
-            button('CUE',f'{key},cue_default',momentary=True),
-            button('▶',f'{key},play',name='MixpiPlay')])
+            load,button('CUE',f'{key},cue_default',momentary=True),play])
         for quick in row.findall('Children/PushButton')[:4]:
             connection(quick, '[Tab],overview', bind='visible')
         loop_button = row.findall('Children/PushButton')[3]

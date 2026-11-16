@@ -139,9 +139,11 @@ class PerformanceSkinTests(unittest.TestCase):
                 guard = next(connection for connection in button.findall('Connection')
                              if connection.findtext('BindProperty') == 'visible')
                 self.assertEqual(guard.findtext('ConfigKey'), '[Tab],overview')
-            for button in buttons[4:]:
-                self.assertFalse(any(connection.findtext('BindProperty') == 'visible'
-                                     for connection in button.findall('Connection')))
+            self.assertEqual([button.findtext('State/Text') for button in buttons[4:]],
+                             ['LOAD', 'CUE', '▶'])
+            cue = buttons[5]
+            self.assertFalse(any(connection.findtext('BindProperty') == 'visible'
+                                 for connection in cue.findall('Connection')))
 
     def test_two_pixel_corners_only_override_owned_buttons(self):
         style = (self.skin/'style.qss').read_text()
@@ -349,7 +351,7 @@ class PerformanceSkinTests(unittest.TestCase):
         rows=[g for g in self.root.findall('.//WidgetGroup') if g.findtext('ObjectName')=='MixpiDeckButtons']
         self.assertEqual(len(rows),2)
         for row in rows:
-            self.assertEqual(len(row.findall('Children/PushButton')),6)
+            self.assertEqual(len(row.findall('Children/PushButton')),7)
             self.assertTrue(all(b.findtext('Size')=='0me,48f' for b in row.findall('Children/PushButton')))
         tabs=[b for b in self.root.findall('.//PushButton') if b.findtext('ObjectName')=='MixpiTab']
         self.assertEqual([b.findtext('State/Text') for b in tabs],['DECKS','TRACKS','FX','SAMPLER'])
@@ -409,6 +411,42 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertFalse(any('LoadSelectedTrackAndPlay' in (key.text or '')
                              for key in self.root.findall('.//ConfigKey')))
         self.assertEqual(len(self.root.findall('.//Library')), 1)
+
+    def test_tracks_shows_load_and_cue_instead_of_cue_and_play(self):
+        rows = [g for g in self.root.findall('.//WidgetGroup')
+                if g.findtext('ObjectName') == 'MixpiDeckButtons']
+        for channel, row in enumerate(rows, 1):
+            key = f'[Channel{channel}]'
+            buttons = {b.findtext('State/Text'): b for b in row.findall('Children/PushButton')}
+            load = buttons['LOAD']
+            command, enabled, visible = load.findall('Connection')
+            self.assertEqual(command.findtext('ConfigKey'), f'{key},LoadSelectedTrack')
+            self.assertEqual(command.findtext('EmitOnPressAndRelease'), 'true')
+            self.assertEqual(load.findtext('LeftClickIsPushButton'), 'true')
+            self.assertEqual((enabled.findtext('ConfigKey'), enabled.findtext('BindProperty')),
+                             (f'{key},play', 'enabled'))
+            self.assertIsNotNone(enabled.find('Transform/Not'))
+            self.assertEqual((visible.findtext('ConfigKey'), visible.findtext('BindProperty')),
+                             ('[Tab],library', 'visible'))
+            self.assertIsNone(visible.find('Transform'))
+            play = buttons['▶']
+            gate = play.findall('Connection')[-1]
+            self.assertEqual((gate.findtext('ConfigKey'), gate.findtext('BindProperty')),
+                             ('[Tab],library', 'visible'))
+            self.assertIsNotNone(gate.find('Transform/Not'))
+            self.assertEqual(play.findtext('Connection/ConfigKey'), f'{key},play')
+            cue = buttons['CUE']
+            self.assertEqual([c.findtext('ConfigKey') for c in cue.findall('Connection')],
+                             [f'{key},cue_default'])
+            self.assertEqual(cue.findtext('Connection/EmitOnPressAndRelease'), 'true')
+            names = [b.findtext('State/Text') for b in row.findall('Children/PushButton')]
+            self.assertLess(names.index('LOAD'), names.index('CUE'))
+            for b in buttons.values():
+                self.assertGreaterEqual(int(b.findtext('Size').split(',')[1].rstrip('f')), 48)
+        keys = [k.text or '' for k in self.root.findall('.//ConfigKey')]
+        for channel in (1, 2):
+            self.assertNotIn(f'[Channel{channel}],LoadSelectedTrackAndPlay', keys)
+        self.assertFalse(any('LoadSelectedTrackAndPlay' in key for key in keys))
 
     def test_loop_quick_controls_keep_decks_navigation_and_sampler_reset(self):
         loops = [button for button in self.root.findall('.//PushButton')

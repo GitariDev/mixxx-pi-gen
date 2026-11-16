@@ -29,14 +29,19 @@ def main():
     parser.add_argument('--without-source-tap', action='store_true')
     parser.add_argument('--without-bpm-lock-touch', action='store_true')
     parser.add_argument('--without-acceptance-fixes', action='store_true')
+    parser.add_argument('--without-council-fixes', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-source-model-') as temporary:
         target = Path(temporary)
-        # mixxx-acceptance-fixes.patch applies on top of bpm-lock-touch.
-        exclude = (('mixxx-source-tap.patch',) if args.without_source_tap else ()) + \
-            (('mixxx-bpm-lock-touch.patch', 'mixxx-acceptance-fixes.patch')
+        # mixxx-acceptance-fixes.patch applies on top of bpm-lock-touch, and
+        # mixxx-council-fixes.patch on top of source-tap and acceptance-fixes.
+        exclude = (('mixxx-source-tap.patch', 'mixxx-council-fixes.patch')
+                   if args.without_source_tap else ()) + \
+            (('mixxx-bpm-lock-touch.patch', 'mixxx-acceptance-fixes.patch', 'mixxx-council-fixes.patch')
              if args.without_bpm_lock_touch else ()) + \
-            (('mixxx-acceptance-fixes.patch',) if args.without_acceptance_fixes else ())
+            (('mixxx-acceptance-fixes.patch', 'mixxx-council-fixes.patch')
+             if args.without_acceptance_fixes else ()) + \
+            (('mixxx-council-fixes.patch',) if args.without_council_fixes else ())
         reconstruct(target, exclude=exclude)
         populate_pinned(target, ['src/' + name for name in ('library/treeitem.h', 'library/treeitem.cpp',
                      'library/treeitemmodel.h', 'library/treeitemmodel.cpp',

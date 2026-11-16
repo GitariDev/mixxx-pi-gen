@@ -82,6 +82,32 @@ def moc_path():
     return str(candidate)
 
 
+def rcc_path():
+    candidate = Path(moc_path()).with_name('rcc')
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        raise RuntimeError('Qt6 rcc unavailable: ' + str(candidate))
+    return str(candidate)
+
+
+def mixxx_images_rcc(target, images):
+    """A resource file with the pinned Mixxx images, at the paths res/mixxx.qrc gives them."""
+    listed = set(re.findall(r'<file>([^<]+)</file>', pinned_bytes('res/mixxx.qrc').decode()))
+    lines = ['<!DOCTYPE RCC>', '<RCC version="1.0">', '    <qresource prefix="/">']
+    for image in images:
+        if image not in listed:
+            raise RuntimeError('Not a Mixxx resource: ' + image)
+        destination = target / 'res' / image
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(pinned_bytes('res/' + image))
+        lines.append(f'        <file>{image}</file>')
+    lines += ['    </qresource>', '</RCC>', '']
+    (target / 'res/mixpi-test.qrc').write_text('\n'.join(lines))
+    output = target / 'mixxx-images.rcc'
+    subprocess.run([rcc_path(), '-binary', str(target / 'res/mixpi-test.qrc'), '-o', str(output)],
+                   check=True, timeout=30)
+    return output
+
+
 def qt_environment():
     environment = dict(os.environ, QT_QPA_PLATFORM='offscreen')
     if platform.system() == 'Darwin':
@@ -140,10 +166,13 @@ def main():
     parser.add_argument('--holdout', action='store_true')
     # Evidence only: run the dialog checks with another menu style sheet.
     parser.add_argument('--menus-qss', type=Path, default=PATCH_DIR / 'pioneered-menus.qss')
+    # Evidence only: the same checks without mixxx-council-fixes.patch must fail.
+    parser.add_argument('--without-council-fixes', action='store_true')
+    parser.add_argument('--grab-dir', type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-library-interface-test-') as temporary:
         target = Path(temporary)
-        reconstruct(target)
+        reconstruct(target, exclude=('mixxx-council-fixes.patch',) if args.without_council_fixes else ())
         command = ['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror']
         command += ['-I' + str(target / 'src'),
                     str(ROOT / 'tests/native/library_interface_test.cpp'),
@@ -153,6 +182,13 @@ def main():
         environment = qt_environment()
         # F-9: the native dialog checks load the real installed menu style.
         environment['MIXPI_MENUS_QSS'] = str(args.menus_qss)
+        # F-9: Mixxx's compiled-in images that the menu style names with
+        # url(:/...), and always the tick, which the program always has.
+        images = sorted(set(re.findall(r'url\(:/([^)]+)\)', args.menus_qss.read_text())) |
+                        {'images/ic_checkmark.svg'})
+        environment['MIXPI_MIXXX_RCC'] = str(mixxx_images_rcc(target, images))
+        if args.grab_dir:
+            environment['MIXPI_ARRANGE_GRAB_DIR'] = str(args.grab_dir)
         mode = ['baseline'] if args.baseline else ['holdout'] if args.holdout else []
         subprocess.run([str(target / 'test'), *mode], env=environment,
                        check=True, timeout=30)

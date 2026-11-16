@@ -223,10 +223,12 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-table-columns-') as temporary:
         target = Path(temporary)
+        # mixxx-council-fixes.patch applies on top of touch-dialogs and
+        # acceptance-fixes, so it leaves with them.
         exclude = ('mixxx-table-columns.patch', 'mixxx-touch-dialogs.patch',
-                   'mixxx-acceptance-fixes.patch') if args.baseline else ()
+                   'mixxx-acceptance-fixes.patch', 'mixxx-council-fixes.patch') if args.baseline else ()
         if args.without_acceptance_fixes:
-            exclude = ('mixxx-acceptance-fixes.patch',)
+            exclude = ('mixxx-acceptance-fixes.patch', 'mixxx-council-fixes.patch')
         reconstruct(target, exclude=exclude)
         populate = ['src/library/proxytrackmodel.cpp', 'src/library/proxytrackmodel.h',
                     'src/library/browse/browsetablemodel.cpp', 'src/library/browse/browsetablemodel.h',

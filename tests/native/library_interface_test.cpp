@@ -2,7 +2,9 @@
 #include <QFile>
 #include <QFontInfo>
 #include <QImage>
+#include <QKeyEvent>
 #include <QMouseEvent>
+#include <QResource>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
@@ -140,6 +142,42 @@ void arrangeRowChecks(QListWidget* list) {
     require(painted, "painted pixels: no Arrange check box covers its label, checked or not");
 }
 
+// F-9 (council round 1): where the style puts one Arrange row's check box
+// (first) and label text (second), in viewport coordinates.
+QPair<QRect, QRect> rowRects(QListWidget* list, QListWidgetItem* item) {
+    list->scrollToItem(item);
+    QApplication::processEvents();
+    RowOption rowOption;
+    QStyleOptionViewItem option;
+    option.initFrom(list->viewport());
+    option.widget = list;
+    option.rect = list->visualItemRect(item);
+    rowOption.initStyleOption(&option, list->model()->index(list->row(item), 0));
+    auto* style = list->style();
+    return {style->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &option, list),
+            style->subElementRect(QStyle::SE_ItemViewItemText, &option, list)};
+}
+
+// The painted check box of one Arrange row.
+QImage indicatorImage(QListWidget* list, QListWidgetItem* item) {
+    return list->viewport()->grab(rowRects(list, item).first).toImage();
+}
+
+// Inside the box border: near-white pixels (the tick) and blue fill pixels.
+QPair<int, int> tickPixels(const QImage& image) {
+    int white = 0;
+    int blue = 0;
+    const QRect inside = image.rect().adjusted(5, 5, -5, -5);
+    for (int y = inside.top(); y <= inside.bottom(); ++y) {
+        for (int x = inside.left(); x <= inside.right(); ++x) {
+            const QColor colour = image.pixelColor(x, y);
+            white += colour.red() > 220 && colour.green() > 220 && colour.blue() > 220 ? 1 : 0;
+            blue += colour.blue() > 150 && colour.red() < 90 ? 1 : 0;
+        }
+    }
+    return {white, blue};
+}
+
 // F-7 width and F-9 touch dialog/menu, with the real pioneered-menus.qss.
 void touchTableChecks() {
     QStandardItemModel model(10, 6);
@@ -170,6 +208,11 @@ void touchTableChecks() {
     require(header->sectionSize(4) == LibraryInterface::kStretchColumnMinimumWidth,
             "wide columns never squeeze Title below its minimum width");
 
+    // Mixxx's own compiled-in images (res/mixxx.qrc); the skin style uses
+    // :/images/ic_checkmark.svg for the Arrange tick.
+    require(QResource::registerResource(qEnvironmentVariable("MIXPI_MIXXX_RCC")) &&
+                    QFile::exists(":/images/ic_checkmark.svg"),
+            "Mixxx's ic_checkmark.svg resource is available as in the program");
     QFile file(qEnvironmentVariable("MIXPI_MENUS_QSS"));
     require(file.open(QIODevice::ReadOnly), "real pioneered-menus.qss is readable");
     const QString style = QString::fromUtf8(file.readAll());
@@ -262,11 +305,72 @@ void touchTableChecks() {
     const QRect rect = list->visualItemRect(item);
     const QPoint label(rect.right() - 40, rect.center().y());
     const Qt::CheckState checked = item->checkState();
+    const Qt::CheckState other = checked == Qt::Checked ? Qt::Unchecked : Qt::Checked;
+    auto* trackHeader = tracks->horizontalHeader();
+    const int column = item->data(Qt::UserRole).toInt();
     send(list->viewport(), QEvent::MouseButtonPress, label, Qt::LeftButton);
     send(list->viewport(), QEvent::MouseMove, label + QPoint(4, 3), Qt::LeftButton);
     send(list->viewport(), QEvent::MouseButtonRelease, label + QPoint(4, 3), Qt::NoButton);
-    require(list->currentItem() == item && listOrder(list) == before && item->checkState() == checked,
+    require(list->currentItem() == item && listOrder(list) == before,
             "a tap that moves a few pixels selects the row and reorders nothing");
+
+    // F-9 (council round 1): a tap anywhere on a row, the label too,
+    // shows or hides that column; the box itself toggles once, not twice.
+    require(item->checkState() == other && trackHeader->isSectionHidden(column) == (other != Qt::Checked),
+            "a tap on the label text toggles the row's column");
+    const auto [box, textRect] = rowRects(list, item);
+    const QPoint labelText(textRect.left() + list->fontMetrics().horizontalAdvance(item->text()) / 2,
+            textRect.center().y());
+    std::cout << "OBSERVE Arrange tap on the label text at x " << labelText.x() - rect.left()
+              << " (box x " << box.left() - rect.left() << ".." << box.right() - rect.left() << ')' << std::endl;
+    click(list->viewport(), labelText);
+    require(item->checkState() == checked && trackHeader->isSectionHidden(column) == (checked != Qt::Checked),
+            "a second tap on the label text toggles it back");
+    click(list->viewport(), box.center());
+    require(item->checkState() == other, "a tap on the check box toggles it once");
+    click(list->viewport(), box.center());
+    require(item->checkState() == checked, "a second tap on the check box toggles it back");
+    QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, " ");
+    list->setCurrentItem(item);
+    QApplication::sendEvent(list, &space);
+    QApplication::processEvents();
+    require(item->checkState() == other, "Space on the current row still toggles it");
+    QApplication::sendEvent(list, &space);
+    QApplication::processEvents();
+    require(item->checkState() == checked && listOrder(list) == before,
+            "the row taps change no order");
+
+    // F-9 (council round 1): a checked box shows a clear tick, Mixxx's
+    // ic_checkmark.svg: white tick pixels on a blue fill, which an unchecked
+    // box does not have.
+    QListWidgetItem* tickedItem = nullptr;
+    QListWidgetItem* emptyItem = nullptr;
+    for (int row = 0; row < list->count(); ++row) {
+        auto* candidate = list->item(row);
+        if (candidate != list->currentItem()) {
+            (candidate->checkState() == Qt::Checked ? tickedItem : emptyItem) = candidate;
+        }
+    }
+    require(tickedItem && emptyItem, "the Arrange list has a checked and an unchecked row");
+    if (tickedItem && emptyItem) {
+        const QImage ticked = indicatorImage(list, tickedItem);
+        const QImage empty = indicatorImage(list, emptyItem);
+        const auto tick = tickPixels(ticked);
+        const auto none = tickPixels(empty);
+        std::cout << "OBSERVE checked box " << ticked.width() << 'x' << ticked.height()
+                  << ": tick " << tick.first << " px, fill " << tick.second << " px; unchecked box: white "
+                  << none.first << " px, fill " << none.second << " px" << std::endl;
+        const auto evidence = qEnvironmentVariable("MIXPI_ARRANGE_GRAB_DIR");
+        if (!evidence.isEmpty()) {
+            ticked.save(evidence + "/arrange-checked-box.png");
+            empty.save(evidence + "/arrange-unchecked-box.png");
+            dialog->grab().save(evidence + "/arrange-dialog.png");
+        }
+        require(ticked != empty, "checked and unchecked boxes look different in a grab");
+        require(tick.first >= 20 && tick.second >= 40,
+                "a checked box shows a white tick on a blue fill");
+        require(none.first == 0, "an unchecked box has no tick");
+    }
     dialog->close();
 
     // Menu rows: the Actions menu and the chooser checkbox rows.

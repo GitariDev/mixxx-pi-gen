@@ -71,10 +71,13 @@ QMenu QCheckBox::indicator:checked {
     border: 2px solid #e5e6ea;
     border-radius: 3px;
 }
+/* Checked: a white tick on blue. ic_checkmark.svg is Mixxx's own image,
+ * built into the program (res/mixxx.qrc), so no file is added (F-9). */
 #MixpiColumnArrangement QListWidget::indicator:checked {
-    background-color: #ffffff;
-    border: 2px solid #68baff;
+    background-color: #1f7fd8;
+    border: 2px solid #ffffff;
     border-radius: 3px;
+    image: url(:/images/ic_checkmark.svg);
 }
 #MixpiColumnArrangement QPushButton {
     color: #ffffff;

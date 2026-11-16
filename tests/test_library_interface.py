@@ -74,6 +74,25 @@ class LibraryInterfacePatchTests(unittest.TestCase):
         self.assertIn('PASS touch Sources list keeps its vertical scroll bar', result.stdout)
 
     @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+    def test_native_sources_drag_checks_fail_without_council_fixes(self):
+        # F-6 (council round 1): without mixxx-council-fixes.patch a drag that
+        # ends on the row it started on still opens that source.
+        result = subprocess.run(['python3', str(ROOT / 'tests/native/library_interface_sources_runner.py'),
+                                 '--without-council-fixes'], capture_output=True, text=True, timeout=150)
+        self.assertNotEqual(result.returncode, 0)
+        for failure in ('touch horizontal drag that ends on the pressed row opens nothing',
+                        'touch out-and-back drag released on the pressed row opens nothing',
+                        'a move of exactly the drag distance and back opens nothing',
+                        'synthetic touch horizontal drag along one row opens nothing'):
+            self.assertIn('FAIL ' + failure, result.stdout)
+        # Later counts cascade once a drag has opened a source; these do not.
+        for kept in ('the horizontal drag fixture stays on one row',
+                     'touch slow drag from row 1 to row 4 opens no source',
+                     'keyboard/controller Down opens the next source once through pressed()',
+                     'synthetic touch drag over three rows opens nothing'):
+            self.assertIn('PASS ' + kept, result.stdout)
+
+    @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
     def test_arrange_label_check_fails_without_the_item_background(self):
         # F-9 (acceptance check 10): the menu style without the item
         # background (as in build 1) paints unselected labels under the box.
@@ -92,6 +111,38 @@ class LibraryInterfacePatchTests(unittest.TestCase):
                       result.stdout)
         self.assertIn('FAIL painted pixels: no Arrange check box covers its label, checked or not',
                       result.stdout)
+
+    @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+    def test_arrange_label_tap_check_fails_without_council_fixes(self):
+        # F-9 (council round 1): without mixxx-council-fixes.patch a tap on
+        # an Arrange label only selects the row.
+        result = subprocess.run(['python3', str(ROOT / 'tests/native/library_interface_runner.py'),
+                                 '--without-council-fixes'], capture_output=True, text=True, timeout=150)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAIL a tap on the label text toggles the row\'s column', result.stdout)
+        for kept in ('a tap on the check box toggles it once', 'Space on the current row still toggles it',
+                     'a checked box shows a white tick on a blue fill',
+                     'painted pixels: no Arrange check box covers its label, checked or not'):
+            self.assertIn('PASS ' + kept, result.stdout)
+
+    @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+    def test_arrange_tick_check_fails_with_the_build2_box(self):
+        # F-9 (council round 1): the build-2 checked box (white fill, no
+        # image) has no tick, and the grab check says so.
+        style = (RUNNER.PATCH_DIR / 'pioneered-menus.qss').read_text()
+        rule = re.search(r'#MixpiColumnArrangement QListWidget::indicator:checked \{[^}]*\}', style)[0]
+        self.assertIn('image: url(:/images/ic_checkmark.svg);', rule)
+        build2 = ('#MixpiColumnArrangement QListWidget::indicator:checked {\n    background-color: #ffffff;\n'
+                  '    border: 2px solid #68baff;\n    border-radius: 3px;\n}')
+        with tempfile.TemporaryDirectory(prefix='mixpi-menus-qss-') as temporary:
+            old = Path(temporary) / 'pioneered-menus.qss'
+            old.write_text(style.replace(rule, build2))
+            result = subprocess.run(['python3', str(ROOT / 'tests/native/library_interface_runner.py'),
+                                     '--menus-qss', str(old)],
+                                    capture_output=True, text=True, timeout=150)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAIL a checked box shows a white tick on a blue fill', result.stdout)
+        self.assertIn('PASS a tap on the label text toggles the row\'s column', result.stdout)
 
     def test_bpm_lock_patch_is_small_and_gated_on_touch_navigation(self):
         patch = (RUNNER.PATCH_DIR / 'mixxx-bpm-lock-touch.patch').read_text()

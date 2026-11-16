@@ -201,6 +201,41 @@ void touchSidebarChecks() {
     require(b.activations == 1 && opened() == 1 && LibraryFeature::shown == &b && highlighted(row(1)),
             "keyboard/controller Down opens the next source once through pressed()");
 
+    // F-6 (council round 1): a press that moves the drag distance from where
+    // it started is a drag and opens nothing, even when it is released on the
+    // row it started on.
+    const int distance = QApplication::startDragDistance();
+    std::cout << "OBSERVE drag distance " << distance << " px" << std::endl;
+    auto path = [&](const QList<QPoint>& points, int pause) {
+        mouse(viewport, QEvent::MouseButtonPress, points.first(), Qt::LeftButton);
+        for (int index = 1; index < points.size(); ++index) {
+            mouse(viewport, QEvent::MouseMove, points[index], Qt::LeftButton);
+            if (pause) {
+                QTest::qWait(pause);
+            }
+        }
+        mouse(viewport, QEvent::MouseButtonRelease, points.last(), Qt::NoButton);
+        QTest::qWait(350);
+    };
+    const int shownBefore = opened();
+    const QPoint start = centre(row(3));
+    const QPoint across = start + QPoint(100, 0);
+    require(sidebar.indexAt(across) == row(3), "the horizontal drag fixture stays on one row");
+    path({start, start + QPoint(25, 0), start + QPoint(50, 0), start + QPoint(75, 0), across}, 15);
+    require(opened() == shownBefore && highlighted(row(1)),
+            "touch horizontal drag that ends on the pressed row opens nothing");
+    const QPoint second = centre(row(2));
+    path({second, second + QPoint(0, 10), centre(row(3)), centre(row(4)), centre(row(3)),
+                 second + QPoint(0, 10), second}, 25);
+    require(opened() == shownBefore && highlighted(row(1)),
+            "touch out-and-back drag released on the pressed row opens nothing");
+    path({start, start + QPoint(distance, 0), start}, 15);
+    require(opened() == shownBefore && highlighted(row(1)),
+            "a move of exactly the drag distance and back opens nothing");
+    drag(4, 2, 10, 30);
+    require(opened() == shownBefore && highlighted(row(1)),
+            "touch slow vertical drag across rows opens nothing");
+
     // A tap: press and release on the same row.
     mouse(viewport, QEvent::MouseButtonPress, centre(row(3)), Qt::LeftButton);
     mouse(viewport, QEvent::MouseMove, centre(row(3)) + QPoint(3, 2), Qt::LeftButton);
@@ -242,6 +277,27 @@ void touchSidebarChecks() {
     require(c.activations == 1 && opened() == before + 1 && LibraryFeature::shown == &c &&
                     highlighted(model.getFeatureRootIndex(&c)),
             "synthetic touch tap opens one source and highlights it");
+
+    // F-6 (council round 1), back at the source list: a real touch drag
+    // along one row opens nothing; a tap with jitter under the drag distance
+    // opens its source once and selects it.
+    sidebar.returnToSourceRoot();
+    QApplication::processEvents();
+    const int afterTaps = opened();
+    const QPoint along = centre(row(4));
+    QTest::touchEvent(&sidebar, device).press(0, viewport->mapTo(&sidebar, along));
+    for (int step = 1; step <= 4; ++step) {
+        QTest::touchEvent(&sidebar, device).move(0, viewport->mapTo(&sidebar, along + QPoint(25 * step, 0)));
+        QTest::qWait(15);
+    }
+    QTest::touchEvent(&sidebar, device).release(0, viewport->mapTo(&sidebar, along + QPoint(100, 0)));
+    QTest::qWait(350);
+    require(opened() == afterTaps, "synthetic touch horizontal drag along one row opens nothing");
+    const QPoint jitter = centre(row(4));
+    path({jitter, jitter + QPoint(distance - 1, 0), jitter + QPoint(0, 2), jitter + QPoint(2, 1)}, 10);
+    require(e.activations == 1 && opened() == afterTaps + 1, "a tap with jitter under the drag distance opens its source once");
+    require(LibraryFeature::shown == &e && highlighted(model.getFeatureRootIndex(&e)),
+            "after a jittery tap the selected row equals the shown source");
 }
 // F-6 (acceptance finding 6): the touch Sources list has no horizontal scroll
 // bar, so it does not take a row; long names elide. The vertical scroll bar

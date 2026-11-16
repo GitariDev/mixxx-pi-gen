@@ -1,0 +1,261 @@
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+index 21e66c0..ec45c9f 100644
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -221,7 +221,7 @@ class MixpiMedia final : public QObject {
+                         const auto binding = mixxx::media::observePath(path.toStdString());
+                         if (selected.revision.empty() || binding.generation.empty() ||
+                                 binding.source != selected.revision) {
+-                            states.append(QStringLiteral("Drive identity changed or unavailable"));
++                            states.append(QStringLiteral("This drive changed or could not be checked."));
+                             continue;
+                         }
+                         states.append(mixxx::media::activityText(
+@@ -229,7 +229,7 @@ class MixpiMedia final : public QObject {
+                                 mixxx::media::copyService().transferStatus(binding)));
+                     }
+                     states.removeDuplicates();
+-                    return states.isEmpty() ? QStringLiteral("Not mounted; usage unavailable") :
++                    return states.isEmpty() ? QStringLiteral("Not mounted.") :
+                             states.join(QStringLiteral(" | "));
+ #else
+                     Q_UNUSED(drive);
+diff --git a/src/library/mixpimediadialog.h b/src/library/mixpimediadialog.h
+index b51e49d..b95d0f2 100644
+--- a/src/library/mixpimediadialog.h
++++ b/src/library/mixpimediadialog.h
+@@ -139,7 +139,7 @@ class MixpiMediaDialog final : public QDialog {
+         for (int index = 0; index < m_list->count(); ++index) {
+             auto* item = m_list->item(index);
+             const auto drive = findDrive(m_snapshot, item->data(Qt::UserRole).toString());
+-            const auto state = drive.isEmpty() ? tr("Drive identity unavailable") : m_activity(drive);
++            const auto state = drive.isEmpty() ? tr("This drive could not be checked.") : m_activity(drive);
+             item->setText(item->data(Qt::UserRole + 1).toString() + "\n" + state);
+         }
+     }
+@@ -181,8 +181,9 @@ class MixpiMediaDialog final : public QDialog {
+                     volume.value("token").toString());
+         }
+         m_volumes->setCurrentIndex(m_volumes->count() == 1 ? 0 : -1);
++        // Plain words, as in the controlled dialog that Eject… opens.
+         m_status->setText(drive.isEmpty() ? tr("Select a drive.") :
+-                tr("Load opens the native source. Eject requires the reviewed media service; keep the drive connected until confirmed."));
++                tr("Load opens this drive in the library. Eject is not available on this system. Keep the drive connected."));
+         updateActions();
+     }
+ 
+@@ -251,7 +252,7 @@ class MixpiMediaDialog final : public QDialog {
+         cancelPending();
+         m_loading = true;
+         updateActions();
+-        m_status->setText(tr("Rechecking the exact selected drive…"));
++        m_status->setText(tr("Checking the selected drive…"));
+         const auto generation = m_generation;
+         const QPointer<MixpiMediaDialog> guard(this);
+         m_observe([guard, generation, token, volumeToken, mount, eject](QJsonObject snapshot) {
+@@ -261,7 +262,7 @@ class MixpiMediaDialog final : public QDialog {
+             const auto drive = findDrive(snapshot, token);
+             if (drive.isEmpty() || (mount && !drive.value("volumes").toArray().isEmpty())) {
+                 guard->m_loading = false;
+-                guard->m_status->setText(tr("Selected drive changed or observation failed. Refresh and choose again."));
++                guard->m_status->setText(tr("The selected drive changed or could not be checked. Refresh and choose again."));
+                 guard->updateActions();
+                 return;
+             }
+@@ -277,7 +278,7 @@ class MixpiMediaDialog final : public QDialog {
+                 if (volume.value("token").toString() == volumeToken && !volumeToken.isEmpty()) {
+                     if (!selected.isEmpty()) {
+                         guard->m_loading = false;
+-                        guard->m_status->setText(tr("Ambiguous source identity. Refresh and choose again."));
++                        guard->m_status->setText(tr("This drive could not be told apart from another. Refresh and choose again."));
+                         guard->updateActions();
+                         return;
+                     }
+@@ -290,7 +291,7 @@ class MixpiMediaDialog final : public QDialog {
+                 guard->updateActions();
+                 return;
+             }
+-            guard->m_status->setText(tr("Opening the selected source… Close cancels pending discovery."));
++            guard->m_status->setText(tr("Opening the drive… Close stops opening it."));
+             guard->m_cancel = guard->m_open(selected, guard,
+                     [guard, generation, volumeToken](QString error) {
+                         if (!guard || guard->m_generation != generation || !guard->isVisible()) {
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+index 41ad1c2..5545086 100644
+--- a/src/widget/libraryinterface.h
++++ b/src/widget/libraryinterface.h
+@@ -2,6 +2,8 @@
+ 
+ #include <algorithm>
+ #include <functional>
++#include <memory>
++#include <utility>
+ 
+ #include <QCheckBox>
+ #include <QDialog>
+@@ -13,6 +15,7 @@
+ #include <QLabel>
+ #include <QMenu>
+ #include <QMap>
++#include <QPair>
+ #include <QPushButton>
+ #include <QTreeView>
+ #include <QVBoxLayout>
+@@ -268,6 +271,23 @@ inline QDialog* arrangeColumns(QHeaderView* header, const QList<int>& available,
+     };
+     QObject::connect(list, &QListWidget::itemChanged, dialog, apply);
+     QObject::connect(list->model(), &QAbstractItemModel::rowsMoved, dialog, apply);
++    // A tap anywhere on a row, the label too, shows or hides that column.
++    // A tap on the box is toggled by Qt's delegate before clicked() is
++    // emitted, so only a tap whose press left the box as it was toggles
++    // here. A drag (reorder) emits no click; Space still toggles the row.
++    auto pressedState = std::make_shared<QPair<QListWidgetItem*, Qt::CheckState>>(
++            nullptr, Qt::Unchecked);
++    QObject::connect(list, &QListWidget::itemPressed, dialog,
++            [pressedState](QListWidgetItem* item) {
++                *pressedState = {item, item->checkState()};
++            });
++    QObject::connect(list, &QListWidget::itemClicked, dialog,
++            [pressedState](QListWidgetItem* item) {
++                const auto pressed = std::exchange(*pressedState, {nullptr, Qt::Unchecked});
++                if (pressed.first == item && item->checkState() == pressed.second) {
++                    item->setCheckState(pressed.second == Qt::Checked ? Qt::Unchecked : Qt::Checked);
++                }
++            });
+     auto* movement = new QHBoxLayout;
+     for (int direction : {-1, 1}) {
+         auto* button = new QPushButton(direction < 0 ? QObject::tr("Up") : QObject::tr("Down"), dialog);
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index e7d9f2b..4790915 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -1,5 +1,6 @@
+ #include "widget/wlibrarysidebar.h"
+ 
++#include <QApplication>
+ #include <QCoreApplication>
+ #include <QHeaderView>
+ #include <QUrl>
+@@ -416,10 +417,11 @@ void WLibrarySidebar::mousePressEvent(QMouseEvent* event) {
+         // a pressed row after 300 ms even when no click follows (a drag).
+         // Remember the row; mouseReleaseEvent() opens it on a tap only.
+ #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+-        m_touchPressIndex = indexAt(event->position().toPoint());
++        m_touchPressPosition = event->position().toPoint();
+ #else
+-        m_touchPressIndex = indexAt(event->pos());
++        m_touchPressPosition = event->pos();
+ #endif
++        m_touchPressIndex = indexAt(m_touchPressPosition);
+         event->accept();
+         return;
+     }
+@@ -430,6 +432,16 @@ void WLibrarySidebar::mouseMoveEvent(QMouseEvent* event) {
+     if (m_touchNavigation && event->buttons().testFlag(Qt::LeftButton)) {
+         // No drag selection: the highlight stays on the source that is shown.
+         // The scroll bar is a separate widget and still scrolls the list.
++        // A move past the drag distance makes this press a drag, never a
++        // tap, even if the finger comes back to the row it started on.
++#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
++        const QPoint position = event->position().toPoint();
++#else
++        const QPoint position = event->pos();
++#endif
++        if (isTouchDrag(position)) {
++            m_touchPressIndex = QPersistentModelIndex();
++        }
+         event->accept();
+         return;
+     }
+@@ -449,9 +461,15 @@ void WLibrarySidebar::mouseReleaseEvent(QMouseEvent* event) {
+ #endif
+     const QPersistentModelIndex pressed = m_touchPressIndex;
+     m_touchPressIndex = QPersistentModelIndex();
+-    if (!index.isValid() || index != pressed) {
+-        // Released on another row, or the rows changed under the finger
+-        // (for example a USB hot-plug): open nothing.
++#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
++    const bool dragged = isTouchDrag(event->position().toPoint());
++#else
++    const bool dragged = isTouchDrag(event->pos());
++#endif
++    if (!index.isValid() || index != pressed || dragged) {
++        // Released on another row, after a drag (past the drag distance at
++        // any time), or the rows changed under the finger (for example a USB
++        // hot-plug): open nothing.
+         return;
+     }
+     selectionModel()->setCurrentIndex(index,
+@@ -461,6 +479,14 @@ void WLibrarySidebar::mouseReleaseEvent(QMouseEvent* event) {
+     emit clicked(index);
+ }
+ 
++bool WLibrarySidebar::isTouchDrag(QPoint position) const {
++    // QApplication::startDragDistance(): the platform distance at which a
++    // press becomes a drag (10 px by default). Finger jitter below it is
++    // still a tap.
++    return (position - m_touchPressPosition).manhattanLength() >=
++            QApplication::startDragDistance();
++}
++
+ void WLibrarySidebar::mouseDoubleClickEvent(QMouseEvent* event) {
+     if (m_touchNavigation && event->button() == Qt::LeftButton) {
+         // A second quick tap is a new tap, not a double-click.
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index a353ee2..c988183 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -3,6 +3,7 @@
+ #include <QBasicTimer>
+ #include <QModelIndex>
+ #include <QPersistentModelIndex>
++#include <QPoint>
+ #include <QTreeView>
+ 
+ #include "library/library_decl.h"
+@@ -55,6 +56,7 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+ 
+   private:
+     void fitTouchColumn();
++    bool isTouchDrag(QPoint position) const;
+     void focusSelectedIndex();
+     QModelIndex selectedIndex();
+ 
+@@ -63,6 +65,9 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     // Touch mode: the row under a left press. A source opens on release over
+     // the same row only, so a press or a drag never opens one.
+     QPersistentModelIndex m_touchPressIndex;
++    // Where that press was. A press that moves the drag distance away from
++    // it is a drag and opens nothing, wherever it is released.
++    QPoint m_touchPressPosition;
+     QBasicTimer m_expandTimer;
+     QModelIndex m_hoverIndex;
+ };
+diff --git a/src/widget/wnumberpos.cpp b/src/widget/wnumberpos.cpp
+index 50128ff..09faa80 100644
+--- a/src/widget/wnumberpos.cpp
++++ b/src/widget/wnumberpos.cpp
+@@ -35,8 +35,8 @@ void WNumberPos::mousePressEvent(QMouseEvent* pEvent) {
+ 
+     if (leftClick) {
+         // MixPi: a tap toggles elapsed <-> remaining only. A tap never
+-        // selects the wide "elapsed and remaining" mode; a saved "both"
+-        // setting goes to elapsed, the single-time default.
++        // selects the wide "elapsed and remaining" mode. A saved "both"
++        // shows elapsed (slotSetDisplayMode()), so its tap gives remaining.
+         if (m_displayMode == TrackTime::DisplayMode::ELAPSED) {
+             m_displayMode = TrackTime::DisplayMode::REMAINING;
+         } else {
+@@ -111,9 +111,10 @@ void WNumberPos::slotTimeRemainingUpdated(double dTimeRemaining) {
+ void WNumberPos::slotSetDisplayMode(double remain) {
+     if (remain == 1.0) {
+         m_displayMode = TrackTime::DisplayMode::REMAINING;
+-    } else if (remain == 2.0) {
+-        m_displayMode = TrackTime::DisplayMode::ELAPSED_AND_REMAINING;
+     } else {
++        // MixPi: a saved 2 ("elapsed and remaining", the Mixxx default for
++        // a new profile) shows elapsed only, so a deck never shows both
++        // times; the next tap gives remaining. The setting is not rewritten.
+         m_displayMode = TrackTime::DisplayMode::ELAPSED;
+     }
+ 

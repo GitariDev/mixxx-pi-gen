@@ -76,25 +76,38 @@ int main(int argc, char** argv) {
     press(deck1, Qt::RightButton);
     require(mode.get() == kElapsed, "right button does not change the mode");
 
-    // A saved "both" (old profile, or chosen in Preferences) is still shown.
+    // F-5 (owner decision 4.1, council round 1): a saved "both" (Mixxx's
+    // default for a new profile, PIN dlgprefdeck.cpp:26-27, or chosen in
+    // Preferences) shows elapsed only; a deck never shows both times.
     mode.set(kBoth);
     application.processEvents();
-    require(both(deck1.text()) && both(deck2.text()), "saved 2 still shows both");
+    std::cout << "OBSERVE saved 2: deck 1 '" << deck1.text().toStdString() << "', deck 2 '"
+              << deck2.text().toStdString() << "'\n";
+    require(elapsed(deck1.text()) && elapsed(deck2.text()), "saved 2 shows elapsed only, never both");
+    elapsed1.set(130.0);
+    remaining1.set(689.75);
+    application.processEvents();
+    require(elapsed(deck1.text()) && !both(deck1.text()), "saved 2 stays elapsed only as the track plays");
+    require(mode.get() == kBoth, "showing saved 2 as elapsed does not rewrite the setting");
     stored.clear();
     press(deck1);
-    require(mode.get() == kElapsed && elapsed(deck1.text()), "tap 2 -> 0 (elapsed)");
+    require(mode.get() == kRemaining && remaining(deck1.text()) && remaining(deck2.text()),
+            "tap from saved 2 -> 1 (remaining), the next time after elapsed");
     for (int tap = 0; tap < 6; ++tap) {
         press(tap % 2 ? deck2 : deck1);
+        require(!both(deck1.text()) && !both(deck2.text()), "no tap after saved 2 shows both");
     }
-    require(stored == std::vector<double>({0, 1, 0, 1, 0, 1, 0}), "taps after 2 toggle 0/1 only");
+    require(stored == std::vector<double>({1, 0, 1, 0, 1, 0, 1}), "taps after 2 toggle 1/0 only");
 
-    // A widget built while the saved mode is 2 starts there; its first tap gives elapsed.
+    // A widget built while the saved mode is 2 shows elapsed; its first tap gives remaining.
     mode.set(kBoth);
     WNumberPos fresh("[Channel1]");
-    require(both(fresh.text()), "new widget shows saved 2");
+    require(elapsed(fresh.text()) && !both(fresh.text()), "new widget with saved 2 shows elapsed only");
     press(fresh);
-    require(mode.get() == kElapsed && elapsed(fresh.text()) && elapsed(deck2.text()),
-            "first tap from saved 2 -> 0 on every deck");
+    require(mode.get() == kRemaining && remaining(fresh.text()) && remaining(deck2.text()),
+            "first tap from saved 2 -> 1 (remaining) on every deck");
+    press(fresh);
+    require(mode.get() == kElapsed && elapsed(fresh.text()), "the toggle continues 1 -> 0 (elapsed)");
     std::cout << "CHECKS " << checks << " FAILURES " << failures << '\n';
     return failures ? 1 : 0;
 }

@@ -5,16 +5,169 @@
 #include <QRegularExpression>
 #include <QJsonArray>
 #include <QListWidget>
+#include <QPointer>
 #include <QTimer>
 #include <iostream>
 
+#include "library/mixpicontrolleddialog.h"
 #include "library/mixpimediadialog.h"
 #include "library/mixpimediaactivity.h"
+
+// F-10: words a user must not see in Load/Eject, and the plain message the
+// controlled dialog shows when eject is not available.
+static const char* const kInternalTerms[] = {"reviewed", "clearance", "retained", "service"};
+static const QString kEjectUnavailable =
+        QStringLiteral("Eject is not available on this system. Keep the drive connected.");
+
+// Every text a user can see in the dialog: title, rows, labels, visible buttons.
+static QStringList visibleTexts(QWidget* dialog) {
+    QStringList texts{dialog->windowTitle()};
+    for (auto* list : dialog->findChildren<QListWidget*>()) {
+        for (int row = 0; row < list->count(); ++row) texts.append(list->item(row)->text());
+    }
+    for (auto* label : dialog->findChildren<QLabel*>()) texts.append(label->text());
+    for (auto* button : dialog->findChildren<QPushButton*>()) {
+        if (!button->isHidden()) texts.append(button->text());
+    }
+    return texts;
+}
+
+static bool plainTexts(QWidget* dialog) {
+    const QRegularExpression deviceNumber(QStringLiteral("\\b\\d+:\\d+\\b"));
+    bool clean = true;
+    for (const auto& value : visibleTexts(dialog)) {
+        for (const char* term : kInternalTerms) {
+            if (value.contains(QLatin1String(term), Qt::CaseInsensitive)) {
+                std::cout << "OBSERVE internal term '" << term << "' in: " << value.toStdString() << '\n';
+                clean = false;
+            }
+        }
+        if (deviceNumber.match(value).hasMatch()) {
+            std::cout << "OBSERVE device number in: " << value.toStdString() << '\n';
+            clean = false;
+        }
+    }
+    return clean;
+}
 
 static QString logged;
 
 static void capture(QtMsgType, const QMessageLogContext&, const QString& message) {
     logged += message + '\n';
+}
+
+// F-10 (council round 1): a drive SELECTED, controlled media off. Eject… is
+// enabled; it opens the controlled dialog, which refuses in plain words.
+template<typename Check>
+static void selectedDriveEject(QApplication& application, const QJsonObject& snapshot, Check& check) {
+    using namespace mixxx::media;
+    MediaUseRegistry registry;
+    TransferHistory history;
+    int observed = 0;
+    int opened = 0;
+    int controlledCalls = 0;
+    bool controlledMount = true;
+    QString controlledToken;
+    QPointer<MixpiControlledMedia> operation;
+    QPointer<MixpiControlledDialog> controlled;
+    QWidget parent;
+    parent.resize(800, 444);
+    parent.show();
+    QPointer<MixpiMediaDialog> dialog = new MixpiMediaDialog(&parent,
+            [&observed, snapshot](MixpiMediaDialog::Receive receive) {
+                ++observed;
+                receive(snapshot);
+            },
+            [&opened](const QJsonObject&, QObject*, std::function<void(QString)>) {
+                ++opened;
+                return MixpiMediaDialog::Cancel{};
+            },
+            // The same steps as MixpiMedia::showControlled(). With controlled
+            // media off, openProduction() finds no reviewed profile, so the
+            // operation has no broker connection and stays Unavailable.
+            [&](bool mount, QString token) {
+                ++controlledCalls;
+                controlledMount = mount;
+                controlledToken = token;
+                operation = MixpiControlledMedia::openProduction();
+                controlled = new MixpiControlledDialog(operation, mount, &parent, token);
+                controlled->show();
+            },
+            std::make_shared<QSet<QString>>(), [&](const QJsonObject&) {
+                return activityText(registry.observe("generation-a"),
+                        history.snapshot({"generation-a", "source-a"}));
+            });
+    dialog->show();
+    application.processEvents();
+    auto* list = dialog->findChild<QListWidget*>("mediaDrives");
+    auto* eject = dialog->findChild<QPushButton*>("mediaEject");
+    auto* status = dialog->findChild<QLabel*>("mediaStatus");
+    check(!QFile::exists("/etc/mixpi/controlled-media") && !QFile::exists("/etc/mixpi/eject-reviewed"),
+            "selected drive: this host has no controlled media profile (as the image)");
+    list->setCurrentRow(0);
+    application.processEvents();
+    check(list->currentRow() == 0 && list->currentItem()->isSelected(), "selected drive: the drive row is selected");
+    std::cout << "OBSERVE selected status: " << status->text().toStdString() << '\n';
+    check(plainTexts(dialog), "selected drive: no visible label has an internal term or device number");
+    check(status->text().contains(kEjectUnavailable),
+            "selected drive: the status line says eject is not available, as the controlled dialog does");
+    check(eject->isEnabled() && eject->isVisible(), "selected drive: Eject… is enabled (unchanged gate)");
+    // Evidence only: grabs of the selected drive and of the dialog after Eject….
+    const auto shots = qEnvironmentVariable("MEDIA_SELECTED_SCREENSHOT_DIR");
+    if (!shots.isEmpty()) {
+        check(dialog->grab().save(shots + "/selected-drive.png"), "selected drive screenshot saved");
+    }
+    eject->click();
+    application.processEvents();
+    check(controlledCalls == 1 && !controlledMount && controlledToken == "drive-a" && observed == 2,
+            "selected drive: Eject… rechecks the drive and opens the controlled eject dialog for it");
+    check(opened == 0, "selected drive: Eject… does not load the drive");
+    check(!dialog || !dialog->isVisible(), "selected drive: the Load/Eject dialog gives way to the controlled dialog");
+    if (!controlled || !operation) {
+        check(false, "selected drive: the controlled dialog is shown");
+        return;
+    }
+    // Let its 50 ms update timer run a few times.
+    for (int round = 0; round < 6; ++round) {
+        QTimer wait;
+        wait.setSingleShot(true);
+        wait.start(50);
+        while (wait.isActive()) application.processEvents(QEventLoop::AllEvents, 10);
+    }
+    check(controlled->isVisible() && operation->state() == MixpiControlledMedia::State::Unavailable,
+            "selected drive: the controlled dialog is shown in its unavailable state");
+    auto* message = controlled->findChildren<QLabel*>().value(0);
+    std::cout << "OBSERVE controlled message: " << (message ? message->text().toStdString() : "") << '\n';
+    check(message && message->text() == kEjectUnavailable,
+            "selected drive: the controlled dialog shows exactly the plain unavailable message");
+    check(plainTexts(controlled), "selected drive: the controlled dialog has no internal term or device number");
+    if (!shots.isEmpty()) {
+        check(controlled->grab().save(shots + "/after-eject.png"), "controlled dialog screenshot saved");
+    }
+    bool commits = false;
+    QStringList usable;
+    for (auto* button : controlled->findChildren<QPushButton*>()) {
+        if (button->isVisible() && button->isEnabled()) usable.append(button->text());
+        commits = commits || ((button->text().contains("Eject", Qt::CaseInsensitive) ||
+                                      button->text().contains("Prepare", Qt::CaseInsensitive)) &&
+                                     button->isVisible() && button->isEnabled());
+    }
+    std::cout << "OBSERVE controlled usable buttons: " << usable.join(", ").toStdString() << '\n';
+    check(!commits && usable == QStringList{"Close"},
+            "selected drive: no button can prepare or commit an eject; only Close is usable");
+    // Spy: an unmount or eject request goes only through the operation's
+    // broker request. Pressing every usable button except Close and waiting
+    // leaves it without a request, not started and still Unavailable.
+    for (auto* button : controlled->findChildren<QPushButton*>()) {
+        if (button->isVisible() && button->isEnabled() && button->text() != "Close") button->click();
+    }
+    application.processEvents();
+    check(!operation->pending() && !operation->locked() && operation->selectedDescription().isEmpty() &&
+                    operation->drives().isEmpty() &&
+                    operation->state() == MixpiControlledMedia::State::Unavailable,
+            "selected drive: no unmount or eject request is made");
+    controlled->close();
+    application.processEvents();
 }
 
 int main(int argc, char** argv) {
@@ -56,20 +209,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     // F-10: no internal terms and no major:minor device number on any user label.
-    auto userFacing = [&] {
-        bool clean = true;
-        const QRegularExpression deviceNumber(QStringLiteral("\\b\\d+:\\d+\\b"));
-        QStringList texts{dialog.windowTitle()};
-        for (int row = 0; row < list->count(); ++row) texts.append(list->item(row)->text());
-        for (auto* label : dialog.findChildren<QLabel*>()) texts.append(label->text());
-        for (auto* button : dialog.findChildren<QPushButton*>()) texts.append(button->text());
-        for (const auto& value : texts) {
-            clean = clean && !value.contains("clearance", Qt::CaseInsensitive) &&
-                    !value.contains("retained", Qt::CaseInsensitive) &&
-                    !deviceNumber.match(value).hasMatch();
-        }
-        return clean;
-    };
+    auto userFacing = [&] { return plainTexts(&dialog); };
     check(userFacing(), "idle dialog labels have no internal terms or device number");
     check(list->item(0)->text().startsWith("Music · 0.0 GiB · Available\n/media/fixture-a\n"),
             "drive label keeps name, size, state and mount path");
@@ -188,8 +328,9 @@ int main(int argc, char** argv) {
         styled.setAttribute(Qt::WA_DeleteOnClose, false);
         check(buttonHeights(styled, "skin"), "every Load/Eject button is at least 48 px high under the skin styles");
         check(!styled.findChild<QPushButton*>("mediaEject")->isEnabled(),
-                "Eject stays disabled with controlled media off");
+                "with no drive selected, Eject is disabled");
     }
+    selectedDriveEject(application, snapshot, check);
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures ? 1 : 0;
 }

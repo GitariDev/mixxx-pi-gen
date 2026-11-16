@@ -90,14 +90,15 @@ struct Stat {
 }
 
 
-def run(baseline=False):
+def run(baseline=False, without_council=False):
     spec = importlib.util.spec_from_file_location(
         'library_reconstruction', ROOT / 'tests/native/library_interface_runner.py')
     reconstruction = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(reconstruction)
     with tempfile.TemporaryDirectory(prefix='mixpi-position-display-') as temporary:
         target = Path(temporary)
-        reconstruction.reconstruct(target)
+        reconstruction.reconstruct(
+            target, exclude=('mixxx-council-fixes.patch',) if without_council else ())
         if baseline:
             (target / 'src/widget/wnumberpos.cpp').write_bytes(pinned_bytes('src/widget/wnumberpos.cpp'))
         populate_pinned(target, ['src/' + name for name in CONTROL_FILES + WIDGET_FILES])
@@ -134,5 +135,6 @@ def run(baseline=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--without-council-fixes', action='store_true')
     options = parser.parse_args()
-    raise SystemExit(run(options.baseline).returncode)
+    raise SystemExit(run(options.baseline, options.without_council_fixes).returncode)

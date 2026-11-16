@@ -416,10 +416,22 @@ def build(skin, loop_display='focus'):
     prop(root,'Layout','vertical')
     children = ET.SubElement(root,'Children')
     top = group('MixpiTopbar','horizontal','0me,50f')
-    for text, key in [('DECKS','overview'),('TRACKS','library'),('FX','fx'),('SAMPLER','sampler')]:
+    def tab(text, key):
         b = button(text,f'[Tab],{key}',size='84f,48f',push=True,name='MixpiTab')
         connection(b,'[MixPi],loop_deck',read=False,transform='<Not/>')
         connection(b,'[MixPi],sample_load',read=False,transform='<Not/>')
+        return b
+    for text, key in [('DECKS','overview'),('TRACKS','library'),('FX','fx'),('SAMPLER','sampler')]:
+        b = tab(text, key)
+        if key == 'overview':
+            # Settings is a view inside Decks ([Tab],overview stays 1). While it
+            # is open, show a twin that never mirrors the tab state, so only
+            # SETTINGS is highlighted. Both send the same writes.
+            connection(b,'[MixPi],loop_deck',transform='<IsEqual>3</IsEqual><Not/>',bind='visible')
+            twin = tab(text, key)
+            twin.find('Connection/ConnectValueToWidget').text = 'false'
+            connection(twin,'[MixPi],loop_deck',transform='<IsEqual>3</IsEqual>',bind='visible')
+            b = group('MixpiTabPair','stacked','84f,48f',[b,twin])
         add(top,b)
     for text, control in [('LOAD / EJECT', 'media_load')]:
         action = button(text, f'[MixPi],{control}', size='132f,48f', push=True)

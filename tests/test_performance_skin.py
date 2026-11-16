@@ -127,7 +127,7 @@ class PerformanceSkinTests(unittest.TestCase):
     def test_decks_label_and_quick_controls_are_tab_scoped(self):
         tabs = [button.findtext('State/Text') for button in self.root.findall('.//PushButton')
                 if button.findtext('ObjectName') == 'MixpiTab']
-        self.assertEqual(tabs, ['DECKS', 'TRACKS', 'FX', 'SAMPLER'])
+        self.assertEqual(tabs, ['DECKS', 'DECKS', 'TRACKS', 'FX', 'SAMPLER'])
         rows = [group for group in self.root.findall('.//WidgetGroup')
                 if group.findtext('ObjectName') == 'MixpiDeckButtons']
         self.assertEqual(len(rows), 2)
@@ -144,6 +144,39 @@ class PerformanceSkinTests(unittest.TestCase):
             cue = buttons[5]
             self.assertFalse(any(connection.findtext('BindProperty') == 'visible'
                                  for connection in cue.findall('Connection')))
+
+    @staticmethod
+    def transform(connection, value):
+        for step in connection.find('Transform') if connection.find('Transform') is not None else ():
+            value = (float(value == float(step.text)) if step.tag == 'IsEqual' else
+                     float(not value) if step.tag == 'Not' else None)
+        return value
+
+    def test_settings_highlights_only_settings_not_decks(self):
+        pair = next(g for g in self.root.findall('.//WidgetGroup')
+                    if g.findtext('ObjectName') == 'MixpiTabPair')
+        self.assertEqual((pair.findtext('Layout'), pair.findtext('Size')), ('stacked', '84f,48f'))
+        normal, twin = pair.findall('Children/PushButton')
+        for b in (normal, twin):
+            self.assertEqual(b.findtext('ObjectName'), 'MixpiTab')
+            self.assertEqual(b.findtext('Size'), '84f,48f')
+            self.assertEqual(b.findtext('State/Text'), 'DECKS')
+            self.assertEqual(b.findtext('LeftClickIsPushButton'), 'true')
+        writes = lambda b: [(c.findtext('ConfigKey'), ET.tostring(c.find('Transform')) if c.find('Transform') is not None else None)
+                            for c in b.findall('Connection') if c.findtext('ConnectValueFromWidget') == 'true']
+        self.assertEqual(writes(normal), writes(twin))
+        self.assertEqual(writes(twin)[0][0], '[Tab],overview')
+        # The twin never shows the tab state; the normal tab does.
+        self.assertFalse(any(c.findtext('ConnectValueToWidget') == 'true' for c in twin.findall('Connection')))
+        self.assertEqual(normal.findtext('Connection/ConnectValueToWidget'), 'true')
+        visible = lambda b: next(c for c in b.findall('Connection') if c.findtext('BindProperty') == 'visible')
+        for loop_deck in (0, 1, 2, 3):
+            shown = [b for b in (normal, twin)
+                     if self.transform(visible(b), float(loop_deck)) and
+                     visible(b).findtext('ConfigKey') == '[MixPi],loop_deck']
+            self.assertEqual(shown, [twin] if loop_deck == 3 else [normal])
+        settings = next(b for b in self.root.findall('.//PushButton') if b.findtext('State/Text') == 'SETTINGS')
+        self.assertEqual(settings.findtext('Connection/Transform/IsEqual'), '3')
 
     def test_two_pixel_corners_only_override_owned_buttons(self):
         style = (self.skin/'style.qss').read_text()
@@ -306,7 +339,8 @@ class PerformanceSkinTests(unittest.TestCase):
                 if button.findtext('ObjectName') == 'MixpiTab']
         for tab in tabs:
             reset = {connection.findtext('ConfigKey'): connection
-                     for connection in tab.findall('Connection')[1:]}
+                     for connection in tab.findall('Connection')[1:]
+                     if connection.find('BindProperty') is None}
             for key in ('[MixPi],loop_deck', '[MixPi],sample_load'):
                 self.assertIsNotNone(reset[key].find('Transform/Not'))
                 self.assertEqual(reset[key].findtext('ConnectValueToWidget'), 'false')
@@ -354,7 +388,7 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(len(row.findall('Children/PushButton')),7)
             self.assertTrue(all(b.findtext('Size')=='0me,48f' for b in row.findall('Children/PushButton')))
         tabs=[b for b in self.root.findall('.//PushButton') if b.findtext('ObjectName')=='MixpiTab']
-        self.assertEqual([b.findtext('State/Text') for b in tabs],['DECKS','TRACKS','FX','SAMPLER'])
+        self.assertEqual([b.findtext('State/Text') for b in tabs],['DECKS','DECKS','TRACKS','FX','SAMPLER'])
         self.assertTrue(all(b.findtext('LeftClickIsPushButton')=='true' for b in tabs))
         self.assertFalse(any('safe_to_remove' in (c.text or '').lower()
                              for c in self.root.findall('.//ConfigKey')))

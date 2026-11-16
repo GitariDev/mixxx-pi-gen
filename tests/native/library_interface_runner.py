@@ -138,6 +138,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--baseline', action='store_true')
     parser.add_argument('--holdout', action='store_true')
+    # Evidence only: run the dialog checks with another menu style sheet.
+    parser.add_argument('--menus-qss', type=Path, default=PATCH_DIR / 'pioneered-menus.qss')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-library-interface-test-') as temporary:
         target = Path(temporary)
@@ -150,7 +152,7 @@ def main():
         subprocess.run(command, check=True, timeout=90)
         environment = qt_environment()
         # F-9: the native dialog checks load the real installed menu style.
-        environment['MIXPI_MENUS_QSS'] = str(PATCH_DIR / 'pioneered-menus.qss')
+        environment['MIXPI_MENUS_QSS'] = str(args.menus_qss)
         mode = ['baseline'] if args.baseline else ['holdout'] if args.holdout else []
         subprocess.run([str(target / 'test'), *mode], env=environment,
                        check=True, timeout=30)

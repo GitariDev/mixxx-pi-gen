@@ -217,10 +217,16 @@ def extract_header_swap(source):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--baseline', action='store_true')
+    # Evidence: the stack without mixxx-acceptance-fixes.patch must fail the
+    # readable-width checks (an added column is about 26 px).
+    parser.add_argument('--without-acceptance-fixes', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-table-columns-') as temporary:
         target = Path(temporary)
-        exclude = ('mixxx-table-columns.patch', 'mixxx-touch-dialogs.patch') if args.baseline else ()
+        exclude = ('mixxx-table-columns.patch', 'mixxx-touch-dialogs.patch',
+                   'mixxx-acceptance-fixes.patch') if args.baseline else ()
+        if args.without_acceptance_fixes:
+            exclude = ('mixxx-acceptance-fixes.patch',)
         reconstruct(target, exclude=exclude)
         populate = ['src/library/proxytrackmodel.cpp', 'src/library/proxytrackmodel.h',
                     'src/library/browse/browsetablemodel.cpp', 'src/library/browse/browsetablemodel.h',
@@ -277,7 +283,11 @@ def main():
         subprocess.run(command, check=True, timeout=300)
         result = subprocess.run([str(target / 'test'), *(['baseline'] if args.baseline else [])],
                                 env=qt_environment(), timeout=60)
-        if args.baseline:
+        if args.without_acceptance_fixes:
+            if result.returncode == 0:
+                raise SystemExit('Unexpectedly passed without mixxx-acceptance-fixes.patch')
+            print('WITHOUT_ACCEPTANCE_FIXES_FAILS exit', result.returncode, flush=True)
+        elif args.baseline:
             if result.returncode == 0:
                 raise SystemExit('Baseline unexpectedly passed: the fixture does not detect the fault')
             print('BASELINE_REPRODUCED exit', result.returncode, flush=True)

@@ -4,7 +4,9 @@
 #include <QImage>
 #include <QMouseEvent>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QStandardItemModel>
+#include <QStyledItemDelegate>
 #include <QTableView>
 #include <iostream>
 
@@ -49,6 +51,93 @@ void send(QWidget* widget, QEvent::Type type, QPoint position, Qt::MouseButtons 
             type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
     QApplication::sendEvent(widget, &event);
     QApplication::processEvents();
+}
+
+// The option QStyledItemDelegate::paint() hands to the style for a row.
+struct RowOption : QStyledItemDelegate {
+    using QStyledItemDelegate::initStyleOption;
+};
+
+// Columns of pixels that differ between two grabs of the same row.
+QPair<int, int> changedColumns(const QImage& a, const QImage& b) {
+    int first = -1;
+    int last = -1;
+    for (int x = 0; x < std::min(a.width(), b.width()); ++x) {
+        for (int y = 0; y < std::min(a.height(), b.height()); ++y) {
+            if (a.pixel(x, y) != b.pixel(x, y)) {
+                first = first < 0 ? x : first;
+                last = x;
+                break;
+            }
+        }
+    }
+    return {first, last};
+}
+
+// F-9 (acceptance check 10): in every Arrange row, checked or not, selected or
+// not, the label starts right of the check box. Two checks with the real
+// skin QSS: the style's own geometry, and the pixels Qt actually paints.
+void arrangeRowChecks(QListWidget* list) {
+    RowOption rowOption;
+    bool geometry = true;
+    bool painted = true;
+    int rows = 0;
+    int unchecked = 0;
+    for (int row = 0; row < list->count(); ++row) {
+        auto* item = list->item(row);
+        list->scrollToItem(item);
+        QApplication::processEvents();
+        const QRect rect = list->visualItemRect(item);
+        QStyleOptionViewItem option;
+        option.initFrom(list->viewport());
+        option.widget = list;
+        option.rect = rect;
+        rowOption.initStyleOption(&option, list->model()->index(row, 0));
+        auto* style = list->style();
+        const QRect check = style->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &option, list);
+        const QRect text = style->subElementRect(QStyle::SE_ItemViewItemText, &option, list);
+        geometry &= check.isValid() && text.left() > check.right();
+
+        // Painted: label pixels (grab with and without the text) must start
+        // right of the box pixels (grab checked and unchecked) and no further
+        // left than the style's text rect. Qt clips the box area when it
+        // hands a row to the base style, so a covered label shows up as text
+        // pixels that start left of the style's text rect.
+        const QSignalBlocker blocker(list);
+        auto grab = [&] {
+            QApplication::processEvents();
+            return list->viewport()->grab(rect).toImage();
+        };
+        const QImage shown = grab();
+        const QString label = item->text();
+        item->setText(QString());
+        const QImage noText = grab();
+        item->setText(label);
+        const Qt::CheckState state = item->checkState();
+        unchecked += state == Qt::Unchecked ? 1 : 0;
+        item->setCheckState(state == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+        const QImage toggled = grab();
+        item->setCheckState(state);
+        const auto labelColumns = changedColumns(shown, noText);
+        const auto boxColumns = changedColumns(shown, toggled);
+        const bool clear = labelColumns.first >= 0 && boxColumns.first >= 0 &&
+                labelColumns.first > boxColumns.second &&
+                labelColumns.first >= text.left() - rect.left();
+        if (!clear || row < 2) {
+            std::cout << "OBSERVE Arrange row " << row << ' ' << label.toStdString()
+                      << (state == Qt::Checked ? " checked" : " unchecked")
+                      << (list->currentRow() == row ? " selected" : "") << ": box x "
+                      << boxColumns.first << ".." << boxColumns.second << ", text x from "
+                      << labelColumns.first << " (style: box " << check.left() - rect.left()
+                      << ".." << check.right() - rect.left() << ", text from "
+                      << text.left() - rect.left() << ')' << std::endl;
+        }
+        painted &= clear;
+        ++rows;
+    }
+    require(rows > 0 && unchecked > 0, "Arrange rows include unchecked columns");
+    require(geometry, "style geometry: every Arrange label starts right of its check box");
+    require(painted, "painted pixels: no Arrange check box covers its label, checked or not");
 }
 
 // F-7 width and F-9 touch dialog/menu, with the real pioneered-menus.qss.
@@ -118,6 +207,10 @@ void touchTableChecks() {
     for (int column = 0; column < 21; ++column) {
         all.append(column);
     }
+    // Some hidden columns, so the dialog has unchecked rows as well.
+    for (int column : {2, 5, 9}) {
+        tracks->horizontalHeader()->setSectionHidden(column, true);
+    }
     auto* dialog = LibraryInterface::arrangeColumns(tracks->horizontalHeader(), all, [] {});
     QApplication::processEvents();
     require(dialog->size() == QSize(520, 400) && dialog->width() <= 780 && dialog->height() <= 420,
@@ -150,6 +243,10 @@ void touchTableChecks() {
     luminance /= image.width() * image.height();
     std::cout << "OBSERVE Arrange list mean grey " << luminance << std::endl;
     require(luminance < 80, "Arrange list background is dark in a grabbed image");
+    list->setCurrentRow(1);
+    arrangeRowChecks(list);
+    list->scrollToTop();
+    QApplication::processEvents();
 
     // Drag to reorder stays: it does not fight the scroll bar or a tap.
     const QList<int> before = listOrder(list);

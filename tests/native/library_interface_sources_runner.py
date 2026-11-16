@@ -28,11 +28,13 @@ def main():
     # Evidence only: the same checks without mixxx-source-tap.patch must fail.
     parser.add_argument('--without-source-tap', action='store_true')
     parser.add_argument('--without-bpm-lock-touch', action='store_true')
+    parser.add_argument('--without-acceptance-fixes', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-source-model-') as temporary:
         target = Path(temporary)
         exclude = (('mixxx-source-tap.patch',) if args.without_source_tap else ()) + \
-            (('mixxx-bpm-lock-touch.patch',) if args.without_bpm_lock_touch else ())
+            (('mixxx-bpm-lock-touch.patch',) if args.without_bpm_lock_touch else ()) + \
+            (('mixxx-acceptance-fixes.patch',) if args.without_acceptance_fixes else ())
         reconstruct(target, exclude=exclude)
         populate_pinned(target, ['src/' + name for name in ('library/treeitem.h', 'library/treeitem.cpp',
                      'library/treeitemmodel.h', 'library/treeitemmodel.cpp',

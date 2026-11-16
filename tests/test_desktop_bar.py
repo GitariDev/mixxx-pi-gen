@@ -185,3 +185,39 @@ class SessionStartStageTests(unittest.TestCase):
         portal.optionxform = str
         portal.read(ROOT / 'stage3/02-desktop/files/xdg-desktop-portal-sway.conf')
         self.assertEqual(dict(portal['preferred']), {'default': 'gtk'})
+
+
+class SettingsButtonStateTests(unittest.TestCase):
+    """Acceptance finding 5 (F-14): after Show top bar, Hide top bar stayed grey.
+
+    The skin binds the button's enabled state to [MixPi],desktop_bar_available
+    and its label to [MixPi],desktop_bar. Before mixxx-acceptance-fixes.patch
+    every 5 s status poll set desktop_bar_available to 0 while the label kept
+    "Hide top bar". The native check is the desktop_bar scenario in
+    tests/test_performance_settings.py; this one pins the text of both sides.
+    """
+
+    def added_lines(self):
+        patch = (ROOT / 'stage3/01-install-packages/files/mixxx-acceptance-fixes.patch').read_text()
+        section = patch[patch.index('diff --git a/src/widget/mixpiperformancesettings.h'):]
+        end = section.find('\ndiff --git', 1)
+        section = section if end < 0 else section[:end]
+        return section, [line[1:] for line in section.splitlines()
+                         if line.startswith('+') and not line.startswith('+++')]
+
+    def test_status_poll_no_longer_lowers_availability(self):
+        section, added = self.added_lines()
+        removed = [line[1:].strip() for line in section.splitlines()
+                   if line.startswith('-') and not line.startswith('---')]
+        self.assertIn('m_barAvailable->set(0);', removed)
+        text = '\n'.join(added)
+        self.assertIn('if (changing) {\n            m_barAvailable->set(0);\n'
+                      '            m_bar->setAndConfirm(2);\n        }', text)
+        # A tap during a poll is kept and run when the poll ends.
+        self.assertIn('m_barRequested = true;', text)
+        self.assertIn('if (requested && valid) {', text)
+
+    def test_skin_binds_label_and_enabled_state_to_the_two_controls(self):
+        generator = (ROOT / 'stage3/01-install-packages/files/mixpi-performance.py').read_text()
+        self.assertIn("connection(bar, '[MixPi],desktop_bar_available', bind='enabled')", generator)
+        self.assertIn("state_labels=('Show top bar', 'Hide top bar', 'Checking top bar…',", generator)

@@ -60,6 +60,10 @@ class MediaTransferDisplayTests(unittest.TestCase):
             compiled = subprocess.run(command, capture_output=True, text=True, timeout=90)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
             environment = qt_environment()
+            files = ROOT / 'stage3/01-install-packages/files'
+            environment['MIXPI_SKIN_QSS'] = ':'.join(
+                str(files / name) for name in ('pioneered-menus.qss', 'pioneered-touch.qss',
+                                               'mixpi-performance.qss'))
             result = subprocess.run([str(executable), *(['holdout'] if holdout else [])],
                                     env=environment, capture_output=True, text=True, timeout=30)
             print(result.stdout, result.stderr, flush=True)

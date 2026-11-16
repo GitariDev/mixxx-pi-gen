@@ -2,7 +2,9 @@
 #include <QAbstractItemModelTester>
 #include <QMouseEvent>
 #include <QPersistentModelIndex>
+#include <QHeaderView>
 #include <QPointer>
+#include <QScrollBar>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
@@ -241,6 +243,59 @@ void touchSidebarChecks() {
                     highlighted(model.getFeatureRootIndex(&c)),
             "synthetic touch tap opens one source and highlights it");
 }
+// F-6 (acceptance finding 6): the touch Sources list has no horizontal scroll
+// bar, so it does not take a row; long names elide. The vertical scroll bar
+// stays. The desktop (non-touch) sidebar keeps the pinned behaviour.
+void sidebarWidthChecks() {
+    const QString longName = QStringLiteral("REKORDBOX (MANTACORE) with a source name far too long for the pane");
+    std::vector<std::unique_ptr<LibraryFeature>> features;
+    SidebarModel model;
+    features.push_back(std::make_unique<LibraryFeature>(longName));
+    for (int index = 0; index < 11; ++index) {
+        features.push_back(std::make_unique<LibraryFeature>(QStringLiteral("SOURCE %1").arg(index)));
+    }
+    for (auto& feature : features) {
+        model.addLibraryFeature(feature.get());
+    }
+    auto build = [&](WLibrarySidebar& sidebar, bool touch) {
+        sidebar.setModel(&model);
+        if (touch) {
+            sidebar.enableTouchNavigation();
+        }
+        sidebar.resize(288, 160);
+        sidebar.show();
+        QApplication::processEvents();
+    };
+    WLibrarySidebar desktop;
+    build(desktop, false);
+    std::cout << "OBSERVE desktop Sources column " << desktop.header()->sectionSize(0)
+              << " px in a " << desktop.viewport()->width() << " px viewport, horizontal max "
+              << desktop.horizontalScrollBar()->maximum() << std::endl;
+    require(desktop.horizontalScrollBarPolicy() == Qt::ScrollBarAsNeeded &&
+                    desktop.horizontalScrollBar()->maximum() > 0,
+            "desktop Sources list keeps the pinned horizontal scrolling for a long name");
+    WLibrarySidebar sidebar;
+    build(sidebar, true);
+    const QModelIndex longIndex = model.getFeatureRootIndex(features.front().get());
+    std::cout << "OBSERVE touch Sources column " << sidebar.header()->sectionSize(0)
+              << " px in a " << sidebar.viewport()->width() << " px viewport, horizontal bar "
+              << (sidebar.horizontalScrollBar()->isVisible() ? "shown" : "hidden")
+              << ", long row right edge " << sidebar.visualRect(longIndex).right() << std::endl;
+    require(sidebar.horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOff &&
+                    !sidebar.horizontalScrollBar()->isVisible(),
+            "touch Sources list has no horizontal scroll bar");
+    require(sidebar.header()->sectionSize(0) <= sidebar.viewport()->width() &&
+                    sidebar.visualRect(longIndex).right() < sidebar.viewport()->width(),
+            "touch Sources column fits the list width, so a long name elides");
+    require(sidebar.verticalScrollBarPolicy() != Qt::ScrollBarAlwaysOff &&
+                    sidebar.verticalScrollBar()->isVisible() &&
+                    sidebar.verticalScrollBar()->maximum() > 0,
+            "touch Sources list keeps its vertical scroll bar");
+    const int before = sidebar.verticalScrollBar()->value();
+    sidebar.verticalScrollBar()->setValue(sidebar.verticalScrollBar()->maximum());
+    require(sidebar.verticalScrollBar()->value() > before, "the vertical scroll bar still scrolls the list");
+}
+
 // F-7 follow-up: the real BPMDelegate (CheckboxDelegate) on a BPM cell whose
 // check state is bpm_lock, as in BaseTrackTableModel.
 struct BpmProbe : BPMDelegate {
@@ -577,6 +632,7 @@ int main(int argc, char** argv) {
             "actual skin-load hidden default uses visible fallback and retains preference");
     bpmLockChecks();
     touchSidebarChecks();
+    sidebarWidthChecks();
     return failures ? 1 : 0;
 #endif
 }

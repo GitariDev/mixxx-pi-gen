@@ -61,6 +61,38 @@ class LibraryInterfacePatchTests(unittest.TestCase):
                       'and Space leave bpm_lock unchanged', result.stdout)
         self.assertIn('FAIL BPM touch: no lock check box is drawn', result.stdout)
 
+    @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+    def test_native_sources_width_checks_fail_without_acceptance_fixes(self):
+        # F-6 (acceptance finding 6): without mixxx-acceptance-fixes.patch the
+        # touch Sources list shows a horizontal scroll bar for a long name.
+        result = subprocess.run(['python3', str(ROOT / 'tests/native/library_interface_sources_runner.py'),
+                                 '--without-acceptance-fixes'], capture_output=True, text=True, timeout=150)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAIL touch Sources list has no horizontal scroll bar', result.stdout)
+        self.assertIn('PASS desktop Sources list keeps the pinned horizontal scrolling for a long name',
+                      result.stdout)
+        self.assertIn('PASS touch Sources list keeps its vertical scroll bar', result.stdout)
+
+    @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+    def test_arrange_label_check_fails_without_the_item_background(self):
+        # F-9 (acceptance check 10): the menu style without the item
+        # background (as in build 1) paints unselected labels under the box.
+        # The style geometry cannot see it; the grab check must.
+        style = (RUNNER.PATCH_DIR / 'pioneered-menus.qss').read_text()
+        rule = re.search(r'#MixpiColumnArrangement QListWidget::item \{[^}]*\}', style)[0]
+        self.assertIn('background-color: #17191f;', rule)
+        with tempfile.TemporaryDirectory(prefix='mixpi-menus-qss-') as temporary:
+            build1 = Path(temporary) / 'pioneered-menus.qss'
+            build1.write_text(style.replace(rule, rule.replace('    background-color: #17191f;\n', '')))
+            result = subprocess.run(['python3', str(ROOT / 'tests/native/library_interface_runner.py'),
+                                     '--menus-qss', str(build1)],
+                                    capture_output=True, text=True, timeout=150)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('PASS style geometry: every Arrange label starts right of its check box',
+                      result.stdout)
+        self.assertIn('FAIL painted pixels: no Arrange check box covers its label, checked or not',
+                      result.stdout)
+
     def test_bpm_lock_patch_is_small_and_gated_on_touch_navigation(self):
         patch = (RUNNER.PATCH_DIR / 'mixxx-bpm-lock-touch.patch').read_text()
         self.assertEqual(re.findall(r'^diff --git a/(\S+) b/\S+$', patch, re.MULTILINE),

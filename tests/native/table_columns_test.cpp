@@ -1,6 +1,7 @@
 // F-7/F-8: Browse defaults, stretch and header persistence through the real
 // WTrackTableViewHeader, ProxyTrackModel, BrowseTableModel and SettingsDAO.
 #include <QApplication>
+#include <QCheckBox>
 #include <QDialog>
 #include <QListWidget>
 #include <QSqlDatabase>
@@ -250,6 +251,11 @@ int main(int argc, char** argv) {
     const QList<int> arranged = visibleOrder(header);
     printOrder("browse after Arrange adds Artist", header);
     require(arranged.contains(COLUMN_ARTIST), "Arrange shows Artist in Browse");
+    // F-8 (acceptance finding 4): the added column was 26 px, only "A" showed.
+    std::cout << "OBSERVE Artist width after Arrange " << header->sectionSize(COLUMN_ARTIST)
+              << " px" << std::endl;
+    require(header->sectionSize(COLUMN_ARTIST) >= 160, // LibraryInterface::kStretchColumnMinimumWidth
+            "a column added in Arrange gets a readable width (at least 160 px)");
     require(!settingsRow(browseRow).isEmpty(), "Arrange change writes the Browse settings row");
     require(visibleWidth(header) == width, "Browse columns still fill 770 px after Arrange");
     view->loadTrackModel(&library);
@@ -257,6 +263,12 @@ int main(int argc, char** argv) {
     header = view->header();
     printOrder("browse after Arrange and switch back", header);
     require(visibleOrder(header) == arranged, "Arrange order survives a model switch and a switch back");
+
+    // A deliberate width is saved and restored, not reset to the floor.
+    header->resizeSection(COLUMN_ARTIST, 210);
+    QApplication::processEvents();
+    require(header->sectionSize(COLUMN_ARTIST) == 210 && visibleWidth(header) == width,
+            "Artist resized to 210 px; Filename still takes the rest");
 
     // Restart: a new view restores the saved row.
     view.reset();
@@ -271,6 +283,37 @@ int main(int argc, char** argv) {
     require(visibleOrder(header) == arranged, "Arrange order survives a restart");
     require(takesRest(header, COLUMN_FILENAME) && visibleWidth(header) == width,
             "restored Browse columns stretch Filename and fill 770 px");
+    std::cout << "OBSERVE Artist width after restart " << header->sectionSize(COLUMN_ARTIST)
+              << " px" << std::endl;
+    require(header->sectionSize(COLUMN_ARTIST) == 210, "saved Artist width (210 px) is restored after a restart");
+    {
+        auto* dialog = arrange(view.get());
+        check(dialog->findChild<QListWidget*>(), QStringLiteral("Artist"), false);
+        check(dialog->findChild<QListWidget*>(), QStringLiteral("Artist"), true);
+        dialog->close();
+    }
+    QApplication::processEvents();
+    require(header->sectionSize(COLUMN_ARTIST) == 210,
+            "hiding and showing Artist again keeps its 210 px width");
+    // The header context menu path (showOrHideColumn) uses the same floor.
+    QCheckBox* albumChoice = nullptr;
+    for (auto* choice : header->findChildren<QCheckBox*>()) {
+        if (choice->text() == QStringLiteral("Album")) {
+            albumChoice = choice;
+        }
+    }
+    require(albumChoice && !albumChoice->isChecked(), "header menu offers hidden Album");
+    if (albumChoice) {
+        albumChoice->setChecked(true);
+        QApplication::processEvents();
+        std::cout << "OBSERVE Album width from the header menu " << header->sectionSize(COLUMN_ALBUM)
+                  << " px" << std::endl;
+        require(!header->isSectionHidden(COLUMN_ALBUM) && header->sectionSize(COLUMN_ALBUM) >= 160,
+                "a column shown from the header menu gets a readable width");
+        albumChoice->setChecked(false);
+        QApplication::processEvents();
+    }
+    require(visibleWidth(header) == width, "Browse columns fill 770 px after the menu changes");
 
     // Hide Filename: the fallback still fills the viewport.
     {

@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QFile>
 #include <QLabel>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -151,6 +152,43 @@ int main(int argc, char** argv) {
                 "holdout concurrent jobs explicitly labeled");
         check(activityText(registry.observe("unused"), {}).contains("This does not mean it is safe to remove."),
                 "holdout idle and no history never grant removal authority");
+    }
+    // F-10 (acceptance finding 7): every Load/Eject button is a 48 px touch
+    // target, shown on its own and under a window with the MixPi skin styles.
+    auto buttonHeights = [&](QDialog& shown, const char* where) {
+        shown.show();
+        application.processEvents();
+        bool tall = true;
+        for (auto* button : shown.findChildren<QPushButton*>()) {
+            std::cout << "OBSERVE " << where << ' ' << button->text().toStdString() << ' '
+                      << button->height() << " px\n";
+            tall = tall && button->height() >= 48;
+        }
+        return tall && shown.findChildren<QPushButton*>().size() == 5;
+    };
+    check(buttonHeights(dialog, "dialog"), "every Load/Eject button is at least 48 px high");
+    dialog.hide();
+    QWidget host;
+    QString skinStyle;
+    for (const auto& path : qEnvironmentVariable("MIXPI_SKIN_QSS").split(':', Qt::SkipEmptyParts)) {
+        QFile file(path);
+        check(file.open(QIODevice::ReadOnly), "MixPi skin style file readable");
+        skinStyle += QString::fromUtf8(file.readAll()) + '\n';
+    }
+    check(!skinStyle.isEmpty(), "MixPi skin styles loaded");
+    host.setStyleSheet(skinStyle);
+    host.resize(800, 444);
+    host.show();
+    {
+        MixpiMediaDialog styled(&host,
+                [snapshot](MixpiMediaDialog::Receive receive) { receive(snapshot); },
+                [](const QJsonObject&, QObject*, std::function<void(QString)>) {
+                    return MixpiMediaDialog::Cancel{};
+                }, [](bool, QString) {}, std::make_shared<QSet<QString>>());
+        styled.setAttribute(Qt::WA_DeleteOnClose, false);
+        check(buttonHeights(styled, "skin"), "every Load/Eject button is at least 48 px high under the skin styles");
+        check(!styled.findChild<QPushButton*>("mediaEject")->isEnabled(),
+                "Eject stays disabled with controlled media off");
     }
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures ? 1 : 0;

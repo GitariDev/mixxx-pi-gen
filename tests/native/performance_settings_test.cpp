@@ -1,6 +1,9 @@
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QTimer>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -264,6 +267,56 @@ void bufferMapping(Fixture& fixture) {
     fixture.unchangedSetters();
 }
 
+// F-14: Settings > Show/Hide top bar with a fake mixpi-desktop-bar (the
+// runner points the helper path at it). The 5 s status poll must not make
+// the button unavailable, and a tap during a poll still runs after it.
+bool waitFor(const std::function<bool()>& condition, int milliseconds) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!condition() && timer.elapsed() < milliseconds) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    return condition();
+}
+
+void desktopBar(Fixture& f) {
+    auto state = [&] { return f.get("desktop_bar"); };
+    auto available = [&] { return f.get("desktop_bar_available"); };
+    require(waitFor([&] { return available() == 1 && state() == 0; }, 5000),
+            "first status poll: hidden (Show top bar) and available");
+    f.request("desktop_bar", 1);
+    require(state() == 2 && available() == 0, "Show: Checking top bar, unavailable while it runs");
+    require(waitFor([&] { return available() == 1 && state() == 1; }, 5000),
+            "Show confirmed: Hide top bar and available together");
+    QTimer* poll = nullptr;
+    for (auto* timer : f.settings->findChildren<QTimer*>()) {
+        if (timer->interval() == 5000) poll = timer;
+    }
+    require(poll, "the 5 s status poll timer exists");
+    qputenv("MIXPI_FAKE_BAR_DELAY", "1");
+    QMetaObject::invokeMethod(poll, "timeout", Qt::DirectConnection);
+    bool steady = true;
+    QElapsedTimer during;
+    during.start();
+    while (during.elapsed() < 400) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        steady = steady && state() == 1 && available() == 1;
+    }
+    std::cout << "OBSERVE during the status poll: state " << state() << " available "
+              << available() << '\n';
+    require(steady, "a status poll keeps Hide top bar available (no grey button)");
+    f.request("desktop_bar", 1);
+    require(state() == 1, "a tap during a status poll waits for the poll");
+    qputenv("MIXPI_FAKE_BAR_DELAY", "0");
+    require(waitFor([&] { return available() == 1 && state() == 0; }, 8000),
+            "the tap made during the poll hides the bar after the poll");
+    QFile calls(qEnvironmentVariable("MIXPI_FAKE_BAR_DIR") + "/calls");
+    require(calls.open(QIODevice::ReadOnly), "fake helper call log readable");
+    const QString log = QString::fromUtf8(calls.readAll());
+    std::cout << "OBSERVE helper calls: " << log.simplified().toStdString() << '\n';
+    require(log.endsWith("show\nstatus\nhide\n"), "helper ran show, status, then hide");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     const QString scenario = argc > 1 ? argv[1] : "initial";
@@ -296,6 +349,8 @@ int main(int argc, char** argv) {
                 buffer(f);
             } else if (scenario == "buffer_mapping") {
                 bufferMapping(f);
+            } else if (scenario == "desktop_bar") {
+                desktopBar(f);
             } else if (scenario == "startup") {
                 for (auto value : {2, 8, 24}) f.request("read_ahead", value);
                 for (auto value : {0, 512, 1024}) f.request("cache_mb", value);

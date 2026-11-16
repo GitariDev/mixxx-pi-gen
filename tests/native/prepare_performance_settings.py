@@ -20,19 +20,28 @@ FILES = [
 ]
 
 
-def prepare(source, output):
+HELPER = 'QStringLiteral("/usr/local/bin/mixpi-desktop-bar")'
+# The only change to the shipping header: the top-bar helper path can point at
+# a fake helper (MIXPI_DESKTOP_BAR_HELPER); unset, it is the installed path.
+HELPER_DOUBLE = ('qEnvironmentVariable("MIXPI_DESKTOP_BAR_HELPER", '
+                 'QStringLiteral("/usr/local/bin/mixpi-desktop-bar"))')
+
+
+def prepare(source, output, exclude=()):
     output.mkdir(parents=True, exist_ok=True)
     os.environ['MIXXX_TEST_SOURCE'] = str(source.resolve())
     with tempfile.TemporaryDirectory(prefix='mixpi-settings-source-') as temporary:
         current = Path(temporary)
-        reconstruct(current)
+        reconstruct(current, exclude=exclude)
         populate_pinned(current, ['src/' + name for name in FILES])
         for name in FILES:
             target = output / 'production' / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((current / 'src' / name).read_bytes())
-        (output / 'mixpiperformancesettings.h').write_bytes(
-            (current / 'src/widget/mixpiperformancesettings.h').read_bytes())
+        header = (current / 'src/widget/mixpiperformancesettings.h').read_text()
+        if header.count(HELPER) != 1:
+            raise RuntimeError('expected one desktop-bar helper path in the shipping header')
+        (output / 'mixpiperformancesettings.h').write_text(header.replace(HELPER, HELPER_DOUBLE))
     here = Path(__file__).resolve().parent
     for name in ('performance_settings_stubs.h', 'performance_settings_test.cpp',
                  'performance_settings_window.h'):
@@ -68,5 +77,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--exclude', action='append', default=[],
+                        help='leave this patch out (evidence runs only)')
     args = parser.parse_args()
-    prepare(args.source, args.output)
+    prepare(args.source, args.output, tuple(args.exclude))

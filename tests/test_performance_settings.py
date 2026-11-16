@@ -75,6 +75,24 @@ class PreferencesEntryTests(unittest.TestCase):
         self.assertIn('preferences->setAndConfirm(0);', source)
 
 
+# Prints what mixpi-desktop-bar prints; "status" can be slow, as on the Pi.
+FAKE_DESKTOP_BAR = '''#!/bin/sh
+echo "$1" >> "$MIXPI_FAKE_BAR_DIR/calls"
+state=$(cat "$MIXPI_FAKE_BAR_DIR/state" 2>/dev/null || echo hidden)
+case "$1" in
+    show) state=visible ;;
+    hide) state=hidden ;;
+    status) sleep "${MIXPI_FAKE_BAR_DELAY:-0}" ;;
+esac
+echo "$state" > "$MIXPI_FAKE_BAR_DIR/state"
+if [ "$state" = visible ]; then
+    echo '{"visible": true, "reserved_px": 36, "error": ""}'
+else
+    echo '{"visible": false, "reserved_px": 0, "error": ""}'
+fi
+'''
+
+
 class NativePerformanceSettingsTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get('MIXXX_TEST_SOURCE'), 'pinned source required')
     def test_pinned_main_window_preferences_slot_is_public(self):
@@ -122,6 +140,19 @@ class NativePerformanceSettingsTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 print(result.stdout.strip())
+            # F-14: Show/Hide top bar against a fake helper (process double only).
+            fake = target / 'fake-bar'
+            fake.mkdir()
+            helper = fake / 'mixpi-desktop-bar'
+            helper.write_text(FAKE_DESKTOP_BAR)
+            helper.chmod(0o755)
+            result = subprocess.run([str(target / 'settings-test'), 'desktop_bar'],
+                                    env=dict(environment, MIXPI_DESKTOP_BAR_HELPER=str(helper),
+                                             MIXPI_FAKE_BAR_DIR=str(fake)),
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('PASS desktop_bar', result.stdout)
+            print(result.stdout.strip())
 
 
 if __name__ == '__main__':

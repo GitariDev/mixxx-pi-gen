@@ -29,6 +29,7 @@ MIXXX_PATCHES=(
     mixxx-table-columns.patch
     mixxx-touch-dialogs.patch
     mixxx-bpm-lock-touch.patch
+    mixxx-acceptance-fixes.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

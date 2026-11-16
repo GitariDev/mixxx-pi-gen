@@ -52,7 +52,12 @@ QMenu QCheckBox::indicator:checked {
     border: 1px solid #596171;
     outline: none;
 }
+/* The background makes the item rule drawable for every row. Without it,
+ * Qt hands unselected rows to the base style, which lays the text out for
+ * its own small indicator, so the 28 px box covered the first letters
+ * (qstylesheetstyle.cpp CE_ItemViewItem, hasDrawable() branch; F-9). */
 #MixpiColumnArrangement QListWidget::item {
+    background-color: #17191f;
     min-height: 48px;
     padding: 0px 8px;
 }

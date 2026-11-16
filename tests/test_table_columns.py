@@ -37,6 +37,19 @@ class TableColumnsNativeTests(unittest.TestCase):
         # The row itself is written on a model switch even before the fix.
         self.assertIn('PASS model switch writes mixxx.db.model.browse.header_state_pb', result.stdout)
 
+    @unittest.skipUnless(native_ready(), 'Qt6 and protobuf development tools required')
+    def test_width_checks_fail_without_acceptance_fixes(self):
+        # Acceptance finding 4 (F-8): without the fix an added column keeps
+        # its 0 px saved width and is drawn at the minimum section size.
+        result = subprocess.run(['python3', str(RUNNER), '--without-acceptance-fixes'],
+                                capture_output=True, text=True, timeout=600)
+        self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr[-4000:])
+        self.assertIn('WITHOUT_ACCEPTANCE_FIXES_FAILS', result.stdout)
+        self.assertIn('FAIL a column added in Arrange gets a readable width (at least 160 px)',
+                      result.stdout)
+        self.assertIn('FAIL a column shown from the header menu gets a readable width', result.stdout)
+        self.assertIn('PASS saved Artist width (210 px) is restored after a restart', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

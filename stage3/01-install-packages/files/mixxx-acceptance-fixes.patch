@@ -1,0 +1,207 @@
+diff --git a/src/library/mixpimediadialog.h b/src/library/mixpimediadialog.h
+index 9fc8ea7..b51e49d 100644
+--- a/src/library/mixpimediadialog.h
++++ b/src/library/mixpimediadialog.h
+@@ -18,6 +18,7 @@
+ 
+ class MixpiMediaDialog final : public QDialog {
+   public:
++    static constexpr int kTouchButtonHeight = 48;
+     using Receive = std::function<void(QJsonObject)>;
+     using Observe = std::function<void(Receive)>;
+     using Cancel = std::function<void()>;
+@@ -82,7 +83,8 @@ class MixpiMediaDialog final : public QDialog {
+         m_close->setObjectName("mediaClose");
+         for (auto* button : {m_refresh, m_load, m_mount, m_eject, m_close}) {
+             button->setAutoDefault(false);
+-            button->setMinimumHeight(44);
++            // Touch target: at least 48 px, like the Arrange dialog buttons.
++            button->setMinimumHeight(kTouchButtonHeight);
+         }
+         for (auto* button : {m_refresh, m_load, m_mount, m_eject}) {
+             actions->addWidget(button);
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+index cacf77d..41ad1c2 100644
+--- a/src/widget/libraryinterface.h
++++ b/src/widget/libraryinterface.h
+@@ -188,6 +188,22 @@ inline void stretchColumn(QHeaderView* header, int column) {
+     }
+ }
+ 
++// A hidden column the user shows (Arrange or the header menu) gets a readable
++// width, with the same floor as the stretch column. A hidden column that was
++// never shown has a saved width of 0, which restores to the minimum section
++// size (about 26 px: only "A" of Artist is left). A column that was shown
++// wider keeps its width. Visible columns are not touched, and restoreState()
++// still restores saved widths.
++inline void showColumnReadable(QHeaderView* header, int column) {
++    if (!header->isSectionHidden(column)) {
++        return;
++    }
++    header->setSectionHidden(column, false);
++    if (header->sectionSize(column) < kStretchColumnMinimumWidth) {
++        header->resizeSection(column, kStretchColumnMinimumWidth);
++    }
++}
++
+ inline void rememberColumnWidths(QHeaderView* header, QMap<int, int>* widths) {
+     QObject::connect(header, &QHeaderView::sectionResized, header,
+             [widths](int column, int, int width) {
+@@ -242,7 +258,11 @@ inline QDialog* arrangeColumns(QHeaderView* header, const QList<int>& available,
+             auto* item = list->item(row);
+             const int column = item->data(Qt::UserRole).toInt();
+             header->moveSection(header->visualIndex(column), row);
+-            header->setSectionHidden(column, item->checkState() != Qt::Checked);
++            if (item->checkState() != Qt::Checked) {
++                header->setSectionHidden(column, true);
++            } else {
++                showColumnReadable(header, column);
++            }
+         }
+         save();
+     };
+diff --git a/src/widget/mixpiperformancesettings.h b/src/widget/mixpiperformancesettings.h
+index 1fa61e9..a41a246 100644
+--- a/src/widget/mixpiperformancesettings.h
++++ b/src/widget/mixpiperformancesettings.h
+@@ -91,7 +91,12 @@ class MixpiPerformanceSettings : public QObject {
+         m_bar->setAndConfirm(3);
+         m_bar->connectValueChangeRequest(this, [this](double v) {
+             if (v == 1 && m_barAvailable->get() == 1) {
+-                desktopBar(m_bar->get() == 1 ? "hide" : "show");
++                if (m_barProcess) {
++                    // A status poll is running: show or hide when it ends.
++                    m_barRequested = true;
++                } else {
++                    desktopBar(m_bar->get() == 1 ? "hide" : "show");
++                }
+             }
+         });
+         auto* barTimer = new QTimer(this);
+@@ -231,8 +236,14 @@ class MixpiPerformanceSettings : public QObject {
+             return;
+         }
+         const bool changing = QByteArray(action) != "status";
+-        m_barAvailable->set(0);
+-        if (changing) m_bar->setAndConfirm(2);
++        // Only a show or hide makes the button unavailable ("Checking top
++        // bar…"). The 5 s status poll leaves it as it is: it used to drop
++        // desktop_bar_available to 0 on every poll, so the button looked
++        // disabled under the shown state label (F-14).
++        if (changing) {
++            m_barAvailable->set(0);
++            m_bar->setAndConfirm(2);
++        }
+         auto* process = new QProcess(this);
+         m_barProcess = process;
+         auto* timeout = new QTimer(process);
+@@ -243,6 +254,7 @@ class MixpiPerformanceSettings : public QObject {
+             m_bar->setAndConfirm(3);
+             m_barAvailable->set(0);
+             m_barProcess = nullptr;
++            m_barRequested = false;
+             process->deleteLater();
+         });
+         connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+@@ -260,6 +272,11 @@ class MixpiPerformanceSettings : public QObject {
+                     result.value("error").toString(tr("The desktop helper failed or timed out. No visibility change was confirmed.")));
+             m_barProcess = nullptr;
+             process->deleteLater();
++            const bool requested = m_barRequested;
++            m_barRequested = false;
++            if (requested && valid) {
++                desktopBar(visible.toBool() ? "hide" : "show");
++            }
+         });
+         process->start(helper, {QString::fromLatin1(action)});
+         timeout->start(12000);
+@@ -279,4 +296,5 @@ class MixpiPerformanceSettings : public QObject {
+     QProcess* m_barProcess = nullptr;
+     bool m_changing = false;
+     bool m_preferencesQueued = false;
++    bool m_barRequested = false;
+ };
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index cd684ce..e7d9f2b 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -43,6 +43,14 @@ void WLibrarySidebar::enableTouchNavigation() {
+         return;
+     }
+     m_sourceCanGoBack->set(0);
++    // Touch: the one column fits the list width and long names elide, so no
++    // horizontal scroll bar takes a row. The vertical scroll bar stays.
++    // fitTouchColumn() sets the width on each layout. (QHeaderView::Stretch
++    // does not work here: the header is hidden and gets no resize events.)
++    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    setTextElideMode(Qt::ElideRight);
++    header()->setSectionResizeMode(QHeaderView::Fixed);
++    header()->setMinimumSectionSize(0);
+     m_touchNavigation = new TouchSourceNavigation(this);
+     m_touchNavigation->requestChildren = [this](const QModelIndex& index) {
+         emit expanded(index);
+@@ -62,6 +70,19 @@ void WLibrarySidebar::enableTouchNavigation() {
+     connect(this, &QObject::destroyed, QCoreApplication::instance(), [] {
+         QCoreApplication::instance()->setProperty("mixpiTouchNavigation", QVariant());
+     });
++    fitTouchColumn();
++}
++
++void WLibrarySidebar::fitTouchColumn() {
++    if (m_touchNavigation && header()->count() > 0 &&
++            header()->sectionSize(0) != viewport()->width()) {
++        header()->resizeSection(0, viewport()->width());
++    }
++}
++
++void WLibrarySidebar::updateGeometries() {
++    QTreeView::updateGeometries();
++    fitTouchColumn();
+ }
+ 
+ void WLibrarySidebar::returnToSourceRoot() {
+@@ -557,7 +578,14 @@ bool WLibrarySidebar::event(QEvent* pEvent) {
+         // Though we can listen to LayoutRequest and adjust the headers minimum
+         // section size to viewport width (-1 for section separator?).
+         // This event occurs after Show, Resize or model data change.
+-        header()->setMinimumSectionSize(viewport()->width() - 1);
++        if (m_touchNavigation) {
++            // Touch: the column is exactly as wide as the list instead
++            // (fitTouchColumn()). This minimum lags one layout behind a
++            // resize and would hold the column at the old, wider width.
++            fitTouchColumn();
++        } else {
++            header()->setMinimumSectionSize(viewport()->width() - 1);
++        }
+     }
+     return QTreeView::event(pEvent);
+ }
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index 755e934..a353ee2 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -50,8 +50,11 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+ 
+   protected:
+     bool event(QEvent* pEvent) override;
++    // Touch navigation: keeps the one column as wide as the list.
++    void updateGeometries() override;
+ 
+   private:
++    void fitTouchColumn();
+     void focusSelectedIndex();
+     QModelIndex selectedIndex();
+ 
+diff --git a/src/widget/wtracktableviewheader.cpp b/src/widget/wtracktableviewheader.cpp
+index a89e6a9..1121418 100644
+--- a/src/widget/wtracktableviewheader.cpp
++++ b/src/widget/wtracktableviewheader.cpp
+@@ -403,7 +403,7 @@ void WTrackTableViewHeader::showOrHideColumn(int column) {
+     }
+     QCheckBox* pCheckBox = it.value();
+     if (pCheckBox->isChecked()) {
+-        showSection(column);
++        LibraryInterface::showColumnReadable(this, column);
+         VERIFY_OR_DEBUG_ASSERT(sectionSize(column) >= WTTVH_MINIMUM_SECTION_SIZE) {
+             resizeSection(column, WTTVH_MINIMUM_SECTION_SIZE);
+         }

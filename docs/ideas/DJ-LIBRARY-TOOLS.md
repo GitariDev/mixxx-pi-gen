@@ -11,6 +11,7 @@ as executable files.
 | --- | --- | --- | --- |
 | DJ-001 | Unreliable BPM/key metadata and inconsistent genres | Reviewed metadata written to music files, recognized by Rekordbox, and recoverable after later changes | Open; provider access and Rekordbox compatibility need verification |
 | DJ-002 | Incorrect beat positions, downbeats, and drifting grids | Analyze the actual local recording and import a corrected grid into Rekordbox | Open; benchmark and import prototype needed |
+| DJ-003 | Hot cues, loops and play history set on the Pi stay in Mixxx | Bring them back into Rekordbox after a gig | Backlog (owner, 2026-11-16): very nice to have; not designed |
 
 ## DJ-001: Enrich and manually correct track metadata
 
@@ -169,6 +170,26 @@ editing is required for the first prototype.
 - [ ] Imported XML preserves cues, loops, and playlists and works for both new and existing collection entries.
 - [ ] Grid results survive restart and attempted re-analysis with Analysis Lock enabled.
 - [ ] Batch processing can resume without redoing reviewed work or replacing manually corrected grids.
+
+## DJ-003: Write Pi hot cues, loops and play history back to Rekordbox
+
+**Owner request (2026-11-16, backlog):** after a gig, update Rekordbox with the
+loop points and hot cues set in Mixxx on the Pi, and with the play history.
+Owner rating: very nice to have.
+
+**Current state:** Mixxx reads the Rekordbox export on the USB drive read-only.
+It keeps cues, loops and history only in `~/.mixxx/mixxxdb.sqlite` on the SD
+card. `SyncTrackMetadataExport` and `SeratoMetadataExport` are 0, so nothing is
+written to the music files, to the drive or to Rekordbox.
+
+**Constraints already decided:** USB drives stay mounted read-write. The owner
+rejected read-only mounting, because this write-back and the recordings export
+both need write access.
+
+**Open questions for design:** Rekordbox XML import or the Rekordbox database;
+how to map Mixxx cue types and colours to Rekordbox hot cues and memory cues;
+history as a Rekordbox playlist; whether it runs on the Pi or on the Mac; how
+to protect cues the owner already set in Rekordbox.
 
 ## Shared build plan
 

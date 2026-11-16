@@ -209,6 +209,47 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual([state.findtext('Text') for state in combo.findall('State')],
                          ['Custom', '4%', '6%', '8%', '10%', '16%', '24%', '50%', '90%'])
         self.assertIn('[MixPi],desktop_bar', [key.text for key in basic.findall('.//ConfigKey')])
+        advanced = next(group for group in panel.findall('.//WidgetGroup')
+                        if group.findtext('ObjectName') == 'MixpiSettingsAdvanced')
+        buttons = {b.findtext('State/Text'): b for b in panel.findall('.//PushButton')}
+        # settings_advanced is a plain control: a two-state toggle sends 1 on
+        # every press, so both buttons must be explicit set-value push buttons.
+        for text, write in (('Advanced…', 'IsEqual'), ('Back', 'Not')):
+            b = buttons[text]
+            self.assertEqual(b.findtext('LeftClickIsPushButton'), 'true')
+            command = b.find('Connection')
+            self.assertEqual(command.findtext('ConfigKey'), '[MixPi],settings_advanced')
+            self.assertEqual(command.findtext('EmitOnDownPress'), 'true')
+            self.assertEqual(command.findtext('ConnectValueToWidget'), 'false')
+            self.assertIsNotNone(command.find('Transform/' + write))
+        self.assertEqual(buttons['Advanced…'].findtext('Connection/Transform/IsEqual'), '1')
+        self.assertIn(buttons['Advanced…'], list(basic.iter()))
+        self.assertIn(buttons['Back'], list(advanced.iter()))
+
+    # Controls that Mixxx itself creates as toggling ControlPushButtons. A
+    # two-state button on any other control sends 1 on every press (B1).
+    REAL_TOGGLES = ('keylock', 'quantize', 'sync_enabled', 'play', 'headSplit', 'enabled')
+
+    def toggle_offenders(self, root):
+        offenders = []
+        for b in root.findall('.//PushButton'):
+            if not b.findtext('ObjectName', '').startswith('Mixpi'):
+                continue  # copied unchanged from the patched Pioneered library.xml
+            if b.findtext('NumberStates') != '2' or b.findtext('LeftClickIsPushButton') == 'true':
+                continue
+            writes = [c.findtext('ConfigKey') for c in b.findall('Connection')
+                      if c.findtext('ConnectValueFromWidget') == 'true']
+            if len(writes) != 1 or writes[0].split(',', 1)[1] not in self.REAL_TOGGLES:
+                offenders.append((b.findtext('State/Text'), writes))
+        return offenders
+
+    def test_two_state_buttons_without_push_mode_target_real_toggles(self):
+        self.assertEqual(self.toggle_offenders(self.root), [])
+
+    def test_guard_catches_a_toggle_on_a_plain_control(self):
+        self.root.find('.//Children').append(SKIN.button('Back', '[MixPi],settings_advanced'))
+        self.assertEqual(self.toggle_offenders(self.root),
+                         [('Back', ['[MixPi],settings_advanced'])])
 
     def test_loop_intervals_retrigger_on_press_and_release(self):
         buttons=self.root.findall('.//PushButton')

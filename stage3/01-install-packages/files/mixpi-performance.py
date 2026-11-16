@@ -269,7 +269,9 @@ def settings():
         label('INTERFACE', '0me,28f'), bar,
         label('Desktop · Mixxx · Speaker', '0me,28f', 'MixpiSettingLabel'),
         label('Settings stays available to restore it.', '0me,28f', 'MixpiSettingLabel'),
-        button('Advanced…', '[MixPi],settings_advanced')])
+        # Explicit set-value buttons: settings_advanced is a plain control, so a
+        # two-state toggle would send 1 on every press and Back would do nothing.
+        preset('Advanced…', '[MixPi],settings_advanced', 1)])
     basic = group('MixpiSettingsBasic', 'horizontal', children=[playback, interface])
     connection(basic, '[MixPi],settings_advanced', transform='<Not/>', bind='visible')
     advanced = group('MixpiSettingsAdvanced', children=[
@@ -277,7 +279,7 @@ def settings():
         group('MixpiSettingsRow', 'horizontal', '0me,48f', [fps, ahead]),
         group('MixpiSettingsRow', 'horizontal', '0me,48f', [cache,
             label('* Next launch', '0me,48f', 'MixpiSettingLabel')]),
-        button('Back', '[MixPi],settings_advanced')])
+        preset('Back', '[MixPi],settings_advanced', 0)])
     connection(advanced, '[MixPi],settings_advanced', bind='visible')
     panel = group('MixpiSettings', 'stacked', children=[basic, advanced])
     connection(panel,'[MixPi],loop_deck',transform='<IsEqual>3</IsEqual>',bind='visible')

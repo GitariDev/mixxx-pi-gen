@@ -1,0 +1,41 @@
+diff --git a/src/widget/mixpiperformancesettings.h b/src/widget/mixpiperformancesettings.h
+index 4a038f6..59f23e4 100644
+--- a/src/widget/mixpiperformancesettings.h
++++ b/src/widget/mixpiperformancesettings.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <QDebug>
+ #include <QMessageBox>
+ #include <QFileInfo>
+ #include <QJsonDocument>
+@@ -68,6 +69,23 @@ class MixpiPerformanceSettings : public QObject {
+         advanced->connectValueChangeRequest(this, [advanced](double v) {
+             if (oneOf(v, {0, 1})) advanced->setAndConfirm(v);
+         });
++        // Open the native Preferences dialog from the touch skin. Queue the call so
++        // the dialog never opens inside the control request (touch press) handler.
++        // Requests made before the queued call runs share that one call.
++        auto* preferences = control("show_preferences");
++        preferences->connectValueChangeRequest(this, [this, preferences](double v) {
++            if (std::isfinite(v) && v > 0 && m_window && !m_preferencesQueued) {
++                m_preferencesQueued = true;
++                QMetaObject::invokeMethod(this, [this] {
++                    m_preferencesQueued = false;
++                    if (!QMetaObject::invokeMethod(m_window, "slotOptionsPreferences",
++                                Qt::DirectConnection)) {
++                        qWarning() << "MixPi: Preferences slot unavailable";
++                    }
++                }, Qt::QueuedConnection);
++            }
++            preferences->setAndConfirm(0);
++        });
+         m_bar = control("desktop_bar");
+         m_barAvailable = control("desktop_bar_available");
+         m_bar->setAndConfirm(3);
+@@ -260,4 +278,5 @@ class MixpiPerformanceSettings : public QObject {
+     ControlObject* m_barAvailable;
+     QProcess* m_barProcess = nullptr;
+     bool m_changing = false;
++    bool m_preferencesQueued = false;
+ };

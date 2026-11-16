@@ -47,6 +47,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-transfer-reporting.patch",
             "mixxx-transfer-display.patch",
             "mixxx-quiet-scan.patch",
+            "mixxx-preferences-entry.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -70,6 +71,7 @@ PREREQUISITES = {
     "mixxx-import-cancellation.patch": ["mixxx-media-continuation.patch"],
     "mixxx-transfer-reporting.patch": ["mixxx-media-selection.patch"],
     "mixxx-transfer-display.patch": ["mixxx-media-activity.patch"],
+    "mixxx-preferences-entry.patch": ["mixxx-performance-settings.patch"],
 }
 
 

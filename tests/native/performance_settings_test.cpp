@@ -1,4 +1,4 @@
-#include <QCoreApplication>
+#include <QApplication>
 #include <QEventLoop>
 #include <QTimer>
 #include <iostream>
@@ -9,6 +9,7 @@
 #include "control/controlobject.h"
 #include "control/controlproxy.h"
 #include "mixpiperformancesettings.h"
+#include "performance_settings_window.h"
 
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -29,7 +30,7 @@ struct Fixture {
         controls.push_back(std::move(control));
         return result;
     }
-    Fixture() {
+    explicit Fixture(QWidget* window = nullptr) {
         WaveformWidgetFactory::instance()->writes = 0;
         WaveformWidgetFactory::instance()->fps = 45;
         for (int i = 0; i != 2; ++i) {
@@ -53,7 +54,7 @@ struct Fixture {
         add("[Sampler1]", "play", 0);
         add("[PreviewDeck1]", "play", 0);
         add("[Recording]", "status", 0);
-        settings = std::make_unique<MixpiPerformanceSettings>(nullptr, config, &sound);
+        settings = std::make_unique<MixpiPerformanceSettings>(window, config, &sound);
     }
     double get(const char* item) { return ControlObject::get(ConfigKey("[MixPi]", item)); }
     void request(const char* item, double value) { ControlProxy("[MixPi]", item).set(value); }
@@ -124,7 +125,7 @@ void requests(Fixture& f) {
 }
 
 void invalid(Fixture& f) {
-    for (auto name : {"waveform_fps", "tempo_range", "tempo_range_index", "settings_advanced", "keylock_engine", "read_ahead", "cache_mb", "buffer_frames"}) {
+    for (auto name : {"waveform_fps", "tempo_range", "tempo_range_index", "settings_advanced", "keylock_engine", "read_ahead", "cache_mb", "buffer_frames", "show_preferences"}) {
         const double previous = f.get(name);
         for (double value : {-1., 3.5, 9999., std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
             f.request(name, value);
@@ -140,6 +141,47 @@ void invalid(Fixture& f) {
     require(f.get("settings_advanced") == 1, "refresh must retain Advanced page");
     f.request("settings_advanced", 0);
     require(f.get("settings_advanced") == 0, "Back must restore basic settings");
+}
+
+void preferences() {
+    PreferencesWindow window;
+    Fixture f(&window);
+    require(f.get("show_preferences") == 0, "Preferences request starts idle");
+    window.insideRequest = true;
+    f.request("show_preferences", 1);
+    window.insideRequest = false;
+    require(window.calls == 0 && f.get("show_preferences") == 0,
+            "request 1 must not open Preferences inside the press handler");
+    QCoreApplication::processEvents();
+    require(window.calls == 1 && !window.calledInsideRequest,
+            "request 1 opens Preferences once after the event loop runs");
+    QCoreApplication::processEvents();
+    require(window.calls == 1, "one request gives exactly one call");
+    f.request("show_preferences", 0);
+    QCoreApplication::processEvents();
+    require(window.calls == 1 && f.get("show_preferences") == 0, "request 0 gives no call");
+    for (double value : {-1., std::numeric_limits<double>::infinity(),
+                 -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
+        f.request("show_preferences", value);
+    }
+    QCoreApplication::processEvents();
+    require(window.calls == 1 && f.get("show_preferences") == 0, "invalid requests give no call");
+    // A double tap before the queued call runs shares that one call.
+    f.request("show_preferences", 1);
+    f.request("show_preferences", 1);
+    require(window.calls == 1, "quick requests still queued");
+    QCoreApplication::processEvents();
+    require(window.calls == 2, "two quick requests give one call, not two dialogs");
+    // A later tap, after the first call ran, is a new request.
+    f.request("show_preferences", 1);
+    QCoreApplication::processEvents();
+    require(window.calls == 3 && f.get("show_preferences") == 0, "later request is served");
+    // The settings object is destroyed with a request queued: no call afterwards.
+    f.request("show_preferences", 1);
+    f.settings.reset();
+    QCoreApplication::processEvents();
+    require(window.calls == 3, "queued request dropped with its settings object");
+    f.unchangedSetters();
 }
 
 void buffer(Fixture& f) {
@@ -223,11 +265,13 @@ void bufferMapping(Fixture& fixture) {
 }
 
 int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     const QString scenario = argc > 1 ? argv[1] : "initial";
     try {
         if (scenario == "semantics") {
             semantics();
+        } else if (scenario == "preferences") {
+            preferences();
         } else {
             qputenv("MIXPI_READAHEAD_CHUNKS", "8");
             qputenv("MIXPI_RAM_CACHE_MAX_MB", "1024");

@@ -7,16 +7,17 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from native.library_interface_runner import qt_available, qt_flags, qt_environment, moc_path, source_reference
+from native.library_interface_runner import (qt_available, qt_flags, qt_environment, moc_path, source_reference,
+                                             pinned_bytes)
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = ROOT / 'stage3/01-install-packages/files/mixxx-performance-settings.patch'
 
 
-def added_source(path):
+def added_source(path, patch=PATCH):
     active = False
     lines = []
-    for line in PATCH.read_text().splitlines():
+    for line in patch.read_text().splitlines():
         if line.startswith('diff --git '):
             active = line.endswith(' b/' + path)
         elif active and line.startswith('+') and not line.startswith('+++'):
@@ -63,7 +64,29 @@ class PerformanceSettingsTests(unittest.TestCase):
         self.assertIn('m_readAheadChunks * CachingReaderChunk::kFrames', source)
 
 
+class PreferencesEntryTests(unittest.TestCase):
+    def test_preferences_request_queues_the_main_window_slot(self):
+        source = added_source('src/widget/mixpiperformancesettings.h',
+                              ROOT / 'stage3/01-install-packages/files/mixxx-preferences-entry.patch')
+        self.assertIn('control("show_preferences")', source)
+        self.assertIn('std::isfinite(v) && v > 0 && m_window && !m_preferencesQueued', source)
+        self.assertIn('}, Qt::QueuedConnection);', source)
+        self.assertIn('QMetaObject::invokeMethod(m_window, "slotOptionsPreferences",', source)
+        self.assertIn('preferences->setAndConfirm(0);', source)
+
+
 class NativePerformanceSettingsTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get('MIXXX_TEST_SOURCE'), 'pinned source required')
+    def test_pinned_main_window_preferences_slot_is_public(self):
+        # The patch invokes this slot by name; moc only exposes declared slots.
+        header = pinned_bytes('src/mixxxmainwindow.h').decode()
+        self.assertIn('class MixxxMainWindow : public QMainWindow {\n    Q_OBJECT', header)
+        slots = header.index('  public slots:')
+        self.assertLess(slots, header.index('    void slotOptionsPreferences();'))
+        self.assertNotIn('  private', header[slots:header.index('    void slotOptionsPreferences();')])
+        self.assertNotIn('  protected', header[slots:header.index('    void slotOptionsPreferences();')])
+
+
     def test_real_qt_control_requests_and_publication(self):
         if not qt_available():
             self.skipTest('native Qt6 development dependencies required')
@@ -81,16 +104,20 @@ class NativePerformanceSettingsTests(unittest.TestCase):
                                 str(target / f'production/control/{name}.h'),
                                 '-o', str(target / f'production/control/moc_{name}.cpp')],
                                check=True, timeout=30)
+            subprocess.run([moc_path(), str(target / 'performance_settings_window.h'),
+                            '-o', str(target / 'moc_performance_settings_window.cpp')],
+                           check=True, timeout=30)
             command = ['c++', '-std=c++20', '-I' + str(target),
                        '-I' + str(target / 'doubles'), '-I' + str(target / 'production')]
-            command += [str(target / 'performance_settings_test.cpp')]
+            command += [str(target / 'performance_settings_test.cpp'),
+                        str(target / 'moc_performance_settings_window.cpp')]
             command += [str(target / f'production/control/{name}.cpp')
                         for name in ('control', 'controlobject', 'controlproxy')]
             command += ['-o', str(target / 'settings-test'), *qt_flags()]
             subprocess.run(command, check=True, timeout=90)
             environment = qt_environment()
             for scenario in ('initial', 'periodic', 'requests', 'invalid', 'buffer',
-                             'buffer_mapping', 'semantics', 'startup'):
+                             'buffer_mapping', 'semantics', 'startup', 'preferences'):
                 result = subprocess.run([str(target / 'settings-test'), scenario], env=environment,
                                         capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

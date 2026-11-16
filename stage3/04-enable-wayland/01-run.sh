@@ -34,3 +34,14 @@ EOF
 on_chroot << EOF
     systemctl --global disable waybar.service
 EOF
+
+# Appliance quieting, Tier 1 (F-13). There is no modem. ModemManager comes in
+# as a Recommends of network-manager (stage2/02-net-tweaks/00-packages); keeping
+# it out would mean installing network-manager without its other Recommends
+# (wpasupplicant, wireless-regdb), so mask the unit instead.
+# Nothing uses footclient (Settings and $term run plain `foot`), so the
+# foot-server socket and service the foot package enables are not needed.
+on_chroot << EOF
+    systemctl mask ModemManager.service
+    systemctl --global disable foot-server.socket foot-server.service
+EOF

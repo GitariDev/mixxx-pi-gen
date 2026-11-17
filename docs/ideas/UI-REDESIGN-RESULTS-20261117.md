@@ -100,3 +100,40 @@ Reports: `deploy/ui-redesign-20261117/council/round1-*.md`. Every code finding i
 - **The tuner:** record `mixpi-ui-redesign-20261117` revision 7 adds U-1 to U-10 and the spec as a source. The harness approved it on the owner's chat instruction of 19:13, which produced **revision 8**.
 - **Build C:** approved as the 4th pi-gen run. Any later build needs the owner's yes. Council rounds: 1 of 5 used.
 - **Next:** the climb continues in a new orchestrator thread, by the owner's "thread migrate" request.
+
+## Build C climb (orchestrator thread 2, from 2026-11-17 22:20)
+
+**Handoff:** tuner record `mixpi-ui-redesign-20261117` revision 8 (approved). Branch head `ef0874d`. Card: build B, Mixxx on DECKS, 66.2 °C, `throttled=0x0`, MANTACORE port disabled, eject gate open. Deck 1 SYNC turned off (it was on from testing). Mac free space 18 GiB: below the 20 GB needed for a build, so space must be freed before build C.
+
+**Baseline at `ef0874d`:** Mac suite 710 run, OK (141 platform skips).
+
+### Wave plan for U-1 to U-10 (plan 12.2)
+
+Builder rules for build C: `docs/ideas/ui-redesign-20261117/agreed-ui/BUILDER-RULES-C.md` (spec first, mockups, "No design of your own; where the spec is silent, build B stays").
+
+Shared registries stay with the orchestrator: `MIXXX_PATCHES`, `PREREQUISITES`, `REQUIRED_TESTS`, and now the stylesheet list in `pioneered-touch.py`. `pioneered-menus.qss` is read by many tests, so it is not split. Instead each native builder writes its page's rules in a new stylesheet file that loads after it, and the old Sources and Media sections are removed in wave C2.
+
+**Wave C1: three builders.**
+
+| Builder | Items | Repo files owned | Mixxx source files patched |
+|---|---|---|---|
+| **S1** (skin) | U-1 (skin and general dialog rules), U-2, U-3, U-6 skin, U-7 skin (ON/OFF button, full-height fills), deck-row title and artist (s6) | GEN `mixpi-performance.py`, QSS-P, PT-PY, QSS-T, QSS-M (general sections only, not Sources or Media), `tests/test_performance_skin.py`, `tests/test_pioneered_touch.py`, `tests/test_touch_dialog_styles.py`, `tests/test_library_interface.py` | none |
+| **N-A** (Sources) | U-4 native: the side menu on the right, its headers, rows and scroll bar; the full-screen edit list | new `mixxx-sources-menu.patch`, new `mixpi-sources-menu.qss`; `tests/test_sources_screen.py`, `tests/test_source_groups.py`, `tests/native/library_interface_sources_*`, `tests/native/source_groups_*`; new tests | `src/widget/wlibrarysidebar.{h,cpp}`, `src/widget/touchsourcenavigation.h`, `src/library/library.{h,cpp}`, `src/widget/libraryinterface.h` |
+| **N-B** (Media) | U-10 Media page; U-8 native (`[MixPi],drive_insert`, ASK or AUTO LOAD) | new `mixxx-media-agreed.patch`, new `mixpi-media-page.qss`; `tests/test_media_screen.py`, `tests/test_media_handover.py`, `tests/test_media_transfer_display.py`, `tests/native/media_screen_*`, `tests/native/media_handover_*`; new tests | `src/widget/mixpipage.h`, `src/library/mixpimediapage.h`, `src/library/mixpimedia.h` |
+
+Then: registration commit, both gates, skin preview on the card (build B's native), and a first conformance look.
+
+**Wave C2: up to three builders.**
+
+| Builder | Items | Repo files owned | Mixxx source files patched |
+|---|---|---|---|
+| **S2** (skin) | U-4 skin side (from N-A's handover note), U-5 skin (pads with ▶ TRIGGER and ■ STOP, header, empty pads, the Clear samples popover), U-8 and U-9 Settings rows, CPU readout show or hide, fixes from the C1 preview, removal of the dead Sources and Media sections from QSS-M | GEN, QSS-P, PT-PY, QSS-T, QSS-M and the skin tests | none |
+| **N-C** (controls) | U-7 effects saved within a second of a change; U-5 Clear samples controls; U-9 brightness, Night dim and CPU readout controls, and the backlight write access (new system file) | new patches (`mixxx-effects-save.patch`, `mixxx-agreed-controls.patch`), a new udev rule under `stage3/02-desktop/files/`, its install line, new tests | `src/effects/*` (the save path), `src/coreservices.cpp`, `src/widget/mixpiperformancesettings.h`, new files |
+| repair | only if C1 integration or the preview finds a native defect, on that builder's files | | |
+
+Control names fixed now, so the skin and native builders can work in parallel:
+- U-8: `[MixPi],drive_insert` 0 = ASK (default), 1 = AUTO LOAD; saved.
+- U-9: `[MixPi],backlight` 5-100 (%), `[MixPi],backlight_available`, `[MixPi],night_dim` 0 or 1, `[MixPi],show_cpu` 0 or 1 (default 1); all saved.
+- U-5: `[MixPi],sampler_clear_open`, `[MixPi],sampler_clear_tick1`…`8`, `[MixPi],sampler_clear_count`, `[MixPi],sampler_clear`.
+
+Then: registration commit, both gates, skin preview, native renders next to the mockups, Mac free space at least 20 GB, then **build C** (the 4th pi-gen run, approved), in-place update, acceptance C, conformance pass, council round 2.

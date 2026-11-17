@@ -74,7 +74,7 @@ index ab07d0a..cb102f0 100644
 +    QStringList m_removableDirectories;
  };
 diff --git a/src/library/library.cpp b/src/library/library.cpp
-index a038206..abdfb9f 100644
+index a038206..6ac120a 100644
 --- a/src/library/library.cpp
 +++ b/src/library/library.cpp
 @@ -6,7 +6,10 @@
@@ -97,26 +97,29 @@ index a038206..abdfb9f 100644
      new MixpiMedia(this, [this]() -> QWidget* { return m_pLibraryWidget; },
              [this](const QJsonObject& volume, QObject* receiver, std::function<void(QString)> completion) {
                  return openRemovableSourceAsync(volume, receiver, std::move(completion));
-@@ -707,7 +712,8 @@ QString Library::openRemovableSource(const QJsonObject& volume) {
+@@ -707,8 +712,9 @@ QString Library::openRemovableSource(const QJsonObject& volume) {
          error = m_pBrowseFeature->openRemovableDirectory(path);
      }
      if (error.isEmpty()) {
 -        ControlObject::set(ConfigKey("[MixPi]", "sample_load"), 0);
+         ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
 +        // The drive now shows in Tracks: sample mode ends where it is.
 +        leaveSampleMode(false);
-         ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
          ControlObject::set(ConfigKey("[Tab]", "library"), 1);
      }
-@@ -759,7 +765,7 @@ std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volum
+     return error;
+@@ -759,8 +765,9 @@ std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volum
                      return;
                  }
                  if (result.isEmpty()) {
 -                    ControlObject::set(ConfigKey("[MixPi]", "sample_load"), 0);
-+                    owner->leaveSampleMode(false);
                      ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
++                    // The drive now shows in Tracks: sample mode ends where it is.
++                    owner->leaveSampleMode(false);
                      ControlObject::set(ConfigKey("[Tab]", "library"), 1);
                  }
-@@ -832,6 +838,220 @@ void Library::refreshSidebarSourceEdit() {
+                 completion(result);
+@@ -832,6 +839,220 @@ void Library::refreshSidebarSourceEdit() {
              m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")));
  }
  
@@ -337,7 +340,7 @@ index a038206..abdfb9f 100644
  void Library::onPlayerManagerTrackAnalyzerProgress(
          TrackId /*trackId*/, AnalyzerProgress /*analyzerProgress*/) {
      if (m_pAnalysisFeature) {
-@@ -858,6 +1078,7 @@ void Library::slotShowTrackModel(QAbstractItemModel* model) {
+@@ -858,6 +1079,7 @@ void Library::slotShowTrackModel(QAbstractItemModel* model) {
      emit showTrackModel(model);
      emit switchToView(m_sTrackViewName);
      emit restoreSearch(trackModel->currentSearch());
@@ -345,7 +348,7 @@ index a038206..abdfb9f 100644
  }
  
  void Library::slotSwitchToView(const QString& view) {
-@@ -866,6 +1087,7 @@ void Library::slotSwitchToView(const QString& view) {
+@@ -866,6 +1088,7 @@ void Library::slotSwitchToView(const QString& view) {
          m_pSidebarWidget->noteSourceShown();
      }
      emit switchToView(view);

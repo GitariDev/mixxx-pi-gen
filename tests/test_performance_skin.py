@@ -573,8 +573,71 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(guard.findtext('ConfigKey'), f'{key},play')
         self.assertEqual(transform(guard, 1.0), 0)
 
-    def tiles(self):
-        return [b for b in self.root.iter('PushButton') if b.findtext('ObjectName') == 'MixpiChooseTile']
+    @staticmethod
+    def from_tracks_variant(button):
+        """True for the variant shown while sample_load is 0 (Choose pad from Tracks)."""
+        guard = next(c for c in button.findall('Connection')
+                     if c.findtext('BindProperty') == 'visible' and c.findtext('ConfigKey') == '[MixPi],sample_load')
+        return guard.find('Transform/Not') is not None
+
+    def tiles(self, from_tracks=False):
+        return [b for b in self.root.iter('PushButton') if b.findtext('ObjectName') == 'MixpiChooseTile'
+                and self.from_tracks_variant(b) == from_tracks]
+
+    def cancel(self, from_tracks=False):
+        found = [b for b in self.root.iter('PushButton') if b.findtext('State/Text') == 'CANCEL'
+                 and self.from_tracks_variant(b) == from_tracks]
+        self.assertEqual(len(found), 1)
+        return found[0]
+
+    def test_choose_pad_from_tracks_returns_to_tracks(self):
+        # N4: Tracks › ✎ › "Load to a sampler pad…" writes sample_pad 0 and screen 4
+        # with sample_load 0. CANCEL and a tile go back to Tracks, not Load sample.
+        model, state = self.model, self.start()
+        model.tap(self.tab_button('TRACKS', state), state)
+        model.apply(state, [('[MixPi],sample_pad', 0), (SCREEN, 4)])
+        tiles = self.tiles(from_tracks=True)
+        self.assertEqual(len(tiles), 8)
+        self.assertEqual([model.tappable(t, state) for t in tiles], [True] * 8)
+        self.assertFalse(any(model.tappable(t, state) for t in self.tiles()))
+        self.assertFalse(model.tappable(self.cancel(), state))
+        model.tap(self.cancel(from_tracks=True), state)
+        self.assertEqual((state[SCREEN], state['[Tab],library']), (0, 1))
+        self.assertTrue(model.tappable(self.model.one('SidebarButton'), state))
+        self.assertTrue(model.visible(self.model.one('MixpiBottom'), state))
+        # Again, then a tile: the pad loads and Tracks is back.
+        model.apply(state, [('[MixPi],sample_pad', 0), (SCREEN, 4)])
+        tile = tiles[2]
+        self.assertEqual(model.writes(tile), [('[Sampler3],LoadSelectedTrack', 1)])
+        release = dict(model.writes(tile, 'release'))
+        self.assertNotIn('[Tab],sampler', release)
+        model.tap(tile, state)
+        self.assertEqual((state[SCREEN], state['[Tab],library'], state['[MixPi],sample_load']), (0, 1, 0))
+        self.assertEqual(state['[Sampler3],LoadSelectedTrack'], 0)
+        self.assertTrue(model.visible(self.model.one('MixpiBottom'), state))
+
+    def test_load_sample_source_row_has_usb_only_with_a_drive(self):
+        row = self.model.one('MixpiSampleSources')
+        buttons = {b.findtext('State/Text'): b for b in row.iter('PushButton')}
+        self.assertEqual(list(buttons), ['SAMPLES', 'THIS PI', 'USB', 'RECORDINGS', 'SOURCES…'])
+        for text, value in (('SAMPLES', 1), ('THIS PI', 2), ('USB', 3), ('RECORDINGS', 4)):
+            b = buttons[text]
+            self.assertEqual(self.model.writes(b), [('[MixPi],sample_source', value)])
+            self.assertEqual(self.model.writes(b, 'release'), [])
+            display = [c for c in b.findall('Connection') if c.findtext('ConnectValueFromWidget') == 'false'][-1]
+            self.assertEqual(display.findtext('ConfigKey'), '[MixPi],sample_source')
+            self.assertEqual([transform(display, float(v)) for v in range(5)], [float(v == value) for v in range(5)])
+            self.assertEqual(size(b)[1], 48)
+        base = Model.state(3, **{'[MixPi]__sample_source_available': 1})
+        for drive in (0, 1):
+            state = dict(base, **{'[MixPi],sample_drive_available': drive})
+            shown = [t for t, b in buttons.items() if self.model.tappable(b, state)]
+            self.assertEqual(shown, ['SAMPLES', 'THIS PI'] + (['USB'] if drive else []) + ['RECORDINGS', 'SOURCES…'])
+        self.assertFalse(self.model.visible(buttons['USB'], dict(base, **{'[MixPi],sample_source_available': 0,
+                                                                         '[MixPi],sample_drive_available': 1})))
+        # All five fit with the hint label: fixed widths within 800.
+        fixed = 8 + sum(w + 6 for t, w in SKIN.SOURCE_ROW.items() if t != 'SOURCES…') + SKIN.SOURCE_ROW['SOURCES…']
+        self.assertLessEqual(fixed, 800 - 100)
 
     def test_choose_pad_has_eight_tiles_in_pad_order(self):
         tiles = self.tiles()
@@ -586,7 +649,7 @@ class PerformanceSkinTests(unittest.TestCase):
             names = [t.text for t in cell.iter('Text')]
             self.assertIn(f"{'A' if sampler <= 4 else 'B'}{(sampler - 1) % 4 + 1}", names)
             self.assertTrue(any(e.findtext('Group') == f'[Sampler{sampler}]' for e in cell.iter('TrackProperty')))
-        cancel = self.button_by_text('CANCEL')
+        cancel = self.cancel()
         self.assertEqual(self.model.final(cancel), {SCREEN: 3})
         scrim = self.model.one('MixpiChooseScrim')
         # A hidden sheet must not raise the page minimum (stacked layouts count hidden pages).
@@ -672,7 +735,7 @@ class PerformanceSkinTests(unittest.TestCase):
         model.tap(self.tab_button('SAMPLER', state), state)
         model.tap(self.button_by_text('+  LOAD SAMPLE'), state)
         model.tap(self.shown_button(state, ObjectName='MixpiPrimary', key=SCREEN), state)
-        model.tap(self.button_by_text('CANCEL'), state)
+        model.tap(self.cancel(), state)
         self.assert_load_sample(state)
         model.tap(self.shown_button(state, ObjectName='MixpiIconButton', key='[Tab],sampler'), state)  # ✕
         self.assertEqual((state[SCREEN], state['[Tab],sampler'], state['[MixPi],sample_load']), (0, 1, 0))
@@ -1163,7 +1226,7 @@ class PerformanceSkinTests(unittest.TestCase):
         model.tap(self.shown_button(state, ObjectName='MixpiPrimary', key=SCREEN), state)
         self.assertEqual(state[SCREEN], 4)
         self.assertTrue(model.tappable(self.tiles()[0], state))
-        model.tap(self.button_by_text('CANCEL'), state)
+        model.tap(self.cancel(), state)
         # Its ✕ returns to the Sampler; TRACKS is plain Tracks with the menu.
         model.tap(self.shown_button(state, ObjectName='MixpiIconButton', key='[Tab],sampler'), state)
         self.assertEqual((state[SCREEN], state['[MixPi],sample_load'], state['[Tab],sampler']), (0, 0, 1))

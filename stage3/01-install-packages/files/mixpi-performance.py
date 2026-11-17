@@ -83,6 +83,8 @@ CUE_TILE = (196, 70)
 TRANSPORT = {'KEY': 48, 'Q': 48, 'SYNC': 60, 'LOOP': 60, 'CUE': 76}
 LOAD_WIDTH, LOAD_CELL = 104, 230
 SETTINGS_RAIL = 200
+# Load sample source row: 8 + 4 x (button + 6) + SOURCES… = 680 of 800.
+SOURCE_ROW = {'SAMPLES': 130, 'THIS PI': 120, 'USB': 96, 'RECORDINGS': 150, 'SOURCES…': 152}
 SETTINGS_PAGES = (('PLAYBACK', 0), ('INTERFACE', 1), ('MEDIA', 2), ('ADVANCED', 3))
 # The USB chip's second line, per [MixPi],media_state (R-4).
 MEDIA_STATES = ('NO USB', 'READY', 'IN USE', 'EJECTING', 'SAFE TO REMOVE')
@@ -665,12 +667,14 @@ def sample_hints():
     return hints
 
 
-def load_to_pad(sampler, size, name, text):
-    """[SamplerN],LoadSelectedTrack on press and release, then back to the Sampler tab."""
+def load_to_pad(sampler, size, name, text, to_sampler=True):
+    """[SamplerN],LoadSelectedTrack on press and release, then back to the Sampler
+    tab, or (TO_SAMPLER false: Choose pad opened from Tracks' Actions) to Tracks."""
     b = button(text, f'[Sampler{sampler}],LoadSelectedTrack', size=size, momentary=True, name=name)
     # A playing pad cannot take a new sound (the rule of the old LOAD TO row).
     connection(b, f'[Sampler{sampler}],play', transform='<Not/>', bind='enabled')
-    write(b, '[Tab],sampler', 1, 'release')
+    if to_sampler:
+        write(b, '[Tab],sampler', 1, 'release')
     reset_views(b, when='release')
     return b
 
@@ -751,17 +755,28 @@ def browse_page(library):
     sources_body = show_when(group('MixpiSourcesBody', children=[sidebar]), SCREEN, SCREEN_SOURCES)
 
     # Load sample: a row of sources, the list, and one LOAD TO PAD button.
-    open_sources = button('SOURCES…', '[Sidebar],sidebar_visible', size='150f,48f', push=True)
+    open_sources = button('SOURCES…', '[Sidebar],sidebar_visible', size=f"{SOURCE_ROW['SOURCES…']}f,48f",
+                          push=True)
     open_sources.find('Connection/ConnectValueToWidget').text = 'false'
     write(open_sources, SCREEN, SCREEN_SOURCES)
-    source_row = group('MixpiSampleSources', 'horizontal', '0me,56f', [open_sources])
-    # The native sample browser (wave 2) offers fixed places through
-    # [MixPi],sample_source; the buttons stay hidden until it says it is there.
-    for text, value in (('SAMPLES', 1), ('THIS PI', 2), ('RECORDINGS', 4)):
-        add(source_row, show_when(preset(text, '[MixPi],sample_source', value, size='150f,48f'),
-                                  '[MixPi],sample_source_available'))
-    add(source_row, label('Shows the list picked in Sources.', '0me,48f', 'MixpiScreenHint',
-                          elide='right'))
+    source_row = group('MixpiSampleSources', 'horizontal', '0me,56f', [gap('8f,48f')])
+    # N4's sample browser: [MixPi],sample_source reads back what is shown (1
+    # Samples, 2 This Pi, 3 USB, 4 Recordings, 0 a list picked in Sources); the
+    # buttons write 1-4 and light from it. USB shows only while a drive is open.
+    # The three fixed places (N4's test_sample_browser pins this tuple), with USB
+    # (3) between THIS PI and RECORDINGS.
+    places = [('SAMPLES', 1), ('THIS PI', 2), ('RECORDINGS', 4)]
+    places.insert(2, ('USB', 3))
+    for text, value in places:
+        width = SOURCE_ROW[text]
+        b = preset(text, '[MixPi],sample_source', value, size=f'{width}f,48f')
+        cell = group('MixpiSourceCell', 'horizontal', f'{width + 6}f,48f', [b, gap('6f,48f')])
+        conditions = [('[MixPi],sample_source_available', None)]
+        if value == 3:
+            conditions.insert(0, ('[MixPi],sample_drive_available', None))
+        add(source_row, when_all(cell, f'{width + 6}f,48f', *conditions))
+    add(source_row, open_sources,
+        label('Or a list picked in Sources.', '0me,48f', 'MixpiScreenHint', elide='right'))
     source_row = when_all(source_row, '0me,56f', *LOAD_MODE)
 
     table = show_when(group('MixpiLibraryMain', children=[parts['Library']]),
@@ -814,22 +829,32 @@ def choose_pad():
             pad_tag(sampler),
             show_when(sampler_title(sampler, '0me,40f', 'MixpiChooseName'), f'{key},track_loaded'),
             show_when(label('Empty', '0me,40f', 'MixpiChooseEmpty'), f'{key},track_loaded', negate=True)])
-        tile = load_to_pad(sampler, '165f,96f', 'MixpiChooseTile', '')
-        tiles.append(group('MixpiChooseCell', 'stacked', '165f,96f', [tile, info]))
+        # Opened from Load sample (sample_load 1): back to the Sampler. Opened
+        # from Tracks' Actions menu (N4: sample_pad 0, screen 4, sample_load 0):
+        # back to Tracks. Exactly one of the two is shown, above the labels.
+        from_sample = show_when(load_to_pad(sampler, '165f,96f', 'MixpiChooseTile', ''),
+                                '[MixPi],sample_load')
+        from_tracks = show_when(load_to_pad(sampler, '165f,96f', 'MixpiChooseTile', '', to_sampler=False),
+                                '[MixPi],sample_load', negate=True)
+        tiles.append(group('MixpiChooseCell', 'stacked', '165f,96f', [from_sample, from_tracks, info]))
     rows = []
     for row in (tiles[:4], tiles[4:]):
         cells = [gap('18f,96f')]
         for index, tile in enumerate(row):
             cells += ([gap('8f,96f')] if index else []) + [tile]
         rows.append(group('MixpiChooseRow', 'horizontal', '0me,96f', cells + [gap('18f,96f')]))
-    cancel = button('CANCEL', SCREEN, size='120f,48f', push=True,
-                    transform=f'<IsEqual>{SCREEN_LOAD_SAMPLE}</IsEqual>')
-    cancel.find('Connection/ConnectValueToWidget').text = 'false'
+    # CANCEL returns where Choose pad came from: Load sample (screen 3) or Tracks (0).
+    cancels = []
+    for value, negate in ((SCREEN_LOAD_SAMPLE, False), (SCREEN_NONE, True)):
+        cancel = button('CANCEL', SCREEN, size='120f,48f', push=True,
+                        transform=f'<IsEqual>{value}</IsEqual>' if value else '<Not/>')
+        cancel.find('Connection/ConnectValueToWidget').text = 'false'
+        cancels.append(show_when(cancel, '[MixPi],sample_load', negate=negate))
     sheet = group('MixpiChooseSheet', size='720f,340f', children=[
         gap('0me,16f'),
         group('MixpiChooseTitleRow', 'horizontal', '0me,48f', [
             gap('18f,48f'), label('Load to which pad?', '0me,48f', 'MixpiSheetTitle'),
-            cancel, gap('18f,48f')]),
+            *cancels, gap('18f,48f')]),
         gap('0me,12f'), rows[0], gap('0me,8f'), rows[1],
         group('MixpiChooseNoteRow', 'horizontal', '0me,44f', [
             gap('18f,44f'),

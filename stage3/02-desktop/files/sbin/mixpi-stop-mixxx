@@ -1,0 +1,55 @@
+#!/bin/sh
+# Stop pi's Mixxx unit and wait until it is inactive (R-14).
+#
+# Run by mixpi-mixxx-stop.service as root at reboot or power-off, before
+# LightDM and the user manager stop. "systemctl --user stop" sends Mixxx
+# SIGTERM, which quits it as File > Exit does, so it saves its settings.
+# Does nothing when Mixxx (or pi's user manager) is not running. Stops only
+# mixpi-mixxx.service; any other unit name is refused.
+set -u
+
+UNIT=mixpi-mixxx.service
+USER_NAME=pi
+RUNTIME_BASE=/run/user
+SYSTEMCTL=/usr/bin/systemctl
+RUNUSER=/usr/sbin/runuser
+# Mixxx's unit sends SIGKILL after 20 s; wait a little longer than that.
+WAIT_SECONDS=22
+
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "$UNIT" ]; }; then
+    echo "mixpi-stop-mixxx: only $UNIT can be stopped" >&2
+    exit 2
+fi
+
+uid=$(id -u "$USER_NAME" 2>/dev/null) || exit 0
+runtime="$RUNTIME_BASE/$uid"
+# No user manager, so no Mixxx.
+[ -S "$runtime/systemd/private" ] || exit 0
+
+user_systemctl() {
+    "$RUNUSER" -u "$USER_NAME" -- env XDG_RUNTIME_DIR="$runtime" "$SYSTEMCTL" --user "$@"
+}
+
+running() {
+    state=$(user_systemctl show --property=ActiveState --value "$UNIT" 2>/dev/null) || return 1
+    case "$state" in
+        active|activating|reloading|deactivating) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+running || exit 0
+echo "mixpi-stop-mixxx: stopping $UNIT"
+# Waits for the stop job; the loop covers a stop already in progress.
+user_systemctl stop "$UNIT"
+waited=0
+while running; do
+    if [ "$waited" -ge "$WAIT_SECONDS" ]; then
+        echo "mixpi-stop-mixxx: $UNIT still not inactive after $WAIT_SECONDS s" >&2
+        exit 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+done
+echo "mixpi-stop-mixxx: $UNIT is inactive"
+exit 0

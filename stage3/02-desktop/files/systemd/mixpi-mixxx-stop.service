@@ -1,0 +1,19 @@
+[Unit]
+Description=Stop Mixxx cleanly before the desktop session ends
+# systemd stops units in the reverse of their start order. Ordered after
+# LightDM and pi's user manager, this unit's stop runs before either goes
+# down on every reboot or power-off path (power button, sudo reboot,
+# systemctl poweroff), so Mixxx still has its Wayland session and quits
+# through File > Exit, which saves mixxx.cfg and samplers.xml.
+After=lightdm.service user@1000.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/sbin/mixpi-stop-mixxx
+# Mixxx's own unit sends SIGKILL after 20 s; this bound covers that.
+TimeoutStopSec=25
+
+[Install]
+WantedBy=multi-user.target

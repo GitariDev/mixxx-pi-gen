@@ -14,60 +14,86 @@
     border-right: 1px solid #596171;
 }
 
+/* Sources is a full screen (R-9): 56 px rows across the whole width. */
+#LibraryWrapper WLibrarySidebar {
+    background-color: #0a0d12;
+    color: #eef2f7;
+    border: 0px;
+    selection-background-color: #1f2a17;
+    selection-color: #ffffff;
+}
 #LibraryWrapper WLibrarySidebar::item {
-    min-height: 48px;
-    padding: 0px 6px;
+    min-height: 56px;
+    padding: 0px 14px;
+    border-bottom: 1px solid #1c2531;
+}
+#LibraryWrapper WLibrarySidebar::item:selected {
+    background-color: #1f2a17;
+    color: #ffffff;
 }
 
+/* 24 px scroll bars on lists (R-9, PROTO .sc). */
 #LibraryWrapper QScrollBar {
-    background-color: #17191f;
+    background-color: #121821;
     border: 0px;
     margin: 0px;
 }
 #LibraryWrapper QScrollBar:horizontal {
-    height: 26px;
+    height: 24px;
 }
 #LibraryWrapper QScrollBar:vertical {
-    width: 26px;
+    width: 24px;
+    border-left: 1px solid #2b3646;
 }
 #LibraryWrapper QScrollBar::handle {
-    background-color: #9aa8bd;
-    border: 3px solid #17191f;
-    border-radius: 6px;
+    background-color: #5d6b80;
+    border: 5px solid #121821;
+    border-radius: 8px;
 }
 #LibraryWrapper QScrollBar::handle:horizontal {
     min-width: 56px;
-    border: 3px solid #17191f;
+    border: 5px solid #121821;
 }
 #LibraryWrapper QScrollBar::handle:vertical {
     min-height: 56px;
 }
 #LibraryWrapper QScrollBar::handle:pressed {
-    background-color: #68baff;
+    background-color: #b5e15c;
 }
 #LibraryWrapper QScrollBar::add-page,
 #LibraryWrapper QScrollBar::sub-page {
-    background-color: #17191f;
+    background-color: #121821;
 }
 
+/* ☰ and ✎ are 48 px icon buttons (R-11); EDIT LIST and BACK keep text. */
 #LibraryActionsButton, #LibrarySourcesButton, #LibraryBackButton, #SidebarButton {
-    background-color: #112f5c;
-    border: 2px solid #b5bac5;
-    border-radius: 4px;
-    color: #ffffff;
-    font-size: 16px;
+    background-color: #19212d;
+    border: 1px solid #2b3646;
+    border-radius: 6px;
+    color: #eef2f7;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 17px;
     font-weight: bold;
-    margin: 1px;
+    margin: 0px;
 }
-#LibraryActionsButton[value="1"] {
-    background-color: #285a88;
-    border-color: #68baff;
+#LibraryActionsButton[value="1"], #SidebarButton[value="1"] {
+    background-color: #2a3a1a;
+    border-color: #b5e15c;
 }
 
 #LibraryBackButton:disabled {
-    color: #848b98;
-    background-color: #17191f;
-    border-color: #454b57;
+    color: #56627a;
+    background-color: #10151c;
+    border-color: #1f2834;
+}
+
+#LibraryWrapper #SearchBox {
+    background-color: #19212d;
+    border: 1px solid #2b3646;
+    border-radius: 8px;
+    color: #eef2f7;
+    font-size: 17px;
+    margin: 0px 6px;
 }
 
 /* The BPM lock is not a touch control. Draw no indicator in the BPM column. */

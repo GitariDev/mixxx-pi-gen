@@ -169,8 +169,24 @@ UnrelatedValue preserve this exactly
         self.assertEqual(actions[0].findtext("Connection/EmitOnDownPress"), "true")
         styles = (self.skin / "style.qss").read_text()
         self.assertNotIn("width: 0;", styles)
-        self.assertIn("height: 26px;", styles)
+        self.assertIn("height: 24px;", styles)
         self.assertIn("#Unrelated { color: red; }", styles)
+
+    def test_sources_screen_rows_and_list_scroll_bars_are_touch_sized(self):
+        # R-9: Sources is a full screen with 56 px rows and 24 px scroll bars.
+        PATCH.apply(self.skin)
+        styles = (self.skin / "style.qss").read_text()
+        block = styles.split(PATCH.STYLE_BEGIN, 1)[1].split(PATCH.STYLE_END, 1)[0]
+        def rule(selector):
+            self.assertEqual(block.count(selector + " {"), 1, selector)
+            return block.split(selector + " {", 1)[1].split("}", 1)[0]
+        self.assertIn("min-height: 56px;", rule("#LibraryWrapper WLibrarySidebar::item"))
+        self.assertIn("width: 24px;", rule("#LibraryWrapper QScrollBar:vertical"))
+        self.assertIn("height: 24px;", rule("#LibraryWrapper QScrollBar:horizontal"))
+        self.assertIn("min-height: 56px;", rule("#LibraryWrapper QScrollBar::handle:vertical"))
+        # The icon buttons light like the performance tabs when open.
+        self.assertIn("border-color: #b5e15c;",
+                      rule('#LibraryActionsButton[value="1"], #SidebarButton[value="1"]'))
 
     def test_track_table_hides_bpm_lock_and_uses_one_dark_selection(self):
         PATCH.apply(self.skin)

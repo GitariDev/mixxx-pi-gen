@@ -1,17 +1,23 @@
-// R-9 step 3: grouped Sources. The real WLibrarySidebar at the Sources
-// screen size (800x384) with the real SidebarModel, wired by the exact
-// connects from Library::bindSidebarWidget, and the actual Library methods
-// (sourceGroupTiles, mapSourceGroups, driveRows, applySidebarSourceVisibility,
-// refreshSidebarSourceEdit, ...) from the patched library.cpp. Substitutes:
-// the features (named trees), the settings and the controls.
+// R-9 step 3 and agreed UI s5: grouped Sources in the side menu. The real
+// WLibrarySidebar as the 320x380 menu at the right of an 800x480 screen (under
+// #LibraryWrapper, as in the skin) with the real SidebarModel, wired by the
+// exact connects from Library::bindSidebarWidget, and the actual Library
+// methods (sourceGroupTiles, mapSourceGroups, driveRows,
+// applySidebarSourceVisibility, refreshSidebarSourceEdit, ...) from the
+// patched library.cpp. Substitutes: the features (named trees), the settings
+// and the controls. With MIXPI_QSS_DIR set, the screen carries the skin's
+// style sheets in their installed order; with MIXPI_SOURCES_GRAB_DIR set, the
+// menu and the edit list are rendered there at 800x480.
 #include <QApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QLabel>
 #include <QPointer>
 #include <QPushButton>
 #include <QScopedPointer>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
@@ -146,6 +152,24 @@ QPushButton* tileNamed(WLibrarySidebar& sidebar, const QString& name) {
     return nullptr;
 }
 
+QString tileSub(WLibrarySidebar& sidebar, const QString& name) {
+    auto* tile = tileNamed(sidebar, name);
+    auto* sub = tile ? tile->findChild<QLabel*>("MixpiSourcesMenuSub") : nullptr;
+    return sub ? sub->text() : QStringLiteral("<none>");
+}
+
+QString tileGlyph(WLibrarySidebar& sidebar, const QString& name) {
+    auto* tile = tileNamed(sidebar, name);
+    auto* icon = tile ? dynamic_cast<LibraryInterface::SourceGlyph*>(tile->findChild<QWidget*>("MixpiSourcesMenuIcon")) : nullptr;
+    return icon ? icon->glyph() : QStringLiteral("<none>");
+}
+
+bool tileEnterable(WLibrarySidebar& sidebar, const QString& name) {
+    auto* tile = tileNamed(sidebar, name);
+    auto* mark = tile ? tile->findChild<QWidget*>("MixpiSourcesMenuChevron") : nullptr;
+    return mark && !mark->isHidden();
+}
+
 QStringList shownRows(WLibrarySidebar& sidebar) {
     QStringList rows;
     auto* model = sidebar.model();
@@ -155,6 +179,24 @@ QStringList shownRows(WLibrarySidebar& sidebar) {
         }
     }
     return rows;
+}
+
+// The skin's style sheets in their installed order (pioneered-touch.py,
+// then mixpi-performance.py).
+QString skinStyle() {
+    const QString directory = qEnvironmentVariable("MIXPI_QSS_DIR");
+    QString style;
+    if (directory.isEmpty()) {
+        return style;
+    }
+    for (const char* name : {"pioneered-menus.qss", "mixpi-sources-menu.qss", "pioneered-touch.qss",
+                 "mixpi-performance.qss"}) {
+        QFile file(QDir(directory).filePath(QString::fromLatin1(name)));
+        if (file.open(QIODevice::ReadOnly)) {
+            style += QString::fromUtf8(file.readAll()) + QStringLiteral("\n");
+        }
+    }
+    return style;
 }
 
 int main(int argc, char** argv) {
@@ -187,6 +229,7 @@ int main(int argc, char** argv) {
     LibraryFeature serato("Serato");
     playlists.children.getRootItem()->appendChild("Warm up", 1);
     playlists.children.getRootItem()->appendChild("Edits", 2);
+    history.children.getRootItem()->appendChild("2026-11-15", 3);
     {
         auto* root = computer.children.getRootItem();
         root->appendChild("Quick Links", QUICK_LINK_NODE);
@@ -206,7 +249,22 @@ int main(int argc, char** argv) {
     library.add("RekordboxFeature", &rekordbox);
     library.add("SeratoFeature", &serato);
 
-    WLibrarySidebar sidebar;
+    // The 800x480 screen: the skin's root carries the style sheets; the menu
+    // is 320x380 at x 480-800, y 100-480 (m-sources-top.png).
+    QWidget screen;
+    screen.setObjectName("MixpiFixtureScreen");
+    screen.resize(800, 480);
+    screen.setStyleSheet(skinStyle() +
+            QStringLiteral("#MixpiFixtureScreen { background-color: #0d1014; }"
+                           "#MixpiFixtureNote { color: #7f8896; font-size: 13px; }"));
+    QWidget wrapper(&screen);
+    wrapper.setObjectName("LibraryWrapper");
+    wrapper.setGeometry(0, 0, 800, 480);
+    QLabel note(QStringLiteral("Top bar, Tracks header, table, strip and load row: the skin (wave C2)."),
+            &wrapper);
+    note.setObjectName("MixpiFixtureNote");
+    note.setGeometry(12, 52, 460, 40);
+    WLibrarySidebar sidebar(&wrapper);
     sidebar.setModel(&model);
     {
         WLibrarySidebar* pSidebarWidget = &sidebar;
@@ -231,43 +289,68 @@ int main(int argc, char** argv) {
         WLibrarySidebar* pSidebarWidget = &sidebar;
 #include "grouped_binding.inc"
     }
+    // As Library::bindSidebarWidget (tests/test_sources_screen.py checks the
+    // line in library.cpp): EDIT opens the edit list.
+    sidebar.sourcesEditRequested = [&library] {
+        library.showSidebarSourcesMenu();
+    };
     QObject::connect(&model, &QAbstractItemModel::modelReset, &sidebar,
             [&library] { library.applySidebarSourceVisibility(); });
-    ControlObject screen(ConfigKey("[MixPi]", "screen"));
+    ControlObject screenControl(ConfigKey("[MixPi]", "screen"));
     ControlObject sidebarVisible(ConfigKey("[Sidebar]", "sidebar_visible"));
     // As Library: read-only for the skin, which reads it for EDIT LIST / DONE.
     ControlObject editing(ConfigKey("[Library]", "sidebar_sources_editing"));
     editing.setReadOnly();
     sidebar.enableTouchNavigation();
-    sidebar.resize(800, 384);
-    sidebar.show();
+    sidebar.setGeometry(480, 100, 320, 380);
+    screen.show();
     library.applySidebarSourceVisibility();
     settle();
+    auto* back = sidebar.findChild<QPushButton*>("MixpiSourcesMenuBack");
+    auto* edit = sidebar.findChild<QPushButton*>("MixpiSourcesMenuEdit");
+    auto* place = sidebar.findChild<QLabel*>("MixpiSourcesMenuPlace");
+    if (!back || !edit || !place) {
+        std::cout << "FAIL the Sources menu has its header" << std::endl;
+        return 1;
+    }
 
     // The one-time mapping of the owner's choices.
     require(settings.getValue(ConfigKey(kConfigGroup, "SourceGroupsMapped"), false) &&
                     settings.getValue(ConfigKey(kConfigGroup, "SourceGroupThisPi"), false) &&
                     settings.getValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), false),
             "the mapping runs once and keeps This Pi and drives on");
-    require(sidebar.hasSourceScreen() && library.groupedSources(), "an 800 px touch sidebar groups Sources");
+    require(sidebar.hasSourceScreen() && library.groupedSources(), "a 320 px touch sidebar is the grouped Sources menu");
     require(tileNames(sidebar) == QStringList({"This Pi", "Recordings", "Folders", "Samples", "More"}),
-            "without a drive the tiles are This Pi, Recordings, Folders, Samples, More");
+            "without a drive the rows are This Pi, Recordings, Folders, Samples, More");
     require(!tileNamed(sidebar, "History"), "the one-time mapping keeps a hidden source hidden (History)");
     require(sidebar.selectedSourceTile() == LibraryInterface::SourceGroups::kThisPi &&
-                    sidebar.sourceTiles().first()->isChecked(),
-            "without a drive the first tile is This Pi, selected");
+                    sidebar.sourceTiles().first()->isChecked() && !sidebar.isSourceMenuInside(),
+            "without a drive This Pi is the current source; the menu opens at the top level");
     require(shownRows(sidebar) == QStringList({"Tracks", "Auto DJ", "Playlists"}),
             "This Pi shows exactly its features, minus hidden ones (Crates)");
-    require(sidebar.sourceCrumb() == "This Pi" && !sidebar.findChild<QPushButton*>("MixpiSourceBack")->isEnabled(),
-            "the crumb says This Pi; Back is off");
-    auto* more = tileNamed(sidebar, "More");
-    require(more && more->findChild<QLabel*>("MixpiSourceTileSub")->text() == "Analyse",
+    require(back->isVisible() && back->isEnabled() && edit->isVisible() && !place->isVisible(),
+            "at the top level the header has BACK and EDIT");
+    require(tileSub(sidebar, "More") == "Analyse",
             "More holds the other sources that are on (Analyse; not Serato, not Rekordbox)");
+    require(tileSub(sidebar, "Folders") == "Browse files and drives" &&
+                    tileSub(sidebar, "Samples") == "Sounds for the pads" &&
+                    tileSub(sidebar, "This Pi") == QString::fromUtf8("Tracks · Playlists · Auto DJ"),
+            "each row has its small line");
     bool sized = true;
     for (auto* tile : sidebar.sourceTiles()) {
-        sized &= tile->height() == 64 && tile->width() >= 200 && tile->width() <= 264;
+        sized &= tile->height() == 52 && tile->width() >= 290 && tile->width() <= 319;
     }
-    require(sized, "tiles are 64 px high in the 264 px rail");
+    require(sized, "rows are 52 px in the 320 px menu");
+    require(tileGlyph(sidebar, "This Pi") == "pi" && tileGlyph(sidebar, "Folders") == "folder" &&
+                    tileGlyph(sidebar, "Samples") == "samples" && tileGlyph(sidebar, "More") == "more" &&
+                    tileGlyph(sidebar, "Recordings").isEmpty(),
+            "the rows carry the mockups' icons (Recordings keeps its own)");
+    auto* piIcon = dynamic_cast<LibraryInterface::SourceGlyph*>(tileNamed(sidebar, "This Pi")->findChild<QWidget*>("MixpiSourcesMenuIcon"));
+    require(piIcon && !piIcon->drawn().isNull(), "a mockup icon is drawn (the SVG reader is present)");
+    require(tileEnterable(sidebar, "This Pi") && tileEnterable(sidebar, "Folders") &&
+                    tileEnterable(sidebar, "More") && !tileEnterable(sidebar, "Samples") &&
+                    !tileEnterable(sidebar, "Recordings"),
+            "› only on rows that can be entered");
 
     // A source hidden by a tile is not a hidden source.
     const QModelIndex recordingsRow = library.sourceRow("RecordingFeature");
@@ -278,18 +361,28 @@ int main(int argc, char** argv) {
     require(activations == before && sidebar.currentIndex() == recordingsRow,
             "a row This Pi does not show is not a hidden context: nothing is reopened");
 
-    // Drill in and back within This Pi.
+    // Inside This Pi: drill in and back.
+    tileNamed(sidebar, "This Pi")->click();
+    settle();
+    require(sidebar.isSourceMenuInside() && place->isVisible() && !edit->isVisible() &&
+                    sidebar.sourceCrumb() == "This Pi" && place->text() == "This Pi" &&
+                    shownRows(sidebar) == QStringList({"Tracks", "Auto DJ", "Playlists"}),
+            "a tap on This Pi goes inside it: BACK, the place, its sources");
     const QModelIndex playlistsRow = library.sourceRow("PlaylistFeature");
     QTest::mouseClick(sidebar.viewport(), Qt::LeftButton, {}, sidebar.visualRect(playlistsRow).center());
     settle();
     require(sidebar.rootIndex() == playlistsRow && sidebar.sourceCrumb() == "This Pi › Playlists",
-            "a row with children drills in; the crumb is This Pi › Playlists");
-    sidebar.findChild<QPushButton*>("MixpiSourceBack")->click();
+            "a row with children drills in; the place is This Pi › Playlists");
+    back->click();
     settle();
-    require(!sidebar.rootIndex().isValid() && shownRows(sidebar) == QStringList({"Tracks", "Auto DJ", "Playlists"}),
-            "Back returns to This Pi's rows");
+    require(!sidebar.rootIndex().isValid() && sidebar.isSourceMenuInside() &&
+                    shownRows(sidebar) == QStringList({"Tracks", "Auto DJ", "Playlists"}),
+            "BACK returns to This Pi's rows");
+    back->click();
+    settle();
+    require(!sidebar.isSourceMenuInside() && edit->isVisible(), "BACK again returns to the top level");
 
-    // A rekordbox drive comes: its tile is first.
+    // A rekordbox drive comes: its row is first.
     auto drive = item("MANTACORE", QVariantList{mantacore, QString(), QStringLiteral("rev-1")});
     drive->appendChild("Friday set", 11);
     drive->appendChild("Grime", 12);
@@ -300,25 +393,29 @@ int main(int argc, char** argv) {
     }
     settle();
     require(tileNames(sidebar).value(0) == "MANTACORE" &&
-                    sidebar.sourceTiles().first()->findChild<QLabel*>("MixpiSourceTileSub")->text() ==
-                            QString::fromUtf8("USB drive · rekordbox"),
-            "with a drive the first tile is the drive");
+                    tileSub(sidebar, "MANTACORE") == QString::fromUtf8("USB · rekordbox") &&
+                    tileGlyph(sidebar, "MANTACORE") == "usb" && tileEnterable(sidebar, "MANTACORE"),
+            "with a drive the first row is the drive (USB · rekordbox, the USB icon, ›)");
     sidebar.sourceTiles().first()->click();
     settle();
     const QModelIndex driveRow = model.index(0, 0, library.sourceRow("RekordboxFeature"));
-    require(shown == "Rekordbox/MANTACORE" && sidebar.rootIndex() == driveRow,
-            "a tap on the drive tile opens it and shows that drive's rows");
+    require(shown == "Rekordbox/MANTACORE" && sidebar.rootIndex() == driveRow && sidebar.isSourceMenuInside(),
+            "a tap on the drive opens it and goes inside");
     require(shownRows(sidebar) == QStringList({"Friday set", "Grime"}) &&
                     sidebar.sourceCrumb() == "MANTACORE" && sidebar.sourceTiles().first()->isChecked(),
-            "its rows are the drive's node; the crumb names the drive; its tile is lit");
-    require(!sidebar.findChild<QPushButton*>("MixpiSourceBack")->isEnabled(),
-            "Back is off at the drive: it does not go up to all drives");
-    screen.setAndConfirm(1);
+            "its rows are the drive's node; the place names the drive; it is the current source");
+    back->click();
+    settle();
+    require(!sidebar.isSourceMenuInside() && tileNames(sidebar).value(0) == "MANTACORE",
+            "BACK at the drive goes to the top level, not up to all drives");
+    sidebar.sourceTiles().first()->click();
+    settle();
+    screenControl.setAndConfirm(1);
     sidebarVisible.setAndConfirm(1);
     const QModelIndex friday = model.index(0, 0, driveRow);
     QTest::mouseClick(sidebar.viewport(), Qt::LeftButton, {}, sidebar.visualRect(friday).center());
     settle();
-    require(shown == "Rekordbox/Friday set" && screen.get() == 0 && sidebarVisible.get() == 0,
+    require(shown == "Rekordbox/Friday set" && screenControl.get() == 0 && sidebarVisible.get() == 0,
             "a tap on a drive playlist opens it in Tracks and closes Sources");
 
     // A drive opened in Computer joins after it, in plug-in order.
@@ -328,15 +425,14 @@ int main(int argc, char** argv) {
         computer.children.insertTreeItemRows(std::move(rows), computer.children.rowCount());
     }
     settle();
-    require(tileNames(sidebar).mid(0, 2) == QStringList({"MANTACORE", "STICK"}) &&
-                    tileNamed(sidebar, "STICK")->findChild<QLabel*>("MixpiSourceTileSub")->text() == "USB drive",
-            "a drive opened in Computer gets a tile, in plug-in order");
+    require(tileNames(sidebar).mid(0, 2) == QStringList({"MANTACORE", "STICK"}) && tileSub(sidebar, "STICK") == "USB",
+            "a drive opened in Computer gets a row (USB), in plug-in order");
 
-    // Unplug while the drive tile is selected.
+    // Unplug while the drive is selected.
     sidebar.sourceTiles().first()->click();
     settle();
     require(sidebar.selectedSourceTile() == QString("drive:" + QDir::cleanPath(mantacore)),
-            "the drive tile is selected again");
+            "the drive is selected again");
     rekordbox.children.removeRows(0, 1);
     settle();
     bool valid = true;
@@ -345,126 +441,260 @@ int main(int argc, char** argv) {
     }
     require(sidebar.selectedSourceTile() == LibraryInterface::SourceGroups::kThisPi &&
                     tileNamed(sidebar, "This Pi")->isChecked() && !tileNamed(sidebar, "MANTACORE"),
-            "unplugged while selected: This Pi is selected and the drive tile is gone");
-    require(valid && !sidebar.rootIndex().isValid() && sidebar.sourceCrumb() == "This Pi" &&
-                    !sidebar.findChild<QPushButton*>("MixpiSourceBack")->isEnabled() &&
+            "unplugged while selected: This Pi is selected and the drive's row is gone");
+    require(valid && !sidebar.rootIndex().isValid() && !sidebar.isSourceMenuInside() &&
+                    sidebar.sourceCrumb() == "This Pi" && edit->isVisible() &&
                     shownRows(sidebar) == QStringList({"Tracks", "Auto DJ", "Playlists"}),
-            "nothing dangles: top level, This Pi's rows, Back off");
+            "nothing dangles: the top level, This Pi current, its rows below");
     QDir(stick).removeRecursively();
     sidebar.sourcesChanged();
     settle();
-    require(!tileNamed(sidebar, "STICK"), "a Computer drive whose folder is gone loses its tile");
+    require(!tileNamed(sidebar, "STICK"), "a Computer drive whose folder is gone loses its row");
 
-    // A node tile without children (Recordings) shows its own row.
+    // A node tile without children (Recordings) opens its own list.
+    screenControl.setAndConfirm(1);
     tileNamed(sidebar, "Recordings")->click();
     settle();
-    require(shown == "Recordings" && sidebar.sourceCrumb() == "Recordings",
-            "a tap on Recordings opens it");
+    require(shown == "Recordings" && screenControl.get() == 0 && !sidebar.isSourceMenuInside(),
+            "a tap on Recordings opens it and closes Sources; the menu stays at the top level");
 
-    // Sources edit lists the tiles.
+    // EDIT: the full-screen edit list, listing the tiles.
+    screenControl.setAndConfirm(1);
+    sidebarVisible.setAndConfirm(1);
     QWidget tracksPane;
     library.m_pLibraryWidget = &tracksPane;
-    library.showSidebarSourcesMenu();
+    edit->click();
     settle();
     auto* list = static_cast<LibraryInterface::SourceEditList*>(library.m_pSidebarSourceEdit.data());
     require(list && list->isVisible() && sidebar.isSourcesEditing() && editing.get() == 1,
-            "the grouped edit list is open and [Library],sidebar_sources_editing is 1 (DONE)");
-    auto rowNames = [&list] {
-        QStringList names;
-        for (auto* row : list->rows()) {
-            names.append(row->findChild<QPushButton*>("MixpiSourceEditName")->text());
-        }
-        return names;
-    };
-    auto rowNamed = [&list](const QString& prefix) -> QWidget* {
-        for (auto* row : list->rows()) {
-            if (row->findChild<QPushButton*>("MixpiSourceEditName")->text().startsWith(prefix)) {
-                return row;
-            }
-        }
-        return nullptr;
-    };
-    const QString dot = QString::fromUtf8("· ");
-    const QStringList expected{"USB drives (each drive)", "This Pi", dot + "Tracks", dot + "Playlists",
-            dot + "Crates", dot + "Auto DJ", "Recordings", "History", "Folders", "Samples", "More",
-            dot + "Analyse", dot + "Serato"};
-    if (!list || rowNames() != expected) {
-        std::cout << "OBSERVE edit rows " << (list ? rowNames().join(" | ").toStdString() : "none")
-                  << std::endl;
-    }
-    require(list && rowNames() == expected,
-            "Sources edit lists the tiles in order, This Pi's and More's sources below them");
-    if (!list || rowNames() != expected) {
+            "EDIT opens the edit list and [Library],sidebar_sources_editing is 1");
+    if (!list) {
         std::cout << "FAILED " << failures << std::endl;
         return 1;
     }
-    auto* trackRow = rowNamed(dot + "Tracks");
-    require(trackRow && trackRow->findChild<QPushButton*>("MixpiSourceEditUp")->isHidden() &&
-                    !trackRow->findChild<QCheckBox*>("MixpiSourceEditSwitch")->isHidden(),
-            "a source row inside a group has a switch, no Up or Down");
-    require(!rowNamed("USB drives")->findChild<QPushButton*>("MixpiSourceEditUp")->isEnabled() &&
-                    rowNamed("This Pi")->findChild<QPushButton*>("MixpiSourceEditUp")->isEnabled() &&
-                    !rowNamed("More")->findChild<QPushButton*>("MixpiSourceEditDown")->isEnabled(),
-            "Up and Down move between tile rows only");
-    rowNamed("Recordings")->findChild<QPushButton*>("MixpiSourceEditDown")->click();
+    require(list->parentWidget() == &screen && list->geometry() == QRect(0, 48, 800, 432),
+            "the edit list is full screen under the top bar");
+    auto rowNames = [&list] {
+        QStringList names;
+        for (auto* row : list->rows()) {
+            names.append(row->findChild<QLabel*>("MixpiSourcesEditName")->text());
+        }
+        return names;
+    };
+    auto rowPart = [&list](const QString& id, const char* name) -> QWidget* {
+        auto* row = list->row(id);
+        return row ? row->findChild<QWidget*>(name) : nullptr;
+    };
+    auto rowSub = [&list](const QString& id) {
+        auto* row = list->row(id);
+        auto* sub = row ? row->findChild<QLabel*>("MixpiSourcesEditSub") : nullptr;
+        return sub ? sub->text() : QStringLiteral("<none>");
+    };
+    namespace Groups = LibraryInterface::SourceGroups;
+    const QStringList expected{"USB drives (each drive)", "This Pi", "Recordings", "History", "Folders",
+            "Samples", "More"};
+    if (rowNames() != expected) {
+        std::cout << "OBSERVE edit rows " << rowNames().join(" | ").toStdString() << std::endl;
+    }
+    require(rowNames() == expected, "the edit list has one row per Sources row, in order (no member rows)");
+    require(rowSub(Groups::kThisPi) == "TRACKS STARTS HERE" &&
+                    static_cast<QPushButton*>(rowPart(Groups::kThisPi, "MixpiSourcesEditStar"))->text() ==
+                            QString::fromUtf8("★") &&
+                    rowSub(Groups::kMore) == "Analyse" && rowSub(Groups::kFolders) == "Browse files and drives" &&
+                    rowSub(Groups::kHistory) == "Played tracks by date" && rowSub(Groups::kDrives) == "USB",
+            "each row has its line; Tracks starts at This Pi (★, TRACKS STARTS HERE)");
+    bool glyphs = true;
+    for (const auto& id : {Groups::kDrives, Groups::kThisPi, Groups::kHistory, Groups::kFolders,
+                 Groups::kSamples, Groups::kMore}) {
+        auto* icon = static_cast<LibraryInterface::SourceGlyph*>(rowPart(id, "MixpiSourcesEditIcon"));
+        glyphs &= icon && icon->glyph() == Groups::glyph(id) && !icon->glyph().isEmpty();
+    }
+    require(glyphs, "each row has the icon it has in the menu");
+    require(list->row(Groups::kHistory)->property("off").toBool() &&
+                    !list->row(Groups::kThisPi)->property("off").toBool(),
+            "a row that is off (History) is dimmed");
+    require(!static_cast<QPushButton*>(rowPart(Groups::kDrives, "MixpiSourcesEditUp"))->isEnabled() &&
+                    static_cast<QPushButton*>(rowPart(Groups::kThisPi, "MixpiSourcesEditUp"))->isEnabled() &&
+                    !static_cast<QPushButton*>(rowPart(Groups::kMore, "MixpiSourcesEditDown"))->isEnabled(),
+            "UP is off on the first row and DOWN on the last");
+    static_cast<QPushButton*>(rowPart(Groups::kRecordings, "MixpiSourcesEditDown"))->click();
     settle();
     require(library.sourceGroupOrder().mid(2, 2) == QStringList({"SetlogFeature", "RecordingFeature"}) &&
                     rowNames().indexOf("History") < rowNames().indexOf("Recordings"),
-            "Down moves a tile and saves the tile order");
-    rowNamed("This Pi")->findChild<QPushButton*>("MixpiSourceEditDown")->click();
+            "Down moves a row and saves the order");
+    static_cast<QPushButton*>(rowPart(Groups::kThisPi, "MixpiSourcesEditDown"))->click();
     settle();
-    require(rowNames().mid(1, 6) == QStringList({"History", "This Pi", dot + "Tracks", dot + "Playlists",
-                                                dot + "Crates", dot + "Auto DJ"}),
-            "a group moves with its source rows");
-    rowNamed("History")->findChild<QCheckBox*>("MixpiSourceEditSwitch")->click();
+    require(rowNames().mid(1, 3) == QStringList({"History", "This Pi", "Recordings"}),
+            "This Pi moves down past History");
+    static_cast<QCheckBox*>(rowPart(Groups::kHistory, "MixpiSourcesEditSwitch"))->click();
     settle();
-    require(settings.getValue(ConfigKey(kConfigGroup, "SidebarSourceSetlogFeature"), false),
-            "the History switch writes its source's own key");
-    rowNamed(dot + "Crates")->findChild<QCheckBox*>("MixpiSourceEditSwitch")->click();
-    settle();
-    rowNamed("USB drives")->findChild<QCheckBox*>("MixpiSourceEditSwitch")->click();
+    require(settings.getValue(ConfigKey(kConfigGroup, "SidebarSourceSetlogFeature"), false) &&
+                    !list->row(Groups::kHistory)->property("off").toBool(),
+            "the History switch writes its source's own key and the row is no longer dimmed");
+    static_cast<QCheckBox*>(rowPart(Groups::kDrives, "MixpiSourcesEditSwitch"))->click();
     settle();
     require(!settings.getValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), true),
             "the drives switch writes the group's key");
-    rowNamed("This Pi")->findChild<QPushButton*>("MixpiSourceEditName")->click();
-    list->startButton()->click();
+    require(!static_cast<QPushButton*>(rowPart(Groups::kSamples, "MixpiSourcesEditStar"))->isEnabled() &&
+                    !static_cast<QPushButton*>(rowPart(Groups::kDrives, "MixpiSourcesEditStar"))->isEnabled(),
+            "★ is off where Tracks cannot start (Samples, drives)");
+    static_cast<QPushButton*>(rowPart(Groups::kHistory, "MixpiSourcesEditStar"))->click();
+    settle();
+    require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == "SetlogFeature" &&
+                    rowSub(Groups::kHistory) == "TRACKS STARTS HERE" &&
+                    rowSub(Groups::kThisPi) == QString::fromUtf8("Tracks · Playlists · Auto DJ"),
+            "★ on History: Tracks starts at History");
+    static_cast<QPushButton*>(rowPart(Groups::kThisPi, "MixpiSourcesEditStar"))->click();
     settle();
     require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == "MixxxLibraryFeature",
-            "Start here on This Pi starts at Tracks");
-    library.showSidebarSourcesMenu();
+            "★ on This Pi starts at Tracks");
+    static_cast<QPushButton*>(rowPart(Groups::kMore, "MixpiSourcesEditStar"))->click();
+    settle();
+    require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == "AnalysisFeature" &&
+                    rowSub(Groups::kMore) == "TRACKS STARTS HERE",
+            "★ on More starts at its first source that is on (Analyse)");
+    static_cast<QPushButton*>(rowPart(Groups::kThisPi, "MixpiSourcesEditStar"))->click();
+    settle();
+    list->doneButton()->click();
     settle();
     require(!sidebar.isSourcesEditing() &&
                     tileNames(sidebar) == QStringList({"History", "This Pi", "Recordings", "Folders",
                                                 "Samples", "More"}),
-            "DONE: the rail shows the new order with History");
-    require(editing.get() == 0 && !list->isVisible(), "DONE sets [Library],sidebar_sources_editing to 0");
-    library.showSidebarSourcesMenu();
+            "DONE: the menu shows the new order with History");
+    require(editing.get() == 0 && !list->isVisible() && screenControl.get() == 1 && sidebarVisible.get() == 1,
+            "DONE sets [Library],sidebar_sources_editing to 0 and Sources stays open");
+    edit->click();
     settle();
-    require(editing.get() == 1 && list->isVisible(), "EDIT LIST again: the control is 1 again");
+    require(editing.get() == 1 && list->isVisible(), "EDIT again: the control is 1 again");
     // A model reset (USB hot-plug) while the list is open: the control
     // follows what is shown.
     recordings.children.setRootItem(TreeItem::newRoot(&recordings));
     settle();
     require(editing.get() == (sidebar.isSourcesEditing() && list->isVisible() ? 1 : 0),
             "after a model reset the control matches the shown edit list");
+    list->closeButton()->click();
+    settle();
+    require(editing.get() == 0 && !list->isVisible() && screenControl.get() == 0 && sidebarVisible.get() == 0,
+            "the close ✕ ends the edit list and closes Sources");
+    edit->click();
+    settle();
     sidebar.hide();
     settle();
-    require(editing.get() == 0 && !sidebar.isSourcesEditing(),
-            "closing Sources (the sidebar hides) sets the control to 0");
+    require(editing.get() == 0 && !sidebar.isSourcesEditing() && !list->isVisible(),
+            "closing Sources (the sidebar hides) ends the edit list");
     sidebar.show();
     settle();
-    require(editing.get() == 0 && !list->isVisible(), "Sources opens again on the list, not the edit list");
+    require(editing.get() == 0 && !list->isVisible(), "Sources opens again on the menu, not the edit list");
+    settings.setValue(ConfigKey(kConfigGroup, "SidebarSourceCrateFeature"), true);
+    library.applySidebarSourceVisibility();
+    settle();
     tileNamed(sidebar, "This Pi")->click();
     settle();
     require(shownRows(sidebar) == QStringList({"Tracks", "Auto DJ", "Playlists", "Crates"}),
             "a source switched on inside This Pi shows there");
+    back->click();
+    settle();
     {
         std::vector<std::unique_ptr<TreeItem>> rows;
-        rows.push_back(item("MANTACORE", QVariantList{mantacore, QString(), QStringLiteral("rev-2")}));
+        auto again = item("MANTACORE", QVariantList{mantacore, QString(), QStringLiteral("rev-2")});
+        again->appendChild("Tracks", 21);
+        again->appendChild("Playlists", 22)->appendChild("Afro house", 23);
+        for (const char* name : {"Warm-up", "Peak time", "Closing", "Afro tech"}) {
+            again->appendChild(QString::fromLatin1(name), 24);
+        }
+        again->appendChild("History", 25)->appendChild("2026-11-15", 26);
+        rows.push_back(std::move(again));
         rekordbox.children.insertTreeItemRows(std::move(rows), 0);
     }
     settle();
-    require(!tileNamed(sidebar, "MANTACORE"), "with the drives switch off, a drive gets no tile");
+    require(!tileNamed(sidebar, "MANTACORE"), "with the drives switch off, a drive gets no row");
+
+    // The renders (agreed UI s5): the state of m-sources-top.png, a list with
+    // counts and a scroll bar, and m-sources-edit.png.
+    const QString grabs = qEnvironmentVariable("MIXPI_SOURCES_GRAB_DIR");
+    {
+        settings.setValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), true);
+        settings.setValue(ConfigKey(kConfigGroup, "SourceGroupOrder"),
+                SourceOrder::encode({Groups::kThisPi, Groups::kDrives, Groups::kHistory, Groups::kFolders,
+                        Groups::kSamples, Groups::kMore, Groups::kRecordings}));
+        settings.setValue(ConfigKey(kConfigGroup, "SidebarSourceRecordingFeature"), false);
+        for (const auto& id : {"AutoDJFeature", "PlaylistFeature", "CrateFeature"}) {
+            settings.setValue(ConfigKey(kConfigGroup, QStringLiteral("SidebarSource") + id), false);
+        }
+        settings.setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), "MixxxLibraryFeature");
+        // Mixxx labels a playlist "name (count) duration".
+        auto* lists = playlists.children.getRootItem();
+        const QList<QPair<QString, int>> named{{"Afro house", 48}, {"Warm-up", 31}, {"Peak time", 26},
+                {"Closing", 22}, {"Afro tech", 40}, {"Deep cuts", 17}, {"Amapiano", 35}, {"Edits", 12}};
+        for (const auto& [name, count] : named) {
+            lists->appendChild(QStringLiteral("%1 (%2) 2:%3:00").arg(name).arg(count).arg(count % 60, 2, 10,
+                                                                                         QLatin1Char('0')),
+                    count);
+        }
+        library.applySidebarSourceVisibility();
+        sidebar.sourcesChanged();
+        settle();
+        tileNamed(sidebar, "This Pi")->click();
+        settle();
+        back->click();
+        settle();
+        require(tileNames(sidebar) == QStringList({"This Pi", "MANTACORE", "History", "Folders", "Samples", "More"}) &&
+                        tileSub(sidebar, "This Pi") == "Tracks" && !sidebar.isSourceMenuInside(),
+                "the render state matches m-sources-top.png (This Pi, MANTACORE, History, Folders, Samples, More)");
+        if (!grabs.isEmpty()) {
+            screen.grab().save(grabs + "/c1-sources-top.png");
+        }
+        // Inside a source with a long list: This Pi › Playlists.
+        settings.setValue(ConfigKey(kConfigGroup, "SidebarSourcePlaylistFeature"), true);
+        library.applySidebarSourceVisibility();
+        settle();
+        tileNamed(sidebar, "This Pi")->click();
+        settle();
+        const QModelIndex lists2 = library.sourceRow("PlaylistFeature");
+        QTest::mouseClick(sidebar.viewport(), Qt::LeftButton, {}, sidebar.visualRect(lists2).center());
+        settle();
+        const QModelIndex afro = model.index(2, 0, lists2);
+        sidebar.selectionModel()->setCurrentIndex(afro, QItemSelectionModel::ClearAndSelect);
+        settle();
+        auto* scroll = sidebar.verticalScrollBar();
+        require(sidebar.rootIndex() == lists2 && scroll->isVisible() && scroll->maximum() > 0 &&
+                        scroll->width() == 24 && place->text() == QString::fromUtf8("This Pi › Playlists"),
+                "inside a long list: the place, and the 24 px scroll bar at the right edge");
+        if (!grabs.isEmpty()) {
+            screen.grab().save(grabs + "/c1-sources-sub.png");
+        }
+        // Inside the drive (rekordbox lists carry no count in Mixxx).
+        back->click();
+        back->click();
+        settle();
+        if (auto* mantacoreTile = tileNamed(sidebar, "MANTACORE")) {
+            mantacoreTile->click();
+            settle();
+            if (!grabs.isEmpty()) {
+                screen.grab().save(grabs + "/c1-sources-drive.png");
+            }
+            back->click();
+            settle();
+        }
+        // The edit list in the state of m-sources-edit.png (Folders off).
+        settings.setValue(ConfigKey(kConfigGroup, "SidebarSourceBrowseFeature"), false);
+        settings.setValue(ConfigKey(kConfigGroup, "SidebarSourcePlaylistFeature"), false);
+        library.applySidebarSourceVisibility();
+        settle();
+        edit->click();
+        settle();
+        require(list->isVisible() &&
+                        rowNames().mid(0, 6) == QStringList({"This Pi", "MANTACORE", "History", "Folders",
+                                                        "Samples", "More"}) &&
+                        rowSub(Groups::kDrives) == QString::fromUtf8("USB · rekordbox") &&
+                        list->row(Groups::kFolders)->property("off").toBool(),
+                "the edit render state matches m-sources-edit.png (MANTACORE by name, Folders off)");
+        if (!grabs.isEmpty()) {
+            screen.grab().save(grabs + "/c1-sources-edit.png");
+        }
+        list->doneButton()->click();
+        settle();
+    }
 
     // The mapping runs once; a group whose sources are all hidden starts hidden.
     settings.setValue(ConfigKey(kConfigGroup, "SourceGroupThisPi"), true);
@@ -479,15 +709,16 @@ int main(int argc, char** argv) {
     require(!settings.getValue(ConfigKey(kConfigGroup, "SourceGroupThisPi"), true),
             "a tile whose sources were all hidden starts hidden");
 
-    // A narrow sidebar keeps one tile per source and no filter.
-    sidebar.resize(300, 384);
+    // A narrow sidebar (the Pioneered touch skin's 260 px pane) keeps one row
+    // per source and no filter.
+    sidebar.setGeometry(540, 100, 260, 380);
     settle();
     bool none = true;
     for (int row = 0; row < model.rowCount(); ++row) {
         none &= sidebar.isRowHidden(row, {}) == sidebar.isSourceRowHidden(row);
     }
     require(!sidebar.hasSourceScreen() && !library.groupedSources() && none,
-            "a narrow touch sidebar has no tiles and hides only the owner's hidden sources");
+            "a narrow touch sidebar has no grouped rows and hides only the owner's hidden sources");
 
     std::cout << (failures ? "FAILED " : "OK ") << failures << std::endl;
     return failures ? 1 : 0;

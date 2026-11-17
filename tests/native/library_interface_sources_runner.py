@@ -30,7 +30,7 @@ def main():
     parser.add_argument('--without-bpm-lock-touch', action='store_true')
     parser.add_argument('--without-acceptance-fixes', action='store_true')
     parser.add_argument('--without-council-fixes', action='store_true')
-    # R-9/R-10: only the Sources screen (rail, crumb, edit list) checks.
+    # Agreed UI s5: only the Sources menu and edit list checks.
     parser.add_argument('--sources-screen', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-source-model-') as temporary:
@@ -162,6 +162,10 @@ class WTrackTableView : public QTableView {
         menus = target / 'pioneered-menus.qss'
         menus.write_bytes((ROOT / 'stage3/01-install-packages/files/pioneered-menus.qss').read_bytes())
         command += ['-DMIXPI_MENUS_QSS="' + str(menus) + '"']
+        # Agreed UI s5: the Sources menu and edit list rules, after the menu block.
+        sources_qss = target / 'mixpi-sources-menu.qss'
+        sources_qss.write_bytes((ROOT / 'stage3/01-install-packages/files/mixpi-sources-menu.qss').read_bytes())
+        command += ['-DMIXPI_SOURCES_QSS="' + str(sources_qss) + '"']
         if sources_screen:
             command += ['-DMIXPI_SOURCES_SCREEN']
         if source_groups:

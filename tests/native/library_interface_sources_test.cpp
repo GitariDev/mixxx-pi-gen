@@ -1,5 +1,7 @@
 #include <QApplication>
 #include <QAbstractItemModelTester>
+#include <QDir>
+#include <QFileInfo>
 #include <QFile>
 #include <QFontInfo>
 #include <QImage>
@@ -82,6 +84,12 @@ class SidebarView : public QTreeView {
             panel->setVisible(editing);
         }
     }
+    // DONE (false) and the close ✕ (true, Sources closes too).
+    int closes = 0;
+    void endSourcesEditing(bool close) {
+        setSourcesEditing(false);
+        closes += close ? 1 : 0;
+    }
 };
 class Library : public QObject {
   public:
@@ -120,6 +128,10 @@ class Library : public QObject {
     QStringList sourceGroupOrder() const;
     bool sourceGroupVisible(const QString& tile) const;
     void moveSourceGroup(const QString& tile, int direction);
+    // The grouped edit list reads these; this fixture has no grouped Sources
+    // (tests/native/source_groups_test.cpp checks them).
+    QModelIndex sourceRow(const QString&) const { return {}; }
+    QList<QModelIndex> driveRows() { return {}; }
 #endif
     void onSkinLoadFinished();
     void setTrackTableFont(const QFont&) {}
@@ -495,11 +507,19 @@ void bpmLockChecks() {
 #ifdef MIXPI_SOURCES_SCREEN
 #include "control/controlobject.h"
 
-// R-9 and R-10: the Sources screen. The menu style block from the skin
-// (pioneered-menus.qss) is the style sheet of the widgets checked here.
+// Agreed UI s5 (build C, U-4): the Sources side menu and the full-screen
+// edit list. The real style sheets are the style of the widgets checked
+// here: the menu block (pioneered-menus.qss) and the Sources rules
+// (mixpi-sources-menu.qss), which load after it.
 QString menusStyle() {
-    QFile file(QStringLiteral(MIXPI_MENUS_QSS));
-    return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    QString style;
+    for (const char* path : {MIXPI_MENUS_QSS, MIXPI_SOURCES_QSS}) {
+        QFile file(QString::fromUtf8(path));
+        if (file.open(QIODevice::ReadOnly)) {
+            style += QString::fromUtf8(file.readAll()) + QStringLiteral("\n");
+        }
+    }
+    return style;
 }
 
 double meanLuminance(const QImage& image) {
@@ -514,13 +534,7 @@ double meanLuminance(const QImage& image) {
 }
 
 QWidget* editRow(LibraryInterface::SourceEditList* list, const QString& id) {
-    for (auto* row : list->rows()) {
-        auto* name = row->findChild<QPushButton*>("MixpiSourceEditName");
-        if (name && name->property("sourceId").toString() == id) {
-            return row;
-        }
-    }
-    return nullptr;
+    return list ? list->row(id) : nullptr;
 }
 
 template<typename T>
@@ -550,14 +564,14 @@ void tap(QAbstractButton* button) {
     QApplication::processEvents();
 }
 
-// R-10: Sources edit through the actual Library methods.
+// R-10 and agreed UI s5: Sources edit through the actual Library methods.
 void editListChecks(Library& library, Settings& settings, SidebarView& view, SidebarModel& model,
         E& featureE, int& constructions) {
     library.m_sidebarSources.append({"E", "E", ConfigKey(kConfigGroup, "SidebarSourceE"), nullptr,
             [&] { ++constructions; return &featureE; }});
     settings.setValue(ConfigKey(kConfigGroup, "SidebarSourceE"), false);
     view.setStyleSheet(menusStyle());
-    view.resize(536, 384);
+    view.resize(800, 432);
     view.show();
     auto rowOf = [&](const QString& title) {
         for (int row = 0; row < model.rowCount(); ++row) {
@@ -571,48 +585,85 @@ void editListChecks(Library& library, Settings& settings, SidebarView& view, Sid
     QApplication::processEvents();
     auto* list = dynamic_cast<LibraryInterface::SourceEditList*>(library.m_pSidebarSourceEdit.data());
     require(list && view.isSourcesEditing() && list->isVisible() && list->geometry() == view.rect(),
-            "EDIT LIST shows the Sources edit list in place of the Sources list");
-    require(view.findChildren<QWidget*>("MixpiSourceEdit").size() == 1 &&
+            "EDIT shows the Sources edit list");
+    if (!list) {
+        return;
+    }
+    require(view.findChildren<QWidget*>("MixpiSourcesEdit").size() == 1 &&
                     view.findChildren<QMenu*>().isEmpty() && !QApplication::activePopupWidget() &&
                     !list->findChild<QListWidget*>(),
             "Sources edit is one list: no menu, no second order list");
     require(constructions == 0, "opening Sources edit keeps optional sources unloaded");
-    require(list && list->rows().size() == library.m_sidebarSources.size(),
+    require(list->rows().size() == library.m_sidebarSources.size(),
             "Sources edit has one row per source, hidden ones too");
+    auto* title = list->findChild<QLabel*>("MixpiSourcesEditTitle");
+    auto* hint = list->findChild<QLabel*>("MixpiSourcesEditHint");
+    auto* done = list->doneButton();
+    auto* close = list->closeButton();
+    const QRect doneBox(done->mapTo(list, QPoint()), done->size());
+    const QRect closeBox(close->mapTo(list, QPoint()), close->size());
+    std::cout << "OBSERVE edit header DONE " << doneBox.x() << ',' << doneBox.y() << ' ' << doneBox.width()
+              << 'x' << doneBox.height() << ", close " << closeBox.x() << ',' << closeBox.y() << ' '
+              << closeBox.width() << 'x' << closeBox.height() << std::endl;
+    require(title && title->text() == "EDIT SOURCES" && hint &&
+                    hint->text() == QString::fromUtf8(
+                                            "Switch sources on or off, set the order, ★ where Tracks starts.") &&
+                    done->text() == "DONE" && done->size() == QSize(96, 48) && close->size() == QSize(48, 48) &&
+                    closeBox.right() == list->width() - 5 && doneBox.right() + 9 == closeBox.left(),
+            "the header has EDIT SOURCES, the hint, DONE and the close ✕ at the right");
     bool sized = true;
     for (auto* row : list->rows()) {
-        sized &= row->height() >= 56;
-        for (const char* name : {"MixpiSourceEditUp", "MixpiSourceEditDown"}) {
+        sized &= row->height() == 52;
+        for (const char* name : {"MixpiSourcesEditUp", "MixpiSourcesEditDown"}) {
             auto* button = row->findChild<QPushButton*>(name);
-            sized &= button && button->width() >= 48 && button->height() >= 48;
+            sized &= button && button->size() == QSize(84, 48);
         }
-        auto* toggle = row->findChild<QCheckBox*>("MixpiSourceEditSwitch");
-        sized &= toggle && toggle->width() >= 64 && toggle->height() >= 48;
-        auto* name = row->findChild<QPushButton*>("MixpiSourceEditName");
-        sized &= name && name->height() >= 48 && QFontInfo(name->font()).pixelSize() >= 13;
+        auto* star = row->findChild<QPushButton*>("MixpiSourcesEditStar");
+        sized &= star && star->size() == QSize(48, 48);
+        auto* toggle = row->findChild<QCheckBox*>("MixpiSourcesEditSwitch");
+        sized &= toggle && toggle->size() == QSize(88, 48);
+        for (auto* label : row->findChildren<QLabel*>()) {
+            sized &= QFontInfo(label->font()).pixelSize() >= 13;
+        }
     }
-    sized &= list->startButton()->height() >= 48 && list->startButton()->width() >= 48;
-    require(sized, "edit rows are 56 px; Up, Down and Start here 48 px; the switch 64x48; text 13 px or more");
+    require(sized, "edit rows are 52 px; ★ 48x48, the toggle 88x48, ▲ UP and ▼ DOWN 84x48; text 13 px or more");
+    auto* firstUp = list->rows().first()->findChild<QPushButton*>("MixpiSourcesEditUp");
+    auto* lastDown = list->rows().last()->findChild<QPushButton*>("MixpiSourcesEditDown");
+    require(firstUp->text() == QString::fromUtf8("▲ UP") && lastDown->text() == QString::fromUtf8("▼ DOWN") &&
+                    !firstUp->isEnabled() && !lastDown->isEnabled(),
+            "UP is off on the first row and DOWN on the last");
     const QString grabs = qEnvironmentVariable("MIXPI_SOURCES_GRAB_DIR");
     if (!grabs.isEmpty()) {
-        list->grab().save(grabs + "/sources-edit.png");
+        list->grab().save(grabs + "/sources-edit-list.png");
     }
     const double luminance = meanLuminance(list->grab().toImage());
     std::cout << "OBSERVE Sources edit mean luminance " << luminance << std::endl;
     require(luminance < 64, "a grab of Sources edit is dark");
 
     // Each switch writes the same key as the old check box.
-    auto* switchB = part<QCheckBox>(list, "B", "MixpiSourceEditSwitch");
-    require(switchB && !switchB->isChecked(), "a hidden source's switch is off");
+    auto* switchB = part<QCheckBox>(list, "B", "MixpiSourcesEditSwitch");
+    require(switchB && !switchB->isChecked() && editRow(list, "B")->property("off").toBool(),
+            "a hidden source's switch is off and its row is dimmed");
+    auto* dimName = part<QLabel>(list, "B", "MixpiSourcesEditName");
+    auto* litName = part<QLabel>(list, "A", "MixpiSourcesEditName");
+    std::cout << "OBSERVE off name " << dimName->palette().color(QPalette::WindowText).name().toStdString()
+              << ", on name " << litName->palette().color(QPalette::WindowText).name().toStdString() << std::endl;
+    require(dimName->palette().color(QPalette::WindowText) == QColor("#73767c") &&
+                    litName->palette().color(QPalette::WindowText) == QColor("#e4e7ec"),
+            "the row that is off is dimmed (its text at 45%)");
     tap(switchB);
     require(settings.getValue(ConfigKey(kConfigGroup, "SidebarSourceB"), false) &&
                     !view.isRowHidden(rowOf("B"), {}),
             "a switch writes the same SidebarSource key as before and shows the source");
-    tap(part<QCheckBox>(list, "B", "MixpiSourceEditSwitch"));
+    QApplication::processEvents();
+    require(!editRow(list, "B")->property("off").toBool() &&
+                    part<QCheckBox>(list, "B", "MixpiSourcesEditSwitch")->property("on").toBool(),
+            "a row switched on is not dimmed and its toggle reads ON");
+    tap(part<QCheckBox>(list, "B", "MixpiSourcesEditSwitch"));
     require(!settings.getValue(ConfigKey(kConfigGroup, "SidebarSourceB"), true) &&
                     view.isRowHidden(rowOf("B"), {}),
             "switching a source off hides it with the same key");
-    auto* switchA = part<QCheckBox>(list, "A", "MixpiSourceEditSwitch");
+    auto* switchA = part<QCheckBox>(list, "A", "MixpiSourcesEditSwitch");
     require(switchA && switchA->isChecked() && !switchA->isEnabled(),
             "the last visible source's switch is disabled");
     tap(switchA);
@@ -620,13 +671,13 @@ void editListChecks(Library& library, Settings& settings, SidebarView& view, Sid
                     !view.isRowHidden(rowOf("A"), {}),
             "a tap on the last visible switch changes nothing");
 
-    // Up and Down change the saved order.
+    // ▲ UP and ▼ DOWN change the saved order.
     QStringList ids;
     for (const auto& source : library.m_sidebarSources) {
         ids.append(source.id);
     }
     const QString second = ids.at(1);
-    tap(part<QPushButton>(list, second, "MixpiSourceEditUp"));
+    tap(part<QPushButton>(list, second, "MixpiSourcesEditUp"));
     QStringList moved = ids;
     moved.move(1, 0);
     QStringList now;
@@ -636,29 +687,31 @@ void editListChecks(Library& library, Settings& settings, SidebarView& view, Sid
     require(now == moved && SourceOrder::decode(settings.getValueString(
                                     ConfigKey(kConfigGroup, "SidebarSourceOrder"))).mid(0, moved.size()) == moved,
             "Up moves a source and saves the order");
-    require(list->selected() == second && !part<QPushButton>(list, second, "MixpiSourceEditUp")->isEnabled(),
-            "the moved row stays selected; the first row has no Up");
-    tap(part<QPushButton>(list, second, "MixpiSourceEditDown"));
+    require(!part<QPushButton>(list, second, "MixpiSourcesEditUp")->isEnabled(),
+            "the moved row is first now and has no UP");
+    tap(part<QPushButton>(list, second, "MixpiSourcesEditDown"));
     now.clear();
     for (const auto& source : library.m_sidebarSources) {
         now.append(source.id);
     }
     require(now == ids, "Down moves it back and saves the order");
 
-    // Start here: the selected, visible source becomes the start source.
-    tap(part<QCheckBox>(list, "B", "MixpiSourceEditSwitch"));
-    tap(part<QPushButton>(list, "B", "MixpiSourceEditName"));
-    require(list->selected() == "B" && list->startButton()->isEnabled(), "a tap on a name selects its row");
-    tap(list->startButton());
-    require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == "B" &&
-                    part<QPushButton>(list, "B", "MixpiSourceEditName")->text().endsWith(QStringLiteral("★")),
-            "Start here writes the start source and its row carries the star");
-    tap(part<QPushButton>(list, "ghost", "MixpiSourceEditName"));
-    require(!list->startButton()->isEnabled(), "Start here is off for a source that is off or not loaded");
+    // ★: Tracks starts at that source.
+    tap(part<QCheckBox>(list, "B", "MixpiSourcesEditSwitch"));
+    tap(part<QPushButton>(list, "B", "MixpiSourcesEditStar"));
+    auto* starB = part<QPushButton>(list, "B", "MixpiSourcesEditStar");
+    auto* subB = part<QLabel>(list, "B", "MixpiSourcesEditSub");
+    require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == "B" && starB &&
+                    starB->text() == QString::fromUtf8("★") && starB->property("start").toBool() &&
+                    subB && subB->text() == "TRACKS STARTS HERE" &&
+                    part<QPushButton>(list, "A", "MixpiSourcesEditStar")->text() == QString::fromUtf8("☆"),
+            "★ on a row writes the start source; that row is lit and reads TRACKS STARTS HERE");
+    require(!part<QPushButton>(list, "ghost", "MixpiSourcesEditStar")->isEnabled(),
+            "★ is off for a source that is off or not loaded");
 
     // An optional source: moving it does not load it; switching it on does.
     while (library.m_sidebarSources.first().id != "E") {
-        auto* up = part<QPushButton>(list, "E", "MixpiSourceEditUp");
+        auto* up = part<QPushButton>(list, "E", "MixpiSourcesEditUp");
         if (!up || !up->isEnabled()) {
             break;
         }
@@ -666,15 +719,15 @@ void editListChecks(Library& library, Settings& settings, SidebarView& view, Sid
     }
     require(constructions == 0 && library.m_sidebarSources.first().id == "E",
             "moving an optional source to the top does not load it");
-    tap(part<QCheckBox>(list, "E", "MixpiSourceEditSwitch"));
+    tap(part<QCheckBox>(list, "E", "MixpiSourcesEditSwitch"));
     require(constructions == 1 && library.order().first() == "E" && model.index(0, 0).data().toString() == "E",
             "switching an optional source on loads it once, at its saved place");
 
     // A drag on the list scrolls it and presses nothing (the C-1 rule).
-    view.resize(536, 300);
+    view.resize(800, 240);
     view.setSourcesEditing(true);
     QApplication::processEvents();
-    auto* down = part<QPushButton>(list, "A", "MixpiSourceEditDown");
+    auto* down = part<QPushButton>(list, "A", "MixpiSourcesEditDown");
     QStringList beforeDrag;
     for (const auto& source : library.m_sidebarSources) {
         beforeDrag.append(source.id);
@@ -689,15 +742,29 @@ void editListChecks(Library& library, Settings& settings, SidebarView& view, Sid
               << list->area()->verticalScrollBar()->value() << std::endl;
     require(afterDrag == beforeDrag && list->area()->verticalScrollBar()->value() > scrolled,
             "a drag on Sources edit scrolls it and presses nothing");
+    require(list->area()->verticalScrollBar()->isVisible() && list->area()->verticalScrollBar()->width() == 24,
+            "a long edit list shows its 24 px scroll bar");
 
+    // DONE and the close ✕.
+    tap(list->doneButton());
+    require(!view.isSourcesEditing() && !list->isVisible() && view.closes == 0,
+            "DONE ends Sources edit and shows the menu again");
     library.showSidebarSourcesMenu();
     QApplication::processEvents();
-    require(!view.isSourcesEditing() && !list->isVisible(), "DONE ends Sources edit and shows the list again");
+    tap(list->closeButton());
+    require(!view.isSourcesEditing() && !list->isVisible() && view.closes == 1,
+            "the close ✕ ends Sources edit and closes Sources");
+    library.showSidebarSourcesMenu();
+    library.showSidebarSourcesMenu();
+    QApplication::processEvents();
+    require(!view.isSourcesEditing() && !list->isVisible(),
+            "the skin's EDIT LIST / DONE control still opens and ends Sources edit");
     view.hide();
     view.setStyleSheet(QString());
 }
 
-// R-9: the real WLibrarySidebar at the Sources screen size (800x384).
+// Agreed UI s5: the real WLibrarySidebar as the Sources side menu, 320x380 at
+// the right of an 800x480 screen, under #LibraryWrapper as in the skin.
 void sourceScreenChecks() {
     const QStringList names{"Tracks", "Playlists", "Crates", "Computer", "Recordings", "History",
             "Analyse", "Rekordbox", "Serato"};
@@ -706,10 +773,14 @@ void sourceScreenChecks() {
     for (const auto& name : names) {
         features.push_back(std::make_unique<LibraryFeature>(name));
     }
-    // Twelve more playlists, so the right part scrolls.
+    // Twelve more playlists, so the list inside Playlists scrolls; Mixxx
+    // labels a playlist "name (count) duration".
     for (int number = 1; number <= 12; ++number) {
-        features[1]->children.getRootItem()->appendChild(QStringLiteral("Friday %1").arg(number));
+        features[1]->children.getRootItem()->appendChild(
+                QStringLiteral("Friday %1 (%2) 1:0%1:00").arg(number).arg(number * 4));
     }
+    // Recordings has no lists: it cannot be entered.
+    features[4]->children.setRootItem(TreeItem::newRoot(features[4].get()));
     // A drive whose playlists still load shows nothing when it is opened.
     features[7]->showsList = false;
     for (auto& feature : features) {
@@ -717,8 +788,14 @@ void sourceScreenChecks() {
     }
     LibraryFeature::shown = nullptr;
     LibraryFeature::listShown = false;
-    WLibrarySidebar sidebar;
-    sidebar.setStyleSheet(menusStyle());
+    QWidget screen800;
+    screen800.setObjectName("MixpiScreen");
+    screen800.resize(800, 480);
+    screen800.setStyleSheet(menusStyle());
+    QWidget wrapper(&screen800);
+    wrapper.setObjectName("LibraryWrapper");
+    wrapper.setGeometry(0, 0, 800, 480);
+    WLibrarySidebar sidebar(&wrapper);
     sidebar.setModel(&model);
     {
         WLibrarySidebar* pSidebarWidget = &sidebar;
@@ -736,6 +813,8 @@ void sourceScreenChecks() {
     sidebar.sourceSubline = [](const QModelIndex& index) {
         return QStringLiteral("Sub ") + index.data().toString();
     };
+    int editRequests = 0;
+    sidebar.sourcesEditRequested = [&editRequests] { ++editRequests; };
     auto rowOf = [&](const QString& title) {
         for (int row = 0; row < model.rowCount(); ++row) {
             if (model.index(row, 0).data().toString() == title) {
@@ -750,65 +829,108 @@ void sourceScreenChecks() {
         sidebar.sourcesChanged();
     });
     sidebar.enableTouchNavigation();
-    sidebar.resize(800, 384);
-    sidebar.show();
+    sidebar.setGeometry(480, 100, 320, 380);
+    screen800.show();
     sidebar.setRowHidden(rowOf("Analyse"), {}, true);
     sidebar.sourcesChanged();
     QTest::qWait(20);
     auto* screen = ControlObject::getControl(ConfigKey("[MixPi]", "screen"));
     auto* sidebarVisible = ControlObject::getControl(ConfigKey("[Sidebar]", "sidebar_visible"));
+    auto* sampleLoad = ControlObject::getControl(ConfigKey("[MixPi]", "sample_load"));
     auto* editing = ControlObject::getControl(ConfigKey("[Library]", "sidebar_sources_editing"));
     auto* viewport = sidebar.viewport();
-    auto* rail = sidebar.findChild<QScrollArea*>("MixpiSourceRail");
-    auto* bar = sidebar.findChild<QWidget*>("MixpiSourceBar");
-    auto* back = sidebar.findChild<QPushButton*>("MixpiSourceBack");
-    auto* crumb = sidebar.findChild<QLabel*>("MixpiSourceCrumb");
-    require(sidebar.hasSourceScreen() && rail && bar && back && crumb,
-            "an 800 px touch sidebar shows the Sources screen");
-    if (!rail || !bar || !back || !crumb) {
+    auto* top = sidebar.findChild<QScrollArea*>("MixpiSourcesMenuTop");
+    auto* header = sidebar.findChild<QWidget*>("MixpiSourcesMenuHeader");
+    auto* back = sidebar.findChild<QPushButton*>("MixpiSourcesMenuBack");
+    auto* edit = sidebar.findChild<QPushButton*>("MixpiSourcesMenuEdit");
+    auto* place = sidebar.findChild<QLabel*>("MixpiSourcesMenuPlace");
+    require(sidebar.hasSourceScreen() && sidebar.property("mixpiSourceMenu").toBool() && top && header &&
+                    back && edit && place,
+            "a 320 px touch sidebar is the Sources side menu");
+    if (!top || !header || !back || !edit || !place) {
         return;
     }
-    std::cout << "OBSERVE frame " << sidebar.frameWidth() << " shape " << sidebar.frameShape() << std::endl;
-    std::cout << "OBSERVE rail " << rail->geometry().x() << ',' << rail->geometry().y() << ' '
-              << rail->width() << 'x' << rail->height() << ", list " << viewport->geometry().x() << ','
-              << viewport->geometry().y() << ' ' << viewport->width() << 'x' << viewport->height() << std::endl;
-    require(rail->geometry() == QRect(0, 0, 264, 384), "at 800x384 the rail is 264 px wide and fills the height");
-    require(viewport->geometry().topLeft() == QPoint(264, 48) && viewport->geometry().bottom() == 383,
-            "the list takes the right part, under a 48 px bar");
+    const QRect backBox(back->mapTo(&sidebar, QPoint()), back->size());
+    const QRect editBox(edit->mapTo(&sidebar, QPoint()), edit->size());
+    std::cout << "OBSERVE header " << header->geometry().x() << ',' << header->geometry().y() << ' '
+              << header->width() << 'x' << header->height() << ", BACK " << backBox.x() << ',' << backBox.y()
+              << ", EDIT " << editBox.x() << ',' << editBox.y() << std::endl;
+    require(header->geometry() == QRect(1, 0, 319, 52) && back->size() == QSize(88, 48) &&
+                    edit->size() == QSize(88, 48) && backBox.topLeft() == QPoint(9, 2) &&
+                    editBox.left() == backBox.right() + 9 && back->text() == "BACK" && edit->text() == "EDIT" &&
+                    back->isVisible() && edit->isVisible() && !place->isVisible() && back->isEnabled(),
+            "at the top level the 52 px header has BACK and EDIT, 88x48 each");
+    require(!back->icon().isNull() && !edit->icon().isNull() &&
+                    LibraryInterface::SourceGlyphs::svg("back").contains("M15 5l-7 7 7 7") &&
+                    LibraryInterface::SourceGlyphs::svg("edit").contains("M3 6h10M3 11h8M3 16h5"),
+            "BACK and EDIT carry their icons: a chevron, and a pencil on a list");
+    require(top->isVisible() && top->geometry() == QRect(1, 52, 319, 328),
+            "the top level fills the panel under the header");
     QStringList tileNames;
     bool tilesSized = true;
     for (auto* tile : sidebar.sourceTiles()) {
         tileNames.append(tile->accessibleName());
-        tilesSized &= tile->height() == 64 && tile->width() <= 264 && tile->width() >= 200;
+        tilesSized &= tile->height() == 52 && tile->width() >= 290;
     }
     QStringList visible = names;
     visible.removeAll("Analyse");
-    require(tileNames == visible, "the rail lists the visible sources in saved order and skips hidden ones");
-    require(tilesSized, "rail tiles are 64 px high");
+    require(tileNames == visible, "the top level lists the visible sources in saved order and skips hidden ones");
+    require(tilesSized, "top-level rows are 52 px and as wide as the panel");
     auto* firstTile = sidebar.sourceTiles().value(0);
-    require(firstTile && firstTile->findChild<QLabel*>("MixpiSourceTileName")->text() == "Tracks" &&
-                    firstTile->findChild<QLabel*>("MixpiSourceTileSub")->text() == "Sub Tracks",
-            "a tile has the source name and the sub-line for its kind");
-    const QRect backOnSidebar(back->mapTo(&sidebar, QPoint()), back->size());
-    std::cout << "OBSERVE Back " << backOnSidebar.x() << ',' << backOnSidebar.y() << ' '
-              << backOnSidebar.width() << 'x' << backOnSidebar.height() << std::endl;
-    require(back->size() == QSize(96, 48) && backOnSidebar.topLeft() == QPoint(268, 0) && !back->isEnabled(),
-            "Back is 96x48 above the list and off at the top level");
-    require(sidebar.sourceCrumb() == "All sources", "the crumb says All sources at the top level");
-    require(sidebar.visualRect(model.index(0, 0)).height() >= 56, "Sources rows are at least 56 px");
+    require(firstTile && firstTile->findChild<QLabel*>("MixpiSourcesMenuName")->text() == "Tracks" &&
+                    firstTile->findChild<QLabel*>("MixpiSourcesMenuSub")->text() == "Sub Tracks" &&
+                    firstTile->findChild<QWidget*>("MixpiSourcesMenuIcon"),
+            "a row has the icon, the title and its small line");
+    auto chevron = [&](const QString& name) {
+        auto* tile = sidebar.sourceTiles().value(visible.indexOf(name));
+        auto* mark = tile ? tile->findChild<QWidget*>("MixpiSourcesMenuChevron") : nullptr;
+        return mark && !mark->isHidden();
+    };
+    require(chevron("Playlists") && !chevron("Recordings"), "› only on rows that can be entered");
+    auto* icon = firstTile->findChild<QWidget*>("MixpiSourcesMenuIcon");
+    require(icon->palette().color(QPalette::WindowText) == QColor("#d6784a"),
+            "source icons are in the source colour (deck 2 orange)");
 
-    // A tap on a tile: that source's top level on the right.
+    // A tap on a source: inside it, BACK and the place.
     auto* playlists = features[1].get();
     const int screenWrites = screen->writes;
     int before = playlists->activations;
     tap(sidebar.sourceTiles().at(1));
     const QModelIndex rootP = model.getFeatureRootIndex(playlists);
     require(playlists->activations == before + 1 && sidebar.rootIndex() == rootP && model.rowCount(rootP) == 13,
-            "a tap on a tile shows that source's lists on the right");
-    require(sidebar.sourceCrumb() == "Playlists" && crumb->text() == "Playlists" && back->isEnabled() &&
-                    sidebar.sourceTiles().at(1)->isChecked() && !sidebar.sourceTiles().at(0)->isChecked(),
-            "the crumb names the source, Back is on and its tile is lit");
+            "a tap on a source shows that source's lists");
+    require(sidebar.isSourceMenuInside() && !top->isVisible() && place->isVisible() && !edit->isVisible() &&
+                    place->text() == "Playlists" && back->isVisible() && back->isEnabled(),
+            "inside a source the header has BACK and the place name");
+    require(sidebar.sourceTiles().at(1)->isChecked() && !sidebar.sourceTiles().at(0)->isChecked(),
+            "the current source is marked at the top level");
     require(screen->writes == screenWrites, "a source with lists keeps Sources open");
+    require(viewport->geometry().topLeft() == QPoint(1, 52) &&
+                    sidebar.visualRect(model.index(0, 0, rootP)).height() == 52,
+            "inside rows are 52 px under the header");
+    const auto counted = LibraryInterface::sourceLabelCount(QStringLiteral("Afro house (48) 3:12:00"));
+    require(counted.first == "Afro house" && counted.second == "48" &&
+                    LibraryInterface::sourceLabelCount("Warm-up (31)").second == "31" &&
+                    LibraryInterface::sourceLabelCount("Tracks").second.isEmpty(),
+            "a row's count sits at the right, apart from its name");
+    auto* scroll = sidebar.verticalScrollBar();
+    const QRect barBox(scroll->mapTo(&sidebar, QPoint()), scroll->size());
+    std::cout << "OBSERVE list scroll bar " << barBox.x() << ',' << barBox.y() << ' ' << barBox.width() << 'x'
+              << barBox.height() << " max " << scroll->maximum() << std::endl;
+    require(scroll->isVisible() && scroll->maximum() > 0 && barBox.width() == 24 && barBox.right() == 319 &&
+                    barBox.top() >= 52,
+            "a list longer than the panel shows a 24 px scroll bar at the menu's right edge");
+    const QModelIndex currentRow = model.index(3, 0, rootP);
+    sidebar.selectionModel()->setCurrentIndex(currentRow, QItemSelectionModel::ClearAndSelect);
+    const QImage rows = viewport->grab().toImage();
+    const QRect currentBox = sidebar.visualRect(currentRow);
+    const QColor edgeColour = rows.pixelColor(1, currentBox.center().y());
+    const QColor currentFill = rows.pixelColor(40, currentBox.center().y());
+    const QColor otherFill = rows.pixelColor(40, sidebar.visualRect(model.index(4, 0, rootP)).center().y());
+    std::cout << "OBSERVE current row edge " << edgeColour.name().toStdString() << " fill "
+              << currentFill.name().toStdString() << ", other " << otherFill.name().toStdString() << std::endl;
+    require(edgeColour == QColor("#a3c45e") && currentFill == QColor("#1d222a") && otherFill == QColor("#161a20"),
+            "the current row has the accent edge and the surface-2 background");
     auto tapRow = [&](const QModelIndex& index) {
         const QPoint centre = sidebar.visualRect(index).center();
         mouse(viewport, QEvent::MouseButtonPress, centre, Qt::LeftButton);
@@ -817,8 +939,9 @@ void sourceScreenChecks() {
     };
     const QModelIndex folder = model.index(0, 0, rootP);
     tapRow(folder);
-    require(sidebar.rootIndex() == folder && sidebar.sourceCrumb() == "Playlists › folder",
-            "a tap on a row with children drills in; the crumb shows the path");
+    require(sidebar.rootIndex() == folder && sidebar.sourceCrumb() == "Playlists › folder" &&
+                    place->toolTip() == "Playlists › folder",
+            "a tap on a row with children drills in; the place shows the path");
     screen->set(1);
     sidebarVisible->set(1);
     const int writesScreen = screen->writes;
@@ -830,12 +953,12 @@ void sourceScreenChecks() {
                     screen->writes == writesScreen + 1 && sidebarVisible->writes == writesVisible + 1,
             "a tap on a list without children opens it once and closes Sources (each control written once)");
     tap(back);
-    require(sidebar.rootIndex() == rootP && sidebar.sourceCrumb() == "Playlists", "Back goes up one level");
+    require(sidebar.rootIndex() == rootP && sidebar.isSourceMenuInside() && place->text() == "Playlists",
+            "BACK goes up one level");
 
     // A drag over three rows scrolls the list and opens nothing.
     before = playlists->activations;
-    auto* scroll = sidebar.verticalScrollBar();
-    const int top = scroll->value();
+    const int topValue = scroll->value();
     const QPoint start = sidebar.visualRect(model.index(4, 0, rootP)).center();
     mouse(viewport, QEvent::MouseButtonPress, start, Qt::LeftButton);
     for (int step = 1; step <= 12; ++step) {
@@ -844,10 +967,13 @@ void sourceScreenChecks() {
     }
     mouse(viewport, QEvent::MouseButtonRelease, start - QPoint(0, 168), Qt::NoButton);
     QTest::qWait(350);
-    std::cout << "OBSERVE list scrolled " << top << " -> " << scroll->value() << std::endl;
-    require(playlists->activations == before && scroll->value() > top && sidebar.rootIndex() == rootP,
+    std::cout << "OBSERVE list scrolled " << topValue << " -> " << scroll->value() << std::endl;
+    require(playlists->activations == before && scroll->value() > topValue && sidebar.rootIndex() == rootP,
             "a drag over three rows scrolls the list and opens nothing");
     scroll->setValue(0);
+    tap(back);
+    require(!sidebar.isSourceMenuInside() && top->isVisible() && edit->isVisible() && !place->isVisible(),
+            "BACK at a source's own level returns to the top level");
 
     // A drive that is still loading shows nothing yet: Sources stays open.
     auto* rekordbox = features[7].get();
@@ -860,39 +986,65 @@ void sourceScreenChecks() {
     tapRow(model.index(0, 0, model.index(0, 0, rootR)));
     require(rekordbox->activations == before + 1 && screen->get() == 1 && screen->writes == writesBefore,
             "a row that shows nothing yet (a drive still loading) keeps Sources open");
+    tap(back);
+    tap(back);
+    require(!sidebar.isSourceMenuInside(), "BACK twice from a drive's list is the top level");
 
-    // A drag on the rail scrolls it and opens no source.
-    auto* railBar = rail->verticalScrollBar();
-    std::cout << "OBSERVE rail scroll range " << railBar->maximum() << std::endl;
+    // Load sample's SOURCES… (agreed UI s7): a pick returns to Load sample.
+    // The menu closes ([MixPi],screen 0) and never writes sample_load, so the
+    // skin shows Load sample again.
+    sampleLoad->set(1);
+    const int sampleWrites = sampleLoad->writes;
+    screen->set(1);
+    sidebarVisible->set(1);
+    tap(sidebar.sourceTiles().at(visible.indexOf("Recordings")));
+    require(screen->get() == 0 && sidebarVisible->get() == 0 && sampleLoad->get() == 1 &&
+                    sampleLoad->writes == sampleWrites && !sidebar.isSourceMenuInside(),
+            "a pick from Load sample's SOURCES… closes Sources and leaves sample_load: Load sample shows again");
+    sampleLoad->set(0);
+
+    // BACK at the top level closes Sources.
+    screen->set(1);
+    sidebarVisible->set(1);
+    tap(back);
+    require(screen->get() == 0 && sidebarVisible->get() == 0, "BACK at the top level closes Sources");
+
+    // EDIT asks for the edit list.
+    tap(edit);
+    require(editRequests == 1, "EDIT opens the edit list (the Library's showSidebarSourcesMenu)");
+
+    // A drag on the top level scrolls it and opens no source.
+    auto* topBar = top->verticalScrollBar();
+    std::cout << "OBSERVE top level scroll range " << topBar->maximum() << std::endl;
     int opened = 0;
     for (auto& feature : features) {
         opened += feature->activations;
     }
-    auto* crates = sidebar.sourceTiles().at(2);
-    dragOn(crates, -40, 4);
+    dragOn(sidebar.sourceTiles().at(2), -40, 4);
     int openedAfter = 0;
     for (auto& feature : features) {
         openedAfter += feature->activations;
     }
-    require(openedAfter == opened && railBar->value() == std::min(40, railBar->maximum()) &&
-                    railBar->maximum() > 0,
-            "a drag on the rail scrolls it and opens no source");
-    railBar->setValue(0);
+    require(openedAfter == opened && topBar->value() == std::min(40, topBar->maximum()) && topBar->maximum() > 0,
+            "a drag on the top level scrolls it and opens no source");
+    require(topBar->isVisible() && topBar->width() == 24,
+            "a top level longer than the panel shows its 24 px scroll bar");
+    topBar->setValue(0);
 
-    // The rail follows visibility and order.
+    // The top level follows visibility and order.
     sidebar.setRowHidden(rowOf("Analyse"), {}, false);
     sidebar.sourcesChanged();
     QTest::qWait(20);
-    require(sidebar.sourceTiles().size() == names.size(), "a source switched on gets its tile");
+    require(sidebar.sourceTiles().size() == names.size(), "a source switched on gets its row");
     sidebar.setRowHidden(rowOf("Analyse"), {}, true);
     sidebar.sourcesChanged();
     model.moveLibraryFeature(rowOf("Serato"), 0, [] {});
     QTest::qWait(20);
     require(sidebar.sourceTiles().size() == visible.size() &&
                     sidebar.sourceTiles().first()->accessibleName() == "Serato",
-            "the rail follows a new saved order");
+            "the top level follows a new saved order");
 
-    // A model reset during a drill (USB hot-plug): back to the top, no crash.
+    // A model reset while inside (USB hot-plug): back to the top, no crash.
     tap(sidebar.sourceTiles().at(1 + visible.indexOf("Playlists")));
     const QModelIndex rootAgain = model.getFeatureRootIndex(playlists);
     tapRow(model.index(0, 0, rootAgain));
@@ -906,49 +1058,53 @@ void sourceScreenChecks() {
     for (auto* tile : sidebar.sourceTiles()) {
         tilesValid &= rowOf(tile->accessibleName()) >= 0;
     }
-    require(!sidebar.rootIndex().isValid() && sidebar.sourceCrumb() == "All sources" &&
+    require(!sidebar.rootIndex().isValid() && !sidebar.isSourceMenuInside() && top->isVisible() &&
                     sidebar.sourceTiles().size() == visible.size() && tilesValid,
-            "a model reset during a drill returns to the top and rebuilds the rail");
+            "a model reset while inside returns to the top level and rebuilds the rows");
     tap(sidebar.sourceTiles().at(1 + visible.indexOf("Playlists")));
     require(sidebar.rootIndex() == model.getFeatureRootIndex(playlists) &&
                     model.index(0, 0, sidebar.rootIndex()).data().toString() == "after the reset",
-            "after the reset a tile tap opens the new lists");
+            "after the reset a tap opens the new lists");
 
-    if (const QString grabs = qEnvironmentVariable("MIXPI_SOURCES_GRAB_DIR"); !grabs.isEmpty()) {
-        sidebar.grab().save(grabs + "/sources-screen.png");
-    }
-
-    // Sources edit takes the right part; the rail stays.
+    // Sources edit is full screen under the top bar.
     auto* panel = new QWidget;
     sidebar.setSourcesEditPanel(panel);
     sidebar.setSourcesEditing(true);
     QApplication::processEvents();
-    require(sidebar.isSourcesEditing() && panel->isVisible() && panel->geometry() == QRect(264, 0, 536, 384) &&
-                    rail->isVisible() && !bar->isVisible() && editing->get() == 1,
-            "Sources edit takes the right part, the rail stays, and the editing control is 1");
-    opened = playlists->activations;
-    tap(sidebar.sourceTiles().at(2));
-    require(playlists->activations == opened && sidebar.rootIndex() == model.getFeatureRootIndex(playlists),
-            "rail taps wait while Sources edit is open");
-    sidebar.setSourcesEditing(false);
+    require(sidebar.isSourcesEditing() && panel->isVisible() && panel->parentWidget() == &screen800 &&
+                    panel->geometry() == QRect(0, 48, 800, 432) && editing->get() == 1,
+            "Sources edit is full screen under the top bar and the editing control is 1");
+    screen->set(1);
+    sidebarVisible->set(1);
+    sidebar.endSourcesEditing(false);
     QApplication::processEvents();
-    require(!panel->isVisible() && bar->isVisible() && editing->get() == 0,
-            "DONE restores the navigation view");
+    require(!panel->isVisible() && editing->get() == 0 && screen->get() == 1 && sidebarVisible->get() == 1,
+            "DONE shows the Sources menu again");
+    sidebar.setSourcesEditing(true);
+    sidebar.endSourcesEditing(true);
+    QApplication::processEvents();
+    require(!panel->isVisible() && editing->get() == 0 && screen->get() == 0 && sidebarVisible->get() == 0,
+            "the close ✕ ends Sources edit and closes Sources");
+    screen800.resize(800, 444);
+    QApplication::processEvents();
+    require(panel->geometry() == QRect(0, 48, 800, 396), "the edit list follows the screen size");
     sidebar.setSourcesEditing(true);
     sidebar.hide();
-    require(!sidebar.isSourcesEditing() && editing->get() == 0, "closing Sources ends Sources edit");
+    require(!sidebar.isSourcesEditing() && editing->get() == 0 && !panel->isVisible(),
+            "closing Sources ends Sources edit");
     sidebar.show();
 
-    // A narrow touch sidebar keeps the one-list layout.
-    sidebar.resize(300, 384);
+    // A narrow touch sidebar (the Pioneered touch skin's 260 px pane) keeps
+    // the one-list layout.
+    sidebar.setGeometry(540, 100, 260, 380);
     QApplication::processEvents();
-    require(!sidebar.hasSourceScreen() && !rail->isVisible() && viewport->geometry().top() < 48 &&
-                    viewport->geometry().left() < 264,
+    require(!sidebar.hasSourceScreen() && !top->isVisible() && !header->isVisible() &&
+                    viewport->geometry().top() < 52,
             "a narrow touch sidebar keeps the one-list layout");
-    sidebar.resize(800, 384);
+    sidebar.setGeometry(480, 100, 320, 380);
     QApplication::processEvents();
-    require(sidebar.hasSourceScreen() && rail->isVisible() && viewport->geometry().topLeft() == QPoint(264, 48),
-            "widening it again shows the Sources screen");
+    require(sidebar.hasSourceScreen() && header->isVisible() && viewport->geometry().topLeft() == QPoint(1, 52),
+            "widening it again shows the Sources menu");
 }
 #endif
 #endif

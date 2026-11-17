@@ -1,14 +1,17 @@
-"""R-9 step 3: grouped Sources.
+"""R-9 step 3 and agreed UI s5: grouped Sources in the side menu.
 
-On the Sources screen the rail's tiles are views onto the sources: one tile
-per open drive (first, in plug-in order), This Pi (Tracks, Playlists, Crates,
-Auto DJ), Recordings, History, Folders (Computer), Samples, and More (the
-other sources, only while one is on). Sources edit orders and hides tiles;
-the owner's per-source choices are mapped once (a tile whose sources are all
-hidden starts hidden).
+The menu's top-level rows are views onto the sources: one row per open drive
+(first, in plug-in order), This Pi (Tracks, Playlists, Crates, Auto DJ),
+Recordings, History, Folders (Computer), Samples, and More (the other
+sources, only while one is on). The full-screen edit list orders and hides
+those rows; the owner's per-source choices are mapped once (a row whose
+sources are all hidden starts hidden).
 
-The native checks are in tests/native/source_groups_test.cpp.
+The native checks are in tests/native/source_groups_test.cpp. They run with
+the skin's style sheets (MIXPI_QSS_DIR); set MIXPI_SOURCES_GRAB_DIR to keep
+the 800x480 renders of the menu and the edit list.
 """
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -65,14 +68,16 @@ class SourceGroupsPatchTests(unittest.TestCase):
 
     @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
     def test_native_source_groups(self):
+        environment = dict(os.environ, MIXPI_QSS_DIR=str(RUNNER.PATCH_DIR))
         result = subprocess.run(['python3', str(ROOT / 'tests/native/sample_browser_runner.py'),
-                                 '--source-groups'], capture_output=True, text=True, timeout=300)
+                                 '--source-groups'], capture_output=True, text=True, timeout=300,
+                                env=environment)
         self.assertEqual(result.returncode, 0, result.stdout[-6000:] + result.stderr[-3000:])
         for check in checks(TEST):
             self.assertIn('PASS ' + check, result.stdout)
         self.assertNotIn('FAIL ', result.stdout)
         self.assertIn('OK 0', result.stdout)
-        self.assertGreaterEqual(len(checks(TEST)), 30)
+        self.assertGreaterEqual(len(checks(TEST)), 45)
 
 
 if __name__ == '__main__':

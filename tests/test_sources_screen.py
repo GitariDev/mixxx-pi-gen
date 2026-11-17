@@ -1,10 +1,19 @@
-"""R-9 and R-10: Sources full screen (rail, Back, crumb, auto-close) and
-Sources edit (one list instead of the Sources menu).
+"""Sources (agreed UI s5, build C U-4; was R-9 and R-10).
 
-The native checks are in tests/native/library_interface_sources_test.cpp: the
-real WLibrarySidebar at 800x384 for the Sources screen, and the actual Library
-methods for Sources edit. tests/test_library_interface.py runs the same
-fixture without the Sources screen part.
+Sources is a side menu on the right (m-sources-top.png, m-sources-sub.png):
+a 52 px header with [‹ BACK] [EDIT] at the top level, or [‹ BACK] and the
+place inside a source; 52 px rows with the icon, the title, a small line, a
+count at the right and › where a row can be entered; the current row has the
+accent edge; a 24 px scroll bar when the list is longer than the panel. EDIT
+opens the full-screen edit list (m-sources-edit.png): EDIT SOURCES, the hint,
+DONE and the close ✕; rows with ★, icon, title and line, ON/OFF, ▲ UP and
+▼ DOWN. The native part is mixxx-sources-menu.patch; its rules are in
+mixpi-sources-menu.qss.
+
+The native checks are in tests/native/library_interface_sources_test.cpp:
+the real WLibrarySidebar at 320x380 at the right of an 800x480 screen for the
+menu, and the actual Library methods for the edit list.
+tests/test_library_interface.py runs the same fixture without the menu part.
 """
 import importlib.util
 from pathlib import Path
@@ -21,43 +30,26 @@ SPEC = importlib.util.spec_from_file_location(
 RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
 PATCH = RUNNER.PATCH_DIR / 'mixxx-sources-screen.patch'
+MENU_PATCH = RUNNER.PATCH_DIR / 'mixxx-sources-menu.patch'
+MENU_QSS = RUNNER.PATCH_DIR / 'mixpi-sources-menu.qss'
+FIXTURE = ROOT / 'tests/native/library_interface_sources_test.cpp'
 
-SCREEN_CHECKS = (
-    'an 800 px touch sidebar shows the Sources screen',
-    'at 800x384 the rail is 264 px wide and fills the height',
-    'the list takes the right part, under a 48 px bar',
-    'the rail lists the visible sources in saved order and skips hidden ones',
-    'rail tiles are 64 px high',
-    'a tile has the source name and the sub-line for its kind',
-    'Back is 96x48 above the list and off at the top level',
-    'Sources rows are at least 56 px',
-    "a tap on a tile shows that source's lists on the right",
-    'the crumb names the source, Back is on and its tile is lit',
-    'a tap on a row with children drills in; the crumb shows the path',
-    'a tap on a list without children opens it once and closes Sources (each control written once)',
-    'a drag over three rows scrolls the list and opens nothing',
-    'a row that shows nothing yet (a drive still loading) keeps Sources open',
-    'a drag on the rail scrolls it and opens no source',
-    'the rail follows a new saved order',
-    'a model reset during a drill returns to the top and rebuilds the rail',
-    'Sources edit takes the right part, the rail stays, and the editing control is 1',
-    'DONE restores the navigation view',
-    'a narrow touch sidebar keeps the one-list layout',
-)
-EDIT_CHECKS = (
-    'EDIT LIST shows the Sources edit list in place of the Sources list',
-    'Sources edit is one list: no menu, no second order list',
-    'edit rows are 56 px; Up, Down and Start here 48 px; the switch 64x48; text 13 px or more',
-    'a grab of Sources edit is dark',
-    'a switch writes the same SidebarSource key as before and shows the source',
-    "the last visible source's switch is disabled",
-    'Up moves a source and saves the order',
-    'Down moves it back and saves the order',
-    'Start here writes the start source and its row carries the star',
-    'switching an optional source on loads it once, at its saved place',
-    'a drag on Sources edit scrolls it and presses nothing',
-    'DONE ends Sources edit and shows the list again',
-)
+
+def fixture_checks(function):
+    """The name of every require(..., "name") in one function of the fixture."""
+    source = FIXTURE.read_text()
+    start = source.index('void ' + function + '(')
+    end = source.index('\n}\n', start)
+    body = source[start:end]
+    names = []
+    for begin in [match.end() for match in re.finditer(r'\brequire\(', body)]:
+        names.append(re.findall(r'"([^"\n]*)"', body[begin:body.index(');', begin)])[-1])
+    return names
+
+
+def patch_names():
+    return subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
+                                    '--mixxx-print-patches'], text=True).split()
 
 
 class SourcesScreenPatchTests(unittest.TestCase):
@@ -68,33 +60,8 @@ class SourcesScreenPatchTests(unittest.TestCase):
                           'src/widget/wlibrarysidebar.h'])
 
     def test_patch_follows_council_fixes(self):
-        names = subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
-                                         '--mixxx-print-patches'], text=True).split()
+        names = patch_names()
         self.assertLess(names.index('mixxx-council-fixes.patch'), names.index('mixxx-sources-screen.patch'))
-
-    def test_sources_menu_is_replaced_by_the_edit_list(self):
-        with tempfile.TemporaryDirectory(prefix='mixpi-sources-screen-') as temporary:
-            target = Path(temporary)
-            RUNNER.reconstruct(target)
-            library = (target / 'src/library/library.cpp').read_text()
-            interface = (target / 'src/widget/libraryinterface.h').read_text()
-            sidebar = (target / 'src/widget/wlibrarysidebar.cpp').read_text()
-        start = library.index('void Library::showSidebarSourcesMenu() {')
-        menu = library[start:library.index('\n}\n', start)]
-        self.assertNotIn('QMenu', menu)
-        self.assertNotIn('popup(', menu)
-        self.assertIn('LibraryInterface::SourceEditList', menu)
-        self.assertIn('"sidebar_sources_editing"', library)
-        for size in ('kSourceRailWidth = 264', 'kSourceTileHeight = 64', 'kSourceBarHeight = 48',
-                     'kSourceRowHeight = 56', 'kSourceBackWidth = 96', 'kSourceSwitchWidth = 64'):
-            self.assertIn(size, interface)
-        self.assertIn('const QMargins margins(LibraryInterface::kSourceRailWidth,', sidebar)
-        self.assertIn('setViewportMargins(margins)', sidebar)
-        self.assertIn('ConfigKey("[MixPi]", "screen")', sidebar)
-        self.assertIn('ConfigKey("[Sidebar]", "sidebar_visible")', sidebar)
-        # No drag-to-reorder in the new list.
-        edit = interface[interface.index('class SourceEditList'):]
-        self.assertNotIn('InternalMove', edit)
 
     def test_edit_done_patch_confirms_the_read_only_editing_control(self):
         # Pi preview p5: EDIT LIST never read DONE. The control is read-only
@@ -108,23 +75,121 @@ class SourcesScreenPatchTests(unittest.TestCase):
         added = '\n'.join(line for line in text.splitlines() if line.startswith('+'))
         self.assertIn('m_sourcesEditingControl->setAndConfirm(shown ? 1 : 0);', added)
         self.assertNotIn('m_sourcesEditingControl->set(', added)
-        names = subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
-                                         '--mixxx-print-patches'], text=True).split()
+        names = patch_names()
         self.assertLess(names.index('mixxx-source-groups.patch'), names.index('mixxx-sources-edit-done.patch'))
 
-    def test_menu_style_has_the_sources_screen_rules(self):
-        style = (RUNNER.PATCH_DIR / 'pioneered-menus.qss').read_text()
-        for selector in ('#MixpiSourceRail', '#MixpiSourceTile', '#MixpiSourceBar', '#MixpiSourceBack',
-                         '#MixpiSourceCrumb', '#MixpiSourceEdit', '#MixpiSourceEditSwitch::indicator',
-                         '#MixpiSourceStartHere'):
+
+class SourcesMenuPatchTests(unittest.TestCase):
+    def test_menu_patch_changes_only_its_files(self):
+        self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) b/\S+$', MENU_PATCH.read_text(), re.MULTILINE)),
+                         ['src/library/library.cpp', 'src/widget/libraryinterface.h',
+                          'src/widget/touchsourcenavigation.h', 'src/widget/wlibrarysidebar.cpp',
+                          'src/widget/wlibrarysidebar.h'])
+
+    def test_menu_patch_comes_last(self):
+        names = patch_names()
+        if 'mixxx-sources-menu.patch' not in names:
+            self.skipTest('mixxx-sources-menu.patch is not registered yet')
+        self.assertLess(names.index('mixxx-sources-edit-done.patch'), names.index('mixxx-sources-menu.patch'))
+        self.assertLess(names.index('mixxx-media-lists.patch'), names.index('mixxx-sources-menu.patch'))
+
+    def test_side_menu_and_edit_list_in_the_reconstructed_source(self):
+        if 'mixxx-sources-menu.patch' not in patch_names():
+            self.skipTest('mixxx-sources-menu.patch is not registered yet')
+        with tempfile.TemporaryDirectory(prefix='mixpi-sources-menu-') as temporary:
+            target = Path(temporary)
+            RUNNER.reconstruct(target)
+            library = (target / 'src/library/library.cpp').read_text()
+            interface = (target / 'src/widget/libraryinterface.h').read_text()
+            sidebar = (target / 'src/widget/wlibrarysidebar.cpp').read_text()
+        # Sizes from the agreed mockups (buttons at the 48 px touch minimum).
+        for size in ('kSourceMenuWidth = 320', 'kSourceMenuHeaderHeight = 52', 'kSourceMenuRowHeight = 52',
+                     'kSourceMenuButtonWidth = 88', 'kSourceTouch = 48', 'kSourceEditTopBar = 48',
+                     'kSourceEditRowHeight = 52', 'kSourceEditDoneWidth = 96', 'kSourceEditSwitchWidth = 88',
+                     'kSourceEditStepWidth = 84', 'kSourceScreenMinimumWidth = kSourceMenuWidth'):
+            self.assertIn(size, interface)
+        # Exact copy from the mockups.
+        for words in ('tr("BACK")', 'tr("EDIT")'):
+            self.assertIn(words, sidebar)
+        for words in ('"EDIT SOURCES"', '"Switch sources on or off, set the order, ★ where Tracks starts."',
+                      '"DONE"', '"▲ UP"', '"▼ DOWN"', '"TRACKS STARTS HERE"', '"ON"', '"OFF"',
+                      '"USB · rekordbox"', '"Played tracks by date"', '"Browse files and drives"',
+                      '"Sounds for the pads"'):
+            self.assertIn(words, interface)
+        # The mockups' icons: the ‹ chevron and the pencil on a list (not the
+        # ✎ actions pencil of the skin).
+        self.assertIn('<path d=\\"M15 5l-7 7 7 7\\"/>', interface)
+        self.assertIn('<path d=\\"M3 6h10M3 11h8M3 16h5\\"/>', interface)
+        self.assertIn('<path d=\\"M12 20l.6-3L19 10.6l2.4 2.4L15 19.4z\\"/>', interface)
+        # The edit list is full screen under the top bar; EDIT in the menu
+        # opens it through the Library.
+        self.assertIn('pSidebarWidget->sourcesEditRequested = [this] {\n        showSidebarSourcesMenu();', library)
+        self.assertIn('list->done = [this] {\n            m_pSidebarWidget->endSourcesEditing(false);', library)
+        self.assertIn('list->closed = [this] {\n            m_pSidebarWidget->endSourcesEditing(true);', library)
+        self.assertIn('QWidget* pHost = skinRoot(this);', sidebar)
+        # The scroll bar starts under the header; no QMenu, no drag-to-reorder.
+        self.assertIn('addScrollBarWidget(m_sourceScrollTop, Qt::AlignTop);', sidebar)
+        edit = interface[interface.index('class SourceEditList'):]
+        self.assertNotIn('InternalMove', edit)
+        start = library.index('void Library::showSidebarSourcesMenu() {')
+        menu = library[start:library.index('\n}\n', start)]
+        self.assertNotIn('QMenu', menu)
+        self.assertNotIn('popup(', menu)
+
+    def test_style_has_every_menu_and_edit_rule(self):
+        style = MENU_QSS.read_text()
+        for selector in ('WLibrarySidebar[mixpiSourceMenu="true"]', '#MixpiSourcesMenuHeader',
+                         'QPushButton#MixpiSourcesMenuBack', 'QPushButton#MixpiSourcesMenuEdit',
+                         'QLabel#MixpiSourcesMenuPlace', 'QPushButton#MixpiSourcesMenuTile:checked',
+                         '#MixpiSourcesMenuIcon', '#MixpiSourcesMenuChevron', '#MixpiSourcesMenuEdge',
+                         '#MixpiSourcesEditHeader', 'QPushButton#MixpiSourcesEditDone',
+                         'QPushButton#MixpiSourcesEditClose', 'QPushButton#MixpiSourcesEditStar[start="true"]',
+                         'QCheckBox#MixpiSourcesEditSwitch[on="true"]', '#MixpiSourcesEditRow[off="true"]',
+                         'QPushButton#MixpiSourcesEditUp:disabled'):
             self.assertIn(selector, style)
+        # Section 1 rules: 3 px radius, 24 px scroll bars, no outline on the
+        # close at rest (its border is its own fill), lit = 26% tint + 2 px.
+        self.assertNotRegex(style, r'border-radius:\s*(?![03]px|4px|6px)\d+px')
+        self.assertEqual(re.findall(r'QScrollBar:vertical \{\s*width: (\d+)px', style), ['24'])
+        close = style[style.index('QPushButton#MixpiSourcesEditClose {'):]
+        close = close[:close.index('}')]
+        self.assertIn('background-color: #1d222a;', close)
+        self.assertIn('border: 1px solid #1d222a;', close)
+        self.assertIn('color: #ec7f74;', close)
+        lit = style[style.index('QPushButton#MixpiSourcesEditStar[start="true"] {'):]
+        lit = lit[:lit.index('}')]
+        self.assertIn('rgba(163, 196, 94, 26%)', lit)
+        self.assertIn('border: 2px solid #a3c45e;', lit)
+        # Only the agreed tokens (and the mockups' scroll thumb, #5b6472).
+        tokens = {'#0d1014', '#161a20', '#1d222a', '#262c35', '#13161b', '#2c333d', '#3a424e', '#e4e7ec',
+                  '#949dab', '#7f8896', '#a3c45e', '#8fad50', '#253019', '#bcd88a', '#d6784a', '#d0574d',
+                  '#ec7f74', '#34191b', '#5b6472',
+                  # The off row: text, line and icon at 45% over the row.
+                  '#73767c', '#4f555f', '#6c4433'}
+        body = re.sub(r'/\*.*?\*/', '', style, flags=re.S)
+        self.assertEqual(set(re.findall(r'#[0-9a-f]{6}\b', body)) - tokens, set())
+        # Fonts: Ubuntu Condensed for labels and buttons, Open Sans for text.
+        self.assertIn('font-family: "Ubuntu Condensed", "Ubuntu";', style)
+        self.assertIn('font-family: "Open Sans", "Ubuntu";', style)
+        for size in re.findall(r'font-size: (\d+)px', style):
+            self.assertGreaterEqual(int(size), 13)
+
+    def test_old_sources_screen_rules_match_nothing_new(self):
+        # The old #MixpiSource* rules in pioneered-menus.qss (removed in C2)
+        # name no widget of the menu or the edit list.
+        old = set(re.findall(r'#(MixpiSource[A-Za-z]*)', (RUNNER.PATCH_DIR / 'pioneered-menus.qss').read_text()))
+        new = set(re.findall(r'"(MixpiSources[A-Za-z]*)"', MENU_PATCH.read_text()))
+        self.assertTrue(new)
+        self.assertEqual(old & new, set())
 
     @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
-    def test_native_sources_screen_and_edit_list(self):
+    def test_native_sources_menu_and_edit_list(self):
         result = subprocess.run(['python3', str(ROOT / 'tests/native/library_interface_sources_runner.py'),
                                  '--sources-screen'], capture_output=True, text=True, timeout=200)
         self.assertEqual(result.returncode, 0, result.stdout[-6000:] + result.stderr[-3000:])
-        for check in SCREEN_CHECKS + EDIT_CHECKS:
+        checks = fixture_checks('sourceScreenChecks') + fixture_checks('editListChecks')
+        self.assertGreaterEqual(len(checks), 60)
+        for check in checks:
             self.assertIn('PASS ' + check, result.stdout)
         self.assertNotIn('FAIL ', result.stdout)
 

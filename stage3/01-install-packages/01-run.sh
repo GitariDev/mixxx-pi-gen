@@ -46,6 +46,9 @@ MIXXX_PATCHES=(
     mixxx-media-lists.patch
     mixxx-sources-menu.patch
     mixxx-media-agreed.patch
+    mixxx-effects-save.patch
+    mixxx-save-within-second.patch
+    mixxx-agreed-controls.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

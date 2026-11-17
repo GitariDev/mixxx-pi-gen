@@ -91,3 +91,12 @@ The checks ran 10:33-11:18, with 2 reboots and 64.7-70.1 °C, `throttled=0x0` th
 | GPT-6.1 Sol xhigh | 6 | repairs on C; six drive checks + Q3 gate; Media list refresh/scroll/overflow; screenshots and hands-on Starlight |
 
 Reports: `deploy/ui-redesign-20261117/council/round1-*.md`. Every code finding is repaired at `fb1a119`. Build B's screenshots are now on the Mac (`acceptance-B/shots/`), and the Starlight steps are marked NOT RUN. Still needed: build C (a 4th pi-gen run, owner's yes asked), a working USB drive (owner asked), and a short hands-on Starlight session (owner asked).
+
+## Owner UI review and the build C go (2026-11-17)
+
+- **The review:** the owner reviewed every screen over five rounds in a private review page and agreed every item. The owner's notes are in `docs/ideas/UI-REVIEW-1-20261117.md`.
+- **The binding spec:** `docs/ideas/ui-redesign-20261117/agreed-ui/AGREED-UI-SPEC.md`, with 12 mockups and the design CSS. Commit `2b1365d`.
+- **The plan:** section 12 adds U-1 to U-10, the precedence rules, a rubric amendment (reviewers judge conformance, not taste) and the budget.
+- **The tuner:** record `mixpi-ui-redesign-20261117` revision 7 adds U-1 to U-10 and the spec as a source. The harness approved it on the owner's chat instruction of 19:13, which produced **revision 8**.
+- **Build C:** approved as the 4th pi-gen run. Any later build needs the owner's yes. Council rounds: 1 of 5 used.
+- **Next:** the climb continues in a new orchestrator thread, by the owner's "thread migrate" request.

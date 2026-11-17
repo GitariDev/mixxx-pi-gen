@@ -90,6 +90,12 @@
 #MixpiUsbBody[highlight="4"] { border-color: #5fae6e; }
 #MixpiUsbButton { background: transparent; border: 0px; margin: 0px; }
 #MixpiUsbButton[pressed="true"] { background: rgba(163, 196, 94, 40); }
+/* Lit while the Media page is open (spec s13, m-media.png), as the gear is on
+ * Settings: the accent tint over the chip and a 2 px accent border, on the
+ * chip's own box (2 px in from the bar's top and bottom). */
+#MixpiUsbButton[value="1"] {
+    background: rgba(163, 196, 94, 66); border: 2px solid #a3c45e; border-radius: 3px; margin: 2px 0px;
+}
 #MixpiUsbName { color: #e4e7ec; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 15px; font-weight: bold; }
 #MixpiUsbState0, #MixpiUsbState1, #MixpiUsbState2, #MixpiUsbState3, #MixpiUsbState4 {
     font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; font-weight: bold;

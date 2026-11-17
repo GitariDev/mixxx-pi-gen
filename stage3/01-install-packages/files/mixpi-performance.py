@@ -1237,7 +1237,8 @@ def tab_stack(text, key, width):
     - SAMPLER only: a twin lit from [MixPi],sample_load (Load sample, Choose pad,
       Sources opened from Load sample);
     - the normal tab, lit from its page, unless Settings is open (the gear is
-      lit then) or, for TRACKS and SAMPLER, a sample screen is open.
+      lit then), the Media page is open (the USB chip is lit then; spec s13,
+      m-media.png) or, for TRACKS and SAMPLER, a sample screen is open.
     All of them send the same writes."""
     size = f'{width}f,48f'
 
@@ -1248,7 +1249,7 @@ def tab_stack(text, key, width):
     # One condition per stacked level, each level with its own unlit base: a
     # shown group whose only child is hidden would still cover what is under it.
     conditions = ([('[MixPi],sample_load', '<Not/>')] if key in ('library', 'sampler') else []) + \
-        [off_screen(SCREEN_SETTINGS)]
+        [off_screen(SCREEN_SETTINGS), off_screen(SCREEN_MEDIA)]
     widget = tab(text, key, width)
     for condition_key, condition in conditions:
         show_when(widget, condition_key, transform=condition)
@@ -1256,6 +1257,9 @@ def tab_stack(text, key, width):
     if key == 'sampler':
         lit = unlit()
         connection(lit, '[MixPi],sample_load', write=False)
+        # Not lit over the Media page either: an unlit twin under it.
+        media_key, not_media = off_screen(SCREEN_MEDIA)
+        lit = group('MixpiTabPair', 'stacked', size, [show_when(lit, media_key, transform=not_media), unlit()])
         widget.find('Children').insert(0, show_when(lit, '[MixPi],sample_load'))
     return widget
 
@@ -1266,9 +1270,10 @@ def usb_chip():
     from native code to the drive name; SCAN NN% shows while a hidden scan runs."""
     # Screen 2 (Media) first: the skin hides every waveform row before the native
     # page shows, so no GL surface is ever above it (build B, R-2/R-4).
+    # Lit while the Media page is open, as the gear is on Settings (spec s13,
+    # m-media.png): the button reads screen == 2.
     tap = button('', SCREEN, size=f'{USB_CHIP}f,48f', push=True, name='MixpiUsbButton',
                  transform=f'<IsEqual>{SCREEN_MEDIA}</IsEqual>')
-    tap.find('Connection/ConnectValueToWidget').text = 'false'
     write(tap, '[MixPi],media_load', 1)
     for state in tap.findall('State'):
         state.append(node('Unpressed', 'mixpi-icon-usb.svg', scalemode='FIXED'))

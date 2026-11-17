@@ -293,8 +293,10 @@ class PerformanceSkinTests(unittest.TestCase):
     def test_every_tab_writes_screen_zero_and_closes_every_view(self):
         tabs = self.tabs()
         texts = [b.findtext('State/Text') for b in tabs]
-        # The tab, one unlit base per condition level, and SAMPLER's lit twin.
-        self.assertEqual({t: texts.count(t) for t in texts}, {'DECKS': 2, 'TRACKS': 3, 'FX': 2, 'SAMPLER': 4})
+        # The tab, one unlit base per condition level (Settings, Media, and
+        # for TRACKS and SAMPLER sample mode), and SAMPLER's lit twin with its
+        # unlit base for the Media page.
+        self.assertEqual({t: texts.count(t) for t in texts}, {'DECKS': 3, 'TRACKS': 4, 'FX': 3, 'SAMPLER': 6})
         pages = ['overview', 'library', 'fx', 'sampler']
         names = {'DECKS': 'overview', 'TRACKS': 'library', 'FX': 'fx', 'SAMPLER': 'sampler'}
         stack = next(self.root.iter('WidgetStack'))
@@ -1069,6 +1071,35 @@ class PerformanceSkinTests(unittest.TestCase):
                              [False] * 4, page)
         self.assertEqual(transform(gear.find('Connection'), 5.0), 1)
         self.assertEqual(transform(gear.find('Connection'), 0.0), 0)
+
+    def test_media_page_lights_only_the_usb_chip(self):
+        # Spec s13, m-media.png: while the Media page is open (screen 2) no tab
+        # is lit and the USB chip is, as the gear is on Settings (k19); card
+        # shot k20 showed FX lit and the chip not.
+        tap = self.model.one('MixpiUsbButton')
+        read = tap.find('Connection')
+        self.assertEqual((read.findtext('ConfigKey'), read.findtext('ConnectValueToWidget')), (SCREEN, 'true'))
+        self.assertEqual([transform(read, float(s)) for s in range(6)], [0, 0, 1, 0, 0, 0])
+        for page in ('overview', 'library', 'fx', 'sampler'):
+            for sample_load in (0, 1):
+                state = Model.state(2, **{f'[Tab]__{page}': 1, '[MixPi]__sample_load': sample_load})
+                state['[Tab],library'] = 1 if page == 'library' else 0
+                self.assertEqual([self.lit_tab(t, state) for t in ('DECKS', 'TRACKS', 'FX', 'SAMPLER')],
+                                 [False] * 4, (page, sample_load))
+                self.assertTrue(self.model.tappable(tap, dict(state, **{'[MixPi],media_available': 1})))
+        # The chip still opens the page from any screen and the tab under it lights
+        # again once the page closes (screen 0).
+        fx = Model.state(0, **{'[Tab]__fx': 1})
+        self.assertEqual([self.lit_tab(t, fx) for t in ('DECKS', 'TRACKS', 'FX', 'SAMPLER')],
+                         [False, False, True, False])
+        self.assertEqual(transform(read, 0.0), 0)
+        style = (self.skin/'style.qss').read_text()
+        rule = style.split('#MixpiUsbButton[value="1"] {', 1)[1].split('}', 1)[0]
+        # The gear's lit look: accent tint at 26% and a 2 px accent border.
+        gear = style.split('#MixpiIconButton[value="1"] {', 1)[1].split('}', 1)[0]
+        for part in ('background: rgba(163, 196, 94, 66);', 'border: 2px solid #a3c45e;'):
+            self.assertIn(part, rule)
+            self.assertIn(part, gear)
 
     def test_gear_opens_the_full_screen_settings(self):
         gear = self.gear()

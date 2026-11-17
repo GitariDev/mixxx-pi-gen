@@ -1,0 +1,356 @@
+/* Sources side menu and Sources edit (agreed UI s5, build C U-4;
+ * mixxx-sources-menu.patch). Loads after pioneered-menus.qss, whose old
+ * #MixpiSource* rules match nothing here. Values: design/tokens.css
+ * (bg #0d1014, surface #161a20, surface-2 #1d222a, surface-3 #262c35,
+ * surface-off #13161b, line #2c333d, line-strong #3a424e, text #e4e7ec,
+ * dim #949dab, off #7f8896, accent #a3c45e, accent-press #8fad50,
+ * accent-surface #253019, accent-lit #bcd88a, deck 2 #d6784a,
+ * danger #d0574d, danger-text #ec7f74, danger-surface #34191b). Radius 3 px;
+ * lit states are a 26% tint of the role colour with a 2 px border.
+ * Labels and buttons in Ubuntu Condensed (upper case), list text in
+ * Open Sans. */
+
+/* --- Side menu: the panel (m-sources-top.png, m-sources-sub.png) --- */
+#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"],
+WLibrarySidebar[mixpiSourceMenu="true"] {
+    background-color: #161a20;
+    color: #e4e7ec;
+    border: 0px;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 16px;
+    selection-background-color: #1d222a;
+    selection-color: #e4e7ec;
+    /* The rows inside a source (drawn natively in these colours). */
+    qproperty-menuBackgroundColor: #161a20;
+    qproperty-menuCurrentColor: #1d222a;
+    qproperty-menuPressedColor: #262c35;
+    qproperty-menuAccentColor: #a3c45e;
+    qproperty-menuLineColor: #2c333d;
+    qproperty-menuTextColor: #e4e7ec;
+    qproperty-menuDimColor: #949dab;
+    qproperty-menuIconColor: #d6784a;
+    qproperty-menuNotePixelSize: 14;
+}
+#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"]::item,
+WLibrarySidebar[mixpiSourceMenu="true"]::item {
+    min-height: 52px;
+    padding: 0px;
+    border: 0px;
+    background-color: transparent;
+}
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuEdge,
+WLibrarySidebar #MixpiSourcesMenuEdge {
+    background-color: #2c333d;
+    border: 0px;
+}
+
+/* Header: [‹ BACK] [EDIT], or [‹ BACK] and the place. Navigate role. */
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuHeader,
+WLibrarySidebar #MixpiSourcesMenuHeader {
+    background-color: #161a20;
+    border: 0px;
+    border-bottom: 1px solid #2c333d;
+}
+#MixpiSourcesMenuHeader QPushButton#MixpiSourcesMenuBack,
+#MixpiSourcesMenuHeader QPushButton#MixpiSourcesMenuEdit {
+    background-color: #1d222a;
+    border: 1px solid #3a424e;
+    border-radius: 3px;
+    color: #e4e7ec;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 15px;
+    font-weight: bold;
+    padding: 0px 8px;
+    margin: 0px;
+}
+#MixpiSourcesMenuHeader QPushButton#MixpiSourcesMenuBack:pressed,
+#MixpiSourcesMenuHeader QPushButton#MixpiSourcesMenuEdit:pressed {
+    background-color: #262c35;
+}
+#MixpiSourcesMenuHeader QLabel#MixpiSourcesMenuPlace {
+    background-color: transparent;
+    color: #e4e7ec;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 15px;
+    font-weight: normal;
+    padding: 0px;
+}
+
+/* Top level: one 52 px row per source. The current source: surface-2 and a
+ * 4 px accent edge (the edge is kept at rest in the row colour, so the
+ * text does not move). */
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuTop,
+WLibrarySidebar #MixpiSourcesMenuTop,
+#MixpiSourcesMenuTop #MixpiSourcesMenuRows {
+    background-color: #161a20;
+    border: 0px;
+}
+#MixpiSourcesMenuTop QPushButton#MixpiSourcesMenuTile {
+    background-color: #161a20;
+    border: 0px;
+    border-left: 4px solid #161a20;
+    border-bottom: 1px solid #2c333d;
+    border-radius: 0px;
+    padding: 0px;
+    margin: 0px;
+    text-align: left;
+}
+#MixpiSourcesMenuTop QPushButton#MixpiSourcesMenuTile:checked {
+    background-color: #1d222a;
+    border-left: 4px solid #a3c45e;
+}
+#MixpiSourcesMenuTop QPushButton#MixpiSourcesMenuTile:pressed {
+    background-color: #262c35;
+}
+#MixpiSourcesMenuTile QLabel#MixpiSourcesMenuName {
+    background-color: transparent;
+    color: #e4e7ec;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 16px;
+    font-weight: 600;
+}
+#MixpiSourcesMenuTile QLabel#MixpiSourcesMenuSub {
+    background-color: transparent;
+    color: #949dab;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 13px;
+    font-weight: normal;
+}
+/* Source icons in the source colour (deck 2 orange, as drawn). */
+#MixpiSourcesMenuTile #MixpiSourcesMenuIcon {
+    color: #d6784a;
+    background-color: transparent;
+}
+#MixpiSourcesMenuTile #MixpiSourcesMenuChevron {
+    color: #949dab;
+    background-color: transparent;
+}
+
+/* Scroll bars at the menu's right edge (rubric 8: 24 px natively). */
+#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar:vertical,
+WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar:vertical,
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuTop QScrollBar:vertical,
+#MixpiSourcesMenuTop QScrollBar:vertical,
+#MixpiSourcesEdit #MixpiSourcesEditList QScrollBar:vertical {
+    width: 24px;
+    margin: 4px 4px 4px 0px;
+    border: 0px;
+    border-radius: 6px;
+    background-color: #1d222a;
+}
+#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::handle:vertical,
+WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::handle:vertical,
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuTop QScrollBar::handle:vertical,
+#MixpiSourcesMenuTop QScrollBar::handle:vertical,
+#MixpiSourcesEdit #MixpiSourcesEditList QScrollBar::handle:vertical {
+    min-height: 48px;
+    margin: 2px;
+    padding: 0px;
+    border: 0px;
+    border-radius: 4px;
+    background-color: #5b6472;
+}
+#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::handle:vertical:pressed,
+WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::handle:vertical:pressed,
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuTop QScrollBar::handle:vertical:pressed,
+#MixpiSourcesMenuTop QScrollBar::handle:vertical:pressed,
+#MixpiSourcesEdit #MixpiSourcesEditList QScrollBar::handle:vertical:pressed {
+    min-height: 48px;
+    min-width: 0px;
+    margin: 2px;
+    padding: 0px;
+    border: 0px;
+    border-radius: 4px;
+    background-color: #7f8896;
+}
+#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::add-line:vertical,
+#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::sub-line:vertical,
+WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::add-line:vertical,
+WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::sub-line:vertical,
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuTop QScrollBar::add-line:vertical,
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuTop QScrollBar::sub-line:vertical,
+#MixpiSourcesMenuTop QScrollBar::add-line:vertical,
+#MixpiSourcesMenuTop QScrollBar::sub-line:vertical,
+#MixpiSourcesEdit #MixpiSourcesEditList QScrollBar::add-line:vertical,
+#MixpiSourcesEdit #MixpiSourcesEditList QScrollBar::sub-line:vertical {
+    height: 0px;
+    border: 0px;
+    background: none;
+}
+#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::add-page:vertical,
+#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::sub-page:vertical,
+WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::add-page:vertical,
+WLibrarySidebar[mixpiSourceMenu="true"] QScrollBar::sub-page:vertical,
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuTop QScrollBar::add-page:vertical,
+#LibraryWrapper WLibrarySidebar #MixpiSourcesMenuTop QScrollBar::sub-page:vertical,
+#MixpiSourcesMenuTop QScrollBar::add-page:vertical,
+#MixpiSourcesMenuTop QScrollBar::sub-page:vertical,
+#MixpiSourcesEdit #MixpiSourcesEditList QScrollBar::add-page:vertical,
+#MixpiSourcesEdit #MixpiSourcesEditList QScrollBar::sub-page:vertical {
+    background: none;
+}
+/* The list's scroll bar starts under the header. */
+WLibrarySidebar #MixpiSourcesMenuScrollTop {
+    background-color: #161a20;
+    border: 0px;
+}
+
+/* --- Sources edit: full screen (m-sources-edit.png) --- */
+#MixpiSourcesEdit,
+#MixpiSourcesEdit #MixpiSourcesEditList,
+#MixpiSourcesEdit #MixpiSourcesEditRows {
+    background-color: #0d1014;
+    border: 0px;
+}
+#MixpiSourcesEdit #MixpiSourcesEditHeader {
+    background-color: #161a20;
+    border: 0px;
+    border-bottom: 1px solid #2c333d;
+}
+#MixpiSourcesEditHeader QLabel#MixpiSourcesEditTitle {
+    background-color: transparent;
+    color: #e4e7ec;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 20px;
+    font-weight: normal;
+}
+#MixpiSourcesEditHeader QLabel#MixpiSourcesEditHint {
+    background-color: transparent;
+    color: #949dab;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 13px;
+    font-weight: normal;
+}
+/* DONE: Confirm (solid muted accent, dark text). */
+#MixpiSourcesEditHeader QPushButton#MixpiSourcesEditDone {
+    background-color: #a3c45e;
+    border: 1px solid #a3c45e;
+    border-radius: 3px;
+    color: #0d1014;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 15px;
+    font-weight: bold;
+    padding: 0px;
+}
+#MixpiSourcesEditHeader QPushButton#MixpiSourcesEditDone:pressed {
+    background-color: #8fad50;
+    border-color: #8fad50;
+}
+/* The close control: surface-2 square, red ✕, no outline at rest. */
+#MixpiSourcesEditHeader QPushButton#MixpiSourcesEditClose {
+    background-color: #1d222a;
+    border: 1px solid #1d222a;
+    border-radius: 3px;
+    color: #ec7f74;
+    padding: 0px;
+}
+#MixpiSourcesEditHeader QPushButton#MixpiSourcesEditClose:pressed {
+    background-color: #34191b;
+    border: 1px solid #d0574d;
+}
+
+/* Rows. */
+#MixpiSourcesEditRows #MixpiSourcesEditRow {
+    background-color: #161a20;
+    border: 0px;
+    border-bottom: 1px solid #2c333d;
+}
+#MixpiSourcesEditRow QLabel#MixpiSourcesEditName {
+    background-color: transparent;
+    color: #e4e7ec;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 16px;
+    font-weight: 600;
+}
+#MixpiSourcesEditRow QLabel#MixpiSourcesEditSub {
+    background-color: transparent;
+    color: #949dab;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 13px;
+    font-weight: normal;
+}
+/* The start row's line: "TRACKS STARTS HERE" in Ubuntu Condensed, dim (as
+ * m-sources-edit.png draws it). */
+#MixpiSourcesEditRow QLabel#MixpiSourcesEditSub[start="true"] {
+    color: #949dab;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 13px;
+}
+#MixpiSourcesEditRow #MixpiSourcesEditIcon {
+    color: #d6784a;
+    background-color: transparent;
+}
+/* A row that is off: its icon and text at 45% (mixed over the row). */
+#MixpiSourcesEditRows #MixpiSourcesEditRow[off="true"] QLabel#MixpiSourcesEditName {
+    color: #73767c;
+}
+#MixpiSourcesEditRows #MixpiSourcesEditRow[off="true"] QLabel#MixpiSourcesEditSub {
+    color: #4f555f;
+}
+#MixpiSourcesEditRows #MixpiSourcesEditRow[off="true"] #MixpiSourcesEditIcon {
+    color: #6c4433;
+}
+
+/* ★, ▲ UP, ▼ DOWN: Navigate buttons. */
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditStar,
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditUp,
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditDown {
+    background-color: #1d222a;
+    border: 1px solid #3a424e;
+    border-radius: 3px;
+    color: #e4e7ec;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 15px;
+    font-weight: bold;
+    padding: 0px;
+}
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditStar {
+    font-size: 18px;
+}
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditStar:pressed,
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditUp:pressed,
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditDown:pressed {
+    background-color: #262c35;
+}
+/* The start row's ★: Choose, lit (a 26% accent tint, 2 px accent border). */
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditStar[start="true"] {
+    background-color: rgba(163, 196, 94, 26%);
+    border: 2px solid #a3c45e;
+    color: #bcd88a;
+}
+/* Disabled: dashed and dim. */
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditStar:disabled,
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditUp:disabled,
+#MixpiSourcesEditRow QPushButton#MixpiSourcesEditDown:disabled {
+    background-color: #13161b;
+    border: 1px dashed #2c333d;
+    color: #7f8896;
+}
+
+/* The ON/OFF toggle: ON accent-surface with an accent border, OFF neutral;
+ * the word and the square take the text colour. */
+#MixpiSourcesEditRow QCheckBox#MixpiSourcesEditSwitch {
+    background-color: #1d222a;
+    border: 1px solid #3a424e;
+    border-radius: 3px;
+    color: #949dab;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 15px;
+    font-weight: bold;
+    padding: 0px;
+    spacing: 0px;
+}
+#MixpiSourcesEditRow QCheckBox#MixpiSourcesEditSwitch[on="true"] {
+    background-color: #253019;
+    border: 1px solid #a3c45e;
+    color: #a3c45e;
+}
+#MixpiSourcesEditRow QCheckBox#MixpiSourcesEditSwitch::indicator {
+    width: 0px;
+    height: 0px;
+}
+#MixpiSourcesEditRow QCheckBox#MixpiSourcesEditSwitch:disabled {
+    background-color: #13161b;
+    border: 1px dashed #2c333d;
+    color: #7f8896;
+}

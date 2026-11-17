@@ -1,0 +1,1774 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -374,6 +374,10 @@
+         return LibraryInterface::sourceSubline(feature
+                         ? QString::fromLatin1(feature->metaObject()->className())
+                         : QString());
++    };
++    // The Sources menu's EDIT (agreed UI s5) opens the edit list.
++    pSidebarWidget->sourcesEditRequested = [this] {
++        showSidebarSourcesMenu();
+     };
+     connect(m_pSidebarModel, &QAbstractItemModel::modelReset,
+             pSidebarWidget, [this] { applySidebarSourceVisibility(); });
+@@ -789,8 +793,9 @@
+     if (!m_pSidebarWidget || !m_pLibraryWidget) {
+         return;
+     }
+-    // Sources edit (R-10): EDIT LIST shows one edit list in place of the
+-    // Sources list (the rail stays); DONE shows the list again.
++    // Sources edit (R-10, agreed UI s5): EDIT shows the full-screen edit
++    // list; DONE shows the Sources menu again and the close ✕ closes Sources
++    // too. Each change is saved at once.
+     if (m_pSidebarWidget->isSourcesEditing()) {
+         m_pSidebarWidget->setSourcesEditing(false);
+         return;
+@@ -835,14 +840,30 @@
+             refreshSidebarSourceEdit();
+         };
+         list->startChosen = [this](const QString& identity) {
+-            // This Pi starts at Tracks.
+-            m_pConfig->setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"),
+-                    identity == LibraryInterface::SourceGroups::kThisPi
+-                            ? QStringLiteral("MixxxLibraryFeature")
+-                            : identity);
++            // This Pi starts at Tracks; More at its first source that is on.
++            QString start = identity == LibraryInterface::SourceGroups::kThisPi
++                    ? QStringLiteral("MixxxLibraryFeature")
++                    : identity;
++            if (identity == LibraryInterface::SourceGroups::kMore) {
++                for (const auto& source : std::as_const(m_sidebarSources)) {
++                    const int row = m_features.indexOf(source.feature);
++                    if (LibraryInterface::SourceGroups::inMore(source.id) && source.feature && row >= 0 &&
++                            !m_pSidebarWidget->isSourceRowHidden(row)) {
++                        start = source.id;
++                        break;
++                    }
++                }
++            }
++            m_pConfig->setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), start);
+             applySidebarSourceVisibility();
+             refreshSidebarSourceEdit();
+         };
++        list->done = [this] {
++            m_pSidebarWidget->endSourcesEditing(false);
++        };
++        list->closed = [this] {
++            m_pSidebarWidget->endSourcesEditing(true);
++        };
+         m_pSidebarWidget->setSourcesEditPanel(list);
+     }
+     refreshSidebarSourceEdit();
+@@ -854,64 +875,92 @@
+     if (!list) {
+         return;
+     }
++    const QString start = m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource"));
+     QList<LibraryInterface::SourceEditEntry> entries;
+     if (groupedSources()) {
+-        // Grouped Sources: one row per tile, in the tiles' order; This Pi
+-        // and More list their sources below them (a switch each).
++        // Grouped Sources (agreed UI s5, m-sources-edit.png): one row per
++        // tile, in the tiles' order, with the icon and line it has in the
++        // Sources menu. Tracks can start at a source of its own only (This
++        // Pi starts at Tracks), as in build B.
+         namespace Groups = LibraryInterface::SourceGroups;
+-        auto member = [this, &entries](const QString& id) {
+-            for (const auto& source : std::as_const(m_sidebarSources)) {
+-                if (source.id == id) {
+-                    entries.append({source.id, QStringLiteral("\u00B7 ") + source.title,
+-                            m_pConfig->getValue(source.preference, true), source.feature != nullptr,
+-                            true});
++        auto names = [this](const QStringList& ids) {
++            QStringList shown;
++            for (const auto& id : ids) {
++                const QModelIndex row = sourceRow(id);
++                if (row.isValid() && !m_pSidebarWidget->isSourceRowHidden(row.row())) {
++                    shown.append(row.data().toString());
+                 }
+             }
++            return shown.join(QStringLiteral(" \u00B7 "));
+         };
+         for (const auto& tile : sourceGroupOrder()) {
++            LibraryInterface::SourceEditEntry entry{tile, Groups::title(tile), sourceGroupVisible(tile), false};
++            entry.subtitle = Groups::subline(tile);
++            entry.glyph = Groups::glyph(tile);
++            entry.start = Groups::startsAt(tile, start);
+             if (tile == Groups::kDrives) {
+-                entries.append({tile, tr("USB drives (each drive)"), sourceGroupVisible(tile), false});
+-            } else if (tile == Groups::kThisPi) {
+-                entries.append({tile, tr("This Pi"), sourceGroupVisible(tile), true});
+-                for (const auto& id : Groups::thisPi()) {
+-                    member(id);
+-                }
+-            } else if (tile == Groups::kSamples) {
+-                entries.append({tile, tr("Samples"), sourceGroupVisible(tile), false});
++                // The drives that are open, by name (MANTACORE).
++                QStringList drives;
++                const QModelIndex rekordbox = sourceRow(QStringLiteral("RekordboxFeature"));
++                for (const auto& drive : driveRows()) {
++                    const bool exported = rekordbox.isValid() && drive.parent() == rekordbox;
++                    const QVariant data = drive.data(SidebarModel::DataRole);
++                    const QString path = QDir::cleanPath(
++                            exported ? data.toList().value(0).toString() : data.toString());
++                    drives.append(exported ? drive.data().toString() : QFileInfo(path).fileName());
++                    if (drives.size() == 1) {
++                        entry.subtitle = Groups::driveSubline(exported);
++                    }
++                }
++                if (!drives.isEmpty()) {
++                    entry.title = drives.join(QStringLiteral(" \u00B7 "));
++                }
++            } else if (tile == Groups::kThisPi) {
++                entry.available = true;
++                entry.subtitle = names(Groups::thisPi());
+             } else if (tile == Groups::kMore) {
+-                entries.append({tile, tr("More"), sourceGroupVisible(tile), false});
++                QStringList more;
+                 for (const auto& source : std::as_const(m_sidebarSources)) {
+                     if (Groups::inMore(source.id)) {
+-                        member(source.id);
++                        more.append(source.id);
+                     }
+                 }
+-            } else {
+-                for (const auto& source : std::as_const(m_sidebarSources)) {
+-                    if (source.id == tile) {
+-                        entries.append({source.id,
+-                                tile == Groups::kFolders       ? tr("Folders")
+-                                        : tile == Groups::kHistory ? tr("History")
+-                                                                   : tr("Recordings"),
+-                                m_pConfig->getValue(source.preference, true),
+-                                source.feature != nullptr});
+-                    }
++                entry.subtitle = names(more);
++                // Tracks can start at its first source that is on.
++                entry.available = !entry.subtitle.isEmpty();
++            } else if (tile != Groups::kSamples) {
++                const auto source = std::find_if(m_sidebarSources.cbegin(), m_sidebarSources.cend(),
++                        [&tile](const SidebarSource& item) { return item.id == tile; });
++                if (source == m_sidebarSources.cend()) {
++                    continue;
+                 }
++                entry.available = source->feature != nullptr;
++                const QModelIndex row = sourceRow(tile);
++                if (row.isValid()) {
++                    entry.icon = row.data(Qt::DecorationRole).value<QIcon>();
++                }
+             }
++            entries.append(entry);
+         }
+         list->moved = [this](const QString& tile, int direction) {
+             moveSourceGroup(tile, direction);
+         };
+-        list->setSources(entries,
+-                m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")));
++        list->setSources(entries);
+         return;
+     }
+     list->moved = nullptr;
+     for (const auto& source : std::as_const(m_sidebarSources)) {
+-        entries.append({source.id, source.title, m_pConfig->getValue(source.preference, true),
+-                source.feature != nullptr});
++        LibraryInterface::SourceEditEntry entry{source.id, source.title,
++                m_pConfig->getValue(source.preference, true), source.feature != nullptr};
++        entry.subtitle = LibraryInterface::sourceSubline(source.id);
++        entry.start = source.id == (start.isEmpty() ? QStringLiteral("MixxxLibraryFeature") : start);
++        const int row = m_features.indexOf(source.feature);
++        if (source.feature && row >= 0) {
++            entry.icon = m_pSidebarModel->index(row, 0).data(Qt::DecorationRole).value<QIcon>();
++        }
++        entries.append(entry);
+     }
+-    list->setSources(entries,
+-            m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")));
++    list->setSources(entries);
+ }
+ 
+ void Library::setupSampleBrowser() {
+@@ -1224,8 +1273,8 @@
+                             export_ ? data.toList().value(0).toString() : data.toString());
+                     tiles.append({QStringLiteral("drive:") + path,
+                             export_ ? drive.data().toString() : QFileInfo(path).fileName(),
+-                            export_ ? tr("USB drive · rekordbox") : tr("USB drive"),
+-                            icon(drive.parent()), drive, {}});
++                            Groups::driveSubline(export_), icon(drive.parent()), drive, {},
++                            Groups::glyph(tile)});
+                 }
+             } else if (tile == Groups::kThisPi || tile == Groups::kMore) {
+                 // A set of top-level sources, each still shown or hidden by
+@@ -1252,28 +1301,23 @@
+                 if (rows.isEmpty()) {
+                     continue;
+                 }
+-                tiles.append({tile, tile == Groups::kThisPi ? tr("This Pi") : tr("More"),
+-                        names.join(QStringLiteral(" · ")), icon(rows.first()), {}, rows});
++                tiles.append({tile, Groups::title(tile), names.join(QStringLiteral(" · ")),
++                        icon(rows.first()), {}, rows, Groups::glyph(tile)});
+             } else if (tile == Groups::kSamples) {
+                 const QModelIndex samples = LibraryInterface::locatePlace(m_pSidebarModel,
+                         sampleSourcePlace(LibraryInterface::SampleBrowser::kSamples),
+                         SidebarModel::DataRole);
+                 if (samples.isValid()) {
+-                    tiles.append({tile, tr("Samples"), tr("Sounds for the pads"),
+-                            icon(samples.parent()), samples, {}});
++                    tiles.append({tile, Groups::title(tile), Groups::subline(tile),
++                            icon(samples.parent()), samples, {}, Groups::glyph(tile)});
+                 }
+             } else {
+                 const QModelIndex row = sourceRow(tile);
+                 if (!row.isValid()) {
+                     continue;
+                 }
+-                const QString name = tile == Groups::kFolders ? tr("Folders")
+-                        : tile == Groups::kHistory           ? tr("History")
+-                                                             : tr("Recordings");
+-                const QString subline = tile == Groups::kFolders ? tr("Browse files and drives")
+-                        : tile == Groups::kHistory              ? tr("Played tracks by date")
+-                                                                : tr("Your recorded sets");
+-                tiles.append({tile, name, subline, icon(row), row, {}});
++                tiles.append({tile, Groups::title(tile), Groups::subline(tile), icon(row), row, {},
++                        Groups::glyph(tile)});
+             }
+         }
+     }
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+--- a/src/widget/libraryinterface.h
++++ b/src/widget/libraryinterface.h
+@@ -12,14 +12,20 @@
+ #include <QDialogButtonBox>
+ #include <QHeaderView>
+ #include <QHBoxLayout>
++#include <QIcon>
+ #include <QListWidget>
+ #include <QKeyEvent>
+ #include <QMouseEvent>
+ #include <QLabel>
+ #include <QMenu>
+ #include <QMap>
++#include <QPainter>
+ #include <QPair>
+ #include <QPersistentModelIndex>
++#include <QRegularExpression>
++#include <QStyle>
++#include <QStyleOption>
++#include <cmath>
+ #include <QPointer>
+ #include <QPushButton>
+ #include <QScrollArea>
+@@ -367,16 +373,234 @@
+ }
+ 
+ 
+-// MixPi Sources screen (R-9, R-10): touch sizes from the redesign plan.
+-constexpr int kSourceRailWidth = 264;
+-constexpr int kSourceTileHeight = 64;
+-constexpr int kSourceBarHeight = 48;
+-constexpr int kSourceRowHeight = 56;
+-constexpr int kSourceBackWidth = 96;
+-constexpr int kSourceSwitchWidth = 64;
+-// A touch sidebar narrower than this keeps the one-list layout.
+-constexpr int kSourceScreenMinimumWidth = 600;
++// MixPi Sources side menu (agreed UI s5, m-sources-top.png and
++// m-sources-sub.png): a 320 px panel at the right, a 52 px header with
++// [‹ BACK] [EDIT] (top level) or [‹ BACK] and the place (inside a source),
++// then 52 px rows. Buttons are 48 px high (the touch minimum).
++constexpr int kSourceMenuWidth = 320;
++constexpr int kSourceMenuHeaderHeight = 52;
++constexpr int kSourceMenuRowHeight = 52;
++constexpr int kSourceMenuButtonWidth = 88;
++constexpr int kSourceTouch = 48;
++constexpr int kSourceGlyphSize = 20;
++// A touch sidebar at least this wide is the Sources side menu. A narrower
++// one (the Pioneered touch skin's 260 px pane) keeps the one-list layout.
++constexpr int kSourceScreenMinimumWidth = kSourceMenuWidth;
++// Sources edit (m-sources-edit.png): full width under the 48 px top bar.
++constexpr int kSourceEditTopBar = 48;
++constexpr int kSourceEditHeaderHeight = 52;
++constexpr int kSourceEditRowHeight = 52;
++constexpr int kSourceEditDoneWidth = 96;
++constexpr int kSourceEditSwitchWidth = 88;
++constexpr int kSourceEditStepWidth = 84;
++
++// Style sheet rules that name a widget (or select on a property) apply
++// when it is polished. A QAbstractScrollArea's scroll bars are polished when
++// it is made, before its name is set: polish the children again (and let
++// the layouts see their new size), then the widget.
++inline void repolishTree(QWidget* widget) {
++    for (auto* child : widget->findChildren<QWidget*>()) {
++        child->style()->unpolish(child);
++        child->style()->polish(child);
++        child->updateGeometry();
++    }
++    widget->style()->unpolish(widget);
++    widget->style()->polish(widget);
++    widget->update();
++}
++
++// The agreed mockups' line icons (design/all-mockups.html: 24 px view box,
++// stroke 1.8, round caps), drawn at 20 px in one colour.
++namespace SourceGlyphs {
++inline QString svg(const QString& name) {
++    static const QMap<QString, QString> paths{
++            {QStringLiteral("pi"),
++                    QStringLiteral("<path d=\"M9 18V5l10-2v13\"/><circle cx=\"6.5\" cy=\"18\" r=\"2.5\"/>"
++                                   "<circle cx=\"16.5\" cy=\"16\" r=\"2.5\"/>")},
++            {QStringLiteral("usb"),
++                    QStringLiteral("<path d=\"M12 3v15\"/><circle cx=\"12\" cy=\"19.5\" r=\"1.8\"/>"
++                                   "<path d=\"M12 14l-5-3V8\"/><path d=\"M12 12l5-3V6\"/>"
++                                   "<rect x=\"5.5\" y=\"6\" width=\"3\" height=\"2.5\"/>"
++                                   "<circle cx=\"17\" cy=\"5\" r=\"1.4\"/><path d=\"M10 5l2-2.5L14 5\"/>")},
++            {QStringLiteral("history"),
++                    QStringLiteral("<path d=\"M4 12a8 8 0 1 0 2.5-5.8\"/><path d=\"M4 4v4h4\"/>"
++                                   "<path d=\"M12 8v4l3 2\"/>")},
++            {QStringLiteral("folder"), QStringLiteral("<path d=\"M3 6h6l2 2h10v11H3z\"/>")},
++            {QStringLiteral("samples"), QStringLiteral("<path d=\"M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10\"/>")},
++            {QStringLiteral("more"),
++                    QStringLiteral("<circle cx=\"6\" cy=\"12\" r=\"1.3\"/><circle cx=\"12\" cy=\"12\" r=\"1.3\"/>"
++                                   "<circle cx=\"18\" cy=\"12\" r=\"1.3\"/>")},
++            {QStringLiteral("list"), QStringLiteral("<path d=\"M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1\"/>")},
++            {QStringLiteral("back"), QStringLiteral("<path d=\"M15 5l-7 7 7 7\"/>")},
++            {QStringLiteral("edit"),
++                    QStringLiteral("<path d=\"M3 6h10M3 11h8M3 16h5\"/>"
++                                   "<path d=\"M12 20l.6-3L19 10.6l2.4 2.4L15 19.4z\"/>")},
++    };
++    return paths.value(name);
++}
+ 
++// NAME in COLOUR, SIZE px square (null for an unknown name, or without
++// Qt's SVG image reader).
++inline QPixmap pixmap(const QString& name, const QColor& colour, int size, qreal ratio = 1.0) {
++    const QString body = svg(name);
++    if (body.isEmpty()) {
++        return {};
++    }
++    const int pixels = qRound(size * ratio);
++    const QString document = QStringLiteral(
++            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%1\" height=\"%1\" viewBox=\"0 0 24 24\" "
++            "fill=\"none\" stroke=\"%2\" stroke-width=\"1.8\" stroke-linecap=\"round\" "
++            "stroke-linejoin=\"round\">%3</svg>")
++                                     .arg(QString::number(pixels), colour.name(QColor::HexRgb), body);
++    QPixmap result;
++    if (!result.loadFromData(document.toUtf8(), "SVG")) {
++        return {};
++    }
++    result.setDevicePixelRatio(ratio);
++    return result;
++}
++
++// An icon from the library (a source's own icon) in one colour.
++inline QPixmap tinted(const QIcon& icon, const QColor& colour, int size, qreal ratio = 1.0) {
++    QPixmap shape = icon.pixmap(QSize(size, size), ratio);
++    if (shape.isNull()) {
++        return {};
++    }
++    QPainter painter(&shape);
++    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
++    painter.fillRect(shape.rect(), colour);
++    return shape;
++}
++} // namespace SourceGlyphs
++
++// A source icon: a mockup glyph (or else the source's own icon) drawn in the
++// widget's text colour, which the style sheet sets (the source colour).
++class SourceGlyph final : public QWidget {
++  public:
++    explicit SourceGlyph(QWidget* parent)
++            : QWidget(parent) {
++        setAttribute(Qt::WA_TransparentForMouseEvents);
++        setFixedSize(kSourceGlyphSize, kSourceGlyphSize);
++    }
++    void setGlyph(const QString& name, const QIcon& fallback = {}) {
++        m_name = name;
++        m_fallback = fallback;
++        update();
++    }
++    QString glyph() const {
++        return m_name;
++    }
++    // What is drawn now (for checks): the glyph, else the tinted icon.
++    QPixmap drawn() const {
++        const QColor colour = palette().color(QPalette::WindowText);
++        QPixmap pixmap = SourceGlyphs::pixmap(m_name, colour, kSourceGlyphSize, devicePixelRatioF());
++        return pixmap.isNull() ? SourceGlyphs::tinted(m_fallback, colour, kSourceGlyphSize,
++                                         devicePixelRatioF())
++                               : pixmap;
++    }
++
++  protected:
++    void paintEvent(QPaintEvent*) override {
++        const QPixmap pixmap = drawn();
++        if (!pixmap.isNull()) {
++            QPainter(this).drawPixmap(0, 0, pixmap);
++        }
++    }
++
++  private:
++    QString m_name;
++    QIcon m_fallback;
++};
++
++// The › of a row that can be entered (the mockups' 9 px chevron, 2 px), in
++// the widget's text colour.
++class SourceChevron final : public QWidget {
++  public:
++    explicit SourceChevron(QWidget* parent)
++            : QWidget(parent) {
++        setAttribute(Qt::WA_TransparentForMouseEvents);
++        setFixedSize(16, 20);
++    }
++    static void draw(QPainter* painter, const QRect& box, const QColor& colour) {
++        painter->save();
++        painter->setRenderHint(QPainter::Antialiasing);
++        painter->setPen(QPen(colour, 2, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
++        const QPointF centre = QRectF(box).center();
++        painter->drawPolyline(QPolygonF({centre + QPointF(-3, -6), centre + QPointF(3, 0),
++                centre + QPointF(-3, 6)}));
++        painter->restore();
++    }
++
++  protected:
++    void paintEvent(QPaintEvent*) override {
++        QPainter painter(this);
++        draw(&painter, rect(), palette().color(QPalette::WindowText));
++    }
++};
++
++// A button with a glyph beside its label ([‹ BACK], [EDIT]), the glyph in
++// the button's text colour.
++class SourceIconButton final : public QPushButton {
++  public:
++    SourceIconButton(const QString& glyph, const QString& text, QWidget* parent)
++            : QPushButton(text, parent), m_glyph(glyph) {
++        setIconSize(QSize(kSourceGlyphSize, kSourceGlyphSize));
++        setFocusPolicy(Qt::NoFocus);
++        refreshIcon();
++    }
++
++  protected:
++    void changeEvent(QEvent* event) override {
++        QPushButton::changeEvent(event);
++        if (event->type() == QEvent::StyleChange || event->type() == QEvent::PaletteChange ||
++                event->type() == QEvent::EnabledChange) {
++            refreshIcon();
++        }
++    }
++
++  private:
++    void refreshIcon() {
++        setIcon(QIcon(SourceGlyphs::pixmap(m_glyph, palette().color(QPalette::ButtonText),
++                kSourceGlyphSize, devicePixelRatioF())));
++    }
++    const QString m_glyph;
++};
++
++// The close control (agreed UI section 1): a square with a red ✕ of two
++// 20x2.5 px strokes in the button's text colour; the style sheet gives the
++// square, the colour and the pressed state.
++class SourceCloseButton final : public QPushButton {
++  public:
++    explicit SourceCloseButton(QWidget* parent)
++            : QPushButton(parent) {
++        setFixedSize(kSourceTouch, kSourceTouch);
++        setFocusPolicy(Qt::NoFocus);
++        setAccessibleName(QObject::tr("Close"));
++    }
++
++  protected:
++    void paintEvent(QPaintEvent* event) override {
++        QPushButton::paintEvent(event);
++        QPainter painter(this);
++        painter.setRenderHint(QPainter::Antialiasing);
++        painter.setPen(QPen(palette().color(QPalette::ButtonText), 2.5, Qt::SolidLine, Qt::FlatCap));
++        const QPointF centre = QRectF(rect()).center();
++        const qreal half = 10 / std::sqrt(2.0);
++        painter.drawLine(centre + QPointF(-half, -half), centre + QPointF(half, half));
++        painter.drawLine(centre + QPointF(-half, half), centre + QPointF(half, -half));
++    }
++};
++
++// A sidebar label "Name (12)" or "Name (12) 1:02:03" (Mixxx playlists and
++// crates): the name, and the count shown at the right of a menu row.
++inline QPair<QString, QString> sourceLabelCount(const QString& label) {
++    static const QRegularExpression counted(
++            QStringLiteral("^(.*\\S)\\s+\\((\\d+)\\)(\\s+[0-9:]+)?$"));
++    const auto match = counted.match(label);
++    return match.hasMatch() ? qMakePair(match.captured(1), match.captured(2))
++                            : qMakePair(label, QString());
++}
++
+ // The fixed second line of a rail tile, per kind of source.
+ inline QString sourceSubline(const QString& identity) {
+     static const QMap<QString, const char*> lines{
+@@ -485,15 +709,51 @@
+     bool m_forwarding = false;
+ };
+ 
+-// An on/off switch: the whole 64x48 area takes the tap.
++// The ON/OFF toggle of Sources edit (m-sources-edit.png): 88x48, the word
++// and a 32 px square; the whole area takes the tap. The style sheet gives
++// the box and the text colour per state ([on="true"]); the square is drawn
++// in the text colour.
+ class SourceSwitch final : public QCheckBox {
+   public:
+-    using QCheckBox::QCheckBox;
++    explicit SourceSwitch(QWidget* parent = nullptr)
++            : QCheckBox(parent) {
++        setAttribute(Qt::WA_StyledBackground);
++        setProperty("on", false);
++        QObject::connect(this, &QCheckBox::toggled, this, [this] { restyle(); });
++    }
++    void restyle() {
++        if (property("on").toBool() != isChecked()) {
++            setProperty("on", isChecked());
++            style()->unpolish(this);
++            style()->polish(this);
++        }
++        update();
++    }
+ 
+   protected:
+     bool hitButton(const QPoint& position) const override {
+         return rect().contains(position);
+     }
++    void paintEvent(QPaintEvent*) override {
++        QStyleOption option;
++        option.initFrom(this);
++        QPainter painter(this);
++        style()->drawPrimitive(QStyle::PE_Widget, &option, &painter, this);
++        const QColor ink = palette().color(QPalette::WindowText);
++        const int knob = 32;
++        const int inset = (height() - knob) / 2;
++        const QRect square(isChecked() ? width() - inset - knob : inset, inset, knob, knob);
++        painter.setRenderHint(QPainter::Antialiasing);
++        painter.setPen(Qt::NoPen);
++        painter.setBrush(ink);
++        painter.drawRoundedRect(square, 2, 2);
++        painter.setPen(ink);
++        painter.setFont(font());
++        const QRect words = isChecked() ? QRect(12, 0, square.left() - 12, height())
++                                        : QRect(square.right() + 1, 0, width() - square.right() - 11, height());
++        painter.drawText(words, (isChecked() ? Qt::AlignLeft : Qt::AlignRight) | Qt::AlignVCenter,
++                isChecked() ? QObject::tr("ON") : QObject::tr("OFF"));
++    }
+ };
+ 
+ struct SourceEditEntry {
+@@ -505,6 +765,13 @@
+     // Grouped Sources (R-9 step 3): a member row (a source inside This Pi or
+     // More) has a switch only; Up and Down move the tile rows.
+     bool member = false;
++    // The small line under the title, and the icon (a mockup glyph, or the
++    // source's own icon).
++    QString subtitle = {};
++    QString glyph = {};
++    QIcon icon = {};
++    // Tracks starts here (★).
++    bool start = false;
+ };
+ 
+ namespace SourceGroups {
+@@ -548,12 +815,96 @@
+     }
+     return QStringLiteral("SourceGroupMore");
+ }
++// The tile's title and small line in the Sources menu and in Sources edit
++// (a drive's own name and This Pi's or More's sources are set apart).
++inline QString title(const QString& tile) {
++    if (tile == kDrives) {
++        return QObject::tr("USB drives (each drive)");
++    }
++    if (tile == kThisPi) {
++        return QObject::tr("This Pi");
++    }
++    if (tile == kSamples) {
++        return QObject::tr("Samples");
++    }
++    if (tile == kMore) {
++        return QObject::tr("More");
++    }
++    if (tile == kFolders) {
++        return QObject::tr("Folders");
++    }
++    if (tile == kHistory) {
++        return QObject::tr("History");
++    }
++    return QObject::tr("Recordings");
++}
++inline QString subline(const QString& tile) {
++    if (tile == kSamples) {
++        return QObject::tr("Sounds for the pads");
++    }
++    if (tile == kFolders) {
++        return QObject::tr("Browse files and drives");
++    }
++    if (tile == kHistory) {
++        return QObject::tr("Played tracks by date");
++    }
++    if (tile == kRecordings) {
++        return QObject::tr("Your recorded sets");
++    }
++    if (tile == kDrives) {
++        return QObject::tr("USB");
++    }
++    return {};
++}
++// A drive's line (m-sources-top.png): "USB · rekordbox" for a rekordbox
++// export, else "USB".
++inline QString driveSubline(bool rekordbox) {
++    return rekordbox ? QObject::tr("USB · rekordbox") : QObject::tr("USB");
++}
++// The tile's icon in the agreed mockups (none: the source's own icon).
++inline QString glyph(const QString& tile) {
++    if (tile == kDrives || tile.startsWith(QStringLiteral("drive:"))) {
++        return QStringLiteral("usb");
++    }
++    if (tile == kThisPi) {
++        return QStringLiteral("pi");
++    }
++    if (tile == kHistory) {
++        return QStringLiteral("history");
++    }
++    if (tile == kFolders) {
++        return QStringLiteral("folder");
++    }
++    if (tile == kSamples) {
++        return QStringLiteral("samples");
++    }
++    if (tile == kMore) {
++        return QStringLiteral("more");
++    }
++    return {};
++}
++// Whether the start source (SidebarDefaultSource; empty: Tracks, Mixxx's
++// default) belongs to this edit row.
++inline bool startsAt(const QString& row, QString start) {
++    if (start.isEmpty()) {
++        start = QStringLiteral("MixxxLibraryFeature");
++    }
++    if (row == start) {
++        return true;
++    }
++    if (start.startsWith(QStringLiteral("group:"))) {
++        return false;
++    }
++    return (row == kThisPi && thisPi().contains(start)) || (row == kMore && inMore(start));
++}
+ } // namespace SourceGroups
+ 
+-// Sources edit (R-10): one list. Each 56 px row has the name, Up, Down and
+-// an on/off switch; the start source carries a star. Start here (under the
+-// list) makes the selected row the start source. The last visible source
+-// cannot be switched off. No drag-to-reorder, no menu.
++// Sources edit (agreed UI s5, m-sources-edit.png): full screen under the top
++// bar. The header has EDIT SOURCES, the hint, DONE and the close ✕. Each
++// 52 px row has ★ (Tracks starts here), the icon, the title and its line,
++// the ON/OFF toggle, ▲ UP and ▼ DOWN. A row that is off is dimmed; UP is off
++// on the first row and DOWN on the last. Each change is saved at once (R-10).
++// The last source that is on cannot be switched off. No drag-to-reorder.
+ class SourceEditList final : public QWidget {
+   public:
+     std::function<void(const QStringList&)> orderChanged;
+@@ -562,56 +913,73 @@
+     // When set, Up and Down call this instead of orderChanged (grouped
+     // Sources: a group moves with its member rows).
+     std::function<void(const QString&, int)> moved;
++    // DONE and the close ✕.
++    std::function<void()> done;
++    std::function<void()> closed;
+ 
+     explicit SourceEditList(QWidget* parent)
+             : QWidget(parent) {
+-        setObjectName(QStringLiteral("MixpiSourceEdit"));
++        setObjectName(QStringLiteral("MixpiSourcesEdit"));
+         setAttribute(Qt::WA_StyledBackground);
+         auto* layout = new QVBoxLayout(this);
+         layout->setContentsMargins(0, 0, 0, 0);
+         layout->setSpacing(0);
+-        auto* hint = new QLabel(QObject::tr("Show, order, and ★ where Tracks starts"), this);
+-        hint->setObjectName(QStringLiteral("MixpiSourceEditHint"));
+-        hint->setFixedHeight(kSourceBarHeight);
+-        layout->addWidget(hint);
++        auto* header = new QWidget(this);
++        header->setObjectName(QStringLiteral("MixpiSourcesEditHeader"));
++        header->setAttribute(Qt::WA_StyledBackground);
++        header->setFixedHeight(kSourceEditHeaderHeight);
++        auto* line = new QHBoxLayout(header);
++        line->setContentsMargins(12, 0, 4, 0);
++        line->setSpacing(8);
++        auto* title = new QLabel(QObject::tr("EDIT SOURCES"), header);
++        title->setObjectName(QStringLiteral("MixpiSourcesEditTitle"));
++        line->addWidget(title);
++        m_hint = new QLabel(QObject::tr("Switch sources on or off, set the order, ★ where Tracks starts."),
++                header);
++        m_hint->setObjectName(QStringLiteral("MixpiSourcesEditHint"));
++        // Shorter than its text when the screen is narrow: no minimum.
++        m_hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
++        line->addWidget(m_hint, 1);
++        m_done = new QPushButton(QObject::tr("DONE"), header);
++        m_done->setObjectName(QStringLiteral("MixpiSourcesEditDone"));
++        m_done->setFocusPolicy(Qt::NoFocus);
++        m_done->setFixedSize(kSourceEditDoneWidth, kSourceTouch);
++        line->addWidget(m_done);
++        m_close = new SourceCloseButton(header);
++        m_close->setObjectName(QStringLiteral("MixpiSourcesEditClose"));
++        line->addWidget(m_close);
++        layout->addWidget(header);
+         m_area = new QScrollArea(this);
+-        m_area->setObjectName(QStringLiteral("MixpiSourceEditList"));
++        m_area->setObjectName(QStringLiteral("MixpiSourcesEditList"));
+         m_area->setFrameShape(QFrame::NoFrame);
+         m_area->setWidgetResizable(true);
+         m_area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+         m_rows = new QWidget(m_area);
+-        m_rows->setObjectName(QStringLiteral("MixpiSourceEditRows"));
++        m_rows->setObjectName(QStringLiteral("MixpiSourcesEditRows"));
+         auto* rows = new QVBoxLayout(m_rows);
+         rows->setContentsMargins(0, 0, 0, 0);
+         rows->setSpacing(0);
+         rows->addStretch();
+         m_area->setWidget(m_rows);
+         layout->addWidget(m_area, 1);
+-        auto* footer = new QWidget(this);
+-        footer->setObjectName(QStringLiteral("MixpiSourceEditFooter"));
+-        footer->setFixedHeight(kSourceRowHeight);
+-        auto* footerLayout = new QHBoxLayout(footer);
+-        footerLayout->setContentsMargins(8, 4, 8, 4);
+-        m_start = new QPushButton(QObject::tr("Start here"), footer);
+-        m_start->setObjectName(QStringLiteral("MixpiSourceStartHere"));
+-        m_start->setFocusPolicy(Qt::NoFocus);
+-        m_start->setFixedSize(160, 48);
+-        footerLayout->addWidget(m_start);
+-        footerLayout->addStretch();
+-        layout->addWidget(footer);
+         m_drag = new TouchDragScroll(m_area);
+-        QObject::connect(m_start, &QPushButton::clicked, this, [this] {
+-            if (startChosen && !m_selected.isEmpty()) {
+-                startChosen(m_selected);
++        repolishTree(m_area);
++        QObject::connect(m_done, &QPushButton::clicked, this, [this] {
++            if (done) {
++                done();
+             }
+         });
++        QObject::connect(m_close, &QPushButton::clicked, this, [this] {
++            if (closed) {
++                closed();
++            }
++        });
+     }
+ 
+-    // Rebuilds the rows. The selection and the scroll position stay.
+-    void setSources(const QList<SourceEditEntry>& sources, const QString& start) {
++    // Rebuilds the rows. The scroll position stays.
++    void setSources(const QList<SourceEditEntry>& sources) {
+         const int scroll = m_area->verticalScrollBar()->value();
+         m_sources = sources;
+-        m_startSource = start;
+         auto* rows = static_cast<QVBoxLayout*>(m_rows->layout());
+         for (auto* row : std::as_const(m_rowWidgets)) {
+             rows->removeWidget(row);
+@@ -621,55 +989,72 @@
+         }
+         m_rowWidgets.clear();
+         m_switches.clear();
+-        bool selectedFound = false;
+         for (int position = 0; position < sources.size(); ++position) {
+             const auto& source = sources.at(position);
+-            selectedFound |= source.id == m_selected;
+             auto* row = new QWidget(m_rows);
+-            row->setObjectName(QStringLiteral("MixpiSourceEditRow"));
++            row->setObjectName(QStringLiteral("MixpiSourcesEditRow"));
+             row->setAttribute(Qt::WA_StyledBackground);
+-            row->setFixedHeight(kSourceRowHeight);
++            row->setFixedHeight(kSourceEditRowHeight);
++            row->setProperty("sourceId", source.id);
++            row->setProperty("off", !source.visible);
++            row->setProperty("member", source.member);
+             auto* line = new QHBoxLayout(row);
+-            line->setContentsMargins(0, 4, 8, 4);
+-            line->setSpacing(6);
+-            auto* name = new QPushButton(source.id == start
+-                            ? source.title + QStringLiteral("  ★")
+-                            : source.title,
+-                    row);
+-            name->setObjectName(QStringLiteral("MixpiSourceEditName"));
+-            name->setCheckable(true);
+-            name->setChecked(source.id == m_selected);
+-            name->setMinimumHeight(48);
+-            name->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+-            name->setProperty("sourceId", source.id);
+-            line->addWidget(name, 1);
+-            auto* up = new QPushButton(QObject::tr("Up"), row);
+-            up->setObjectName(QStringLiteral("MixpiSourceEditUp"));
+-            up->setFixedSize(48, 48);
++            line->setContentsMargins(16, 2, 16, 2);
++            line->setSpacing(12);
++            auto* star = new QPushButton(source.start ? QStringLiteral("★") : QStringLiteral("☆"), row);
++            star->setObjectName(QStringLiteral("MixpiSourcesEditStar"));
++            star->setAccessibleName(QObject::tr("Start here"));
++            star->setProperty("start", source.start);
++            star->setFixedSize(kSourceTouch, kSourceTouch);
++            star->setEnabled(source.start || (source.visible && source.available));
++            line->addWidget(star);
++            auto* icon = new SourceGlyph(row);
++            icon->setObjectName(QStringLiteral("MixpiSourcesEditIcon"));
++            icon->setGlyph(source.glyph, source.icon);
++            line->addWidget(icon);
++            auto* text = new QVBoxLayout;
++            text->setContentsMargins(0, 0, 0, 0);
++            text->setSpacing(3);
++            text->addStretch();
++            auto* name = new QLabel(source.title, row);
++            name->setObjectName(QStringLiteral("MixpiSourcesEditName"));
++            name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
++            text->addWidget(name);
++            auto* sub = new QLabel(source.start ? QObject::tr("TRACKS STARTS HERE") : source.subtitle, row);
++            sub->setObjectName(QStringLiteral("MixpiSourcesEditSub"));
++            sub->setProperty("start", source.start);
++            sub->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
++            sub->setVisible(source.start || !source.subtitle.isEmpty());
++            text->addWidget(sub);
++            text->addStretch();
++            line->addLayout(text, 1);
++            auto* toggle = new SourceSwitch(row);
++            toggle->setObjectName(QStringLiteral("MixpiSourcesEditSwitch"));
++            toggle->setAccessibleName(QObject::tr("Show %1").arg(source.title));
++            toggle->setFixedSize(kSourceEditSwitchWidth, kSourceTouch);
++            toggle->setChecked(source.visible);
++            line->addWidget(toggle);
++            auto* up = new QPushButton(QObject::tr("▲ UP"), row);
++            up->setObjectName(QStringLiteral("MixpiSourcesEditUp"));
++            up->setFixedSize(kSourceEditStepWidth, kSourceTouch);
+             up->setEnabled(movableBefore(position));
+             line->addWidget(up);
+-            auto* down = new QPushButton(QObject::tr("Down"), row);
+-            down->setObjectName(QStringLiteral("MixpiSourceEditDown"));
+-            down->setFixedSize(48, 48);
++            auto* down = new QPushButton(QObject::tr("▼ DOWN"), row);
++            down->setObjectName(QStringLiteral("MixpiSourcesEditDown"));
++            down->setFixedSize(kSourceEditStepWidth, kSourceTouch);
+             down->setEnabled(movableAfter(position));
+             line->addWidget(down);
+             if (source.member) {
+                 // A source inside a group: its switch only, in line.
+-                name->setProperty("member", true);
+-                for (auto* button : {up, down}) {
++                for (QWidget* button : {static_cast<QWidget*>(star), static_cast<QWidget*>(up),
++                             static_cast<QWidget*>(down)}) {
+                     auto policy = button->sizePolicy();
+                     policy.setRetainSizeWhenHidden(true);
+                     button->setSizePolicy(policy);
+                     button->hide();
+                 }
+             }
+-            auto* toggle = new SourceSwitch(row);
+-            toggle->setObjectName(QStringLiteral("MixpiSourceEditSwitch"));
+-            toggle->setAccessibleName(QObject::tr("Show %1").arg(source.title));
+-            toggle->setFixedSize(kSourceSwitchWidth, 48);
+-            toggle->setChecked(source.visible);
+-            line->addWidget(toggle);
+-            for (QAbstractButton* button : {static_cast<QAbstractButton*>(name),
++            for (QAbstractButton* button : {static_cast<QAbstractButton*>(star),
+                          static_cast<QAbstractButton*>(up),
+                          static_cast<QAbstractButton*>(down),
+                          static_cast<QAbstractButton*>(toggle)}) {
+@@ -677,7 +1062,12 @@
+                 m_drag->watch(button);
+             }
+             const QString id = source.id;
+-            QObject::connect(name, &QPushButton::clicked, this, [this, id] { select(id); });
++            const bool start = source.start;
++            QObject::connect(star, &QPushButton::clicked, this, [this, id, start] {
++                if (!start && startChosen) {
++                    startChosen(id);
++                }
++            });
+             QObject::connect(up, &QPushButton::clicked, this, [this, id] { move(id, -1); });
+             QObject::connect(down, &QPushButton::clicked, this, [this, id] { move(id, 1); });
+             QObject::connect(toggle, &QCheckBox::toggled, this, [this, id](bool on) {
+@@ -689,28 +1079,32 @@
+             m_rowWidgets.append(row);
+             m_switches.append(toggle);
+         }
+-        if (!selectedFound) {
+-            m_selected.clear();
+-        }
+         protectLastVisible(m_switches);
+-        updateStart();
+         rows->activate();
+         m_rows->adjustSize();
+         m_area->verticalScrollBar()->setValue(scroll);
+     }
+ 
+-    QString selected() const {
+-        return m_selected;
+-    }
+     QList<QWidget*> rows() const {
+         return m_rowWidgets;
+     }
+-    QPushButton* startButton() const {
+-        return m_start;
++    QWidget* row(const QString& id) const {
++        for (auto* row : m_rowWidgets) {
++            if (row->property("sourceId").toString() == id) {
++                return row;
++            }
++        }
++        return nullptr;
+     }
+     QScrollArea* area() const {
+         return m_area;
+     }
++    QPushButton* doneButton() const {
++        return m_done;
++    }
++    QPushButton* closeButton() const {
++        return m_close;
++    }
+ 
+   private:
+     bool movableBefore(int position) const {
+@@ -737,18 +1131,8 @@
+         return false;
+     }
+ 
+-    void select(const QString& id) {
+-        m_selected = id;
+-        for (auto* row : std::as_const(m_rowWidgets)) {
+-            auto* name = row->findChild<QPushButton*>(QStringLiteral("MixpiSourceEditName"));
+-            name->setChecked(name->property("sourceId").toString() == id);
+-        }
+-        updateStart();
+-    }
+-
+     void move(const QString& id, int direction) {
+         if (moved) {
+-            m_selected = id;
+             moved(id, direction);
+             return;
+         }
+@@ -762,31 +1146,20 @@
+             return;
+         }
+         order.move(from, to);
+-        m_selected = id;
+         if (orderChanged) {
+             orderChanged(order);
+         }
+     }
+ 
+-    void updateStart() {
+-        bool startable = false;
+-        for (const auto& source : std::as_const(m_sources)) {
+-            if (source.id == m_selected) {
+-                startable = source.visible && source.available && source.id != m_startSource;
+-            }
+-        }
+-        m_start->setEnabled(startable);
+-    }
+-
++    QLabel* m_hint;
++    QPushButton* m_done;
++    QPushButton* m_close;
+     QScrollArea* m_area;
+     QWidget* m_rows;
+-    QPushButton* m_start;
+     TouchDragScroll* m_drag;
+     QList<SourceEditEntry> m_sources;
+     QList<QWidget*> m_rowWidgets;
+     QList<QCheckBox*> m_switches;
+-    QString m_selected;
+-    QString m_startSource;
+ };
+ 
+ // R-8: the Load sample screen shares the one library widget with Tracks. Each
+diff --git a/src/widget/touchsourcenavigation.h b/src/widget/touchsourcenavigation.h
+--- a/src/widget/touchsourcenavigation.h
++++ b/src/widget/touchsourcenavigation.h
+@@ -22,6 +22,9 @@
+     QPersistentModelIndex node;
+     // A set tile (This Pi, More) shows these top-level rows instead.
+     QList<QPersistentModelIndex> rows;
++    // Its icon in the agreed mockups (LibraryInterface::SourceGroups::glyph);
++    // empty: ICON, the source's own.
++    QString glyph = {};
+ };
+ } // namespace LibraryInterface
+ 
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -6,10 +6,13 @@
+ #include <QHeaderView>
+ #include <QIcon>
+ #include <QLabel>
++#include <QMainWindow>
++#include <QPainter>
+ #include <QPushButton>
+ #include <QResizeEvent>
+ #include <QScrollArea>
+ #include <QScrollBar>
++#include <QStyle>
+ #include <QStyledItemDelegate>
+ #include <QTimer>
+ #include <QUrl>
+@@ -30,7 +33,10 @@
+ 
+ namespace {
+ 
+-// Sources screen rows are at least 56 px high, whatever the style gives.
++// Sources side menu rows (m-sources-sub.png): 52 px; the icon in the source
++// colour, the name, the count at the right and › on a row that can be
++// entered. The row shown in Tracks has the current-row style (surface-2,
++// a 4 px accent edge). The colours are the style sheet's (qproperty-menu*).
+ class SourceRowDelegate final : public QStyledItemDelegate {
+   public:
+     explicit SourceRowDelegate(WLibrarySidebar* pSidebar)
+@@ -40,15 +46,81 @@
+     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
+         QSize size = QStyledItemDelegate::sizeHint(option, index);
+         if (m_pSidebar->hasSourceScreen()) {
+-            size.setHeight(std::max(size.height(), LibraryInterface::kSourceRowHeight));
++            size.setHeight(LibraryInterface::kSourceMenuRowHeight);
+         }
+         return size;
+     }
++    void paint(QPainter* painter, const QStyleOptionViewItem& option,
++            const QModelIndex& index) const override {
++        if (!m_pSidebar->hasSourceScreen()) {
++            QStyledItemDelegate::paint(painter, option, index);
++            return;
++        }
++        const QRect row = option.rect;
++        const bool current = index == m_pSidebar->currentIndex();
++        const bool pressed = index == m_pSidebar->pressedSourceRow();
++        painter->save();
++        painter->fillRect(row,
++                pressed       ? m_pSidebar->menuPressedColor()
++                        : current ? m_pSidebar->menuCurrentColor()
++                                  : m_pSidebar->menuBackgroundColor());
++        if (current) {
++            painter->fillRect(QRect(row.left(), row.top(), 4, row.height()),
++                    m_pSidebar->menuAccentColor());
++        }
++        painter->fillRect(QRect(row.left(), row.bottom(), row.width(), 1), m_pSidebar->menuLineColor());
++        const qreal ratio = painter->device()->devicePixelRatioF();
++        const int glyph = LibraryInterface::kSourceGlyphSize;
++        int left = row.left() + 16;
++        int right = row.right() + 1 - 16;
++        QPixmap icon = LibraryInterface::SourceGlyphs::tinted(
++                index.data(Qt::DecorationRole).value<QIcon>(), m_pSidebar->menuIconColor(), glyph, ratio);
++        if (icon.isNull()) {
++            icon = LibraryInterface::SourceGlyphs::pixmap(QStringLiteral("list"),
++                    m_pSidebar->menuIconColor(), glyph, ratio);
++        }
++        painter->drawPixmap(left, row.top() + (row.height() - glyph) / 2, icon);
++        left += glyph + 12;
++        if (index.model()->hasChildren(index)) {
++            LibraryInterface::SourceChevron::draw(painter,
++                    QRect(right - 16, row.top(), 16, row.height()), m_pSidebar->menuDimColor());
++            right -= 16 + 12;
++        }
++        const auto [name, count] = LibraryInterface::sourceLabelCount(index.data().toString());
++        if (!count.isEmpty()) {
++            QFont note = option.font;
++            note.setPixelSize(m_pSidebar->menuNotePixelSize());
++            painter->setFont(note);
++            painter->setPen(m_pSidebar->menuDimColor());
++            const int width = QFontMetrics(note).horizontalAdvance(count);
++            painter->drawText(QRect(right - width, row.top(), width, row.height()),
++                    Qt::AlignRight | Qt::AlignVCenter, count);
++            right -= width + 12;
++        }
++        QFont title = option.font;
++        title.setWeight(QFont::DemiBold);
++        painter->setFont(title);
++        painter->setPen(m_pSidebar->menuTextColor());
++        const QRect text(left, row.top(), std::max(0, right - left), row.height());
++        painter->drawText(text, Qt::AlignLeft | Qt::AlignVCenter,
++                QFontMetrics(title).elidedText(name, Qt::ElideRight, text.width()));
++        painter->restore();
++    }
+ 
+   private:
+     WLibrarySidebar* const m_pSidebar;
+ };
+ 
++// The widget that carries the skin (as mixpiSkinRoot() in mixpipage.h): the
++// main window's central widget, else the window.
++QWidget* skinRoot(QWidget* pWidget) {
++    QWidget* pWindow = pWidget->window();
++    if (auto* pMain = qobject_cast<QMainWindow*>(pWindow); pMain && pMain->centralWidget()) {
++        return pMain->centralWidget();
++    }
++    return pWindow;
++}
++
+ QLabel* tileLabel(const QString& name, QWidget* pParent) {
+     auto* pLabel = new QLabel(pParent);
+     pLabel->setObjectName(name);
+@@ -101,6 +173,10 @@
+     };
+     m_touchNavigation->changed = [this](bool canGoBack) {
+         m_sourceCanGoBack->set(canGoBack ? 1 : 0);
++        if (!groupedTiles && !rootIndex().isValid()) {
++            // One row per source: their list is the menu's top level.
++            m_menuInside = false;
++        }
+         updateSourceChrome();
+     };
+     sourceBack->connectValueChangeRequest(this, [this](double value) {
+@@ -115,9 +191,9 @@
+     connect(this, &QObject::destroyed, QCoreApplication::instance(), [] {
+         QCoreApplication::instance()->setProperty("mixpiTouchNavigation", QVariant());
+     });
+-    // The Sources screen (R-9): rows of 56 px, a rail that follows every
+-    // change of the top-level rows (USB hot-plug resets the model), and a
+-    // list that scrolls by drag.
++    // The Sources side menu (agreed UI s5): rows of 52 px, a top level that
++    // follows every change of the top-level rows (USB hot-plug resets the
++    // model), and a list that scrolls by drag.
+     m_sourcesEditingControl = ControlObject::getControl(
+             ConfigKey("[Library]", "sidebar_sources_editing"));
+     setItemDelegate(new SourceRowDelegate(this));
+@@ -142,48 +218,79 @@
+     if (wanted != m_sourceScreen) {
+         m_sourceScreen = wanted;
+         if (wanted && !m_sourceRail) {
++            // Top level: the source rows.
+             m_sourceRail = new QScrollArea(this);
+-            m_sourceRail->setObjectName("MixpiSourceRail");
++            m_sourceRail->setObjectName("MixpiSourcesMenuTop");
+             m_sourceRail->setFrameShape(QFrame::NoFrame);
+             m_sourceRail->setWidgetResizable(true);
+             m_sourceRail->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+             auto* pTiles = new QWidget(m_sourceRail);
+-            pTiles->setObjectName("MixpiSourceTiles");
++            pTiles->setObjectName("MixpiSourcesMenuRows");
+             auto* pTileLayout = new QVBoxLayout(pTiles);
+             pTileLayout->setContentsMargins(0, 0, 0, 0);
+             pTileLayout->setSpacing(0);
+             pTileLayout->addStretch();
+             m_sourceRail->setWidget(pTiles);
+             m_sourceRailDrag = new LibraryInterface::TouchDragScroll(m_sourceRail);
++            // The header: [‹ BACK] [EDIT] at the top level, [‹ BACK] and the
++            // place inside a source.
+             m_sourceBar = new QWidget(this);
+-            m_sourceBar->setObjectName("MixpiSourceBar");
++            m_sourceBar->setObjectName("MixpiSourcesMenuHeader");
+             m_sourceBar->setAttribute(Qt::WA_StyledBackground);
+-            m_sourceBack = new QPushButton(tr("Back"), m_sourceBar);
+-            m_sourceBack->setObjectName("MixpiSourceBack");
+-            m_sourceBack->setFocusPolicy(Qt::NoFocus);
+-            m_sourceBack->setFixedSize(LibraryInterface::kSourceBackWidth,
+-                    LibraryInterface::kSourceBarHeight);
+-            connect(m_sourceBack, &QPushButton::clicked, this, [this] {
+-                if (m_touchNavigation) {
+-                    m_touchNavigation->back();
++            auto* pBarLayout = new QHBoxLayout(m_sourceBar);
++            pBarLayout->setContentsMargins(8, 2, 8, 2);
++            pBarLayout->setSpacing(8);
++            m_sourceBack = new LibraryInterface::SourceIconButton(
++                    QStringLiteral("back"), tr("BACK"), m_sourceBar);
++            m_sourceBack->setObjectName("MixpiSourcesMenuBack");
++            m_sourceBack->setFixedSize(LibraryInterface::kSourceMenuButtonWidth,
++                    LibraryInterface::kSourceTouch);
++            connect(m_sourceBack, &QPushButton::clicked, this, [this] { sourceMenuBack(); });
++            pBarLayout->addWidget(m_sourceBack);
++            m_sourceEdit = new LibraryInterface::SourceIconButton(
++                    QStringLiteral("edit"), tr("EDIT"), m_sourceBar);
++            m_sourceEdit->setObjectName("MixpiSourcesMenuEdit");
++            m_sourceEdit->setFixedSize(LibraryInterface::kSourceMenuButtonWidth,
++                    LibraryInterface::kSourceTouch);
++            connect(m_sourceEdit, &QPushButton::clicked, this, [this] {
++                if (sourcesEditRequested) {
++                    sourcesEditRequested();
+                 }
+             });
++            pBarLayout->addWidget(m_sourceEdit);
+             m_sourceCrumbLabel = new QLabel(m_sourceBar);
+-            m_sourceCrumbLabel->setObjectName("MixpiSourceCrumb");
++            m_sourceCrumbLabel->setObjectName("MixpiSourcesMenuPlace");
++            m_sourceCrumbLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
++            pBarLayout->addWidget(m_sourceCrumbLabel, 1);
++            pBarLayout->addStretch();
++            // The panel's 1 px left edge.
++            m_sourceEdge = new QWidget(this);
++            m_sourceEdge->setObjectName("MixpiSourcesMenuEdge");
++            m_sourceEdge->setAttribute(Qt::WA_StyledBackground);
++            // The list's scroll bar starts under the header.
++            m_sourceScrollTop = new QWidget(this);
++            m_sourceScrollTop->setObjectName("MixpiSourcesMenuScrollTop");
++            m_sourceScrollTop->setFixedHeight(LibraryInterface::kSourceMenuHeaderHeight);
++            addScrollBarWidget(m_sourceScrollTop, Qt::AlignTop);
+         }
+         if (m_sourceRail) {
+-            m_sourceRail->setVisible(wanted);
+-            m_sourceBar->setVisible(wanted && !m_sourcesEditing);
++            m_sourceBar->setVisible(wanted);
++            m_sourceEdge->setVisible(wanted);
++            m_sourceRail->setVisible(wanted && !m_menuInside);
++            m_sourceScrollTop->setVisible(wanted);
+         }
+         if (groupedTiles) {
+-            // The tile filter and Back's stop belong to the Sources screen.
++            // The tile filter and Back's stop belong to the Sources menu.
+             if (!wanted && m_touchNavigation) {
+                 m_touchNavigation->setFloor({});
+             }
+             applyTileFilter();
+         }
++        // The style sheet's menu rules (WLibrarySidebar[mixpiSourceMenu="true"]).
++        setProperty("mixpiSourceMenu", wanted);
++        LibraryInterface::repolishTree(this);
+         if (wanted) {
+-            // The rail and the bar start at the edge: no frame around them.
++            // The header and the rows start at the edge: no frame around them.
+             m_frameShape = frameShape();
+             setFrameShape(QFrame::NoFrame);
+             applySourceMargins();
+@@ -194,7 +301,7 @@
+             setViewportMargins(0, 0, 0, 0);
+             updateGeometries();
+         }
+-        // Row heights change with the screen.
++        // Row heights change with the menu.
+         scheduleDelayedItemsLayout();
+     }
+     layoutSourceScreen();
+@@ -205,31 +312,42 @@
+         // Polishing (a style sheet) may bring the frame back.
+         setFrameShape(QFrame::NoFrame);
+     }
+-    const int frame = frameWidth();
+-    const QRect inside = rect().adjusted(frame, frame, -frame, -frame);
+     if (m_sourceScreen) {
+-        const int rail = LibraryInterface::kSourceRailWidth;
+-        const int bar = LibraryInterface::kSourceBarHeight;
+-        m_sourceRail->setGeometry(inside.x(), inside.y(), rail, inside.height());
+-        m_sourceBar->setGeometry(inside.x() + rail, inside.y(), inside.width() - rail, bar);
+-        m_sourceBack->move(4, 0);
+-        const int crumbLeft = 4 + LibraryInterface::kSourceBackWidth + 8;
+-        m_sourceCrumbLabel->setGeometry(crumbLeft, 0,
+-                std::max(0, m_sourceBar->width() - crumbLeft - 8), bar);
+-        m_sourceRail->raise();
+-        m_sourceBar->raise();
++        const int edge = kSourceMenuEdge;
++        const int bar = LibraryInterface::kSourceMenuHeaderHeight;
++        m_sourceEdge->setGeometry(0, 0, edge, height());
++        m_sourceBar->setGeometry(edge, 0, width() - edge, bar);
++        m_sourceRail->setGeometry(edge, bar, width() - edge, std::max(0, height() - bar));
+         updateSourceChrome();
+     }
+-    if (m_sourcesEditPanel) {
+-        m_sourcesEditPanel->setGeometry(m_sourceScreen
+-                        ? inside.adjusted(LibraryInterface::kSourceRailWidth, 0, 0, 0)
+-                        : inside);
+-        if (m_sourcesEditing) {
+-            m_sourcesEditPanel->raise();
+-        }
++    placeSourcesEditPanel();
++}
++
++void WLibrarySidebar::placeSourcesEditPanel() {
++    if (!m_sourcesEditPanel) {
++        return;
+     }
++    QWidget* pHost = m_sourcesEditPanel->parentWidget();
++    if (pHost == this || !pHost) {
++        m_sourcesEditPanel->setGeometry(rect());
++    } else {
++        // Full width under the top bar (m-sources-edit.png).
++        const int top = LibraryInterface::kSourceEditTopBar;
++        m_sourcesEditPanel->setGeometry(0, top, pHost->width(), std::max(0, pHost->height() - top));
++    }
++    if (m_sourcesEditing) {
++        m_sourcesEditPanel->raise();
++    }
+ }
+ 
++bool WLibrarySidebar::eventFilter(QObject* pObject, QEvent* pEvent) {
++    if (m_sourcesEditPanel && pObject == m_sourcesEditPanel->parentWidget() &&
++            pEvent->type() == QEvent::Resize) {
++        placeSourcesEditPanel();
++    }
++    return QTreeView::eventFilter(pObject, pEvent);
++}
++
+ void WLibrarySidebar::resizeEvent(QResizeEvent* pEvent) {
+     QTreeView::resizeEvent(pEvent);
+     updateSourceScreen();
+@@ -275,45 +393,78 @@
+     }
+     m_sourceTiles.clear();
+     m_sourceTileIndexes.clear();
+-    m_groupedTiles.clear();
++    // One row of the top level: icon, title, small line, › when it can be
++    // entered.
++    auto addTile = [this, pTiles, pTileLayout](const QString& name, const QString& subline,
++                           const QString& glyph, const QIcon& icon, bool enterable) {
++        auto* pTile = new QPushButton(pTiles);
++        pTile->setObjectName("MixpiSourcesMenuTile");
++        pTile->setCheckable(true);
++        pTile->setFocusPolicy(Qt::NoFocus);
++        pTile->setFixedHeight(LibraryInterface::kSourceMenuRowHeight);
++        pTile->setAccessibleName(name);
++        pTile->setProperty("enterable", enterable);
++        auto* pLine = new QHBoxLayout(pTile);
++        pLine->setContentsMargins(12, 0, 16, 0);
++        pLine->setSpacing(12);
++        auto* pIcon = new LibraryInterface::SourceGlyph(pTile);
++        pIcon->setObjectName("MixpiSourcesMenuIcon");
++        pIcon->setGlyph(glyph, icon);
++        pLine->addWidget(pIcon);
++        auto* pText = new QVBoxLayout;
++        pText->setContentsMargins(0, 0, 0, 0);
++        pText->setSpacing(3);
++        pText->addStretch();
++        auto* pName = tileLabel("MixpiSourcesMenuName", pTile);
++        pName->setText(name);
++        pName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
++        pText->addWidget(pName);
++        auto* pSub = tileLabel("MixpiSourcesMenuSub", pTile);
++        pSub->setText(subline);
++        pSub->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
++        pSub->setVisible(!subline.isEmpty());
++        pText->addWidget(pSub);
++        pText->addStretch();
++        pLine->addLayout(pText, 1);
++        auto* pChevron = new LibraryInterface::SourceChevron(pTile);
++        pChevron->setObjectName("MixpiSourcesMenuChevron");
++        pChevron->setVisible(enterable);
++        pLine->addWidget(pChevron);
++        m_sourceRailDrag->watch(pTile);
++        pTileLayout->insertWidget(pTileLayout->count() - 1, pTile);
++        m_sourceTiles.append(pTile);
++        return pTile;
++    };
+     if (groupedTiles) {
+         // Grouped Sources: the Library's tiles (drives first, This Pi, ...).
+         m_groupedTiles = groupedTiles();
+         for (const auto& tile : std::as_const(m_groupedTiles)) {
+-            auto* pTile = new QPushButton(pTiles);
+-            pTile->setObjectName("MixpiSourceTile");
++            // A set tile (This Pi, More) and a drive always hold rows; a
++            // drive's lists load when it is opened.
++            const bool enterable = !tile.rows.isEmpty() ||
++                    tile.id.startsWith(QStringLiteral("drive:")) ||
++                    (tile.node.isValid() && model()->hasChildren(tile.node));
++            auto* pTile = addTile(tile.name, tile.subline, tile.glyph, tile.icon, enterable);
+             pTile->setProperty("drive", tile.id.startsWith(QStringLiteral("drive:")));
+-            pTile->setCheckable(true);
+-            pTile->setFocusPolicy(Qt::NoFocus);
+-            pTile->setFixedHeight(LibraryInterface::kSourceTileHeight);
+-            pTile->setAccessibleName(tile.name);
+-            auto* pLine = new QHBoxLayout(pTile);
+-            pLine->setContentsMargins(12, 6, 8, 6);
+-            pLine->setSpacing(10);
+-            auto* pIcon = tileLabel("MixpiSourceTileIcon", pTile);
+-            pIcon->setFixedSize(26, 26);
+-            pIcon->setPixmap(tile.icon.pixmap(26, 26));
+-            pLine->addWidget(pIcon);
+-            auto* pText = new QVBoxLayout;
+-            pText->setSpacing(2);
+-            auto* pName = tileLabel("MixpiSourceTileName", pTile);
+-            pName->setText(tile.name);
+-            pText->addWidget(pName);
+-            auto* pSub = tileLabel("MixpiSourceTileSub", pTile);
+-            pSub->setText(tile.subline);
+-            pText->addWidget(pSub);
+-            pLine->addLayout(pText, 1);
+             const QString id = tile.id;
+-            connect(pTile, &QPushButton::clicked, this, [this, id] { openGroupedTile(id, true); });
+-            m_sourceRailDrag->watch(pTile);
+-            pTileLayout->insertWidget(pTileLayout->count() - 1, pTile);
+-            m_sourceTiles.append(pTile);
++            connect(pTile, &QPushButton::clicked, this, [this, id] {
++                m_closedByTap = false;
++                openGroupedTile(id, true);
++                // A list without children opened in Tracks and closed
++                // Sources: the menu stays at the top level.
++                m_menuInside = !m_closedByTap;
++                updateSourceChrome();
++            });
+             m_sourceTileIndexes.append(tile.node);
+         }
+         // The selected tile went away (a drive pulled out), or a model reset
+         // left its rows: show a tile again without opening anything in
+         // Tracks. This Pi first, else the first tile.
+         if (!selectedTile() || !withinSelectedTile()) {
++            if (!selectedTile()) {
++                // Nothing to be inside of: the top level.
++                m_menuInside = false;
++            }
+             // First time: the tile of what Tracks shows.
+             QString id = selectedTile() ? m_selectedTile
+                                         : (m_selectedTile.isEmpty() ? tileOf(currentIndex())
+@@ -335,38 +486,21 @@
+         updateSourceChrome();
+         return;
+     }
+-    // One tile per visible top-level source, in the model's (saved) order.
++    // One row per visible top-level source, in the model's (saved) order.
+     for (int row = 0; row < model()->rowCount(); ++row) {
+         if (isRowHidden(row, QModelIndex())) {
+             continue;
+         }
+         const QPersistentModelIndex index(model()->index(row, 0));
+-        auto* pTile = new QPushButton(pTiles);
+-        pTile->setObjectName("MixpiSourceTile");
+-        pTile->setCheckable(true);
+-        pTile->setFocusPolicy(Qt::NoFocus);
+-        pTile->setFixedHeight(LibraryInterface::kSourceTileHeight);
+-        pTile->setAccessibleName(index.data().toString());
+-        auto* pLine = new QHBoxLayout(pTile);
+-        pLine->setContentsMargins(12, 6, 8, 6);
+-        pLine->setSpacing(10);
+-        auto* pIcon = tileLabel("MixpiSourceTileIcon", pTile);
+-        pIcon->setFixedSize(26, 26);
+-        pIcon->setPixmap(index.data(Qt::DecorationRole).value<QIcon>().pixmap(26, 26));
+-        pLine->addWidget(pIcon);
+-        auto* pText = new QVBoxLayout;
+-        pText->setSpacing(2);
+-        auto* pName = tileLabel("MixpiSourceTileName", pTile);
+-        pName->setText(index.data().toString());
+-        pText->addWidget(pName);
+-        auto* pSub = tileLabel("MixpiSourceTileSub", pTile);
+-        pSub->setText(sourceSubline ? sourceSubline(index) : QString());
+-        pText->addWidget(pSub);
+-        pLine->addLayout(pText, 1);
+-        connect(pTile, &QPushButton::clicked, this, [this, index] { openSourceTile(index); });
+-        m_sourceRailDrag->watch(pTile);
+-        pTileLayout->insertWidget(pTileLayout->count() - 1, pTile);
+-        m_sourceTiles.append(pTile);
++        auto* pTile = addTile(index.data().toString(),
++                sourceSubline ? sourceSubline(index) : QString(), QString(),
++                index.data(Qt::DecorationRole).value<QIcon>(), model()->hasChildren(index));
++        connect(pTile, &QPushButton::clicked, this, [this, index] {
++            m_closedByTap = false;
++            openSourceTile(index);
++            m_menuInside = !m_closedByTap && rootIndex().isValid();
++            updateSourceChrome();
++        });
+         m_sourceTileIndexes.append(index);
+     }
+     updateSourceChrome();
+@@ -396,12 +530,19 @@
+     if (!m_sourceScreen || !m_touchNavigation) {
+         return;
+     }
+-    m_sourceBack->setEnabled(m_touchNavigation->canGoBack());
++    // BACK is always on: up one level, to the top level, or (at the top
++    // level) closed.
++    m_sourceBack->setEnabled(true);
++    m_sourceEdit->setVisible(!m_menuInside);
++    m_sourceCrumbLabel->setVisible(m_menuInside);
++    m_sourceRail->setVisible(!m_menuInside);
+     const QString crumb = sourceCrumb();
+     m_sourceCrumbLabel->setToolTip(crumb);
+-    // The end of the path matters most: elide at the left.
++    // The end of the path matters most: elide at the left, in the room
++    // right of BACK (the header's margins and spacing are 8 px).
++    const int room = m_sourceBar->width() - 8 - LibraryInterface::kSourceMenuButtonWidth - 8 - 8;
+     m_sourceCrumbLabel->setText(m_sourceCrumbLabel->fontMetrics().elidedText(
+-            crumb, Qt::ElideLeft, m_sourceCrumbLabel->width()));
++            crumb, Qt::ElideLeft, std::max(0, room)));
+     QModelIndex top = rootIndex();
+     if (!top.isValid()) {
+         top = currentIndex();
+@@ -417,6 +558,33 @@
+         }
+         m_sourceTiles.at(tile)->setChecked(top.isValid() && m_sourceTileIndexes.at(tile) == top);
+     }
++    if (!m_menuInside) {
++        m_sourceRail->raise();
++    }
++    m_sourceBar->raise();
++    m_sourceEdge->raise();
++}
++
++void WLibrarySidebar::sourceMenuBack() {
++    if (!m_touchNavigation) {
++        return;
++    }
++    if (!m_menuInside) {
++        // The top level: BACK closes the menu.
++        closeSources();
++        return;
++    }
++    if (m_touchNavigation->canGoBack()) {
++        m_touchNavigation->back();
++    } else {
++        showSourceMenuTop();
++    }
++    updateSourceChrome();
++}
++
++void WLibrarySidebar::showSourceMenuTop() {
++    m_menuInside = false;
++    updateSourceChrome();
+ }
+ 
+ const LibraryInterface::SourceTile* WLibrarySidebar::selectedTile() const {
+@@ -587,8 +755,11 @@
+ }
+ 
+ void WLibrarySidebar::closeSources() {
++    m_closedByTap = true;
+     // The skin's controls: the sidebar-visible control and [MixPi],screen
+     // (0 none, 1 Sources, ...). A skin without them has nothing to close.
++    // Opened from Load sample, [MixPi],sample_load stays 1: the skin shows
++    // Load sample again.
+     for (const auto& key : {ConfigKey("[Sidebar]", "sidebar_visible"),
+                  ConfigKey("[MixPi]", "screen")}) {
+         if (auto* pControl = ControlObject::getControl(key, ControlFlag::NoWarnIfMissing)) {
+@@ -606,7 +777,18 @@
+     }
+     m_sourcesEditPanel = pPanel;
+     if (pPanel) {
+-        pPanel->setParent(this);
++        // Sources edit is full screen: a child of the skin's root, under the
++        // top bar. A sidebar that is its own window (a fixture) holds it.
++        QWidget* pHost = skinRoot(this);
++        if (!pHost || pHost == this || !pHost->isAncestorOf(this)) {
++            pHost = this;
++        }
++        pPanel->setParent(pHost);
++        if (pHost != this) {
++            pHost->installEventFilter(this);
++        }
++        // Its rules now come from the skin root's style sheet.
++        LibraryInterface::repolishTree(pPanel);
+         pPanel->setVisible(m_sourcesEditing);
+     } else {
+         m_sourcesEditing = false;
+@@ -632,17 +814,21 @@
+     if (m_sourcesEditPanel) {
+         m_sourcesEditPanel->setVisible(editing);
+     }
+-    if (m_sourceBar) {
+-        m_sourceBar->setVisible(m_sourceScreen && !editing);
+-    }
+     syncSourcesEditing();
+     layoutSourceScreen();
+     if (!editing) {
+-        // The rail shows the new order and visibility.
++        // The menu shows the new order and visibility.
+         rebuildSourceRail();
+     }
+ }
+ 
++void WLibrarySidebar::endSourcesEditing(bool closeMenu) {
++    setSourcesEditing(false);
++    if (closeMenu) {
++        closeSources();
++    }
++}
++
+ void WLibrarySidebar::fitTouchColumn() {
+     if (m_touchNavigation && header()->count() > 0 &&
+             header()->sectionSize(0) != viewport()->width()) {
+@@ -659,8 +845,8 @@
+ }
+ 
+ void WLibrarySidebar::applySourceMargins() {
+-    const QMargins margins(LibraryInterface::kSourceRailWidth,
+-            LibraryInterface::kSourceBarHeight, 0, 0);
++    // The header above the rows, and the 1 px edge at the left.
++    const QMargins margins(kSourceMenuEdge, LibraryInterface::kSourceMenuHeaderHeight, 0, 0);
+     if (m_sourceScreen && viewportMargins() != margins) {
+         setViewportMargins(margins);
+     }
+@@ -1004,6 +1190,10 @@
+         m_touchPressIndex = indexAt(m_touchPressPosition);
+         m_touchScrollStart = verticalScrollBar()->value();
+         m_touchDragging = false;
++        if (m_sourceScreen) {
++            // The menu row under the finger is drawn pressed.
++            viewport()->update();
++        }
+         event->accept();
+         return;
+     }
+@@ -1022,6 +1212,9 @@
+         const QPoint position = event->pos();
+ #endif
+         if (isTouchDrag(position)) {
++            if (m_touchPressIndex.isValid() && m_sourceScreen) {
++                viewport()->update();
++            }
+             m_touchPressIndex = QPersistentModelIndex();
+             m_touchDragging = true;
+         }
+@@ -1050,6 +1243,9 @@
+     const QPersistentModelIndex pressed = m_touchPressIndex;
+     m_touchPressIndex = QPersistentModelIndex();
+     m_touchDragging = false;
++    if (m_sourceScreen) {
++        viewport()->update();
++    }
+ #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+     const bool dragged = isTouchDrag(event->position().toPoint());
+ #else
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <QBasicTimer>
++#include <QColor>
+ #include <QList>
+ #include <QModelIndex>
+ #include <QPersistentModelIndex>
+@@ -27,30 +28,50 @@
+ 
+ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     Q_OBJECT
++    // The Sources side menu's row colours and count size, set by the style
++    // sheet (qproperty-menu...: mixpi-sources-menu.qss).
++    Q_PROPERTY(QColor menuBackgroundColor MEMBER m_menuBackground)
++    Q_PROPERTY(QColor menuCurrentColor MEMBER m_menuCurrent)
++    Q_PROPERTY(QColor menuPressedColor MEMBER m_menuPressed)
++    Q_PROPERTY(QColor menuAccentColor MEMBER m_menuAccent)
++    Q_PROPERTY(QColor menuLineColor MEMBER m_menuLine)
++    Q_PROPERTY(QColor menuTextColor MEMBER m_menuText)
++    Q_PROPERTY(QColor menuDimColor MEMBER m_menuDim)
++    Q_PROPERTY(QColor menuIconColor MEMBER m_menuIcon)
++    Q_PROPERTY(int menuNotePixelSize MEMBER m_menuNotePixelSize)
+   public:
+     explicit WLibrarySidebar(QWidget* parent = nullptr);
+ 
+     void enableTouchNavigation();
+     void returnToSourceRoot();
+ 
+-    // MixPi Sources screen (touch, at least kSourceScreenMinimumWidth wide):
+-    // the rail of visible sources on the left, Back and the crumb on top,
+-    // the list of the shown folder on the right.
++    // MixPi Sources side menu (touch, at least kSourceScreenMinimumWidth
++    // wide; agreed UI s5): a header with [‹ BACK] [EDIT] over the source rows
++    // (the top level), or [‹ BACK] and the place over the rows inside a
++    // source.
+     bool hasSourceScreen() const {
+         return m_sourceScreen;
+     }
++    bool isSourceMenuInside() const {
++        return m_sourceScreen && m_menuInside;
++    }
++    void showSourceMenuTop();
++    // EDIT: the Library opens the Sources edit list.
++    std::function<void()> sourcesEditRequested;
+     // The second line of a rail tile, for a top-level row.
+     std::function<QString(const QModelIndex&)> sourceSubline;
+     // Visibility or order of the sources changed: the rail follows.
+     void sourcesChanged();
+     // The Library noticed that the last tap opened a list or a view.
+     void noteSourceShown();
+-    // Sources edit: the panel takes the right part; the rail stays.
++    // Sources edit: the panel is full screen, under the skin's top bar.
+     void setSourcesEditPanel(QWidget* pPanel);
+     bool isSourcesEditing() const {
+         return m_sourcesEditing;
+     }
+     void setSourcesEditing(bool editing);
++    // DONE (back to the menu) or the close ✕ (Sources closes too).
++    void endSourcesEditing(bool closeMenu);
+     // [Library],sidebar_sources_editing is 1 exactly while the edit list is
+     // shown (the skin's EDIT LIST button reads DONE).
+     void syncSourcesEditing();
+@@ -69,6 +90,38 @@
+         return m_selectedTile;
+     }
+ 
++    QColor menuBackgroundColor() const {
++        return m_menuBackground;
++    }
++    QColor menuCurrentColor() const {
++        return m_menuCurrent;
++    }
++    QColor menuPressedColor() const {
++        return m_menuPressed;
++    }
++    QColor menuAccentColor() const {
++        return m_menuAccent;
++    }
++    QColor menuLineColor() const {
++        return m_menuLine;
++    }
++    QColor menuTextColor() const {
++        return m_menuText;
++    }
++    QColor menuDimColor() const {
++        return m_menuDim;
++    }
++    QColor menuIconColor() const {
++        return m_menuIcon;
++    }
++    int menuNotePixelSize() const {
++        return m_menuNotePixelSize;
++    }
++    // The row under a touch press that is not a drag (drawn pressed).
++    QModelIndex pressedSourceRow() const {
++        return m_touchPressIndex;
++    }
++
+     void contextMenuEvent(QContextMenuEvent * event) override;
+     void dragMoveEvent(QDragMoveEvent * event) override;
+     void dragEnterEvent(QDragEnterEvent * event) override;
+@@ -102,6 +155,7 @@
+     void updateGeometries() override;
+     void resizeEvent(QResizeEvent* pEvent) override;
+     void hideEvent(QHideEvent* pEvent) override;
++    bool eventFilter(QObject* pObject, QEvent* pEvent) override;
+ 
+   private:
+     void fitTouchColumn();
+@@ -113,6 +167,8 @@
+     void activateTouchIndex(const QModelIndex& index);
+     void updateSourceScreen();
+     void layoutSourceScreen();
++    void placeSourcesEditPanel();
++    void sourceMenuBack();
+     void applySourceMargins();
+     void scheduleSourceRail();
+     void rebuildSourceRail();
+@@ -140,7 +196,12 @@
+     QBasicTimer m_expandTimer;
+     QModelIndex m_hoverIndex;
+ 
++    static constexpr int kSourceMenuEdge = 1;
+     bool m_sourceScreen = false;
++    // Inside a source (its rows), else the top level (the source rows).
++    bool m_menuInside = false;
++    // The last tap opened a list and closed Sources.
++    bool m_closedByTap = false;
+     QFrame::Shape m_frameShape = QFrame::StyledPanel;
+     bool m_sourcesEditing = false;
+     bool m_sourceRailPending = false;
+@@ -149,6 +210,9 @@
+     LibraryInterface::TouchDragScroll* m_sourceRailDrag = nullptr;
+     QWidget* m_sourceBar = nullptr;
+     QPushButton* m_sourceBack = nullptr;
++    QPushButton* m_sourceEdit = nullptr;
++    QWidget* m_sourceEdge = nullptr;
++    QWidget* m_sourceScrollTop = nullptr;
+     QLabel* m_sourceCrumbLabel = nullptr;
+     QPointer<QWidget> m_sourcesEditPanel;
+     QList<QPushButton*> m_sourceTiles;
+@@ -158,4 +222,14 @@
+     QList<LibraryInterface::SourceTile> m_groupedTiles;
+     QString m_selectedTile;
+     QSet<int> m_hiddenSourceRows;
++    // Until the style sheet sets them: the agreed tokens.
++    QColor m_menuBackground{0x16, 0x1a, 0x20};
++    QColor m_menuCurrent{0x1d, 0x22, 0x2a};
++    QColor m_menuPressed{0x26, 0x2c, 0x35};
++    QColor m_menuAccent{0xa3, 0xc4, 0x5e};
++    QColor m_menuLine{0x2c, 0x33, 0x3d};
++    QColor m_menuText{0xe4, 0xe7, 0xec};
++    QColor m_menuDim{0x94, 0x9d, 0xab};
++    QColor m_menuIcon{0xd6, 0x78, 0x4a};
++    int m_menuNotePixelSize = 14;
+ };

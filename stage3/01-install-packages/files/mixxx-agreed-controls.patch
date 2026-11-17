@@ -1,0 +1,438 @@
+diff --git a/src/coreservices.cpp b/src/coreservices.cpp
+index 05e0491..7d4b90b 100644
+--- a/src/coreservices.cpp
++++ b/src/coreservices.cpp
+@@ -24,6 +24,7 @@
+ #include "library/library_prefs.h"
+ #include "library/trackcollection.h"
+ #include "library/trackcollectionmanager.h"
++#include "mixer/mixpisamplerclear.h"
+ #include "mixer/playerinfo.h"
+ #include "mixer/playermanager.h"
+ #include "moc_coreservices.cpp"
+@@ -39,6 +40,7 @@
+ #include "util/db/dbconnectionpooled.h"
+ #include "util/font.h"
+ #include "util/logger.h"
++#include "util/mixpidisplaycontrols.h"
+ #include "util/screensavermanager.h"
+ #include "util/statsmanager.h"
+ #include "util/time.h"
+@@ -707,6 +709,11 @@ void CoreServices::initialize(QApplication* pApp) {
+     // them on startup.
+     m_pSkinControls = std::make_unique<SkinControls>();
+ 
++    // MixPi controls the skin binds to: Clear samples (spec s6), and
++    // Brightness, Night dim and CPU readout (spec s12).
++    m_pSamplerClear = std::make_unique<MixpiSamplerClear>();
++    m_pDisplayControls = std::make_unique<MixpiDisplayControls>(pConfig);
++
+     // Load tracks in args.qlMusicFiles (command line arguments) into player
+     // 1 and 2:
+     const QList<QString>& musicFiles = m_cmdlineArgs.getMusicFiles();
+@@ -919,6 +926,9 @@ void CoreServices::finalize() {
+ 
+     m_pSkinControls.reset();
+ 
++    m_pSamplerClear.reset();
++    m_pDisplayControls.reset();
++
+     m_pConfigAutosave.reset();
+ 
+     m_pControlIndicatorTimer.reset();
+diff --git a/src/coreservices.h b/src/coreservices.h
+index 9c43a34..eb24b88 100644
+--- a/src/coreservices.h
++++ b/src/coreservices.h
+@@ -22,6 +22,8 @@ class TrackCollectionManager;
+ class Library;
+ class SkinControls;
+ class ControlPushButton;
++class MixpiSamplerClear;
++class MixpiDisplayControls;
+ 
+ namespace mixxx {
+ 
+@@ -150,6 +152,9 @@ class CoreServices : public QObject {
+     std::unique_ptr<ConfigAutosave> m_pConfigAutosave;
+     // MixPi: writes effects.xml within a second of a change.
+     std::unique_ptr<EffectsAutosave> m_pEffectsAutosave;
++    // MixPi Clear samples popover, and Brightness, Night dim and CPU readout.
++    std::unique_ptr<MixpiSamplerClear> m_pSamplerClear;
++    std::unique_ptr<MixpiDisplayControls> m_pDisplayControls;
+ 
+     Timer m_runtime_timer;
+     const CmdlineArgs& m_cmdlineArgs;
+diff --git a/src/mixer/mixpisamplerclear.h b/src/mixer/mixpisamplerclear.h
+new file mode 100644
+index 0000000..27710cf
+--- /dev/null
++++ b/src/mixer/mixpisamplerclear.h
+@@ -0,0 +1,151 @@
++#pragma once
++
++#include <QObject>
++#include <QString>
++#include <array>
++#include <cmath>
++#include <memory>
++
++#include "control/controlobject.h"
++#include "control/controlproxy.h"
++
++/// MixPi Clear samples (spec s6): the controls behind the Sampler page's
++/// "Clear samples" popover.
++///
++/// - [MixPi],sampler_clear_open (0/1): the popover is open. Writing 1 clears
++///   every tick.
++/// - [MixPi],sampler_clear_tick1 ... tick8 (0/1).
++/// - [MixPi],sampler_clear_count (read-only, 0-8): the ticked pads that hold
++///   a sample.
++/// - [MixPi],sampler_clear (write 1): empty every ticked pad that holds a
++///   sample, clear the ticks and close the popover.
++///
++/// A pad is emptied through its own [SamplerN],eject, exactly like the
++/// per-pad CLEAR of build B. Eject only unloads the sample from the pad: the
++/// file stays where it is. Like build B (whose CLEAR was disabled while the
++/// pad played) a playing pad is not emptied: Mixxx refuses to eject a
++/// playing player, so that pad keeps its sample and keeps playing. The
++/// sampler bank is saved by the R-13 save on change (track unloaded).
++class MixpiSamplerClear : public QObject {
++  public:
++    static constexpr int kPads = 8;
++
++    explicit MixpiSamplerClear(QObject* pParent = nullptr)
++            : QObject(pParent) {
++        m_pOpen = control("sampler_clear_open");
++        m_pOpen->connectValueChangeRequest(this, [this](double value) {
++            if (value != 0 && value != 1) {
++                return;
++            }
++            if (value == 1) {
++                clearTicks();
++            }
++            m_pOpen->setAndConfirm(value);
++            recount();
++        });
++        for (int pad = 0; pad < kPads; ++pad) {
++            ControlObject* pTick = control(
++                    QStringLiteral("sampler_clear_tick%1").arg(pad + 1));
++            pTick->connectValueChangeRequest(this, [this, pTick](double value) {
++                if (value != 0 && value != 1) {
++                    return;
++                }
++                pTick->setAndConfirm(value);
++                recount();
++            });
++            m_ticks[pad] = pTick;
++        }
++        m_pCount = control("sampler_clear_count");
++        m_pCount->setReadOnly();
++        m_pClear = control("sampler_clear");
++        m_pClear->connectValueChangeRequest(this, [this](double value) {
++            if (std::isfinite(value) && value > 0) {
++                clear();
++            }
++            // A trigger, not a state: it always reads 0.
++            m_pClear->setAndConfirm(0);
++        });
++        // Samplers 5-8 can be added after start-up ([App],num_samplers):
++        // watch their pads as they appear.
++        if (ControlObject::exists(ConfigKey("[App]", "num_samplers"))) {
++            m_pSamplerCount = std::make_unique<ControlProxy>(
++                    ConfigKey("[App]", "num_samplers"), this);
++            m_pSamplerCount->connectValueChanged(this, [this] {
++                watchPads();
++                recount();
++            });
++        }
++        watchPads();
++        recount();
++    }
++
++  private:
++    static ConfigKey padKey(int pad, const char* item) {
++        return ConfigKey(QStringLiteral("[Sampler%1]").arg(pad + 1), QString::fromLatin1(item));
++    }
++
++    ControlObject* control(const QString& item) {
++        auto* pControl = new ControlObject(ConfigKey(QStringLiteral("[MixPi]"), item));
++        pControl->setParent(this);
++        return pControl;
++    }
++
++    void watchPads() {
++        for (int pad = 0; pad < kPads; ++pad) {
++            if (m_loaded[pad] || !ControlObject::exists(padKey(pad, "track_loaded"))) {
++                continue;
++            }
++            m_loaded[pad] = std::make_unique<ControlProxy>(padKey(pad, "track_loaded"), this);
++            m_loaded[pad]->connectValueChanged(this, [this] {
++                recount();
++            });
++        }
++    }
++
++    bool holdsSample(int pad) const {
++        return m_loaded[pad] && m_loaded[pad]->get() > 0;
++    }
++
++    void clearTicks() {
++        for (auto* pTick : m_ticks) {
++            pTick->setAndConfirm(0);
++        }
++    }
++
++    void recount() {
++        int count = 0;
++        for (int pad = 0; pad < kPads; ++pad) {
++            if (m_ticks[pad]->get() == 1 && holdsSample(pad)) {
++                ++count;
++            }
++        }
++        m_pCount->forceSet(count);
++    }
++
++    void clear() {
++        watchPads();
++        for (int pad = 0; pad < kPads; ++pad) {
++            // Only a pad that holds a sample: an eject on an empty pad would
++            // reload the last ejected sample.
++            if (m_ticks[pad]->get() != 1 || !holdsSample(pad)) {
++                continue;
++            }
++            const ConfigKey eject = padKey(pad, "eject");
++            if (ControlObject::exists(eject)) {
++                // Press and release, like the pad's own CLEAR button.
++                ControlObject::set(eject, 1);
++                ControlObject::set(eject, 0);
++            }
++        }
++        clearTicks();
++        m_pOpen->setAndConfirm(0);
++        recount();
++    }
++
++    ControlObject* m_pOpen;
++    std::array<ControlObject*, kPads> m_ticks{};
++    ControlObject* m_pCount;
++    ControlObject* m_pClear;
++    std::unique_ptr<ControlProxy> m_pSamplerCount;
++    std::array<std::unique_ptr<ControlProxy>, kPads> m_loaded;
++};
+diff --git a/src/util/mixpidisplaycontrols.h b/src/util/mixpidisplaycontrols.h
+new file mode 100644
+index 0000000..b81fe79
+--- /dev/null
++++ b/src/util/mixpidisplaycontrols.h
+@@ -0,0 +1,180 @@
++#pragma once
++
++#include <unistd.h>
++
++#include <QDir>
++#include <QFile>
++#include <QObject>
++#include <QString>
++#include <QStringList>
++#include <QtDebug>
++#include <algorithm>
++#include <cmath>
++
++#include "control/controlobject.h"
++#include "control/controlpotmeter.h"
++#include "preferences/usersettings.h"
++
++/// MixPi Settings › Interface (spec s12): Brightness, Night dim and CPU
++/// readout.
++///
++/// - [MixPi],backlight: a potmeter 5-100 (%), saved as [MixPi],Backlight and
++///   applied at start. With no saved value it starts from the panel's
++///   current level. A change writes round(value × max_brightness / 100) to
++///   the first /sys/class/backlight/*/brightness (MIXPI_BACKLIGHT_DIR points
++///   tests at another folder).
++/// - [MixPi],backlight_available (read-only): 1 when that file is writable.
++/// - [MixPi],night_dim (0/1), saved as [MixPi],NightDim: while 1 the panel
++///   is at kNightDimPercent of max, and [MixPi],backlight is kept.
++/// - [MixPi],show_cpu (0/1, default 1), saved as [MixPi],ShowCpu. Only the
++///   skin reads it.
++///
++/// The settings are written to mixxx.cfg by the save on change (R-13).
++class MixpiDisplayControls : public QObject {
++  public:
++    /// The Night dim level, in % of the panel's max_brightness. Reported to
++    /// the owner, who may tune it.
++    static constexpr int kNightDimPercent = 10;
++    static constexpr int kMinPercent = 5;
++    static constexpr int kMaxPercent = 100;
++
++    explicit MixpiDisplayControls(UserSettingsPointer pSettings, QObject* pParent = nullptr)
++            : QObject(pParent),
++              m_pSettings(pSettings) {
++        findPanel();
++
++        m_pAvailable = control("backlight_available");
++        m_pAvailable->setReadOnly();
++        m_pAvailable->forceSet(writable() ? 1 : 0);
++
++        m_pBacklight = new ControlPotmeter(ConfigKey(kGroup, QStringLiteral("backlight")),
++                kMinPercent,
++                kMaxPercent);
++        m_pBacklight->setParent(this);
++        const QString saved = m_pSettings->getValueString(kBacklightKey);
++        bool savedOk = false;
++        const double savedPercent = saved.toDouble(&savedOk);
++        const bool hasSaved = savedOk && std::isfinite(savedPercent);
++        m_pBacklight->forceSet(hasSaved ? clampPercent(savedPercent) : currentPercent());
++        m_pBacklight->connectValueChangeRequest(this, [this](double value) {
++            if (!std::isfinite(value)) {
++                return;
++            }
++            const double percent = clampPercent(value);
++            m_pBacklight->setAndConfirm(percent);
++            m_pSettings->setValue(kBacklightKey, static_cast<int>(percent));
++            apply();
++        });
++
++        m_pNightDim = control("night_dim");
++        m_pNightDim->forceSet(m_pSettings->getValue(kNightDimKey, 0) == 1 ? 1 : 0);
++        m_pNightDim->connectValueChangeRequest(this, [this](double value) {
++            if (value != 0 && value != 1) {
++                return;
++            }
++            m_pNightDim->setAndConfirm(value);
++            m_pSettings->setValue(kNightDimKey, static_cast<int>(value));
++            apply();
++        });
++
++        m_pShowCpu = control("show_cpu");
++        m_pShowCpu->forceSet(m_pSettings->getValue(kShowCpuKey, 1) == 0 ? 0 : 1);
++        m_pShowCpu->connectValueChangeRequest(this, [this](double value) {
++            if (value != 0 && value != 1) {
++                return;
++            }
++            m_pShowCpu->setAndConfirm(value);
++            m_pSettings->setValue(kShowCpuKey, static_cast<int>(value));
++        });
++
++        // Apply what was saved. With nothing saved and Night dim off the
++        // panel already is at the level shown.
++        if (hasSaved || m_pNightDim->get() == 1) {
++            apply();
++        }
++    }
++
++  private:
++    static inline const QString kGroup = QStringLiteral("[MixPi]");
++    static inline const ConfigKey kBacklightKey = ConfigKey(kGroup, QStringLiteral("Backlight"));
++    static inline const ConfigKey kNightDimKey = ConfigKey(kGroup, QStringLiteral("NightDim"));
++    static inline const ConfigKey kShowCpuKey = ConfigKey(kGroup, QStringLiteral("ShowCpu"));
++
++    static double clampPercent(double value) {
++        return std::clamp(std::round(value),
++                static_cast<double>(kMinPercent),
++                static_cast<double>(kMaxPercent));
++    }
++
++    ControlObject* control(const char* item) {
++        auto* pControl = new ControlObject(ConfigKey(kGroup, QString::fromLatin1(item)));
++        pControl->setParent(this);
++        return pControl;
++    }
++
++    static int readNumber(const QString& path) {
++        QFile file(path);
++        if (!file.open(QIODevice::ReadOnly)) {
++            return -1;
++        }
++        bool ok = false;
++        const int value = QString::fromLatin1(file.readAll()).trimmed().toInt(&ok);
++        return ok ? value : -1;
++    }
++
++    // The first panel (by name) under the backlight class folder.
++    void findPanel() {
++        const QDir folder(qEnvironmentVariable(
++                "MIXPI_BACKLIGHT_DIR", QStringLiteral("/sys/class/backlight")));
++        const QStringList names = folder.entryList(
++                QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
++        for (const QString& name : names) {
++            const QString panel = folder.absoluteFilePath(name);
++            const int max = readNumber(panel + QStringLiteral("/max_brightness"));
++            if (max > 0 && QFile::exists(panel + QStringLiteral("/brightness"))) {
++                m_brightnessPath = panel + QStringLiteral("/brightness");
++                m_maxBrightness = max;
++                return;
++            }
++        }
++    }
++
++    bool writable() const {
++        return !m_brightnessPath.isEmpty() &&
++                ::access(QFile::encodeName(m_brightnessPath).constData(), W_OK) == 0;
++    }
++
++    double currentPercent() const {
++        const int level = m_brightnessPath.isEmpty() ? -1 : readNumber(m_brightnessPath);
++        if (level < 0) {
++            return kMaxPercent;
++        }
++        return clampPercent(level * 100.0 / m_maxBrightness);
++    }
++
++    void apply() {
++        if (!writable()) {
++            m_pAvailable->forceSet(0);
++            return;
++        }
++        const double percent = m_pNightDim->get() == 1 ? kNightDimPercent : m_pBacklight->get();
++        const int level = static_cast<int>(std::lround(percent * m_maxBrightness / 100.0));
++        QFile file(m_brightnessPath);
++        const QByteArray text = QByteArray::number(level) + '\n';
++        if (!file.open(QIODevice::WriteOnly) || file.write(text) != text.size() || !file.flush()) {
++            qWarning() << "MixPi: could not set the backlight" << m_brightnessPath
++                       << file.errorString();
++            m_pAvailable->forceSet(0);
++            return;
++        }
++        m_pAvailable->forceSet(1);
++    }
++
++    UserSettingsPointer m_pSettings;
++    QString m_brightnessPath;
++    int m_maxBrightness = 0;
++    ControlObject* m_pAvailable;
++    ControlPotmeter* m_pBacklight;
++    ControlObject* m_pNightDim;
++    ControlObject* m_pShowCpu;
++};
+diff --git a/src/widget/weffectselector.cpp b/src/widget/weffectselector.cpp
+index cedbdb8..6477a5d 100644
+--- a/src/widget/weffectselector.cpp
++++ b/src/widget/weffectselector.cpp
+@@ -1,6 +1,7 @@
+ #include "widget/weffectselector.h"
+ 
+ #include <QAbstractItemView>
++#include <QStyle>
+ #include <QtDebug>
+ 
+ #include "effects/effectsmanager.h"
+@@ -121,6 +122,17 @@ void WEffectSelector::slotEffectUpdated() {
+         setCurrentIndex(newIndex);
+         setBaseTooltip(itemData(newIndex, Qt::ToolTipRole).toString());
+     }
++
++    // MixPi: a stylesheet dims an empty selector ("Select effect…", spec s8)
++    // with [mixpiEmpty="true"]. Re-polish when it changes so the rule applies.
++    const bool empty = m_pEffectSlot == nullptr || m_pEffectSlot->getManifest() == nullptr;
++    const QVariant mixpiEmpty = property("mixpiEmpty");
++    if (!mixpiEmpty.isValid() || mixpiEmpty.toBool() != empty) {
++        setProperty("mixpiEmpty", empty);
++        style()->unpolish(this);
++        style()->polish(this);
++        update();
++    }
+ }
+ 
+ bool WEffectSelector::event(QEvent* pEvent) {

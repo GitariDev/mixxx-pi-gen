@@ -1,0 +1,362 @@
+diff --git a/src/coreservices.cpp b/src/coreservices.cpp
+index 31ab77f..05e0491 100644
+--- a/src/coreservices.cpp
++++ b/src/coreservices.cpp
+@@ -16,6 +16,7 @@
+ #include "controllers/controllermanager.h"
+ #include "controllers/keyboard/keyboardeventfilter.h"
+ #include "database/mixxxdb.h"
++#include "effects/effectsautosave.h"
+ #include "effects/effectsmanager.h"
+ #include "engine/enginemixer.h"
+ #include "library/coverartcache.h"
+@@ -718,6 +719,13 @@ void CoreServices::initialize(QApplication* pApp) {
+     }
+ 
+     m_pConfigAutosave->start();
++    // MixPi: effects.xml is saved within a second of a change too (spec s8).
++    m_pEffectsAutosave = std::make_unique<EffectsAutosave>(
++            effectsXmlPath(pConfig->getSettingsPath()),
++            [pEffectsManager = m_pEffectsManager.get()] {
++                return effectsXml(*pEffectsManager);
++            });
++    m_pEffectsAutosave->start();
+ 
+     m_isInitialized = true;
+ }
+@@ -830,6 +838,8 @@ void CoreServices::finalize() {
+     // No autosave during shutdown; wait for a write in progress so that the
+     // quit-time save below is the last one.
+     m_pConfigAutosave->stop();
++    // No effects autosave either: the EffectsManager writes effects.xml last.
++    m_pEffectsAutosave.reset();
+ 
+     // Stop all pending library operations
+     qDebug() << t.elapsed(false).debugMillisWithUnit() << "stopping pending Library tasks";
+diff --git a/src/coreservices.h b/src/coreservices.h
+index 9f88d0f..9c43a34 100644
+--- a/src/coreservices.h
++++ b/src/coreservices.h
+@@ -26,6 +26,7 @@ class ControlPushButton;
+ namespace mixxx {
+ 
+ class ControlIndicatorTimer;
++class EffectsAutosave;
+ class DbConnectionPool;
+ class ScreensaverManager;
+ 
+@@ -147,6 +148,8 @@ class CoreServices : public QObject {
+     std::unique_ptr<ControlPushButton> m_pTouchShift;
+     // MixPi save on change: writes mixxx.cfg shortly after each change.
+     std::unique_ptr<ConfigAutosave> m_pConfigAutosave;
++    // MixPi: writes effects.xml within a second of a change.
++    std::unique_ptr<EffectsAutosave> m_pEffectsAutosave;
+ 
+     Timer m_runtime_timer;
+     const CmdlineArgs& m_cmdlineArgs;
+diff --git a/src/effects/effectsautosave.h b/src/effects/effectsautosave.h
+new file mode 100644
+index 0000000..01a6094
+--- /dev/null
++++ b/src/effects/effectsautosave.h
+@@ -0,0 +1,166 @@
++#pragma once
++
++#include <QByteArray>
++#include <QDir>
++#include <QElapsedTimer>
++#include <QFile>
++#include <QMetaObject>
++#include <QObject>
++#include <QString>
++#include <QThreadPool>
++#include <QTimer>
++#include <QtDebug>
++#include <functional>
++#include <memory>
++#include <utility>
++
++#include "preferences/configobject.h"
++
++class EffectsManager;
++
++namespace mixxx {
++
++/// The effects.xml bytes for the current state of the effects: what the
++/// quit-time save writes (EffectsManager::saveEffectsXml uses it too).
++/// Empty if it can't be built. GUI thread only.
++QByteArray effectsXml(const EffectsManager& manager);
++
++/// Where Mixxx keeps effects.xml: in the settings folder.
++inline QString effectsXmlPath(const QString& settingsPath) {
++    return QDir(settingsPath).absoluteFilePath(QStringLiteral("effects.xml"));
++}
++
++/// MixPi: saves the effects state (effects.xml) within a second of a change,
++/// so the loaded effects survive a killed Mixxx or a power cut. Stock Mixxx
++/// writes the file only at a clean quit.
++///
++/// Runs on the GUI thread, where the effect chains live. Every pollMs it
++/// takes a snapshot (the bytes the quit-time save would write) and compares
++/// it with the bytes last written. A changed snapshot is written once it has
++/// stayed the same for quietMs, or at the latest maxDelayMs after the first
++/// unsaved change, so a burst of changes gives one write. The write runs on a
++/// worker thread (temporary file, sync, rename), never on the GUI or the audio
++/// thread. Nothing is written while nothing changes.
++class EffectsAutosave final {
++  public:
++    struct Timing {
++        // A single change is seen within pollMs and written once it has been
++        // the same for quietMs: on disk about 0.3 to 0.6 s after the change.
++        int pollMs = 200;
++        int quietMs = 300;
++        int maxDelayMs = 3000;
++        int retryMs = 5000;
++    };
++    using Snapshot = std::function<QByteArray()>;
++
++    EffectsAutosave(QString filePath, Snapshot snapshot, Timing timing)
++            : m_filePath(std::move(filePath)),
++              m_snapshot(std::move(snapshot)),
++              m_timing(timing),
++              m_pContext(std::make_unique<QObject>()),
++              m_pPollTimer(std::make_unique<QTimer>()),
++              m_pWorker(std::make_unique<QThreadPool>()) {
++        m_pWorker->setMaxThreadCount(1);
++        m_pPollTimer->setTimerType(Qt::PreciseTimer);
++        m_pPollTimer->setInterval(m_timing.pollMs);
++        QObject::connect(m_pPollTimer.get(), &QTimer::timeout, m_pContext.get(), [this] {
++            poll();
++        });
++    }
++    EffectsAutosave(QString filePath, Snapshot snapshot)
++            : EffectsAutosave(std::move(filePath), std::move(snapshot), Timing()) {
++    }
++    ~EffectsAutosave() {
++        stop();
++    }
++    EffectsAutosave(const EffectsAutosave&) = delete;
++    EffectsAutosave& operator=(const EffectsAutosave&) = delete;
++
++    /// Starts polling. What is on disk now counts as saved.
++    void start() {
++        QFile file(m_filePath);
++        m_lastSaved = file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
++        m_lastSeen = m_lastSaved;
++        m_pPollTimer->start();
++    }
++
++    /// Stops polling and waits for a write in progress. Call it before the
++    /// quit-time save, so that save is the last write.
++    void stop() {
++        m_pPollTimer->stop();
++        m_pWorker->waitForDone();
++    }
++
++  private:
++    void poll() {
++        if (m_writing) {
++            return;
++        }
++        const QByteArray snapshot = m_snapshot();
++        if (snapshot.isEmpty()) {
++            return;
++        }
++        if (snapshot == m_lastSaved) {
++            m_lastSeen = snapshot;
++            m_sinceFirstUnsaved.invalidate();
++            return;
++        }
++        if (!m_sinceFirstUnsaved.isValid()) {
++            m_sinceFirstUnsaved.start();
++        }
++        if (snapshot != m_lastSeen || !m_sinceChange.isValid()) {
++            m_lastSeen = snapshot;
++            m_sinceChange.start();
++        }
++        const bool quiet = m_sinceChange.elapsed() >= m_timing.quietMs;
++        const bool overdue = m_sinceFirstUnsaved.elapsed() >= m_timing.maxDelayMs;
++        if (!quiet && !overdue) {
++            return;
++        }
++        if (m_sinceFailure.isValid() && m_sinceFailure.elapsed() < m_timing.retryMs) {
++            return;
++        }
++        m_writing = true;
++        const QString filePath = m_filePath;
++        QObject* pContext = m_pContext.get();
++        m_pWorker->start([this, filePath, snapshot, pContext] {
++            const bool ok = writeFileAtomically(filePath, snapshot);
++            // Back on the GUI thread. stop() waits for this task, so pContext
++            // outlives the call; a result still queued when pContext is
++            // deleted is dropped with it.
++            QMetaObject::invokeMethod(
++                    pContext,
++                    [this, ok, snapshot] { writeFinished(ok, snapshot); },
++                    Qt::QueuedConnection);
++        });
++    }
++
++    void writeFinished(bool ok, const QByteArray& snapshot) {
++        m_writing = false;
++        if (!ok) {
++            // writeFileAtomically() has logged why; the old file is intact.
++            m_sinceFailure.start();
++            return;
++        }
++        m_sinceFailure.invalidate();
++        m_lastSaved = snapshot;
++        // Changes made while the file was written start a new window.
++        m_sinceFirstUnsaved.invalidate();
++        qDebug() << "EffectsAutosave: saved" << m_filePath;
++    }
++
++    const QString m_filePath;
++    const Snapshot m_snapshot;
++    const Timing m_timing;
++    std::unique_ptr<QObject> m_pContext;
++    std::unique_ptr<QTimer> m_pPollTimer;
++    std::unique_ptr<QThreadPool> m_pWorker;
++    QByteArray m_lastSaved;
++    QByteArray m_lastSeen;
++    bool m_writing = false;
++    QElapsedTimer m_sinceChange;
++    QElapsedTimer m_sinceFirstUnsaved;
++    QElapsedTimer m_sinceFailure;
++};
++
++} // namespace mixxx
+diff --git a/src/effects/effectsmanager.cpp b/src/effects/effectsmanager.cpp
+index 9db9362..34941f8 100644
+--- a/src/effects/effectsmanager.cpp
++++ b/src/effects/effectsmanager.cpp
+@@ -7,6 +7,7 @@
+ #include "effects/chains/outputeffectchain.h"
+ #include "effects/chains/quickeffectchain.h"
+ #include "effects/chains/standardeffectchain.h"
++#include "effects/effectsautosave.h"
+ #include "effects/effectslot.h"
+ #include "effects/effectsmessenger.h"
+ #include "effects/presets/effectchainpreset.h"
+@@ -277,6 +278,26 @@ void EffectsManager::readEffectsXmlSingleDeck(const QString& deckGroup) {
+ }
+ 
+ void EffectsManager::saveEffectsXml() {
++    // CoreServices has stopped the MixPi autosave (EffectsAutosave) before
++    // this quit-time save, so this is the last write.
++    const QByteArray contents = mixxx::effectsXml(*this);
++    if (contents.isEmpty()) {
++        return;
++    }
++    QDir settingsPath(m_pConfig->getSettingsPath());
++    if (!settingsPath.exists()) {
++        return;
++    }
++    // Atomic: a temporary file, synced, then renamed over effects.xml.
++    if (!mixxx::writeFileAtomically(
++                settingsPath.absoluteFilePath(kEffectsXmlFile), contents)) {
++        qWarning() << "EffectsManager: could not save effects.xml file";
++    }
++}
++
++namespace mixxx {
++
++QByteArray effectsXml(const EffectsManager& manager) {
+     QDomDocument doc(EffectXml::kRoot);
+     doc.setContent(EffectXml::kFileHeader);
+     QDomElement rootElement = doc.createElement(EffectXml::kRoot);
+@@ -284,62 +305,55 @@ void EffectsManager::saveEffectsXml() {
+             "schemaVersion", QString::number(EffectXml::kXmlSchemaVersion));
+     doc.appendChild(rootElement);
+ 
++    // The EQ and QuickEffect chains of every deck. Every deck is a registered
++    // input channel.
+     QHash<QString, EffectManifestPointer> eqEffectManifests;
+-    eqEffectManifests.reserve(m_equalizerEffectChains.size());
+-    QHashIterator<QString, EqualizerEffectChainPointer> eqIt(m_equalizerEffectChains);
+-    while (eqIt.hasNext()) {
+-        eqIt.next();
+-        const auto pEffectSlot = eqIt.value()->getEffectSlot(0);
+-        VERIFY_OR_DEBUG_ASSERT(pEffectSlot) {
+-            return;
+-        }
+-        auto pManifest = pEffectSlot->getManifest();
+-        eqEffectManifests.insert(eqIt.key(), pManifest);
+-    }
+-
+     QHash<QString, EffectChainPresetPointer> quickEffectChainPresets;
+-    quickEffectChainPresets.reserve(m_quickEffectChains.size());
+-    QHashIterator<QString, QuickEffectChainPointer> qeIt(m_quickEffectChains);
+-    while (qeIt.hasNext()) {
+-        qeIt.next();
+-        auto* pQuickEffectChain = qeIt.value().data();
+-        auto pPreset = EffectChainPresetPointer::create(pQuickEffectChain);
+-        quickEffectChainPresets.insert(qeIt.key(), pPreset);
++    const QSet<ChannelHandleAndGroup> inputChannels = manager.registeredInputChannels();
++    for (const auto& handleGroup : inputChannels) {
++        const QString group = handleGroup.name();
++        const auto pEqChain = manager.getEqualizerEffectChain(group);
++        if (pEqChain) {
++            const auto pEffectSlot = pEqChain->getEffectSlot(0);
++            VERIFY_OR_DEBUG_ASSERT(pEffectSlot) {
++                return QByteArray();
++            }
++            eqEffectManifests.insert(group, pEffectSlot->getManifest());
++        }
++        const auto pQuickEffectChain = manager.getQuickEffectChain(group);
++        if (pQuickEffectChain) {
++            quickEffectChainPresets.insert(group,
++                    EffectChainPresetPointer::create(pQuickEffectChain.data()));
++        }
+     }
+ 
+     QList<EffectChainPresetPointer> standardEffectChainPresets;
+-    standardEffectChainPresets.reserve(m_quickEffectChains.size());
+-    for (const auto& pChainSlot : std::as_const(m_standardEffectChains)) {
+-        auto* pChain = pChainSlot.data();
+-        auto pPreset = EffectChainPresetPointer::create(pChain);
+-        standardEffectChainPresets.append(pPreset);
++    for (int i = 0; i < kNumStandardEffectUnits; ++i) {
++        const auto pChain = manager.getEffectChain(
++                StandardEffectChain::formatEffectChainGroup(i));
++        if (pChain) {
++            standardEffectChainPresets.append(EffectChainPresetPointer::create(pChain.data()));
++        }
+     }
+ 
+-    const auto outputChainPreset = m_outputEffectChain.isNull()
++    const auto pOutputChain = manager.getOutputEffectChain();
++    const auto outputChainPreset = pOutputChain.isNull()
+             // required for tests when no output effect chain exists
+             ? EffectChainPresetPointer::create()
+             // no ownership concerns apply because we're just calling
+             // EffectChainPreset::EffectChainPreset(const EffectChain* chain)
+-            : EffectChainPresetPointer::create(m_outputEffectChain.data());
++            : EffectChainPresetPointer::create(pOutputChain.data());
+ 
+-    m_pChainPresetManager->saveEffectsXml(&doc,
++    manager.getChainPresetManager()->saveEffectsXml(&doc,
+             EffectsXmlData{
+                     eqEffectManifests,
+                     quickEffectChainPresets,
+                     standardEffectChainPresets,
+                     outputChainPreset});
+ 
+-    m_pVisibleEffectsList->saveEffectsXml(&doc, m_pBackendManager);
++    manager.getVisibleEffectsList()->saveEffectsXml(&doc, manager.getBackendManager());
+ 
+-    QDir settingsPath(m_pConfig->getSettingsPath());
+-    if (!settingsPath.exists()) {
+-        return;
+-    }
+-    QFile file(settingsPath.absoluteFilePath(kEffectsXmlFile));
+-    if (!file.open(QIODevice::Truncate | QIODevice::WriteOnly)) {
+-        qWarning() << "EffectsManager: could not save effects.xml file";
+-        return;
+-    }
+-    file.write(doc.toString().toUtf8());
+-    file.close();
++    return doc.toString().toUtf8();
+ }
++
++} // namespace mixxx

@@ -293,7 +293,7 @@ index 15af514..d74bb52 100644
 +    QTimer* m_pAutosaveTimer;
  };
 diff --git a/src/preferences/configobject.cpp b/src/preferences/configobject.cpp
-index 81709fa..e76d9bf 100644
+index 81709fa..7019681 100644
 --- a/src/preferences/configobject.cpp
 +++ b/src/preferences/configobject.cpp
 @@ -3,9 +3,22 @@
@@ -491,25 +491,25 @@ index 81709fa..e76d9bf 100644
          }
 -        stream << i.key().item << " " << i.value().value << "\n";
 -        minLength += i.key().item.length() + i.value().value.length() + 1;
--    }
--
--    stream.flush();
--    // the stream is usually longer, depending on the amount of encoded data.
--    if (stream.pos() < minLength || QFileInfo(tmpFile).size() != stream.pos()) {
--        qWarning().nospace() << "Error while writing configuration file: " << tmpFile.fileName();
--        return false;
 +        text += i.key().item + QStringLiteral(" ") + i.value().value + QStringLiteral("\n");
      }
 +    const QByteArray bytes = text.toUtf8();
  
+-    stream.flush();
+-    // the stream is usually longer, depending on the amount of encoded data.
+-    if (stream.pos() < minLength || QFileInfo(tmpFile).size() != stream.pos()) {
+-        qWarning().nospace() << "Error while writing configuration file: " << tmpFile.fileName();
++    if (!mixxx::writeFileAtomically(filename, bytes)) {
+         return false;
+     }
+-
 -    tmpFile.close();
 -    if (tmpFile.error() !=
 -            QFile::NoError) { //could be better... should actually say what the error was..
 -        qWarning().nospace() << "Error while writing configuration file: "
 -                             << tmpFile.fileName() << ": " << tmpFile.errorString();
-+    if (!mixxx::writeFileAtomically(filename, bytes)) {
-         return false;
-     }
+-        return false;
+-    }
 -
 -    QFile oldConfig(m_filename);
 -    // Trying to remove a file that does not exist would fail
@@ -533,7 +533,7 @@ index 81709fa..e76d9bf 100644
      return true;
  }
  
-@@ -523,3 +588,183 @@ template<>
+@@ -523,3 +588,188 @@ template<>
  QString ConfigObject<ConfigValueKbd>::computeResourcePath() {
      return computeResourcePathImpl();
  }
@@ -559,8 +559,13 @@ index 81709fa..e76d9bf 100644
 +}
 +
 +void copyPersistentValue(ConfigObject<ConfigValue>* pConfig, ControlDoublePrivate* pControl) {
-+    // Exactly what ~ControlDoublePrivate() writes at quit.
-+    pConfig->set(pControl->getKey(), QString::number(pControl->get()));
++    // Exactly what ~ControlDoublePrivate() writes at quit. Compared under the
++    // read lock first, so an unchanged value never takes the write lock.
++    const ConfigKey& key = pControl->getKey();
++    const QString value = QString::number(pControl->get());
++    if (pConfig->getValueString(key) != value) {
++        pConfig->set(key, value);
++    }
 +}
 +
 +const QString kMixPiGroup = QStringLiteral("[MixPi]");

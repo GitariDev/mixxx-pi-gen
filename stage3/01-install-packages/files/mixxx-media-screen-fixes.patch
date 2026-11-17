@@ -1,0 +1,89 @@
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+index 222542c..3f11815 100644
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -288,14 +288,15 @@ class MixpiMedia final : public QObject {
+         if (!ensureWidgets()) {
+             return;
+         }
+-        m_page->open();
++        m_page->openSoon();
+         observeNow();
+         refresh();
+     }
+ 
+     QWidget* window() const {
+-        auto* widget = m_parent ? m_parent() : nullptr;
+-        return widget ? widget->window() : nullptr;
++        // The skin root (the central widget), not the main window: the skin
++        // stylesheet is set there (Acceptance B, R-4).
++        return mixpiSkinRoot(m_parent ? m_parent() : nullptr);
+     }
+ 
+     static ControlObject* control(const QString& group, const QString& item) {
+diff --git a/src/widget/mixpipage.h b/src/widget/mixpipage.h
+index fc775f0..a3d44a9 100644
+--- a/src/widget/mixpipage.h
++++ b/src/widget/mixpipage.h
+@@ -4,11 +4,27 @@
+ #include <QFrame>
+ #include <QHBoxLayout>
+ #include <QLabel>
++#include <QMainWindow>
++#include <QTimer>
+ #include <QPointer>
+ #include <QPushButton>
+ #include <QVBoxLayout>
+ #include <functional>
+ 
++// The widget that carries the skin: the legacy skin parser sets the skin's
++// <Style> (style.qss) on the skin's root widget, and MixxxMainWindow makes
++// that root its central widget. Native MixPi views are its children so the
++// skin stylesheet styles them (Acceptance B, R-4).
++inline QWidget* mixpiSkinRoot(QWidget* anyWidget) {
++    QWidget* window = anyWidget ? anyWidget->window() : nullptr;
++    if (auto* main = qobject_cast<QMainWindow*>(window)) {
++        if (main->centralWidget()) {
++            return main->centralWidget();
++        }
++    }
++    return window;
++}
++
+ // MixPi native page host (R-2): a full-width child of the main window under
+ // the 48 px top bar, down to the bottom edge. Not a dialog: it needs no window
+ // manager and is not capped at 780x420. It writes [MixPi],screen (through the
+@@ -89,6 +105,33 @@ class MixpiPage : public QFrame {
+         }
+     }
+ 
++    static constexpr int kRepaintMs = 120;
++
++    // Acceptance B, R-2: write [MixPi],screen first so the skin hides the
++    // waveform rows, show the page on the next event-loop turn, raise it, and
++    // repaint it once more after the rows are hidden. The waveforms are
++    // native GL windows (QOpenGLWindow in a window container): a raised
++    // child widget cannot cover them, so the skin's hide is what clears them.
++    void openSoon() {
++        if (m_writeScreen) {
++            m_writeScreen(m_number);
++        }
++        const QPointer<MixpiPage> page(this);
++        QTimer::singleShot(0, this, [page] {
++            if (!page) {
++                return;
++            }
++            page->open();
++            page->raise();
++            QTimer::singleShot(kRepaintMs, page.data(), [page] {
++                if (page && page->isVisible()) {
++                    page->raise();
++                    page->repaint();
++                }
++            });
++        });
++    }
++
+     // The ✕: hide, and write screen 0 so the tab that was open shows again.
+     void closePage() {
+         const bool wasVisible = isVisible();

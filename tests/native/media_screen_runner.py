@@ -16,6 +16,8 @@ from native.library_interface_runner import (PATCH_DIR, moc_path, populate_pinne
 ROOT = Path(__file__).resolve().parents[2]
 SCREEN = 'mixxx-media-screen.patch'
 HANDOVER = 'mixxx-media-handover.patch'
+# Acceptance B repairs (skin root parent, deferred open), after the source groups.
+FIXES = 'mixxx-media-screen-fixes.patch'
 QSS = ':'.join(str(PATCH_DIR / name) for name in
                ('pioneered-menus.qss', 'pioneered-touch.qss', 'mixpi-performance.qss'))
 
@@ -27,8 +29,9 @@ def touched(name):
 
 def patched_tree(target, upto=SCREEN):
     """Reconstruct the stack without the N3 patches, then apply them in order."""
-    ours = [SCREEN] if upto == SCREEN else [SCREEN, HANDOVER]
-    names, _ = reconstruct(target, exclude=(SCREEN, HANDOVER))
+    order = [SCREEN, HANDOVER, FIXES]
+    ours = order[:order.index(upto) + 1]
+    names, _ = reconstruct(target, exclude=tuple(order))
     for name in ours:
         for path in touched(name):
             try:
@@ -54,6 +57,18 @@ def build_screen(target):
     command = ['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', *includes,
                str(target / 'src/widget/wlabel.cpp'), str(ROOT / 'tests/native/media_screen_test.cpp'),
                '-o', str(binary), *qt_flags(('QtCore', 'QtGui', 'QtWidgets', 'QtXml'))]
+    print('COMPILE', repr(command), flush=True)
+    subprocess.run(command, check=True, timeout=300)
+    return binary
+
+
+def build_fixes(target):
+    """The Acceptance B repairs: the whole N3 stack, Qt only."""
+    patched_tree(target, FIXES)
+    binary = target / 'media-screen-fixes-test'
+    command = ['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-I' + str(target / 'src'),
+               str(ROOT / 'tests/native/media_screen_fixes_test.cpp'), '-o', str(binary),
+               *qt_flags(('QtCore', 'QtGui', 'QtWidgets'))]
     print('COMPILE', repr(command), flush=True)
     subprocess.run(command, check=True, timeout=300)
     return binary

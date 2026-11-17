@@ -71,5 +71,42 @@ class MediaScreenNativeTests(unittest.TestCase):
                 self.assertIn('PASS ' + name, result.stdout)
 
 
+FIXES = runner.PATCH_DIR / runner.FIXES
+
+
+class MediaScreenFixesPatchTests(unittest.TestCase):
+    """Acceptance B: R-4 unstyled page, R-2 waveform drawn over the page."""
+
+    def test_fixes_touch_only_n3_files(self):
+        files = re.findall(r'^diff --git a/(\S+) ', FIXES.read_text(), re.MULTILINE)
+        self.assertEqual(sorted(files), ['src/library/mixpimedia.h', 'src/widget/mixpipage.h'])
+
+    def test_views_live_under_the_skin_root_and_open_deferred(self):
+        text = FIXES.read_text()
+        self.assertIn('+        return mixpiSkinRoot(m_parent ? m_parent() : nullptr);', text)
+        self.assertIn('-        m_page->open();', text)
+        self.assertIn('+        m_page->openSoon();', text)
+        page = text.split('+++ b/src/widget/mixpipage.h', 1)[1]
+        soon = page.split('void openSoon() {', 1)[1].split('\n+    }\n', 1)[0]
+        self.assertLess(soon.index('m_writeScreen(m_number)'), soon.index('QTimer::singleShot(0'))
+        self.assertLess(soon.index('page->open()'), soon.index('page->raise()'))
+        self.assertIn('page->repaint()', soon)
+
+
+@unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+class MediaScreenFixesNativeTests(unittest.TestCase):
+    def test_skin_root_style_and_deferred_open(self):
+        with tempfile.TemporaryDirectory(prefix='mixpi-media-screen-fixes-') as temporary:
+            binary = runner.build_fixes(Path(temporary))
+            result = runner.run(binary)
+            print(result.stdout, result.stderr, flush=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(' 0 failures', result.stdout)
+            for name in ('open: screen 2 is written first and the page is not shown yet',
+                         'geometry: follows the skin root to 800x444'):
+                self.assertIn('PASS ' + name, result.stdout)
+            self.assertIn('PASS style: the page resolves the #MixpiPage background', result.stdout)
+
+
 if __name__ == '__main__':
     unittest.main()

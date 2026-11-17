@@ -1,11 +1,18 @@
 #!/bin/sh
 # Stop pi's Mixxx unit and wait until it is inactive (R-14).
 #
-# Run by mixpi-mixxx-stop.service as root at reboot or power-off, before
-# LightDM and the user manager stop. "systemctl --user stop" sends Mixxx
-# SIGTERM, which quits it as File > Exit does, so it saves its settings.
-# Does nothing when Mixxx (or pi's user manager) is not running. Stops only
-# mixpi-mixxx.service; any other unit name is refused.
+# "systemctl --user stop" sends Mixxx SIGTERM, which quits it as File > Exit
+# does, so it saves its settings. Does nothing when Mixxx (or pi's user
+# manager) is not running. Stops only mixpi-mixxx.service.
+#
+# usage:
+#   mixpi-stop-mixxx [mixpi-mixxx.service]   stop Mixxx now
+#   mixpi-stop-mixxx --wait-for-shutdown     run under a logind delay
+#       inhibitor (mixpi-mixxx-stop.service): wait for logind's
+#       PrepareForShutdown(true), stop Mixxx, then exit, which releases the
+#       inhibitor. logind waits for that before it stops anything, so sway
+#       (in the LightDM session scope) is still alive while Mixxx quits.
+# Any other argument is refused.
 set -u
 
 UNIT=mixpi-mixxx.service
@@ -13,18 +20,21 @@ USER_NAME=pi
 RUNTIME_BASE=/run/user
 SYSTEMCTL=/usr/bin/systemctl
 RUNUSER=/usr/sbin/runuser
+BUSCTL=/usr/bin/busctl
+# Only signals sent by logind itself count.
+LOGIND_SERVICE=org.freedesktop.login1
+LOGIND_PATH=/org/freedesktop/login1
+LOGIND_INTERFACE=org.freedesktop.login1.Manager
 # Mixxx's unit sends SIGKILL after 20 s; wait a little longer than that.
 WAIT_SECONDS=22
 
-if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "$UNIT" ]; }; then
+mode=stop
+if [ "$#" -eq 1 ] && [ "$1" = --wait-for-shutdown ]; then
+    mode=wait
+elif [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "$UNIT" ]; }; then
     echo "mixpi-stop-mixxx: only $UNIT can be stopped" >&2
     exit 2
 fi
-
-uid=$(id -u "$USER_NAME" 2>/dev/null) || exit 0
-runtime="$RUNTIME_BASE/$uid"
-# No user manager, so no Mixxx.
-[ -S "$runtime/systemd/private" ] || exit 0
 
 user_systemctl() {
     "$RUNUSER" -u "$USER_NAME" -- env XDG_RUNTIME_DIR="$runtime" "$SYSTEMCTL" --user "$@"
@@ -38,18 +48,51 @@ running() {
     esac
 }
 
-running || exit 0
-echo "mixpi-stop-mixxx: stopping $UNIT"
-# Waits for the stop job; the loop covers a stop already in progress.
-user_systemctl stop "$UNIT"
-waited=0
-while running; do
-    if [ "$waited" -ge "$WAIT_SECONDS" ]; then
-        echo "mixpi-stop-mixxx: $UNIT still not inactive after $WAIT_SECONDS s" >&2
-        exit 1
+stop_mixxx() {
+    uid=$(id -u "$USER_NAME" 2>/dev/null) || return 0
+    runtime="$RUNTIME_BASE/$uid"
+    # No user manager, so no Mixxx.
+    [ -S "$runtime/systemd/private" ] || return 0
+    running || return 0
+    echo "mixpi-stop-mixxx: stopping $UNIT"
+    # Waits for the stop job; the loop covers a stop already in progress.
+    user_systemctl stop "$UNIT"
+    waited=0
+    while running; do
+        if [ "$waited" -ge "$WAIT_SECONDS" ]; then
+            echo "mixpi-stop-mixxx: $UNIT still not inactive after $WAIT_SECONDS s" >&2
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    echo "mixpi-stop-mixxx: $UNIT is inactive"
+    return 0
+}
+
+if [ "$mode" = stop ]; then
+    stop_mixxx
+    exit $?
+fi
+
+echo "mixpi-stop-mixxx: holding the shutdown until Mixxx has quit"
+while :; do
+    if ! signal=$("$BUSCTL" --system wait "$LOGIND_SERVICE" "$LOGIND_PATH" \
+            "$LOGIND_INTERFACE" PrepareForShutdown 2>/dev/null); then
+        # The bus or logind is restarting; never spin.
+        sleep 1
+        continue
     fi
-    sleep 1
-    waited=$((waited + 1))
+    case "$signal" in
+        "b true")
+            echo "mixpi-stop-mixxx: shutdown requested"
+            stop_mixxx
+            # Exiting releases the inhibitor whatever the stop did, so a real
+            # shutdown is never held longer than the stop takes.
+            exit 0
+            ;;
+        *)
+            # PrepareForShutdown(false): a shutdown was cancelled. Keep holding.
+            ;;
+    esac
 done
-echo "mixpi-stop-mixxx: $UNIT is inactive"
-exit 0

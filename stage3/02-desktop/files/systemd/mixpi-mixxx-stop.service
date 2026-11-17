@@ -1,17 +1,25 @@
 [Unit]
-Description=Stop Mixxx cleanly before the desktop session ends
-# systemd stops units in the reverse of their start order. Ordered after
-# LightDM and pi's user manager, this unit's stop runs before either goes
-# down on every reboot or power-off path (power button, sudo reboot,
-# systemctl poweroff), so Mixxx still has its Wayland session and quits
-# through File > Exit, which saves mixxx.cfg and samplers.xml.
-After=lightdm.service user@1000.service
+Description=Stop Mixxx cleanly before a reboot or power-off
+# A reboot or power-off (power button, sudo reboot, systemctl poweroff) first
+# asks logind, which emits PrepareForShutdown(true) and waits for every delay
+# inhibitor before it stops anything. This unit holds such an inhibitor from
+# boot; on the signal it stops Mixxx while sway still runs, so Mixxx quits
+# through File > Exit and saves mixxx.cfg and samplers.xml, then it exits and
+# the shutdown goes on. The LightDM session scope has a dynamic name, so no
+# After= could order a stop job against it.
+After=systemd-logind.service lightdm.service user@1000.service
+Wants=systemd-logind.service
+# Re-arm forever; never give up after a few restarts.
+StartLimitIntervalSec=0
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/true
+Type=simple
+ExecStart=/usr/bin/systemd-inhibit --what=shutdown --mode=delay --who=MixPi "--why=Saving Mixxx settings" /usr/local/sbin/mixpi-stop-mixxx --wait-for-shutdown
+# Fallback when the unit is stopped without a logind shutdown.
 ExecStop=/usr/local/sbin/mixpi-stop-mixxx
+# After a shutdown that was cancelled, take the inhibitor again.
+Restart=always
+RestartSec=2
 # Mixxx's own unit sends SIGKILL after 20 s; this bound covers that.
 TimeoutStopSec=25
 

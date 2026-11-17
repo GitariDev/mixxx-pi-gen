@@ -1,9 +1,12 @@
-"""R-14: a reboot or power-off stops Mixxx before LightDM and the user manager.
+"""R-14: a reboot or power-off waits until Mixxx has quit and saved.
 
-Without this, the session (sway under LightDM) stops before pi's user manager
-stops mixpi-mixxx.service; Mixxx then loses its Wayland connection and exits
-without the File > Exit save (EV/owner-options/README.txt, confirmed on VM b).
-mixpi-mixxx-stop.service is ordered after both, so systemd runs its stop first.
+Without this, the LightDM session scope (sway) and pi's mixpi-mixxx.service
+stop together; Mixxx loses its Wayland connection and exits without the
+File > Exit save. An After= cannot help: the scope's name is dynamic and the
+stop jobs ran in parallel on the card (deploy/ui-redesign-20261117/buildA-checks/
+r14-*.txt). mixpi-mixxx-stop.service holds a logind delay inhibitor; logind
+emits PrepareForShutdown(true) and waits for it before it stops anything, and
+the helper stops Mixxx and exits, which releases it.
 """
 import configparser
 import os
@@ -20,6 +23,9 @@ DESKTOP = ROOT / 'stage3/02-desktop'
 UNIT = DESKTOP / 'files/systemd/mixpi-mixxx-stop.service'
 HELPER = DESKTOP / 'files/sbin/mixpi-stop-mixxx'
 MIXXX_UNIT = DESKTOP / 'files/systemd/user/mixpi-mixxx.service'
+LOGIND_DROPIN = DESKTOP / 'files/logind/50-mixpi-inhibit.conf'
+INHIBIT = ('/usr/bin/systemd-inhibit --what=shutdown --mode=delay --who=MixPi '
+           '"--why=Saving Mixxx settings" /usr/local/sbin/mixpi-stop-mixxx --wait-for-shutdown')
 STAGE = DESKTOP / '02-run.sh'
 
 
@@ -37,13 +43,16 @@ def unit_problems(text):
     install = parser['Install'] if parser.has_section('Install') else {}
     after = set(unit.get('After', '').split())
     problems = []
-    for name in ('lightdm.service', 'user@1000.service'):
+    for name in ('systemd-logind.service', 'lightdm.service', 'user@1000.service'):
         if name not in after:
             problems.append('not ordered after ' + name)
     if unit.get('DefaultDependencies', 'yes') != 'yes':
         problems.append('no default dependencies: not stopped before shutdown.target')
-    expected = {'Type': 'oneshot', 'RemainAfterExit': 'yes', 'ExecStart': '/bin/true',
-                'ExecStop': '/usr/local/sbin/mixpi-stop-mixxx', 'TimeoutStopSec': '25'}
+    if unit.get('StartLimitIntervalSec') != '0':
+        problems.append('restarts can hit the start limit')
+    expected = {'Type': 'simple', 'ExecStart': INHIBIT,
+                'ExecStop': '/usr/local/sbin/mixpi-stop-mixxx', 'Restart': 'always',
+                'TimeoutStopSec': '25'}
     for key, value in expected.items():
         if service.get(key) != value:
             problems.append(f'{key} is not {value}')
@@ -62,8 +71,22 @@ class StopUnitTests(unittest.TestCase):
 
     def test_check_rejects_a_unit_without_the_order(self):
         text = re.sub(r'^After=.*\n', '', UNIT.read_text(), flags=re.MULTILINE)
-        self.assertEqual(unit_problems(text), ['not ordered after lightdm.service',
+        self.assertEqual(unit_problems(text), ['not ordered after systemd-logind.service',
+                                               'not ordered after lightdm.service',
                                                'not ordered after user@1000.service'])
+
+    def test_check_rejects_the_build_a_unit(self):
+        # Build A ran a oneshot with only an ExecStop; on the card the session
+        # scope stopped at the same time and Mixxx did not save.
+        text = UNIT.read_text().replace(INHIBIT, '/bin/true')
+        self.assertIn('ExecStart is not ' + INHIBIT, unit_problems(text))
+
+    def test_logind_waits_long_enough_for_the_quit(self):
+        login = sections(LOGIND_DROPIN.read_text())['Login']
+        self.assertEqual(dict(login), {'InhibitDelayMaxSec': '20'})
+        # The inhibitor's own stop bound must not be shorter than logind's.
+        mixxx = sections(MIXXX_UNIT.read_text())['Service']
+        self.assertLessEqual(seconds(mixxx['TimeoutStopSec']), seconds(login['InhibitDelayMaxSec']))
 
     def test_stop_bound_covers_the_mixxx_sigkill_bound(self):
         mixxx = sections(MIXXX_UNIT.read_text())['Service']
@@ -114,12 +137,17 @@ class StageInstallTests(unittest.TestCase):
                 self.assertEqual(unit.read_bytes(), UNIT.read_bytes())
                 self.assertEqual(stat.S_IMODE(unit.stat().st_mode), 0o644)
                 self.assertEqual(os.readlink(link), '/etc/systemd/system/mixpi-mixxx-stop.service')
+                dropin = rootfs / 'etc/systemd/logind.conf.d/50-mixpi-inhibit.conf'
+                self.assertEqual(dropin.read_bytes(), LOGIND_DROPIN.read_bytes())
+                self.assertEqual(stat.S_IMODE(dropin.stat().st_mode), 0o644)
 
     def test_stage_leaves_the_helper_owned_by_root(self):
         # pi-gen runs the stage as root; only home folders are handed to pi.
         for line in STAGE.read_text().splitlines():
             if 'chown' in line:
                 self.assertNotRegex(line, r'/usr/local/sbin|/etc/systemd')
+        self.assertIn('install -m 644 files/logind/50-mixpi-inhibit.conf '
+                      '${ROOTFS_DIR}/etc/systemd/logind.conf.d/\n', STAGE.read_text())
 
 
 class HelperBehaviourTests(unittest.TestCase):
@@ -147,16 +175,28 @@ class HelperBehaviourTests(unittest.TestCase):
                   'sed -i.bak 1d "$STATE"; exit 0 ;;\n'
                   'stop) cp "$AFTER_STOP" "$STATE"; exit 0 ;;\n'
                   'esac\nexit 3\n')
+        # busctl wait: print the next signal from the signals file (one line
+        # per wait, "fail" for a bus error); with none left, wait forever.
+        self.signals = self.directory / 'signals'
+        self.stub(bin_dir / 'busctl',
+                  'echo "busctl $*" >> "$CALLS"\n'
+                  'line=$(head -n 1 "$SIGNALS" 2>/dev/null)\n'
+                  '[ -n "$line" ] || while :; do /bin/sleep 1; done\n'
+                  'sed -i.bak 1d "$SIGNALS"\n'
+                  '[ "$line" = fail ] && exit 1\n'
+                  'echo "$line"\n')
         self.runtime = self.directory / 'run'
         text = HELPER.read_text()
         text = text.replace('RUNTIME_BASE=/run/user', f'RUNTIME_BASE={self.runtime}')
         text = text.replace('SYSTEMCTL=/usr/bin/systemctl', f'SYSTEMCTL={bin_dir}/systemctl')
         text = text.replace('RUNUSER=/usr/sbin/runuser', f'RUNUSER={bin_dir}/runuser')
+        text = text.replace('BUSCTL=/usr/bin/busctl', f'BUSCTL={bin_dir}/busctl')
         text = text.replace('WAIT_SECONDS=22', 'WAIT_SECONDS=3')
         self.helper = self.directory / 'mixpi-stop-mixxx'
         self.helper.write_text(text)
         self.environment = {'PATH': f'{bin_dir}:/usr/bin:/bin', 'CALLS': str(self.log),
-                            'STATE': str(self.state), 'AFTER_STOP': str(self.directory / 'after')}
+                            'STATE': str(self.state), 'AFTER_STOP': str(self.directory / 'after'),
+                            'SIGNALS': str(self.signals)}
 
     def stub(self, path, body):
         path.write_text('#!/bin/sh\n' + body)
@@ -214,7 +254,8 @@ class HelperBehaviourTests(unittest.TestCase):
     def test_any_other_unit_is_refused(self):
         self.user_manager()
         for arguments in (['sway-session.service'], ['mixpi-mixxx.service', 'lightdm.service'],
-                          ['mixpi-mixxx']):
+                          ['mixpi-mixxx'], ['--wait-for-shutdown', 'mixpi-mixxx.service'],
+                          ['--wait'], ['--stop']):
             with self.subTest(arguments=arguments):
                 result, calls = self.run_helper(['active'], ['inactive'], *arguments)
                 self.assertEqual(result.returncode, 2)
@@ -226,6 +267,53 @@ class HelperBehaviourTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('still not inactive', result.stderr)
         self.assertEqual(len(self.stops(calls)), 1)
+
+    def run_waiting(self, signals, states=('active',), after_stop=('inactive',), timeout=20):
+        self.signals.write_text(''.join(line + '\n' for line in signals))
+        return self.run_helper(list(states), list(after_stop), '--wait-for-shutdown')
+
+    def test_wait_mode_stops_mixxx_on_prepare_for_shutdown_and_exits(self):
+        self.user_manager()
+        result, calls = self.run_waiting(['b true'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.stops(calls)), 1)
+        self.assertEqual(self.state.read_text(), 'inactive\n')
+        waits = [call for call in calls if call.startswith('busctl')]
+        self.assertEqual(waits, ['busctl --system wait org.freedesktop.login1 /org/freedesktop/login1 '
+                                 'org.freedesktop.login1.Manager PrepareForShutdown'])
+        # The stop happens after the signal, not before.
+        self.assertLess(calls.index(waits[0]), calls.index(self.stops(calls)[0]))
+
+    def test_wait_mode_keeps_holding_after_a_cancelled_shutdown_or_bus_error(self):
+        self.user_manager()
+        result, calls = self.run_waiting(['b false', 'fail', 'b true'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len([call for call in calls if call.startswith('busctl')]), 3)
+        self.assertEqual(len(self.stops(calls)), 1)
+
+    def test_wait_mode_never_stops_mixxx_without_the_signal(self):
+        self.user_manager()
+        self.signals.write_text('b false\n')
+        self.state.write_text('active\n')
+        (self.directory / 'after').write_text('inactive\n')
+        process = subprocess.Popen(['sh', str(self.helper), '--wait-for-shutdown'],
+                                   env=self.environment, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                process.wait(timeout=2)
+        finally:
+            # The stub busctl's sleep holds the pipes; end it first.
+            subprocess.run(['pkill', '-f', str(self.directory)], check=False)
+            process.kill()
+            process.communicate(timeout=10)
+        self.assertEqual(self.stops(self.log.read_text().splitlines()), [])
+
+    def test_wait_mode_releases_the_inhibitor_even_when_the_stop_hangs(self):
+        self.user_manager()
+        result, _ = self.run_waiting(['b true'], after_stop=('deactivating',))
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('still not inactive', result.stderr)
 
 
 if __name__ == '__main__':

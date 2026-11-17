@@ -1,31 +1,116 @@
-#MixpiTopbar, #MixpiTransport, #MixpiDeckButtons { background: #111318; }
-#MixpiButton, #MixpiPlay, #MixpiTab, #MixpiRecord, #MixpiDesktopBar {
-    color: #f5f6fa; background: #222833; border: 1px solid #687381;
-    border-radius: 5px; margin: 2px; font-size: 16px; font-weight: bold;
+/* Redesign palette (PROTO .rd tokens): bg #0a0d12, panel #121821 / #19212d /
+ * #222c3a, line #2b3646, text #eef2f7, dim #8c9ab0, active lime #b5e15c,
+ * deck 1 #4aa8ff, deck 2 #ff8f3f, safe #43d17a, danger #ff5468. Radius 6.
+ * Fonts on the image only (fonts-ubuntu: Ubuntu, Ubuntu Condensed, Ubuntu Mono;
+ * Open Sans as the fallback). No text under 13 px. */
+#MixpiTopbar, #MixpiTransport, #MixpiDeckButtons, #MixpiBottom { background: #0a0d12; }
+#MixpiTopbar { border-bottom: 1px solid #2b3646; }
+#MixpiButton, #MixpiPlay, #MixpiRecord, #MixpiDesktopBar, #MixpiUsbChip, #MixpiPrimary {
+    color: #eef2f7; background: #19212d; border: 1px solid #2b3646;
+    border-radius: 6px; margin: 2px; font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 16px; font-weight: bold;
 }
-#MixpiButton[value="1"], #MixpiPlay[value="1"] { background: #27577d; border-color: #73bfff; }
-#MixpiPlay { border-color: #91cb72; }
-#MixpiRecord[value="1"] { color: #101318; background: #f2c465; border-color: #f2c465; }
+#MixpiButton[value="1"], #MixpiPlay[value="1"] {
+    color: #b5e15c; background: #2a3a1a; border-color: #b5e15c;
+}
+#MixpiPlay { color: #43d17a; border-color: #2f7a4c; font-size: 20px; }
+#MixpiPlay[value="1"] { color: #06150c; background: #43d17a; border-color: #43d17a; }
+#MixpiRecord[value="1"] { color: #101318; background: #ffb020; border-color: #ffb020; }
 #MixpiRecord[value="2"], #MixpiRecord[value="3"] {
-    color: white; background: #a52132; border-color: #ff8190;
+    color: white; background: #ff5468; border-color: #ff5468;
 }
-#MixpiTab[value="1"] { border: 2px solid #b5e15c; background: #303b21; color: #d9f694; }
-#MixpiLabel, #MixpiWaveKey { color: #f0f3f9; font-size: 17px; }
-#MixpiWaveInfo { background: #172033; border-right: 1px solid #39475c; }
-#MixpiTitleStrip { background: #123b80; }
-#MixpiDeckTitle, #MixpiDeckNumber { color: white; font-size: 17px; }
-#MixpiDeckNumber { font-weight: bold; }
-#MixpiDeckStats { background: #101318; border-right: 1px solid #637184; }
+#MixpiButton:disabled { color: #56627a; background: #10151c; border-color: #1f2834; }
+
+/* Tabs: plain words; the active tab is filled with a 3 px lime underline. */
+#MixpiTab {
+    color: #8c9ab0; background: #0a0d12; border: 0px; border-bottom: 3px solid #0a0d12;
+    margin: 0px; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 18px; font-weight: bold;
+}
+#MixpiTab[value="1"] {
+    color: #b5e15c; border-bottom: 3px solid #b5e15c;
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 #0a0d12, stop: 1 #1a2312);
+}
+#MixpiUsbChip { margin: 4px 0px; font-size: 16px; border-radius: 8px; }
+#MixpiUsbChip:disabled { color: #8c9ab0; }
+#MixpiRecord { margin: 4px 0px; }
+#MixpiIconButton {
+    background: #19212d; border: 1px solid #2b3646; border-radius: 6px; margin: 0px;
+}
+#MixpiIconButton[value="1"] { background: #2a3a1a; border-color: #b5e15c; }
+#MixpiIconButton:disabled { background: #10151c; border-color: #1f2834; }
+#MixpiCpuBox { margin: 0px 0px 0px 6px; }
+#MixpiCpuLabel { color: #8c9ab0; font-size: 13px; }
+#MixpiCpu { color: #b5e15c; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 17px; font-weight: bold; }
+
+/* The one main action of a screen. */
+#MixpiPrimary { color: #10140a; background: #b5e15c; border-color: #b5e15c; font-size: 18px; }
+#MixpiPrimary:disabled { color: #56627a; background: #10151c; border-color: #1f2834; }
+
+/* Full-screen headers (Tracks, Sources, Load sample) and the Sampler header. */
+#MixpiBrowseHeader, #MixpiSamplerHeader, #MixpiSampleSources, #MixpiSampleFooter {
+    background: #121821; border-bottom: 1px solid #2b3646;
+}
+#MixpiSampleFooter { border-bottom: 0px; border-top: 1px solid #2b3646; }
+#MixpiScreenTitle {
+    color: #eef2f7; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 22px; font-weight: bold;
+    padding-left: 12px;
+}
+#MixpiScreenHint, #MixpiTracksCrumb {
+    color: #8c9ab0; font-family: "Ubuntu", "Open Sans"; font-size: 14px; padding: 0px 10px;
+}
+#MixpiTracksCrumb { color: #eef2f7; font-size: 15px; }
+#MixpiSavedNote { color: #43d17a; font-size: 14px; }
+#MixpiTrackTitles { background: #121821; border-top: 1px solid #2b3646; }
+
+/* Choose pad: a sheet over the dimmed list. */
+#MixpiChooseScrim { background: rgba(3, 5, 8, 160); }
+#MixpiChooseSheet { background: #121821; border: 1px solid #3a4759; border-radius: 12px; }
+#MixpiSheetTitle { color: #eef2f7; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 23px; font-weight: bold; }
+#MixpiChooseCell { background: #19212d; border: 1px solid #2b3646; border-radius: 6px; }
+#MixpiChooseInfo { qproperty-layoutContentsMargins: rect(10 8 10 6); }
+#MixpiChooseName { color: #eef2f7; font-size: 14px; }
+#MixpiChooseEmpty { color: #8c9ab0; font-size: 14px; }
+#MixpiChooseTile { background: transparent; border: 0px; border-radius: 6px; margin: 0px; }
+#MixpiChooseTile[value="1"] { background: rgba(181, 225, 92, 60); }
+#MixpiChooseTile:disabled { background: rgba(10, 13, 18, 190); }
+
+/* Sampler pads: deck A pads 1-4 blue tags, deck B pads 5-8 amber tags. */
+#MixpiPadA, #MixpiPadB { background: #19212d; border: 1px solid #2b3646; }
+#MixpiPadEmpty { background: #0a0d12; border: 1px dashed #2b3646; }
+#MixpiPadBadgeA, #MixpiPadBadgeB {
+    color: #071019; font-family: "Ubuntu", "Open Sans"; font-size: 15px; font-weight: bold;
+    border-radius: 5px;
+}
+#MixpiPadBadgeA, #MixpiDeckNumber1 { background: #4aa8ff; }
+#MixpiPadBadgeB, #MixpiDeckNumber2 { background: #ff8f3f; }
+#MixpiPadTag { color: #8c9ab0; font-size: 13px; font-weight: bold; padding-left: 6px; }
+#MixpiPadInfo { qproperty-layoutContentsMargins: rect(8 4 8 2); }
+#MixpiPadTime { color: #8c9ab0; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 13px; }
+#MixpiPadName { color: #eef2f7; font-size: 15px; font-weight: bold; }
+#MixpiPadEmptyText { color: #8c9ab0; font-size: 15px; }
+#MixpiPadTap, #MixpiPadLoad { background: transparent; border: 0px; margin: 0px; }
+#MixpiPadTap[value="1"] { background: rgba(181, 225, 92, 46); border: 2px solid #b5e15c; }
+#MixpiPadLoad:pressed { background: rgba(181, 225, 92, 30); }
+
+#MixpiLabel, #MixpiWaveKey { color: #eef2f7; font-size: 17px; }
+#MixpiWaveInfo { background: #121821; border-right: 1px solid #2b3646; }
+#MixpiTitleStrip { background: #121821; }
+#MixpiDeckTitle, #MixpiDeckNumber1, #MixpiDeckNumber2 { color: white; font-size: 16px; }
+#MixpiDeckNumber1, #MixpiDeckNumber2 {
+    color: #071019; font-weight: bold; qproperty-alignment: AlignCenter;
+    margin: 3px; border-radius: 5px;
+}
+#MixpiDeckStats { background: #121821; border-right: 1px solid #2b3646; }
 #MixpiTime, #MixpiRate, #MixpiKey { color: #f4f6fa; font-size: 21px; }
 #MixpiKey, #MixpiWaveKey { font-size: 17px; }
-#MixpiBpm { background: #f4f6fa; color: #101318; font-size: 25px; font-weight: bold; margin: 4px; }
-#MixpiLoopPanel { background: rgba(12,19,31,150); border: 1px solid #6897cb; }
-#MixpiLoopHeader { background: #173357; }
+#MixpiBpm { background: #e9eef5; color: #0b0f14; font-size: 25px; font-weight: bold; margin: 4px; border-radius: 5px; }
+#MixpiLoopPanel { background: rgba(16,22,30,240); border: 1px solid #2b3646; }
+#MixpiLoopHeader { background: #121821; }
 #MixpiLoopPanel #MixpiButton { font-size: 19px; }
-#MixpiFx { background: #111823; }
-#MixpiFxCard { border: 1px solid #536276; margin: 3px; }
+#MixpiFx { background: #0a0d12; }
+#MixpiFxCard { border: 1px solid #2b3646; border-radius: 6px; margin: 3px; }
 #MixpiFxHeader { padding: 4px 8px; }
-#MixpiFxMix { background: #123363; border: 1px solid #416395; margin: 2px 6px; }
+#MixpiFxMix { background: #121821; border: 1px solid #2b3646; margin: 2px 6px; }
 #MixpiEffectSelector { color: white; background: #20334a; font-size: 18px; }
 #MixpiEffectSelector QAbstractItemView {
     color: #f5f6fa; background: #20334a;
@@ -42,18 +127,11 @@
     color: #f5f6fa; background: #20334a; font-size: 17px;
     selection-color: #101318; selection-background-color: #b5e15c;
 }
-#MixpiDepth { background: #1d2634; margin: 2px 12px; }
-#MixpiCpuBox { margin: 3px; }
+#MixpiDepth { background: #19212d; margin: 2px 12px; }
 
-#MixpiSettings { background: #121c2e; border: 1px solid #6897cb; }
+#MixpiSettings { background: #121821; border: 1px solid #2b3646; }
 #MixpiPlaybackSettings, #MixpiInterfaceSettings { padding: 4px; }
-#MixpiSetting { border-bottom: 1px solid #34445e; }
+#MixpiSetting { border-bottom: 1px solid #2b3646; }
 #MixpiSettingLabel { font-size: 13px; color: #d9e3f2; padding: 3px; }
-#MixpiCpu { color: #a6d95c; font-size: 19px; }
-#MixpiSamplerCard { background: #172033; border: 1px solid #536276; }
-#MixpiSamplerTitle { color: #f4f6fa; font-size: 16px; margin: 4px; }
-#MixpiSamplerHeader #MixpiLabel { font-size: 14px; }
-#MixpiSamplerDestinations { background: #173357; }
-#MixpiButton:disabled { color: #89909a; background: #171b22; }
-#MixpiDesktopBar { border-radius: 2px; }
+#MixpiDesktopBar { border-radius: 6px; }
 #MixpiDesktopBar:disabled { color: #a9b7c8; background: #182536; }

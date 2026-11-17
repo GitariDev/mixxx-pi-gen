@@ -20,8 +20,17 @@ HANDOVER = 'mixxx-media-handover.patch'
 FIXES = 'mixxx-media-screen-fixes.patch'
 # Council round 1: scrolling lists, no rebuild on an unchanged refresh.
 LISTS = 'mixxx-media-lists.patch'
+# Build C, wave C1 (U-10, U-8): the agreed Media page and [MixPi],drive_insert.
+AGREED = 'mixxx-media-agreed.patch'
 QSS = ':'.join(str(PATCH_DIR / name) for name in
                ('pioneered-menus.qss', 'pioneered-touch.qss', 'mixpi-performance.qss'))
+# The agreed page's own stylesheet loads right after pioneered-menus.qss.
+AGREED_QSS = ':'.join(str(PATCH_DIR / name) for name in
+                      ('pioneered-menus.qss', 'mixpi-media-page.qss', 'pioneered-touch.qss',
+                       'mixpi-performance.qss'))
+# The fonts Mixxx loads at start (res/fonts), for faithful offscreen renders.
+FONTS = ['res/fonts/' + name for name in
+         ('OpenSans-Regular.ttf', 'OpenSans-Semibold.ttf', 'OpenSans-Bold.ttf', 'Ubuntu-R.ttf', 'Ubuntu-B.ttf')]
 
 
 def touched(name):
@@ -31,7 +40,7 @@ def touched(name):
 
 def patched_tree(target, upto=SCREEN):
     """Reconstruct the stack without the N3 patches, then apply them in order."""
-    order = [SCREEN, HANDOVER, FIXES, LISTS]
+    order = [SCREEN, HANDOVER, FIXES, LISTS, AGREED]
     ours = order[:order.index(upto) + 1]
     names, _ = reconstruct(target, exclude=tuple(order))
     for name in ours:
@@ -88,8 +97,65 @@ def build_lists(target):
     return binary
 
 
-def run(binary, *arguments):
+def build_agreed(target):
+    """The agreed Media page (U-10) and the insert choice (U-8): the whole N3 stack, Qt only."""
+    patched_tree(target, AGREED)
+    populate_pinned(target, FONTS)
+    binary = target / 'media-agreed-test'
+    command = ['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-I' + str(target / 'src'),
+               str(ROOT / 'tests/native/media_agreed_test.cpp'), '-o', str(binary),
+               *qt_flags(('QtCore', 'QtGui', 'QtWidgets', 'QtTest'))]
+    print('COMPILE', repr(command), flush=True)
+    subprocess.run(command, check=True, timeout=300)
+    return binary
+
+
+def build_insert(target):
+    """[MixPi],drive_insert with the shipped control framework and save on change.
+
+    As save_on_change_runner.build: the registered stack with this patch on
+    top, the pinned control and config sources, and its interface doubles.
+    """
+    from native import save_on_change_runner as save
+    reconstruct(target, exclude=(AGREED,))
+    for path in touched(AGREED):
+        try:
+            populate_pinned(target, [path])
+        except subprocess.CalledProcessError:
+            pass  # a new file of this patch
+    subprocess.run(['git', 'apply', str(PATCH_DIR / AGREED)], cwd=target, check=True, timeout=15)
+    populate_pinned(target, ['src/' + name for name in save.PINNED_FILES])
+    support = target / 'interfaces'
+    for name in save.DOUBLED:
+        (support / name).parent.mkdir(parents=True, exist_ok=True)
+        (support / name).write_text('#pragma once\n#include "save_on_change_doubles.h"\n')
+    for name, text in save.DOUBLES.items():
+        (support / name).parent.mkdir(parents=True, exist_ok=True)
+        (support / name).write_text(text)
+    includes = ['-I' + str(support), '-I' + str(target / 'src'), '-I' + str(ROOT / 'tests/native')]
+    for header in ('control/control.h', 'control/controlobject.h', 'control/controlproxy.h',
+                   'mixer/samplerbank.h'):
+        path = target / 'src' / header
+        subprocess.run([moc_path(), *includes, str(path), '-o', str(path.parent / ('moc_' + path.stem + '.cpp'))],
+                       check=True, timeout=30)
+    doubles_moc = target / 'moc_save_on_change_doubles.cpp'
+    subprocess.run([moc_path(), *includes, str(ROOT / 'tests/native/save_on_change_doubles.h'),
+                    '-o', str(doubles_moc)], check=True, timeout=30)
+    sources = [target / 'src' / name for name in
+               ('preferences/configobject.cpp', 'control/control.cpp', 'control/controlobject.cpp',
+                'control/controlproxy.cpp', 'mixer/samplerbank.cpp')] + [doubles_moc]
+    binary = target / 'media-insert-test'
+    command = ['c++', '-std=c++20', '-Wall', '-Wextra', *includes, *[str(source) for source in sources],
+               str(ROOT / 'tests/native/media_insert_test.cpp'), '-o', str(binary), '-pthread',
+               *qt_flags(('QtCore', 'QtGui', 'QtWidgets', 'QtXml'))]
+    print('COMPILE', repr(command), flush=True)
+    subprocess.run(command, check=True, timeout=300)
+    return binary
+
+
+def run(binary, *arguments, qss=QSS, environment_extra=None):
     environment = qt_environment()
-    environment['MIXPI_SKIN_QSS'] = QSS
+    environment['MIXPI_SKIN_QSS'] = qss
+    environment.update(environment_extra or {})
     return subprocess.run([str(binary), *arguments], env=environment, capture_output=True, text=True,
                           timeout=120)

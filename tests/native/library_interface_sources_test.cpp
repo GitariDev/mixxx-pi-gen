@@ -56,6 +56,11 @@ class SidebarView : public QTreeView {
   public:
     void returnToSourceRoot() { setRootIndex({}); }
     void selectIndex(const QModelIndex& index) { setCurrentIndex(index); }
+    // mixxx-source-groups.patch: the owner's hidden sources (no tiles here,
+    // so they are the view's hidden rows), and no grouped Sources screen.
+    void setSourceRowHidden(int row, bool hidden) { setRowHidden(row, QModelIndex(), hidden); }
+    bool isSourceRowHidden(int row) const { return isRowHidden(row, QModelIndex()); }
+    bool hasSourceScreen() const { return false; }
     // The Sources screen hooks the Library calls; the real WLibrarySidebar
     // is checked in sourceScreenChecks().
     int sourceChanges = 0;
@@ -109,6 +114,12 @@ class Library : public QObject {
     void showSidebarSourcesMenu();
 #ifdef MIXPI_SOURCES_SCREEN
     void refreshSidebarSourceEdit();
+#endif
+#ifdef MIXPI_SOURCE_GROUPS
+    bool groupedSources() const;
+    QStringList sourceGroupOrder() const;
+    bool sourceGroupVisible(const QString& tile) const;
+    void moveSourceGroup(const QString& tile, int direction);
 #endif
     void onSkinLoadFinished();
     void setTrackTableFont(const QFont&) {}

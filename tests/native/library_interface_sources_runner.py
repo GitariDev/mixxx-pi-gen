@@ -137,6 +137,11 @@ class WTrackTableView : public QTableView {
                       'void Library::onSkinLoadFinished()']
         if sources_screen:
             signatures.append('void Library::refreshSidebarSourceEdit()')
+        # mixxx-source-groups.patch: Sources edit lists tiles on a Sources screen.
+        source_groups = 'mixxx-source-groups.patch' in names
+        if source_groups:
+            signatures += ['bool Library::groupedSources()', 'QStringList Library::sourceGroupOrder()',
+                           'bool Library::sourceGroupVisible(', 'void Library::moveSourceGroup(']
         (target / 'library_order_methods.h').write_text(
             '\n'.join(method(library, signature) for signature in signatures))
         # The exact sidebar activation wiring from Library::bindSidebarWidget.
@@ -158,6 +163,8 @@ class WTrackTableView : public QTableView {
         command += ['-DMIXPI_MENUS_QSS="' + str(menus) + '"']
         if sources_screen:
             command += ['-DMIXPI_SOURCES_SCREEN']
+        if source_groups:
+            command += ['-DMIXPI_SOURCE_GROUPS']
         mocs = [(target / 'src/library/sidebarmodel.h', target / 'src/library/moc_sidebarmodel.cpp'),
                 (target / 'src/library/treeitemmodel.h', target / 'src/library/moc_treeitemmodel.cpp'),
                 (stubs / 'library/libraryfeature.h', target / 'moc_feature.cpp')]

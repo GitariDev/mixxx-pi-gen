@@ -1,0 +1,139 @@
+diff --git a/src/widget/mixpiperformancesettings.h b/src/widget/mixpiperformancesettings.h
+index a41a246..f7dd939 100644
+--- a/src/widget/mixpiperformancesettings.h
++++ b/src/widget/mixpiperformancesettings.h
+@@ -37,18 +37,33 @@ class MixpiPerformanceSettings : public QObject {
+         m_range = control("tempo_range");
+         m_range->connectValueChangeRequest(this, [this](double v) {
+             if (!oneOf(v, {4, 6, 8, 10, 16, 24, 50, 90})) return;
++            // Mixxx reads [Controls],RateRangePercent at start (DlgPrefDeck)
++            // and the config autosave writes it out. Like DlgPrefDeck, set the
++            // config before the decks: DlgPrefLibrary reads it when they change.
++            const ConfigKey rangeKey("[Controls]", "RateRangePercent");
++            m_settings->set(rangeKey, ConfigValue(static_cast<int>(v)));
+             for (const auto* group : {"[Channel1]", "[Channel2]"}) {
+                 ControlProxy range(group, "rateRange");
+                 range.set(v / 100.0);
+             }
+             refresh();
++            // Store what the decks actually use if they refused the request.
++            if (m_range->get() != v && oneOf(m_range->get(), {4, 6, 8, 10, 16, 24, 50, 90})) {
++                m_settings->set(rangeKey, ConfigValue(static_cast<int>(m_range->get())));
++            }
+         });
+         m_rangeIndex = control("tempo_range_index");
+         m_rangeIndex->connectValueChangeRequest(this, [this](double v) {
+             if (!oneOf(v, {1, 2, 3, 4, 5, 6, 7, 8})) return;
+             const int ranges[] = {4, 6, 8, 10, 16, 24, 50, 90};
+             const int range = ranges[static_cast<int>(v) - 1];
+-            if (m_range->get() != range) m_range->set(range);
++            if (m_range->get() != range) {
++                m_range->set(range);
++            } else {
++                // The decks already use it; still make it the saved range
++                // (a no-op when mixxx.cfg holds it already).
++                m_settings->set(ConfigKey("[Controls]", "RateRangePercent"), ConfigValue(range));
++            }
+         });
+         m_engine = control("keylock_engine");
+         m_engine->connectValueChangeRequest(this, [this](double v) {
+@@ -229,12 +244,16 @@ class MixpiPerformanceSettings : public QObject {
+     }
+     void desktopBar(const char* action) {
+         if (m_barProcess) return;
++        // While a show or hide is being re-checked, the 5 s poll waits.
++        if (m_barRecheckPending && QByteArray(action) == "status" && !m_barRechecking) return;
+         const QString helper = QStringLiteral("/usr/local/bin/mixpi-desktop-bar");
+         if (!QFileInfo(helper).isExecutable()) {
+             m_bar->setAndConfirm(3);
+             m_barAvailable->set(0);
+             return;
+         }
++        const bool rechecking = m_barRechecking;
++        m_barRechecking = false;
+         const bool changing = QByteArray(action) != "status";
+         // Only a show or hide makes the button unavailable ("Checking top
+         // bar…"). The 5 s status poll leaves it as it is: it used to drop
+@@ -243,6 +262,8 @@ class MixpiPerformanceSettings : public QObject {
+         if (changing) {
+             m_barAvailable->set(0);
+             m_bar->setAndConfirm(2);
++            m_barWantVisible = QByteArray(action) == "show";
++            m_barRechecksLeft = 0;
+         }
+         auto* process = new QProcess(this);
+         m_barProcess = process;
+@@ -258,7 +279,7 @@ class MixpiPerformanceSettings : public QObject {
+             process->deleteLater();
+         });
+         connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+-                [this, process, timeout, changing](int code, QProcess::ExitStatus status) {
++                [this, process, timeout, changing, rechecking](int code, QProcess::ExitStatus status) {
+             timeout->stop();
+             const auto result = QJsonDocument::fromJson(process->readAllStandardOutput()).object();
+             const auto visible = result.value("visible");
+@@ -266,12 +287,45 @@ class MixpiPerformanceSettings : public QObject {
+                     result.value("error").isString() &&
+                     result.value("error").toString().isEmpty() &&
+                     result.value("reserved_px").toInt(-1) == (visible.toBool() ? 36 : 0);
+-            m_bar->setAndConfirm(valid ? (visible.toBool() ? 1 : 0) : 3);
+-            m_barAvailable->set(valid ? 1 : 0);
+-            if (!valid && changing) QMessageBox::warning(m_window, tr("Top bar was not confirmed"),
+-                    result.value("error").toString(tr("The desktop helper failed or timed out. No visibility change was confirmed.")));
++            const bool confirming = changing || rechecking;
++            const bool confirmed = valid && visible.toBool() == m_barWantVisible;
+             m_barProcess = nullptr;
+             process->deleteLater();
++            if (confirming && !confirmed) {
++                // F-14: on the first show after a start Waybar can take longer
++                // than the helper's 0.8 s to reserve its 36 px, so the helper
++                // reports a disagreement although the bar comes up. Look again
++                // a few times before saying anything; the button stays on
++                // "Checking top bar". A confirmed show or hide never gets here.
++                if (changing) m_barRechecksLeft = kBarRechecks;
++                if (m_barRechecksLeft > 0) {
++                    --m_barRechecksLeft;
++                    if (!valid) m_barLastError = result.value("error").toString();
++                    m_barRecheckPending = true;
++                    QTimer::singleShot(kBarRecheckMs, this, [this] {
++                        m_barRecheckPending = false;
++                        m_barRechecking = true;
++                        desktopBar("status");
++                        if (m_barRechecking) {
++                            // No check could start (one already runs, or no helper).
++                            m_barRechecking = false;
++                            m_barRechecksLeft = 0;
++                        }
++                    });
++                    return;
++                }
++            }
++            m_barRechecksLeft = 0;
++            m_bar->setAndConfirm(valid ? (visible.toBool() ? 1 : 0) : 3);
++            m_barAvailable->set(valid ? 1 : 0);
++            if (confirming && !confirmed) {
++                QString error = valid ? QString() : result.value("error").toString();
++                if (error.isEmpty()) error = m_barLastError;
++                if (error.isEmpty()) error = valid ? tr("Desktop visibility was not confirmed.") :
++                        tr("The desktop helper failed or timed out. No visibility change was confirmed.");
++                QMessageBox::warning(m_window, tr("Top bar was not confirmed"), error);
++            }
++            m_barLastError.clear();
+             const bool requested = m_barRequested;
+             m_barRequested = false;
+             if (requested && valid) {
+@@ -294,6 +348,14 @@ class MixpiPerformanceSettings : public QObject {
+     ControlObject* m_bar;
+     ControlObject* m_barAvailable;
+     QProcess* m_barProcess = nullptr;
++    // F-14: re-checks after a show or hide that the helper did not confirm.
++    static constexpr int kBarRechecks = 4;
++    static constexpr int kBarRecheckMs = 750;
++    int m_barRechecksLeft = 0;
++    bool m_barRechecking = false;
++    bool m_barRecheckPending = false;
++    bool m_barWantVisible = false;
++    QString m_barLastError;
+     bool m_changing = false;
+     bool m_preferencesQueued = false;
+     bool m_barRequested = false;

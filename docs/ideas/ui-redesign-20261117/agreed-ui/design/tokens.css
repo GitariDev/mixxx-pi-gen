@@ -1,0 +1,88 @@
+/* MixPi device tokens (builder C, UI review round 1).
+ * The device screen is always dark, in both page themes.
+ * Names from docs/ideas/UI-REVIEW-1-20261117.md section 3 are kept; values are tuned.
+ * Extra tokens (marked +) carry the tints and text tones the roles need.
+ *
+ * Today's skin, for comparison (mixpi-performance.qss 1-5): bg #0a0d12, panels
+ * #121821/#19212d, line #2b3646, text #eef2f7, lime #b5e15c, deck 1 #4aa8ff,
+ * deck 2 #ff8f3f, safe #43d17a, warning #ffb020, danger #ff5468, radius 6.
+ *
+ * Warm hues are kept apart by hue and by fill style:
+ *   deck 2 orange  #d6784a  hue 20  identity: the solid "2" badge; neutral at rest
+ *   caution amber  #dfa33a  hue 38  on its own dark amber tint even at rest;
+ *                                   the only warm colour that goes solid (while pressed)
+ *   cue yellow     #cbb551  hue 49  CUE only
+ */
+:root {
+  /* Surfaces */
+  --mx-bg: #0d1014;
+  --mx-surface: #161a20;
+  --mx-surface-2: #1d222a;
+  --mx-surface-3: #262c35;        /* + pressed neutral */
+  --mx-surface-off: #13161b;      /* + disabled fill */
+  --mx-line: #2c333d;
+  --mx-line-strong: #3a424e;      /* + button and field borders */
+  --mx-scrim: rgba(5, 7, 9, 0.66);/* + popover backdrop */
+
+  /* Text */
+  --mx-text: #e4e7ec;
+  --mx-text-dim: #949dab;
+  --mx-text-off: #7f8896;         /* + disabled text, still 5:1 */
+  --mx-ink: #0d1014;              /* + dark text on solid fills */
+
+  /* Accent: selection, chosen, confirm */
+  --mx-accent: #a3c45e;
+  --mx-accent-press: #8fad50;     /* + confirm pressed */
+  --mx-accent-surface: #253019;
+  --mx-slider-fill: #5d7238;      /* + slider level, full height */
+
+  /* Decks */
+  --mx-deck1: #5b95d4;
+  --mx-deck1-text: #9cc2ec;       /* + deck 1 label on dark */
+  --mx-deck1-surface: #172536;    /* + deck 1 pressed tint */
+  --mx-deck2: #d6784a;
+  --mx-deck2-text: #ebb08e;       /* + deck 2 label on dark */
+  --mx-deck2-surface: #35201a;    /* + deck 2 pressed tint */
+
+  /* Transport */
+  --mx-play: #5fae6e;
+  --mx-play-text: #7cc58a;        /* + */
+  --mx-play-surface: #172a1d;     /* + */
+  --mx-cue: #cbb551;
+  --mx-cue-text: #d9c56a;         /* + */
+  --mx-cue-surface: #2c2912;      /* + */
+
+  /* Caution: eject, stop, hide (takes away, can be redone) */
+  --mx-caution: #dfa33a;
+  --mx-caution-text: #e8b65c;     /* + */
+  --mx-caution-surface: #30260e;
+
+  /* Danger: clear, delete, the close glyph (cannot be undone) */
+  --mx-danger: #d0574d;
+  --mx-danger-text: #ec7f74;      /* + */
+  --mx-danger-surface: #34191b;
+
+  /* Info: SYNC, scan, in use */
+  --mx-info: #5aa4c4;
+  --mx-info-text: #86c0d8;        /* + */
+  --mx-info-surface: #13272f;     /* + */
+
+  /* Lit and chosen: a see-through tint of the role colour (--mx-lit-alpha over whatever
+   * is behind), the role colour as a 2 px border, and a light role-colour text. */
+  --mx-lit-alpha: 26%;            /* + */
+  --mx-accent-lit: #bcd88a;       /* + */
+  --mx-info-lit: #a3d2e6;         /* + */
+  --mx-play-lit: #9bd6a6;         /* + */
+  --mx-cue-lit: #e3d58a;          /* + */
+  --mx-deck1-lit: #b3d1f2;        /* + */
+  --mx-deck2-lit: #f2c2a6;        /* + */
+  --mx-caution-lit: #f0c983;      /* + */
+  --mx-danger-lit: #f4a59d;       /* + */
+
+  /* Shape and type */
+  --mx-radius: 3px;
+  --mx-radius-sm: 2px;
+  --mx-font-ui: "Ubuntu Condensed", "Ubuntu", "Arial Narrow", sans-serif;
+  --mx-font-text: "Open Sans", "Ubuntu", "Segoe UI", sans-serif;
+  --mx-font-num: "Ubuntu Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+}

@@ -802,3 +802,72 @@ Scale:
 - **4 or less:** a constraint is broken, an owner comment is missing, or the plan needs more builds than its stated ceiling.
 
 Hard limits: a broken constraint caps the score at 4. A missing owner comment caps it at 6. A root cause that a reviewer disproves in source caps it at 7 until corrected.
+
+## 12. Owner UI review, 2026-11-17: binding for build C
+
+Recorded by the orchestrator (Claude Opus 5.5 xhigh).
+
+**Background.** After build B, the owner reviewed every screen in the private review page "MixPi UI review" over five rounds and agreed every item. Their words are verbatim in `docs/ideas/UI-REVIEW-1-20261117.md`. The agreed design is written down, with 800×480 mockups and the design CSS, in **`docs/ideas/ui-redesign-20261117/agreed-ui/AGREED-UI-SPEC.md`**.
+
+**Owner, 2026-11-17 19:13:** "Okay let's do the thread migrate where we update the climb tuner plan with all these agreed items and climb to the new pi build. Same orchecstration, builders and reviewers as we have done in the recent past. Please don't deviate from UI we set and have the reviewers know what the app is supposed to look like so they judge against that not what they think is best."
+
+### 12.1 Precedence
+
+- Where the spec differs from an item above, from 4.2, from the prototype or from build B, **the spec wins**.
+- Where the spec says nothing, build B stays as it is.
+- Nobody adds a design of their own: no builder, reviewer or orchestrator.
+- Known overrides:
+  - **R-9:** Sources is no longer full-screen navigation. It is a **side menu on the right**, under ☰. The edit list stays full screen (spec s5).
+  - **R-11:** while Sources is open, ☰ becomes the standard **red ✕ close, with no outline**, in the same spot. It is not a lit button.
+  - **R-17:** effect ON/OFF is a **button**, not a switch. Slider fills run full height. Effects are **saved within a second of a change**.
+  - **10.1 Q1 and R-18:** Settings › Media gains **"Plugging in a drive: ASK / AUTO LOAD"**, default ASK. ASK is the Q1 ping, and AUTO LOAD opens the drive with no ping. This replaces Q1's "no on-insert setting".
+  - **R-4:** the Media page follows spec s13:
+    - ALL, READY and IN USE filters;
+    - one row per drive with OPEN (browse icon) and EJECT (eject icon, Caution);
+    - a scroll bar;
+    - no COPY TO PI, and no deck or song lines;
+    - the footer line "N tracks playing from Pi memory".
+  - **R-16:**
+    - Tool panel: EXIT LOOP (Danger) and RELOOP (Sound) on their own row, with ½ and ×2 given green borders.
+    - Deck row: title and artist side by side; the artist is shortened first when the SYNC or MASTER chips show.
+  - **R-7:**
+    - CLEAR SAMPLES… opens a popover with ticks, and CLEAR (n) is Danger.
+    - Each pad has its own ▶ TRIGGER and ■ STOP.
+  - **R-8:** Load sample offers SAMPLES and SOURCES… only.
+
+### 12.2 New items, U-1 to U-10
+
+| Item | What (spec section) | Builds on | Layer |
+|---|---|---|---|
+| U-1 | The rules for every screen (spec 1): tokens, roles, 3 px radius, pill chips, see-through lit states, close on the right as the red ✕ with no outline at rest, ticked rows with no left edge, scroll bars | R-1, R-16, all QSS | skin |
+| U-2 | Tool panel loop rows (s2) | R-16 | skin (generator) |
+| U-3 | Tracks header order and ▶ beside CUE on both decks (s3) | R-11, R-1 | skin |
+| U-4 | Sources: side menu on the right, ☰ becomes ✕, Back and Edit icons, top-level and inside-a-source headers, scroll bar, full-screen edit list with DONE and ✕ (s5) | R-9, R-10, R-11 | skin and native (the Sources rail patch) |
+| U-5 | Sampler: CLEAR SAMPLES… popover, TRIGGER and STOP split, empty-pad text, deck-row title and artist (s6). Acceptance adds a full shutdown test for the samples | R-7, R-16, R-13 | skin and native |
+| U-6 | Load sample: SAMPLES and SOURCES… only (s7) | R-8 | skin and native |
+| U-7 | FX: ON/OFF button, full-height slider fill, effects saved within a second of a change (s8) | R-17, R-13 | skin and native (save) |
+| U-8 | Settings › Media: Plugging in a drive, ASK or AUTO LOAD (s11) | R-18, R-4 | skin and native |
+| U-9 | Settings › Interface: Brightness, Night dim and CPU readout (s12). Brightness and Night dim need write access to `/sys/class/backlight/*/brightness` for the session user, through a udev rule or a small root helper (a new system file), which is a system change. Night dim's low level is an implementation value: report it to the owner, who may tune it. | R-18, R-1 | skin, native and system |
+| U-10 | Media page (s13) | R-4 | native (the media page) and skin |
+
+**Carried into build C:**
+- every round-1 council repair at `fb1a119`;
+- build B's 5 failed and 6 blocked acceptance checks, with the drive checks run on the owner's spare stick;
+- the Q3 10% performance gate (fallback approved: ship the RAM copy, and add copy-on-eject only if a later test fails);
+- the interactive Starlight session, where the owner presses and the orchestrator screenshots, and the owner comments before anything changes.
+
+### 12.3 Rubric amendment (section 11)
+
+- **Criterion 7, Design fidelity, now reads:**
+  - The built result matches `agreed-ui/AGREED-UI-SPEC.md` and its mockups, and the owner's verbatim words. On the card, each spec screen is checked against its mockup, with a screenshot.
+  - **A deviation from the spec is a defect.** A reviewer's own preference is not a finding and does not change the score.
+  - Real usability or safety concerns with the agreed design go under "Owner questions (no score effect)".
+- **New hard limit:** an unlisted deviation from the agreed UI caps the score at 6, the same as a missing owner comment.
+- **Briefing reviewers:** every reviewer gets the spec, the 12 mockups and this section before scoring.
+
+### 12.4 Budget
+
+- **Build C:** the owner's message of 19:13 is their yes to build C as the 4th pi-gen run, past the old ceiling of 3.
+- **Any later build** needs the owner's yes again.
+- **Council rounds:** 1 of 5 used.
+- **Flashes:** stay at 0. Delivery is an in-place update.

@@ -1,0 +1,1133 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Components preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Ubuntu+Condensed&family=Ubuntu+Mono:wght@400;700&family=Ubuntu:wght@400;500;700&display=swap">
+<style>
+:root { --bg:#f6f6f3; --fg:#1d2026; --muted:#5d6470; --line:#dcdcd6; --card:#ffffff; --accent:#4f6b1f; --accent-fg:#fff; --warn:#a8650a; --ok:#2f7a45; --danger:#b3362e; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#121417; --fg:#e7e9ec; --muted:#9aa1ab; --line:#2c3036; --card:#1a1d21; --accent:#b2cf72; --accent-fg:#111; } }
+:root[data-theme="dark"] { --bg:#121417; --fg:#e7e9ec; --muted:#9aa1ab; --line:#2c3036; --card:#1a1d21; --accent:#b2cf72; --accent-fg:#111; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 "Open Sans", system-ui, sans-serif; }
+main { max-width: 960px; margin: 0 auto; padding: 16px; }
+/* MixPi device tokens (builder C, UI review round 1).
+ * The device screen is always dark, in both page themes.
+ * Names from docs/ideas/UI-REVIEW-1-20261117.md section 3 are kept; values are tuned.
+ * Extra tokens (marked +) carry the tints and text tones the roles need.
+ *
+ * Today's skin, for comparison (mixpi-performance.qss 1-5): bg #0a0d12, panels
+ * #121821/#19212d, line #2b3646, text #eef2f7, lime #b5e15c, deck 1 #4aa8ff,
+ * deck 2 #ff8f3f, safe #43d17a, warning #ffb020, danger #ff5468, radius 6.
+ *
+ * Warm hues are kept apart by hue and by fill style:
+ *   deck 2 orange  #d6784a  hue 20  identity: the solid "2" badge; neutral at rest
+ *   caution amber  #dfa33a  hue 38  on its own dark amber tint even at rest;
+ *                                   the only warm colour that goes solid (while pressed)
+ *   cue yellow     #cbb551  hue 49  CUE only
+ */
+:root {
+  /* Surfaces */
+  --mx-bg: #0d1014;
+  --mx-surface: #161a20;
+  --mx-surface-2: #1d222a;
+  --mx-surface-3: #262c35;        /* + pressed neutral */
+  --mx-surface-off: #13161b;      /* + disabled fill */
+  --mx-line: #2c333d;
+  --mx-line-strong: #3a424e;      /* + button and field borders */
+  --mx-scrim: rgba(5, 7, 9, 0.66);/* + popover backdrop */
+
+  /* Text */
+  --mx-text: #e4e7ec;
+  --mx-text-dim: #949dab;
+  --mx-text-off: #7f8896;         /* + disabled text, still 5:1 */
+  --mx-ink: #0d1014;              /* + dark text on solid fills */
+
+  /* Accent: selection, chosen, confirm */
+  --mx-accent: #a3c45e;
+  --mx-accent-press: #8fad50;     /* + confirm pressed */
+  --mx-accent-surface: #253019;
+  --mx-slider-fill: #5d7238;      /* + slider level, full height */
+
+  /* Decks */
+  --mx-deck1: #5b95d4;
+  --mx-deck1-text: #9cc2ec;       /* + deck 1 label on dark */
+  --mx-deck1-surface: #172536;    /* + deck 1 pressed tint */
+  --mx-deck2: #d6784a;
+  --mx-deck2-text: #ebb08e;       /* + deck 2 label on dark */
+  --mx-deck2-surface: #35201a;    /* + deck 2 pressed tint */
+
+  /* Transport */
+  --mx-play: #5fae6e;
+  --mx-play-text: #7cc58a;        /* + */
+  --mx-play-surface: #172a1d;     /* + */
+  --mx-cue: #cbb551;
+  --mx-cue-text: #d9c56a;         /* + */
+  --mx-cue-surface: #2c2912;      /* + */
+
+  /* Caution: eject, stop, hide (takes away, can be redone) */
+  --mx-caution: #dfa33a;
+  --mx-caution-text: #e8b65c;     /* + */
+  --mx-caution-surface: #30260e;
+
+  /* Danger: clear, delete, the close glyph (cannot be undone) */
+  --mx-danger: #d0574d;
+  --mx-danger-text: #ec7f74;      /* + */
+  --mx-danger-surface: #34191b;
+
+  /* Info: SYNC, scan, in use */
+  --mx-info: #5aa4c4;
+  --mx-info-text: #86c0d8;        /* + */
+  --mx-info-surface: #13272f;     /* + */
+
+  /* Lit and chosen: a see-through tint of the role colour (--mx-lit-alpha over whatever
+   * is behind), the role colour as a 2 px border, and a light role-colour text. */
+  --mx-lit-alpha: 26%;            /* + */
+  --mx-accent-lit: #bcd88a;       /* + */
+  --mx-info-lit: #a3d2e6;         /* + */
+  --mx-play-lit: #9bd6a6;         /* + */
+  --mx-cue-lit: #e3d58a;          /* + */
+  --mx-deck1-lit: #b3d1f2;        /* + */
+  --mx-deck2-lit: #f2c2a6;        /* + */
+  --mx-caution-lit: #f0c983;      /* + */
+  --mx-danger-lit: #f4a59d;       /* + */
+
+  /* Shape and type */
+  --mx-radius: 3px;
+  --mx-radius-sm: 2px;
+  --mx-font-ui: "Ubuntu Condensed", "Ubuntu", "Arial Narrow", sans-serif;
+  --mx-font-text: "Open Sans", "Ubuntu", "Segoe UI", sans-serif;
+  --mx-font-num: "Ubuntu Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+}
+
+/* MixPi device primitives (builder C, UI review round 1). Device pixels, 800x480.
+ * Needs tokens.css. Every rule is scoped by an .mx- class.
+ *
+ * Buttons    <button class="mx-btn mx-btn--caution">EJECT</button>
+ *            modifiers --confirm --sound --deck1 --deck2 --play --cue --caution --danger --ghost
+ *            states .is-on (lit or chosen: see-through role tint, 2 px role border, light role text),
+ *            .is-disabled, .is-pressed (shows a press; same as :active)
+ *            44 px tall, radius 3, Ubuntu Condensed 15 px uppercase.
+ * Close      <button class="mx-close" aria-label="Close"></button>  44x44, red ✕ drawn in CSS, no outline at rest.
+ * Tabs       <nav class="mx-tabs"><span class="mx-tab is-on">DECKS</span>…</nav>  48 px bar.
+ * Segmented  <div class="mx-seg"><span class="mx-seg-opt is-on">RB FAST</span>…</div>
+ * Slider     <div class="mx-slider" style="--v:.4"><i class="mx-slider-fill"></i><i class="mx-slider-thumb"></i></div>
+ *            --v 0..1; the fill is full height and ends at the thumb's centre. Width comes from the parent.
+ * Menu       <div class="mx-menu"><div class="mx-menu-item is-on has-sub">…</div></div>  rows 52 px.
+ *            .mx-menu-item--danger; optional .mx-menu-note (dim text pushed right), .mx-tick (tick box).
+ *            A ticked row (.is-on holding .mx-tick) shows the tick and a slight background, no left edge.
+ * Chips      <span class="mx-chip mx-chip--sync">SYNC</span>
+ *            --usb (plain, NO USB) --ready --inuse --caution (EJECTING) --sync --master; .is-on = solid (SAFE TO REMOVE).
+ *            Pills: chips are indicators and cannot be pressed.
+ * Popover    <div class="mx-popover">                    fills the nearest positioned box, dims it
+ *              <div class="mx-popover-sheet">
+ *                <div class="mx-popover-head"><span class="mx-popover-title">…</span><button class="mx-close"></button></div>
+ *                <div class="mx-popover-body">…</div>
+ *                <div class="mx-popover-foot"><button class="mx-btn">CANCEL</button><button class="mx-btn mx-btn--danger">CLEAR (2)</button></div>
+ * Toggle     <button class="mx-toggle is-on"></button>  88x44, says ON or OFF.
+ * Deck row   <div class="mx-deckrow mx-deckrow--deck1">   72 px, two lines, flat children in this order:
+ *              .mx-deckrow-num     the 1 or 2 badge
+ *              .mx-deckrow-title   track title (white)
+ *              .mx-deckrow-artist  artist (dim), right after the title
+ *              .mx-deckrow-chips   holds .mx-chip--sync / --master, pushed to the right
+ *              .mx-deckrow-time    second line: remaining time; optional data-label caption above
+ *              .mx-deckrow-bpm     BPM box
+ *              .mx-deckrow-pitch   ±% pitch; optional data-label caption above
+ *              .mx-deckrow-key     key
+ *            The artist shrinks with "…" first, then the title, so chips never get pushed out.
+ */
+
+/* ---------- Screen ---------- */
+.mx-screen {
+  position: relative;
+  box-sizing: border-box;
+  width: 800px;
+  height: 480px;
+  overflow: hidden;
+  background: var(--mx-bg);
+  color: var(--mx-text);
+  font: 400 15px/1.25 var(--mx-font-text);
+  -webkit-font-smoothing: antialiased;
+}
+.mx-screen *, .mx-screen *::before, .mx-screen *::after { box-sizing: border-box; }
+.mx-screen button { font: inherit; color: inherit; }
+
+/* ---------- Button ---------- */
+.mx-btn {
+  --mx-tone: var(--mx-line-strong);
+  --mx-tone-text: var(--mx-text);
+  --mx-tone-surface: var(--mx-surface-3);
+  --mx-lit: var(--mx-accent);
+  --mx-lit-text: var(--mx-accent-lit);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: 44px;
+  min-width: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  color: var(--mx-text);
+  font: 700 15px/1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+}
+.mx-btn:active, .mx-btn.is-pressed { background: var(--mx-surface-3); }
+
+/* Confirm: muted accent fill, dark text */
+.mx-btn--confirm {
+  background: var(--mx-accent);
+  border-color: var(--mx-accent);
+  color: var(--mx-ink);
+}
+.mx-btn--confirm:active, .mx-btn--confirm.is-pressed {
+  background: var(--mx-accent-press);
+  border-color: var(--mx-accent-press);
+}
+
+/* Sound family: tone outline and tone text at rest, dark tint when pressed */
+.mx-btn--sound { --mx-tone: var(--mx-info); --mx-tone-text: var(--mx-info-text); --mx-tone-surface: var(--mx-info-surface); --mx-lit: var(--mx-info); --mx-lit-text: var(--mx-info-lit); }
+.mx-btn--deck1 { --mx-tone: var(--mx-deck1); --mx-tone-text: var(--mx-deck1-text); --mx-tone-surface: var(--mx-deck1-surface); --mx-lit: var(--mx-deck1); --mx-lit-text: var(--mx-deck1-lit); }
+.mx-btn--deck2 { --mx-tone: var(--mx-deck2); --mx-tone-text: var(--mx-deck2-text); --mx-tone-surface: var(--mx-deck2-surface); --mx-lit: var(--mx-deck2); --mx-lit-text: var(--mx-deck2-lit); }
+.mx-btn--play  { --mx-tone: var(--mx-play);  --mx-tone-text: var(--mx-play-text);  --mx-tone-surface: var(--mx-play-surface); --mx-lit: var(--mx-play); --mx-lit-text: var(--mx-play-lit); font-size: 19px; }
+.mx-btn--cue   { --mx-tone: var(--mx-cue);   --mx-tone-text: var(--mx-cue-text);   --mx-tone-surface: var(--mx-cue-surface); --mx-lit: var(--mx-cue); --mx-lit-text: var(--mx-cue-lit); }
+.mx-btn--caution { --mx-lit: var(--mx-caution); --mx-lit-text: var(--mx-caution-lit); }
+.mx-btn--danger  { --mx-lit: var(--mx-danger);  --mx-lit-text: var(--mx-danger-lit); }
+.mx-btn--sound, .mx-btn--deck1, .mx-btn--deck2, .mx-btn--play, .mx-btn--cue {
+  border-color: color-mix(in srgb, var(--mx-tone) 60%, var(--mx-surface-2));
+  color: var(--mx-tone-text);
+}
+.mx-btn--sound:active, .mx-btn--deck1:active, .mx-btn--deck2:active, .mx-btn--play:active, .mx-btn--cue:active,
+.mx-btn--sound.is-pressed, .mx-btn--deck1.is-pressed, .mx-btn--deck2.is-pressed, .mx-btn--play.is-pressed, .mx-btn--cue.is-pressed {
+  background: var(--mx-tone-surface);
+  border-color: var(--mx-tone);
+}
+
+/* Caution: amber on its own dark amber tint; solid amber only under the finger */
+.mx-btn--caution {
+  background: var(--mx-caution-surface);
+  border-color: var(--mx-caution);
+  color: var(--mx-caution-text);
+}
+.mx-btn--caution:active, .mx-btn--caution.is-pressed {
+  background: var(--mx-caution);
+  border-color: var(--mx-caution);
+  color: var(--mx-ink);
+}
+
+/* Danger: red on a dark red tint; solid red when pressed */
+.mx-btn--danger {
+  background: var(--mx-danger-surface);
+  border-color: var(--mx-danger);
+  color: var(--mx-danger-text);
+}
+.mx-btn--danger:active, .mx-btn--danger.is-pressed {
+  background: var(--mx-danger);
+  border-color: var(--mx-danger);
+  color: var(--mx-ink);
+}
+
+/* Lit or chosen, every role: a see-through tint of the role colour, never a flat fill.
+ * The 2 px role border (1 px border + 1 px inset) and the lighter text set it apart from rest. */
+.mx-btn.is-on {
+  background: color-mix(in srgb, var(--mx-lit) var(--mx-lit-alpha), transparent);
+  border-color: var(--mx-lit);
+  box-shadow: inset 0 0 0 1px var(--mx-lit);
+  color: var(--mx-lit-text);
+}
+.mx-btn.is-on:active, .mx-btn.is-on.is-pressed {
+  background: color-mix(in srgb, var(--mx-lit) 40%, transparent);
+}
+
+/* Ghost: a quiet Navigate button, outlined on a transparent background */
+.mx-btn--ghost { background: transparent; border-color: var(--mx-line-strong); color: var(--mx-text); }
+.mx-btn--ghost:active, .mx-btn--ghost.is-pressed { background: var(--mx-surface-3); }
+.mx-btn--ghost.is-on { background: transparent; border-color: var(--mx-line-strong); color: var(--mx-accent); box-shadow: inset 0 -3px 0 var(--mx-accent); }
+
+/* Disabled wins over every role */
+.mx-btn.is-disabled, .mx-btn.is-disabled:active {
+  background: var(--mx-surface-off);
+  border-color: var(--mx-line);
+  border-style: dashed;
+  color: var(--mx-text-off);
+  filter: none;
+  box-shadow: none;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ---------- Close: neutral square, red ✕ glyph ---------- */
+.mx-close {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent; /* no outline at rest */
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  font-size: 0;
+  color: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.mx-close::before, .mx-close::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 2.5px;
+  margin: -1.25px 0 0 -10px;
+  border-radius: 1px;
+  background: var(--mx-danger-text);
+  transform: rotate(45deg);
+}
+.mx-close::after { transform: rotate(-45deg); }
+.mx-close:active, .mx-close.is-pressed { background: var(--mx-danger-surface); border-color: var(--mx-danger); }
+.mx-close.is-disabled { background: var(--mx-surface-off); pointer-events: none; }
+.mx-close.is-disabled::before, .mx-close.is-disabled::after { background: var(--mx-text-off); }
+
+/* ---------- Tabs (top bar) ---------- */
+.mx-tabs {
+  display: flex;
+  align-items: stretch;
+  box-sizing: border-box;
+  height: 48px;
+  background: var(--mx-bg);
+  border-bottom: 1px solid var(--mx-line);
+}
+.mx-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 88px;
+  padding: 3px 18px 0;
+  border-bottom: 3px solid transparent;
+  color: var(--mx-text-dim);
+  font: 700 18px/1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mx-tab:active, .mx-tab.is-pressed { color: var(--mx-text); background: var(--mx-surface); }
+.mx-tab.is-on { color: var(--mx-text); border-bottom-color: var(--mx-accent); }
+.mx-tab.is-disabled { color: var(--mx-text-off); pointer-events: none; }
+
+/* ---------- Segmented choice ---------- */
+.mx-seg {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 44px;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  overflow: hidden;
+}
+.mx-seg-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 64px;
+  padding: 0 16px;
+  border-left: 1px solid var(--mx-line-strong);
+  color: var(--mx-text);
+  font: 700 15px/1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mx-seg-opt:first-child { border-left: 0; }
+.mx-seg-opt:active, .mx-seg-opt.is-pressed { background: var(--mx-surface-3); }
+.mx-seg-opt.is-on {
+  background: color-mix(in srgb, var(--mx-accent) var(--mx-lit-alpha), transparent);
+  color: var(--mx-accent-lit);
+  box-shadow: inset 0 0 0 2px var(--mx-accent);
+}
+.mx-seg-opt.is-disabled { background: var(--mx-surface-off); color: var(--mx-text-off); pointer-events: none; }
+
+/* ---------- Slider: full-height fill up to the thumb's centre ---------- */
+.mx-slider {
+  --v: 0.5;
+  --mx-thumb-w: 24px;
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  height: 44px;
+  min-width: 120px;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  overflow: hidden;
+  cursor: pointer;
+}
+.mx-slider-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--mx-thumb-w) / 2 + (100% - var(--mx-thumb-w)) * var(--v));
+  background: var(--mx-slider-fill);
+}
+.mx-slider-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: calc((100% - var(--mx-thumb-w)) * var(--v));
+  width: var(--mx-thumb-w);
+  border-radius: var(--mx-radius-sm);
+  background: var(--mx-text);
+  box-shadow: 0 0 0 1px var(--mx-bg);
+}
+.mx-slider-thumb::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--mx-surface-3);
+}
+.mx-slider:active .mx-slider-thumb, .mx-slider.is-pressed .mx-slider-thumb { background: var(--mx-accent); }
+.mx-slider.is-disabled { background: var(--mx-surface-off); border-color: var(--mx-line); pointer-events: none; }
+.mx-slider.is-disabled .mx-slider-fill { background: var(--mx-surface-3); }
+.mx-slider.is-disabled .mx-slider-thumb { background: var(--mx-text-off); }
+
+/* ---------- Menu and list rows ---------- */
+.mx-menu {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: var(--mx-surface);
+}
+.mx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  min-height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--mx-line);
+  color: var(--mx-text);
+  font: 400 16px/1.2 var(--mx-font-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.mx-menu-item:active, .mx-menu-item.is-pressed { background: var(--mx-surface-3); }
+.mx-menu-item.is-on {
+  background: var(--mx-surface-2);
+  box-shadow: inset 4px 0 0 var(--mx-accent);
+  font-weight: 600;
+}
+/* Ticked rows: the tick and the slight background say it; no left edge */
+.mx-menu-item.is-on:has(.mx-tick) { box-shadow: none; font-weight: 400; }
+.mx-menu-item.has-sub::after {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-left: auto;
+  margin-right: 4px;
+  border-top: 2px solid var(--mx-text-dim);
+  border-right: 2px solid var(--mx-text-dim);
+  transform: rotate(45deg);
+}
+.mx-menu-item.has-sub:has(.mx-menu-note)::after { margin-left: 0; }
+.mx-menu-item--danger { color: var(--mx-danger-text); }
+.mx-menu-item--danger:active, .mx-menu-item--danger.is-pressed { background: var(--mx-danger-surface); }
+.mx-menu-item.is-disabled { color: var(--mx-text-off); pointer-events: none; }
+.mx-menu-note { margin-left: auto; color: var(--mx-text-dim); font-size: 14px; }
+.mx-tick {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--mx-text-dim);
+  border-radius: var(--mx-radius-sm);
+}
+.mx-menu-item.is-on .mx-tick, .mx-tick.is-on { background: var(--mx-accent); border-color: var(--mx-accent); }
+.mx-menu-item.is-on .mx-tick::after, .mx-tick.is-on::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 6px;
+  height: 11px;
+  border-right: 2.5px solid var(--mx-ink);
+  border-bottom: 2.5px solid var(--mx-ink);
+  transform: rotate(45deg);
+}
+
+/* ---------- Chips ---------- */
+.mx-chip {
+  --mx-tone: var(--mx-line-strong);
+  --mx-tone-text: var(--mx-text-dim);
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--mx-tone);
+  border-radius: 999px; /* pill: an indicator, not a button */
+  background: transparent;
+  color: var(--mx-tone-text);
+  font: 700 13px/1 var(--mx-font-ui);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mx-chip--usb { --mx-tone: var(--mx-line-strong); --mx-tone-text: var(--mx-text-dim); }
+.mx-chip--ready { --mx-tone: var(--mx-play); --mx-tone-text: var(--mx-play-text); }
+.mx-chip--inuse { --mx-tone: var(--mx-info); --mx-tone-text: var(--mx-text); background: var(--mx-info-surface); }
+.mx-chip--caution { --mx-tone: var(--mx-caution); --mx-tone-text: var(--mx-caution-text); background: var(--mx-caution-surface); }
+.mx-chip--sync { --mx-tone: var(--mx-info); --mx-tone-text: var(--mx-info-text); }
+.mx-chip--master { --mx-tone: var(--mx-accent); --mx-tone-text: var(--mx-accent); }
+.mx-chip.is-on { background: var(--mx-tone); color: var(--mx-ink); }
+
+/* ---------- Popover ---------- */
+.mx-popover {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--mx-scrim);
+}
+.mx-popover-sheet {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 480px;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.mx-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 6px 6px 6px 16px;
+  border-bottom: 1px solid var(--mx-line);
+}
+.mx-popover-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--mx-text);
+  font: 700 20px/1.1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mx-popover-head .mx-close { margin-left: auto; }
+.mx-popover-body { flex: 1; min-height: 0; overflow-y: auto; }
+.mx-popover-body .mx-menu-item:last-child { border-bottom: 0; }
+.mx-popover-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--mx-line);
+  background: var(--mx-surface);
+}
+
+/* ---------- Toggle ---------- */
+.mx-toggle {
+  position: relative;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 88px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  font-size: 0;
+  cursor: pointer;
+  appearance: none;
+}
+.mx-toggle::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--mx-radius-sm);
+  background: var(--mx-text-dim);
+}
+.mx-toggle::after {
+  content: "OFF";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  color: var(--mx-text-dim);
+  font: 700 15px/1 var(--mx-font-ui);
+  letter-spacing: 0.04em;
+}
+.mx-toggle:active, .mx-toggle.is-pressed { background: var(--mx-surface-3); }
+.mx-toggle.is-on { background: var(--mx-accent-surface); border-color: var(--mx-accent); }
+.mx-toggle.is-on::before { left: auto; right: 5px; background: var(--mx-accent); }
+.mx-toggle.is-on::after { content: "ON"; right: auto; left: 12px; color: var(--mx-accent); }
+.mx-toggle.is-disabled { background: var(--mx-surface-off); border-color: var(--mx-line); border-style: dashed; pointer-events: none; }
+.mx-toggle.is-disabled::before { background: var(--mx-surface-3); }
+.mx-toggle.is-disabled::after { color: var(--mx-text-off); }
+
+/* ---------- Deck row ---------- */
+.mx-deckrow {
+  --mx-deck: var(--mx-deck1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: space-between;
+  column-gap: 6px;
+  row-gap: 0;
+  box-sizing: border-box;
+  height: 72px;
+  min-width: 0;
+  padding: 3px 6px 4px;
+  background: var(--mx-surface);
+  color: var(--mx-text);
+  font: 400 16px/1.2 var(--mx-font-text);
+}
+.mx-deckrow--deck2 { --mx-deck: var(--mx-deck2); }
+/* Line break between the head line and the stats line */
+.mx-deckrow::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
+.mx-deckrow-num, .mx-deckrow-title, .mx-deckrow-artist, .mx-deckrow-chips { order: 1; }
+.mx-deckrow-time, .mx-deckrow-bpm, .mx-deckrow-pitch, .mx-deckrow-key { order: 3; }
+.mx-deckrow-num {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--mx-radius-sm);
+  background: var(--mx-deck);
+  color: var(--mx-ink);
+  font: 700 14px/1 var(--mx-font-ui);
+}
+.mx-deckrow-title, .mx-deckrow-artist {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Title and artist start from zero and grow up to their own width. The title takes
+ * space first (grow 1000), the artist gets what is left, so the artist is cut with "…"
+ * first and the title only after it. Starting from zero also keeps the chips on line one. */
+.mx-deckrow-title { flex: 1000 1 0; max-width: max-content; min-width: 3.5em; color: var(--mx-text); }
+.mx-deckrow-artist { flex: 1 1 0; max-width: max-content; min-width: 2.2em; color: var(--mx-text-dim); font-size: 14px; }
+.mx-deckrow-chips { flex: none; display: inline-flex; gap: 4px; margin-left: auto; }
+/* Optional caption over the time and pitch: data-label="REMAINING · TAP", data-label="±8%".
+ * Drawn in the space between the two lines, so the row stays 72 px and line one is unchanged. */
+.mx-deckrow-time, .mx-deckrow-pitch { position: relative; }
+.mx-deckrow-time[data-label]::before, .mx-deckrow-pitch[data-label]::before {
+  content: attr(data-label);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 2px);
+  color: var(--mx-text-dim);
+  font: 700 11px/1 var(--mx-font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mx-deckrow-time { font: 400 21px/1 var(--mx-font-num); color: var(--mx-text); }
+.mx-deckrow-bpm {
+  padding: 3px 8px;
+  border-radius: var(--mx-radius);
+  background: var(--mx-text);
+  color: var(--mx-ink);
+  font: 700 24px/1 var(--mx-font-num);
+}
+.mx-deckrow-pitch { font: 400 19px/1 var(--mx-font-num); color: var(--mx-text); }
+.mx-deckrow-key { margin-left: auto; font: 400 17px/1 var(--mx-font-num); color: var(--mx-text); }
+
+</style></head><body><main><h2>Components &amp; tuning</h2>
+<style>
+.mxg { color: var(--fg); font-size: 15px; line-height: 1.5; min-width: 0; }
+.mxg-lead { margin: 0 0 16px; max-width: 68ch; }
+.mxg-h { margin: 32px 0 8px; font-size: 18px; line-height: 1.3; color: var(--fg); }
+.mxg-h:first-of-type { margin-top: 8px; }
+.mxg-sub { margin: 20px 0 6px; font-size: 15px; color: var(--fg); }
+.mxg-p { margin: 0 0 12px; max-width: 68ch; }
+.mxg-note { margin: 6px 0 0; font-size: 13px; color: var(--muted); max-width: 72ch; }
+.mxg-note code, .mxg-p code, .mxg-table code { font-size: 12px; }
+.mxg-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
+.mxg-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.mxg-table th, .mxg-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.mxg-table th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.mxg-table tr:last-child td { border-bottom: 0; }
+.mxg-roles { min-width: 860px; }
+.mxg-role { font-weight: 700; white-space: nowrap; }
+.mxg-role-dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; vertical-align: 0; }
+.mxg-live { background: var(--mx-bg); min-width: 230px; }
+.mxg-live-in { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mxg-btns { min-width: 640px; }
+.mxg-btns td.mxg-dev { background: var(--mx-bg); vertical-align: middle; }
+.mxg-btns td.mxg-dev + td.mxg-dev { border-left: 1px solid var(--mx-line); }
+.mxg-dim-cap { font: 400 12px/1.3 var(--mx-font-text); color: var(--mx-text-dim); }
+.mxg-panel { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-start; padding: 14px; border-radius: 6px; background: var(--mx-bg); border: 1px solid var(--line); color: var(--mx-text); font-family: var(--mx-font-text); min-width: 0; }
+.mxg-panel--surface { background: var(--mx-surface); }
+.mxg-panel--col { flex-direction: column; align-items: stretch; }
+.mxg-state { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 0; max-width: 100%; }
+.mxg-state--wide { flex: 1 1 240px; align-items: stretch; }
+.mxg-panel--col > .mxg-state--wide { flex: none; }
+.mxg-cap { font: 400 12px/1.3 var(--mx-font-text); color: var(--mx-text-dim); }
+.mxg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.mxg-vs { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.mxg-vs-label { margin: 0 0 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.mxg-vs-label--new { color: var(--accent); }
+.mxg-cite { margin: 6px 0 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.mxg-cite code { font-size: 11.5px; }
+.mxg-w-slider { width: 260px; max-width: 100%; }
+.mxg-w-menu { width: 340px; max-width: 100%; }
+.mxg-w-deck { width: 400px; max-width: 100%; }
+.mxg-w-deck--narrow { width: 300px; max-width: 100%; }
+.mxg-header { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; height: 52px; padding: 0 4px 0 12px; background: var(--mx-surface); border-bottom: 1px solid var(--mx-line); }
+.mxg-header-title { flex: 1; min-width: 0; font: 700 20px/1 var(--mx-font-ui); letter-spacing: 0.03em; color: var(--mx-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mxg-stage { position: relative; height: 400px; border-radius: 6px; border: 1px solid var(--line); background: var(--mx-bg); overflow: hidden; }
+.mxg-stage-pads { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 10px; }
+.mxg-stage-pad { height: 78px; border: 1px solid var(--mx-line); border-radius: 3px; background: var(--mx-surface-2); padding: 8px 10px; font: 600 14px/1.3 var(--mx-font-text); color: var(--mx-text); }
+.mxg-swgroups { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.mxg-swgroup { border: 1px solid var(--line); border-radius: 6px; background: var(--card); padding: 10px 12px; min-width: 0; }
+.mxg-swgroup-h { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--fg); }
+.mxg-sw { display: flex; align-items: center; gap: 10px; padding: 3px 0; min-width: 0; }
+.mxg-sw-chip { flex: none; width: 34px; height: 26px; border-radius: 3px; border: 1px solid var(--line); }
+.mxg-sw-name { font: 12px/1.3 var(--mx-font-num); color: var(--fg); overflow-wrap: anywhere; }
+.mxg-sw-hex { font: 12px/1.3 var(--mx-font-num); color: var(--muted); }
+.mxg-sw-was { font-size: 11px; color: var(--muted); }
+.mxg-list { margin: 0; padding-left: 20px; max-width: 72ch; }
+.mxg-list li { margin: 4px 0; }
+/* "Now" drawings: today's real skin values, cited in each caption */
+.mxg-now { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mxg-now-btn { display: inline-flex; align-items: center; justify-content: center; height: 48px; padding: 0 14px; background: #19212d; border: 1px solid #2b3646; border-radius: 6px; color: #eef2f7; font: 700 16px/1 "Ubuntu Condensed", "Ubuntu", sans-serif; white-space: nowrap; box-sizing: border-box; }
+.mxg-now-cue { color: #ffd23f; border-color: #8a7420; }
+.mxg-now-play { color: #43d17a; border-color: #2f7a4c; font-size: 20px; min-width: 64px; }
+.mxg-now-play-on { color: #06150c; background: #43d17a; border-color: #43d17a; }
+.mxg-now-deck1-on { color: #bfe0ff; background: rgba(74, 168, 255, 0.18); border-color: #4aa8ff; }
+.mxg-now-load1 { color: #bfe0ff; border-color: #4aa8ff; }
+.mxg-now-eject { color: #10140a; background: #b5e15c; border-color: #b5e15c; font-size: 17px; min-width: 120px; }
+.mxg-now-slider { position: relative; width: 260px; max-width: 100%; height: 48px; background: #19212d; box-sizing: border-box; }
+.mxg-now-slider-bar { position: absolute; left: 0; top: 0; height: 8px; background: #b5e15c; }
+.mxg-now-slider-handle { position: absolute; top: 2px; width: 24px; height: 40px; border-radius: 6px; background: #e9eef5; border: 2px solid #121821; box-sizing: border-box; }
+.mxg-now-menu { width: 300px; max-width: 100%; background: #17191f; color: #ffffff; font: 400 16px/1.2 "Open Sans", sans-serif; padding: 4px 0; box-sizing: border-box; }
+.mxg-now-menu-item { display: flex; align-items: center; min-height: 32px; padding: 8px 28px 8px 12px; box-sizing: border-box; position: relative; }
+.mxg-now-menu-item--sel { background: #285a88; }
+.mxg-now-menu-arrow { position: absolute; right: 10px; font-size: 11px; }
+.mxg-now-chip { display: inline-flex; align-items: center; height: 22px; padding: 0 6px; border: 1px solid #b5e15c; border-radius: 4px; color: #b5e15c; font: 700 13px/1 "Ubuntu", "Open Sans", sans-serif; box-sizing: border-box; }
+.mxg-now-chip--sync { color: #4aa8ff; border-color: #4aa8ff; }
+.mxg-now-chip--ready { color: #43d17a; border-color: #43d17a; }
+.mxg-now-chip--inuse { color: #9fd0ff; border-color: #4aa8ff; }
+.mxg-now-chip--eject { color: #ffb020; border-color: #ffb020; }
+.mxg-now-chip--safe { color: #0b1a10; background: #43d17a; border-color: #43d17a; }
+.mxg-now-head { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; height: 52px; padding: 0 6px; background: #121821; border-bottom: 1px solid #2b3646; box-sizing: border-box; }
+.mxg-now-head-title { flex: 1; min-width: 0; color: #eef2f7; font: 700 18px/1 "Ubuntu Condensed", "Ubuntu", sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mxg-now-x { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 48px; height: 48px; background: #19212d; border: 1px solid #2b3646; border-radius: 6px; color: #eef2f7; font: 400 26px/1 "Ubuntu", sans-serif; box-sizing: border-box; }
+.mxg-now-x--sq { border-radius: 0; }
+.mxg-now-x--lime { color: #b5e15c; }
+</style>
+
+<div class="mxg">
+  <p class="mxg-lead">Every control on the screen has one of six roles, and indicators show state. The colour tells you the role before you read the label, so a button that takes something away never looks like one that does the job you came for. Colours are muted from today's lime and saturated fills; a lit button keeps a see-through tint of its colour with a heavier border, so it reads at arm's length in a dark room without a flat fill. Buttons have 3&nbsp;px corners; chips, which you cannot press, are pills.</p>
+
+  <h3 class="mxg-h">Roles</h3>
+  <div class="mxg-scroll">
+    <table class="mxg-table mxg-roles">
+      <thead><tr><th>Role</th><th>What it means</th><th>Examples</th><th>The rule</th><th>On the screen</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="mxg-role"><span class="mxg-role-dot" style="background:var(--mx-text-dim)"></span>Navigate</td>
+          <td>Moves you around. Changes nothing.</td>
+          <td>Tabs, BACK, menu rows, ☰, Sources items</td>
+          <td>Grey. Where you are gets a green edge or underline.</td>
+          <td class="mxg-live"><div class="mxg-live-in"><button class="mx-btn">BACK</button><button class="mx-btn" aria-label="Sources">☰</button><div class="mx-tabs" style="height:44px"><span class="mx-tab is-on" style="min-width:0;padding:0 12px">TRACKS</span><span class="mx-tab" style="min-width:0;padding:0 12px">FX</span></div></div></td>
+        </tr>
+        <tr>
+          <td class="mxg-role"><span class="mxg-role-dot" style="background:var(--mx-accent-surface);box-shadow:inset 0 0 0 1px var(--mx-accent)"></span>Choose</td>
+          <td>Picks one setting or mode.</td>
+          <td>Segmented options, FX 1 / FX 2, routes</td>
+          <td>Grey. The chosen one gets a green tint and green text. One is chosen at a time.</td>
+          <td class="mxg-live"><div class="mxg-live-in"><div class="mx-seg"><span class="mx-seg-opt">ST</span><span class="mx-seg-opt is-on">RB FAST</span><span class="mx-seg-opt">RB FINE</span></div></div></td>
+        </tr>
+        <tr>
+          <td class="mxg-role"><span class="mxg-role-dot" style="background:var(--mx-accent)"></span>Confirm</td>
+          <td>Does the thing you came for.</td>
+          <td>LOAD, LOAD TO PAD, DONE, OPEN</td>
+          <td>Solid muted green, dark text. One per screen. Never on something that takes away.</td>
+          <td class="mxg-live"><div class="mxg-live-in"><button class="mx-btn mx-btn--confirm">LOAD TO PAD</button><button class="mx-btn mx-btn--confirm">DONE</button></div></td>
+        </tr>
+        <tr>
+          <td class="mxg-role"><span class="mxg-role-dot" style="background:var(--mx-play)"></span>Sound</td>
+          <td>Changes what you hear now.</td>
+          <td>▶, CUE, pad TRIGGER, SYNC, KEY, Q, LOOP, effect ON</td>
+          <td>Outlined in its own colour at rest. Lit: a see-through tint of that colour with a heavier border, which means it is shaping the sound right now.</td>
+          <td class="mxg-live"><div class="mxg-live-in"><button class="mx-btn mx-btn--cue">CUE</button><button class="mx-btn mx-btn--play is-on" aria-label="Play">▶</button><button class="mx-btn mx-btn--sound is-on">SYNC</button><button class="mx-btn mx-btn--deck2 is-on">Q</button><button class="mx-btn mx-btn--sound">KEY</button></div></td>
+        </tr>
+        <tr>
+          <td class="mxg-role"><span class="mxg-role-dot" style="background:var(--mx-caution)"></span>Caution</td>
+          <td>Takes something away. You can do it again.</td>
+          <td>EJECT, pad STOP, HIDE, CANCEL scan</td>
+          <td>Amber on a dark amber tint. Fills amber only under your finger. <strong>EJECT is Caution, never Confirm green.</strong></td>
+          <td class="mxg-live"><div class="mxg-live-in"><button class="mx-btn mx-btn--caution">⏏ EJECT</button><button class="mx-btn mx-btn--caution">■ STOP</button><button class="mx-btn mx-btn--caution">HIDE</button></div></td>
+        </tr>
+        <tr>
+          <td class="mxg-role"><span class="mxg-role-dot" style="background:var(--mx-danger)"></span>Danger</td>
+          <td>Cannot be undone.</td>
+          <td>CLEAR (n), delete, the close ✕ glyph</td>
+          <td>Red, and always behind a confirm step. The close ✕ is the one exception: a red glyph on a grey square, so it reads as close without shouting. It never deletes anything.</td>
+          <td class="mxg-live"><div class="mxg-live-in"><button class="mx-btn mx-btn--danger">CLEAR (2)</button><button class="mx-close" aria-label="Close"></button></div></td>
+        </tr>
+        <tr>
+          <td class="mxg-role"><span class="mxg-role-dot" style="background:transparent;box-shadow:inset 0 0 0 1px var(--mx-info);border-radius:5px"></span>Indicators</td>
+          <td>Shows a state. You cannot press it.</td>
+          <td>SYNC and MASTER on the deck row; IN USE, READY, EJECTING and SAFE TO REMOVE on the Media page; the scan % on the USB chip; the key and BPM readouts</td>
+          <td>Pill-shaped chips or plain readouts. No press state, so they never look like buttons.</td>
+          <td class="mxg-live"><div class="mxg-live-in"><span class="mx-chip mx-chip--sync">SYNC</span><span class="mx-chip mx-chip--master">MASTER</span><span class="mx-chip mx-chip--inuse">IN USE</span><span class="mx-chip mx-chip--caution">EJECTING</span></div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="mxg-note">Deck 2 orange and Caution amber stay apart two ways. By hue: deck 2 is a red-leaning orange (#d6784a, hue 20°), Caution is a yellow-leaning amber (#dfa33a, hue 38°), CUE is yellow (#cbb551, hue 49°). By fill: deck 2 controls are neutral at rest and the deck colour is solid only in the "2" badge; Caution sits on its own dark amber tint even at rest, and is the only warm colour that goes solid, while pressed. LOAD 1 and LOAD 2 on the deck rows keep their deck colour; a lone LOAD in a sheet or the plug-in ping is Confirm.</p>
+
+  <h3 class="mxg-h">Primitives in their states</h3>
+  <h4 class="mxg-sub">Buttons, one row per role</h4>
+  <div class="mxg-scroll">
+    <table class="mxg-table mxg-btns">
+      <thead><tr><th>Modifier</th><th>Rest</th><th>Pressed</th><th>On / lit</th><th>Disabled</th></tr></thead>
+      <tbody>
+        <tr><td><code>.mx-btn</code><br>Navigate, Choose</td>
+          <td class="mxg-dev"><button class="mx-btn">LOOP</button></td><td class="mxg-dev"><button class="mx-btn is-pressed">LOOP</button></td><td class="mxg-dev"><button class="mx-btn is-on">LOOP</button></td><td class="mxg-dev"><button class="mx-btn is-disabled">LOOP</button></td></tr>
+        <tr><td><code>--confirm</code><br>Confirm</td>
+          <td class="mxg-dev"><button class="mx-btn mx-btn--confirm">DONE</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--confirm is-pressed">DONE</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--confirm is-on">DONE</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--confirm is-disabled">DONE</button></td></tr>
+        <tr><td><code>--sound</code><br>Sound (teal)</td>
+          <td class="mxg-dev"><button class="mx-btn mx-btn--sound">SYNC</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--sound is-pressed">SYNC</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--sound is-on">SYNC</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--sound is-disabled">SYNC</button></td></tr>
+        <tr><td><code>--play</code><br>Sound</td>
+          <td class="mxg-dev"><button class="mx-btn mx-btn--play">▶</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--play is-pressed">▶</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--play is-on">▶</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--play is-disabled">▶</button></td></tr>
+        <tr><td><code>--cue</code><br>Sound</td>
+          <td class="mxg-dev"><button class="mx-btn mx-btn--cue">CUE</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--cue is-pressed">CUE</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--cue is-on">CUE</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--cue is-disabled">CUE</button></td></tr>
+        <tr><td><code>--deck1</code><br>Sound, deck 1</td>
+          <td class="mxg-dev"><button class="mx-btn mx-btn--deck1">LOAD 1</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--deck1 is-pressed">LOAD 1</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--deck1 is-on">Q</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--deck1 is-disabled">LOAD 1</button></td></tr>
+        <tr><td><code>--deck2</code><br>Sound, deck 2</td>
+          <td class="mxg-dev"><button class="mx-btn mx-btn--deck2">LOAD 2</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--deck2 is-pressed">LOAD 2</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--deck2 is-on">Q</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--deck2 is-disabled">LOAD 2</button></td></tr>
+        <tr><td><code>--caution</code><br>Caution</td>
+          <td class="mxg-dev"><button class="mx-btn mx-btn--caution">⏏ EJECT</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--caution is-pressed">⏏ EJECT</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--caution is-on">EJECTING…</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--caution is-disabled">⏏ EJECT</button></td></tr>
+        <tr><td><code>--danger</code><br>Danger</td>
+          <td class="mxg-dev"><button class="mx-btn mx-btn--danger">CLEAR (2)</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--danger is-pressed">CLEAR (2)</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--danger is-on">CLEAR (2)</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--danger is-disabled">CLEAR (0)</button></td></tr>
+        <tr><td><code>--ghost</code><br>Navigate, quiet</td>
+          <td class="mxg-dev"><button class="mx-btn mx-btn--ghost">MORE…</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--ghost is-pressed">MORE…</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--ghost is-on">MORE…</button></td><td class="mxg-dev"><button class="mx-btn mx-btn--ghost is-disabled">MORE…</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="mxg-note">On / lit is a see-through tint of the role colour, a 2&nbsp;px border in that colour and lighter text, for every role. Pressed shows what your finger sees (<code>:active</code>, or <code>.is-pressed</code> to draw it). Disabled keeps readable text and swaps the border to dashed, so it reads as "not now" instead of vanishing.</p>
+
+  <div class="mxg-grid" style="margin-top:12px">
+    <div>
+      <h4 class="mxg-sub">Close <code>.mx-close</code></h4>
+      <div class="mxg-panel">
+        <div class="mxg-state"><button class="mx-close" aria-label="Close"></button><span class="mxg-cap">Rest, no outline</span></div>
+        <div class="mxg-state"><button class="mx-close is-pressed" aria-label="Close"></button><span class="mxg-cap">Pressed</span></div>
+        <div class="mxg-state"><button class="mx-close is-disabled" aria-label="Close"></button><span class="mxg-cap">Disabled</span></div>
+        <div class="mxg-state mxg-state--wide"><div class="mxg-header" style="padding-right:0;background:var(--mx-surface)"><span class="mxg-header-title">SETTINGS</span><button class="mx-close" aria-label="Close"></button></div><span class="mxg-cap">At the right end of the header row</span></div>
+      </div>
+    </div>
+    <div>
+      <h4 class="mxg-sub">Tabs <code>.mx-tabs</code> <code>.mx-tab</code></h4>
+      <div class="mxg-panel mxg-panel--col" style="overflow-x:auto">
+        <div class="mx-tabs" style="min-width:max-content"><span class="mx-tab is-on">DECKS</span><span class="mx-tab is-pressed">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab is-disabled">SAMPLER</span></div>
+        <span class="mxg-cap">On (DECKS), pressed (TRACKS), rest (FX), disabled (SAMPLER)</span>
+      </div>
+    </div>
+    <div>
+      <h4 class="mxg-sub">Segmented <code>.mx-seg</code> <code>.mx-seg-opt</code></h4>
+      <div class="mxg-panel">
+        <div class="mxg-state"><div class="mx-seg"><span class="mx-seg-opt">256</span><span class="mx-seg-opt is-pressed">512</span><span class="mx-seg-opt is-on">1024</span></div><span class="mxg-cap">1024 chosen, 512 pressed</span></div>
+        <div class="mxg-state"><div class="mx-seg"><span class="mx-seg-opt is-on">ASK</span><span class="mx-seg-opt">AUTO LOAD</span><span class="mx-seg-opt is-disabled">OFF</span></div><span class="mxg-cap">With a disabled option</span></div>
+      </div>
+    </div>
+    <div>
+      <h4 class="mxg-sub">Slider <code>.mx-slider</code></h4>
+      <div class="mxg-panel mxg-panel--col">
+        <div class="mxg-state mxg-state--wide"><div class="mx-slider" style="--v:.15"><i class="mx-slider-fill"></i><i class="mx-slider-thumb"></i></div><span class="mxg-cap">--v: 0.15</span></div>
+        <div class="mxg-state mxg-state--wide"><div class="mx-slider is-pressed" style="--v:.5"><i class="mx-slider-fill"></i><i class="mx-slider-thumb"></i></div><span class="mxg-cap">--v: 0.5, while dragging</span></div>
+        <div class="mxg-state mxg-state--wide"><div class="mx-slider" style="--v:.85"><i class="mx-slider-fill"></i><i class="mx-slider-thumb"></i></div><span class="mxg-cap">--v: 0.85</span></div>
+        <div class="mxg-state mxg-state--wide"><div class="mx-slider is-disabled" style="--v:.6"><i class="mx-slider-fill"></i><i class="mx-slider-thumb"></i></div><span class="mxg-cap">Disabled (no effect loaded)</span></div>
+      </div>
+    </div>
+    <div>
+      <h4 class="mxg-sub">Menu rows <code>.mx-menu</code> <code>.mx-menu-item</code></h4>
+      <div class="mxg-panel mxg-panel--col">
+        <div class="mx-menu mxg-w-menu">
+          <div class="mx-menu-item">Arrange columns</div>
+          <div class="mx-menu-item is-on">This Pi<span class="mx-menu-note">412 tracks</span></div>
+          <div class="mx-menu-item has-sub">Load</div>
+          <div class="mx-menu-item is-pressed has-sub">rekordbox</div>
+          <div class="mx-menu-item mx-menu-item--danger">Clear pad 3…</div>
+          <div class="mx-menu-item is-disabled">Recordings</div>
+        </div>
+        <span class="mxg-cap">Plain, on (current list), with sub-items, pressed, danger, disabled. Rows are 52&nbsp;px.</span>
+      </div>
+    </div>
+    <div>
+      <h4 class="mxg-sub">Chips <code>.mx-chip</code></h4>
+      <div class="mxg-panel mxg-panel--col">
+        <div class="mxg-live-in"><span class="mx-chip mx-chip--usb">NO USB</span><span class="mx-chip mx-chip--ready">READY</span><span class="mx-chip mx-chip--inuse">IN USE</span><span class="mx-chip mx-chip--caution">EJECTING</span><span class="mx-chip mx-chip--ready is-on">SAFE TO REMOVE</span></div>
+        <span class="mxg-cap">USB states</span>
+        <div class="mxg-live-in"><span class="mx-chip mx-chip--sync">SYNC</span><span class="mx-chip mx-chip--master">MASTER</span></div>
+        <span class="mxg-cap">Deck flags. Chips are pills: they show a state and cannot be pressed.</span>
+      </div>
+    </div>
+    <div>
+      <h4 class="mxg-sub">Toggle <code>.mx-toggle</code></h4>
+      <div class="mxg-panel">
+        <div class="mxg-state"><button class="mx-toggle" aria-label="Split cue off"></button><span class="mxg-cap">Off</span></div>
+        <div class="mxg-state"><button class="mx-toggle is-on" aria-label="Split cue on"></button><span class="mxg-cap">On</span></div>
+        <div class="mxg-state"><button class="mx-toggle is-pressed" aria-label="Pressed"></button><span class="mxg-cap">Pressed</span></div>
+        <div class="mxg-state"><button class="mx-toggle is-disabled" aria-label="Disabled"></button><span class="mxg-cap">Disabled</span></div>
+      </div>
+    </div>
+    <div>
+      <h4 class="mxg-sub">Deck row <code>.mx-deckrow</code></h4>
+      <div class="mxg-panel mxg-panel--col">
+        <div class="mx-deckrow mxg-w-deck"><span class="mx-deckrow-num">1</span><span class="mx-deckrow-title">Your Body</span><span class="mx-deckrow-artist">Biscits</span><span class="mx-deckrow-time" data-label="Remaining · Tap">-3:42.52</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">-7.1</span><span class="mx-deckrow-key">1B</span></div>
+        <span class="mxg-cap">No chips: title and artist side by side. Captions over time and pitch come from <code>data-label</code>.</span>
+        <div class="mx-deckrow mx-deckrow--deck2 mxg-w-deck"><span class="mx-deckrow-num">2</span><span class="mx-deckrow-title">You're The One</span><span class="mx-deckrow-artist">KAYTRANADA feat. Syd &amp; Shay Lia</span><span class="mx-deckrow-chips"><span class="mx-chip mx-chip--sync">SYNC</span><span class="mx-chip mx-chip--master">MASTER</span></span><span class="mx-deckrow-time" data-label="Remaining · Tap">-3:47.76</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">0.0</span><span class="mx-deckrow-key">8A</span></div>
+        <span class="mxg-cap">SYNC and MASTER showing: the artist is cut short first</span>
+        <div class="mx-deckrow mxg-w-deck--narrow"><span class="mx-deckrow-num">1</span><span class="mx-deckrow-title">Frontin' The Best (Giggs Remix)</span><span class="mx-deckrow-artist">Pharrell</span><span class="mx-deckrow-chips"><span class="mx-chip mx-chip--sync">SYNC</span><span class="mx-chip mx-chip--master">MASTER</span></span><span class="mx-deckrow-time" data-label="Remaining · Tap">-1:05.10</span><span class="mx-deckrow-bpm">124.00</span><span class="mx-deckrow-pitch" data-label="±8%">+2.3</span><span class="mx-deckrow-key">5A</span></div>
+        <span class="mxg-cap">Still no room: then the title is cut too</span>
+      </div>
+    </div>
+  </div>
+
+  <h4 class="mxg-sub">Popover <code>.mx-popover</code>: Clear samples</h4>
+  <div class="mxg-stage">
+    <div class="mxg-stage-pads">
+      <div class="mxg-stage-pad">1 · Air horn.wav</div><div class="mxg-stage-pad">2 · Siren.wav</div><div class="mxg-stage-pad">3 · Vox chop.wav</div><div class="mxg-stage-pad">5 · Rewind.wav</div>
+    </div>
+    <div class="mx-popover">
+      <div class="mx-popover-sheet">
+        <div class="mx-popover-head"><span class="mx-popover-title">Clear samples</span><button class="mx-close" aria-label="Close"></button></div>
+        <div class="mx-popover-body">
+          <div class="mx-menu">
+            <div class="mx-menu-item is-on"><span class="mx-tick"></span>Pad 1 · Air horn.wav</div>
+            <div class="mx-menu-item is-on"><span class="mx-tick"></span>Pad 2 · Siren.wav</div>
+            <div class="mx-menu-item"><span class="mx-tick"></span>Pad 3 · Vox chop.wav</div>
+            <div class="mx-menu-item"><span class="mx-tick"></span>Pad 5 · Rewind.wav</div>
+          </div>
+        </div>
+        <div class="mx-popover-foot"><button class="mx-btn">CANCEL</button><button class="mx-btn mx-btn--danger">CLEAR (2)</button></div>
+      </div>
+    </div>
+  </div>
+  <p class="mxg-note">The backdrop dims the screen behind the sheet. A ticked row shows the tick and a slightly lighter background, with no left edge. Tick the pads, then CLEAR (n). CANCEL and ✕ change nothing.</p>
+
+  <h3 class="mxg-h">Now vs Proposed</h3>
+  <p class="mxg-p">"Now" is drawn from today's skin values; each caption names the lines it uses.</p>
+
+  <h4 class="mxg-sub">Buttons: CUE, ▶, SYNC, LOAD, EJECT</h4>
+  <div class="mxg-vs">
+    <div>
+      <p class="mxg-vs-label">Now</p>
+      <div class="mxg-panel"><div class="mxg-now">
+        <span class="mxg-now-btn mxg-now-cue">CUE</span><span class="mxg-now-btn mxg-now-play mxg-now-play-on">▶</span><span class="mxg-now-btn mxg-now-deck1-on">SYNC</span><span class="mxg-now-btn mxg-now-load1">LOAD 1</span><span class="mxg-now-btn mxg-now-eject">⏏ EJECT</span>
+      </div></div>
+      <p class="mxg-cite">Radius 6, bold 16&nbsp;px: <code>mixpi-performance.qss</code> 8-14. CUE #ffd23f: 63. ▶ lit #43d17a fill: 18-19. SYNC lit, deck 1 tint: 57-58. LOAD 1: 64. EJECT is a primary button (<code>mixxx-media-screen.patch</code> 1141), lime #b5e15c: <code>pioneered-menus.qss</code> 317-321.</p>
+    </div>
+    <div>
+      <p class="mxg-vs-label mxg-vs-label--new">Proposed</p>
+      <div class="mxg-panel"><div class="mxg-now">
+        <button class="mx-btn mx-btn--cue">CUE</button><button class="mx-btn mx-btn--play is-on" aria-label="Play">▶</button><button class="mx-btn mx-btn--sound is-on">SYNC</button><button class="mx-btn mx-btn--deck1">LOAD 1</button><button class="mx-btn mx-btn--caution">⏏ EJECT</button>
+      </div></div>
+      <p class="mxg-cite">Radius 3, 44&nbsp;px. Lit ▶ and SYNC keep a see-through tint; EJECT moves from Confirm green to Caution amber.</p>
+    </div>
+  </div>
+
+  <h4 class="mxg-sub">Slider: MIX and effect depth</h4>
+  <div class="mxg-vs">
+    <div>
+      <p class="mxg-vs-label">Now</p>
+      <div class="mxg-panel mxg-panel--col">
+        <div class="mxg-now-slider"><i class="mxg-now-slider-bar" style="width:62%"></i><i class="mxg-now-slider-handle" style="left:calc(62% - 12px)"></i></div>
+      </div>
+      <p class="mxg-cite">An 8&nbsp;px lime bar along the top edge: <code>mixpi-performance.py</code> 510 (BarColor #b5e15c, BarWidth 8). Handle 24×40, rx 6, #e9eef5: 1225. Track #19212d: <code>mixpi-performance.qss</code> 207.</p>
+    </div>
+    <div>
+      <p class="mxg-vs-label mxg-vs-label--new">Proposed</p>
+      <div class="mxg-panel mxg-panel--col">
+        <div class="mx-slider mxg-w-slider" style="--v:.62"><i class="mx-slider-fill"></i><i class="mx-slider-thumb"></i></div>
+      </div>
+      <p class="mxg-cite">The fill takes the full height of the track and stops at the centre of the handle, so it never needs centring.</p>
+    </div>
+  </div>
+
+  <h4 class="mxg-sub">Menu row</h4>
+  <div class="mxg-vs">
+    <div>
+      <p class="mxg-vs-label">Now</p>
+      <div class="mxg-panel">
+        <div class="mxg-now-menu">
+          <div class="mxg-now-menu-item">Load<span class="mxg-now-menu-arrow">▸</span></div>
+          <div class="mxg-now-menu-item mxg-now-menu-item--sel">Load to a sampler pad…</div>
+          <div class="mxg-now-menu-item">Arrange columns</div>
+        </div>
+      </div>
+      <p class="mxg-cite">#17191f, white, 32&nbsp;px rows: <code>pioneered-menus.qss</code> 4-6, 16. Selected #285a88 blue: 18-22.</p>
+    </div>
+    <div>
+      <p class="mxg-vs-label mxg-vs-label--new">Proposed</p>
+      <div class="mxg-panel">
+        <div class="mx-menu mxg-w-menu">
+          <div class="mx-menu-item has-sub">Load</div>
+          <div class="mx-menu-item is-on">Load to a sampler pad…</div>
+          <div class="mx-menu-item">Arrange columns</div>
+        </div>
+      </div>
+      <p class="mxg-cite">52&nbsp;px rows, a chevron for sub-items, and the current row marked with the green edge used across the skin instead of a blue bar.</p>
+    </div>
+  </div>
+
+  <h4 class="mxg-sub">Chips</h4>
+  <div class="mxg-vs">
+    <div>
+      <p class="mxg-vs-label">Now</p>
+      <div class="mxg-panel"><div class="mxg-now">
+        <span class="mxg-now-chip mxg-now-chip--sync">SYNC</span><span class="mxg-now-chip">MASTER</span><span class="mxg-now-chip mxg-now-chip--ready">READY</span><span class="mxg-now-chip mxg-now-chip--inuse">IN USE</span><span class="mxg-now-chip mxg-now-chip--eject">EJECTING</span><span class="mxg-now-chip mxg-now-chip--safe">SAFE TO REMOVE</span>
+      </div></div>
+      <p class="mxg-cite">Radius 4, lime by default: <code>mixpi-performance.qss</code> 73-76; SYNC deck 1 blue: 79. Drive states: <code>pioneered-menus.qss</code> 286-297.</p>
+    </div>
+    <div>
+      <p class="mxg-vs-label mxg-vs-label--new">Proposed</p>
+      <div class="mxg-panel"><div class="mxg-now">
+        <span class="mx-chip mx-chip--sync">SYNC</span><span class="mx-chip mx-chip--master">MASTER</span><span class="mx-chip mx-chip--ready">READY</span><span class="mx-chip mx-chip--inuse">IN USE</span><span class="mx-chip mx-chip--caution">EJECTING</span><span class="mx-chip mx-chip--ready is-on">SAFE TO REMOVE</span>
+      </div></div>
+      <p class="mxg-cite">Pills, because you cannot press them. EJECTING takes the Caution amber; SYNC is teal on both decks.</p>
+    </div>
+  </div>
+
+  <h4 class="mxg-sub">Close</h4>
+  <div class="mxg-vs">
+    <div>
+      <p class="mxg-vs-label">Now</p>
+      <div class="mxg-panel mxg-panel--col">
+        <div class="mxg-now-head"><span class="mxg-now-head-title">DECK 1 · LOOP</span><span class="mxg-now-btn" style="width:110px">×&nbsp;&nbsp;CLOSE</span></div>
+        <div class="mxg-now-head"><span class="mxg-now-x">✕</span><span class="mxg-now-head-title">SETTINGS</span></div>
+        <div class="mxg-now-head"><span class="mxg-now-x mxg-now-x--sq">✕</span><span class="mxg-now-head-title">USB &amp; MEDIA</span></div>
+      </div>
+      <p class="mxg-cite">Tool panel "×&nbsp;&nbsp;CLOSE" text button, 110×48: <code>mixpi-performance.py</code> 446. Settings ✕ on the left, plain #eef2f7 icon: 600-604, 49; button <code>mixpi-performance.qss</code> 111-113. Media ✕ on the left, square corners: <code>pioneered-menus.qss</code> 226-232.</p>
+    </div>
+    <div>
+      <p class="mxg-vs-label mxg-vs-label--new">Proposed</p>
+      <div class="mxg-panel mxg-panel--col">
+        <div class="mxg-header"><span class="mxg-header-title">DECK 1 · LOOP</span><button class="mx-close" aria-label="Close"></button></div>
+        <div class="mxg-header"><span class="mxg-header-title">SETTINGS</span><button class="mx-close" aria-label="Close"></button></div>
+        <div class="mxg-header"><span class="mxg-header-title">USB &amp; MEDIA</span><button class="mx-close" aria-label="Close"></button></div>
+      </div>
+      <p class="mxg-cite">One close button everywhere: a 44×44 grey square with a red ✕, at the right end of the header row.</p>
+    </div>
+  </div>
+
+  <h3 class="mxg-h">Palette</h3>
+  <p class="mxg-p">Device colours, grouped by role. The screen is always dark, whatever the page theme. Each tuned value notes today's colour where there is one.</p>
+  <div class="mxg-swgroups">
+  <div class="mxg-swgroup"><p class="mxg-swgroup-h">Surfaces and lines</p>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-bg)"></span><span><span class="mxg-sw-name">--mx-bg</span><br><span class="mxg-sw-hex">#0d1014</span> <span class="mxg-sw-was">was #0a0d12</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-surface)"></span><span><span class="mxg-sw-name">--mx-surface</span><br><span class="mxg-sw-hex">#161a20</span> <span class="mxg-sw-was">was #121821</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-surface-2)"></span><span><span class="mxg-sw-name">--mx-surface-2</span><br><span class="mxg-sw-hex">#1d222a</span> <span class="mxg-sw-was">was #19212d</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-surface-3)"></span><span><span class="mxg-sw-name">--mx-surface-3</span><br><span class="mxg-sw-hex">#262c35</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-surface-off)"></span><span><span class="mxg-sw-name">--mx-surface-off</span><br><span class="mxg-sw-hex">#13161b</span> <span class="mxg-sw-was">was #10151c</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-line)"></span><span><span class="mxg-sw-name">--mx-line</span><br><span class="mxg-sw-hex">#2c333d</span> <span class="mxg-sw-was">was #2b3646</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-line-strong)"></span><span><span class="mxg-sw-name">--mx-line-strong</span><br><span class="mxg-sw-hex">#3a424e</span></span></div>
+  </div>
+  <div class="mxg-swgroup"><p class="mxg-swgroup-h">Text</p>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-text)"></span><span><span class="mxg-sw-name">--mx-text</span><br><span class="mxg-sw-hex">#e4e7ec</span> <span class="mxg-sw-was">was #eef2f7</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-text-dim)"></span><span><span class="mxg-sw-name">--mx-text-dim</span><br><span class="mxg-sw-hex">#949dab</span> <span class="mxg-sw-was">was #8c9ab0</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-text-off)"></span><span><span class="mxg-sw-name">--mx-text-off</span><br><span class="mxg-sw-hex">#7f8896</span> <span class="mxg-sw-was">was #56627a</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-ink)"></span><span><span class="mxg-sw-name">--mx-ink</span><br><span class="mxg-sw-hex">#0d1014</span></span></div>
+  </div>
+  <div class="mxg-swgroup"><p class="mxg-swgroup-h">Navigate, Choose, Confirm</p>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-accent)"></span><span><span class="mxg-sw-name">--mx-accent</span><br><span class="mxg-sw-hex">#a3c45e</span> <span class="mxg-sw-was">was #b5e15c</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-accent-press)"></span><span><span class="mxg-sw-name">--mx-accent-press</span><br><span class="mxg-sw-hex">#8fad50</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-accent-lit)"></span><span><span class="mxg-sw-name">--mx-accent-lit</span><br><span class="mxg-sw-hex">#bcd88a</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-accent-surface)"></span><span><span class="mxg-sw-name">--mx-accent-surface</span><br><span class="mxg-sw-hex">#253019</span> <span class="mxg-sw-was">was #2a3a1a</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-slider-fill)"></span><span><span class="mxg-sw-name">--mx-slider-fill</span><br><span class="mxg-sw-hex">#5d7238</span> <span class="mxg-sw-was">was #b5e15c</span></span></div>
+  </div>
+  <div class="mxg-swgroup"><p class="mxg-swgroup-h">Sound: decks</p>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-deck1)"></span><span><span class="mxg-sw-name">--mx-deck1</span><br><span class="mxg-sw-hex">#5b95d4</span> <span class="mxg-sw-was">was #4aa8ff</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-deck1-text)"></span><span><span class="mxg-sw-name">--mx-deck1-text</span><br><span class="mxg-sw-hex">#9cc2ec</span> <span class="mxg-sw-was">was #bfe0ff</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-deck1-surface)"></span><span><span class="mxg-sw-name">--mx-deck1-surface</span><br><span class="mxg-sw-hex">#172536</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-deck1-lit)"></span><span><span class="mxg-sw-name">--mx-deck1-lit</span><br><span class="mxg-sw-hex">#b3d1f2</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-deck2)"></span><span><span class="mxg-sw-name">--mx-deck2</span><br><span class="mxg-sw-hex">#d6784a</span> <span class="mxg-sw-was">was #ff8f3f</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-deck2-text)"></span><span><span class="mxg-sw-name">--mx-deck2-text</span><br><span class="mxg-sw-hex">#ebb08e</span> <span class="mxg-sw-was">was #ffd6b8</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-deck2-surface)"></span><span><span class="mxg-sw-name">--mx-deck2-surface</span><br><span class="mxg-sw-hex">#35201a</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-deck2-lit)"></span><span><span class="mxg-sw-name">--mx-deck2-lit</span><br><span class="mxg-sw-hex">#f2c2a6</span></span></div>
+  </div>
+  <div class="mxg-swgroup"><p class="mxg-swgroup-h">Sound: transport and sync</p>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-play)"></span><span><span class="mxg-sw-name">--mx-play</span><br><span class="mxg-sw-hex">#5fae6e</span> <span class="mxg-sw-was">was #43d17a</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-play-text)"></span><span><span class="mxg-sw-name">--mx-play-text</span><br><span class="mxg-sw-hex">#7cc58a</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-play-surface)"></span><span><span class="mxg-sw-name">--mx-play-surface</span><br><span class="mxg-sw-hex">#172a1d</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-play-lit)"></span><span><span class="mxg-sw-name">--mx-play-lit</span><br><span class="mxg-sw-hex">#9bd6a6</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-cue)"></span><span><span class="mxg-sw-name">--mx-cue</span><br><span class="mxg-sw-hex">#cbb551</span> <span class="mxg-sw-was">was #ffd23f</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-cue-text)"></span><span><span class="mxg-sw-name">--mx-cue-text</span><br><span class="mxg-sw-hex">#d9c56a</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-cue-surface)"></span><span><span class="mxg-sw-name">--mx-cue-surface</span><br><span class="mxg-sw-hex">#2c2912</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-cue-lit)"></span><span><span class="mxg-sw-name">--mx-cue-lit</span><br><span class="mxg-sw-hex">#e3d58a</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-info)"></span><span><span class="mxg-sw-name">--mx-info</span><br><span class="mxg-sw-hex">#5aa4c4</span> <span class="mxg-sw-was">was #4aa8ff</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-info-text)"></span><span><span class="mxg-sw-name">--mx-info-text</span><br><span class="mxg-sw-hex">#86c0d8</span> <span class="mxg-sw-was">was #9fd0ff</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-info-surface)"></span><span><span class="mxg-sw-name">--mx-info-surface</span><br><span class="mxg-sw-hex">#13272f</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-info-lit)"></span><span><span class="mxg-sw-name">--mx-info-lit</span><br><span class="mxg-sw-hex">#a3d2e6</span></span></div>
+  </div>
+  <div class="mxg-swgroup"><p class="mxg-swgroup-h">Caution</p>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-caution)"></span><span><span class="mxg-sw-name">--mx-caution</span><br><span class="mxg-sw-hex">#dfa33a</span> <span class="mxg-sw-was">was #ffb020</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-caution-text)"></span><span><span class="mxg-sw-name">--mx-caution-text</span><br><span class="mxg-sw-hex">#e8b65c</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-caution-surface)"></span><span><span class="mxg-sw-name">--mx-caution-surface</span><br><span class="mxg-sw-hex">#30260e</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-caution-lit)"></span><span><span class="mxg-sw-name">--mx-caution-lit</span><br><span class="mxg-sw-hex">#f0c983</span></span></div>
+  </div>
+  <div class="mxg-swgroup"><p class="mxg-swgroup-h">Danger</p>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-danger)"></span><span><span class="mxg-sw-name">--mx-danger</span><br><span class="mxg-sw-hex">#d0574d</span> <span class="mxg-sw-was">was #ff5468</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-danger-text)"></span><span><span class="mxg-sw-name">--mx-danger-text</span><br><span class="mxg-sw-hex">#ec7f74</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-danger-surface)"></span><span><span class="mxg-sw-name">--mx-danger-surface</span><br><span class="mxg-sw-hex">#34191b</span></span></div>
+    <div class="mxg-sw"><span class="mxg-sw-chip" style="background:var(--mx-danger-lit)"></span><span><span class="mxg-sw-name">--mx-danger-lit</span><br><span class="mxg-sw-hex">#f4a59d</span></span></div>
+  </div>
+</div>
+
+  <h3 class="mxg-h">Radius and type</h3>
+  <ul class="mxg-list">
+    <li><strong>Radius:</strong> buttons and fields 3&nbsp;px (also sliders, the close button and popovers); 2&nbsp;px on badges, ticks and the slider handle. Indicators that cannot be pressed (chips) are pills. Today is 6&nbsp;px on buttons, 4&nbsp;px on chips, 8&nbsp;px on search, 10&nbsp;px on cards and 12&nbsp;px on sheets.</li>
+    <li><strong>Ubuntu Condensed</strong> (<code>--mx-font-ui</code>): every label you tap or scan: buttons, tabs, chips, screen and popover titles.</li>
+    <li><strong>Open Sans</strong> (<code>--mx-font-text</code>): words you read: track titles, artists, menu rows, hints.</li>
+    <li><strong>Ubuntu Mono</strong> (<code>--mx-font-num</code>): numbers that change: time, BPM, pitch, key, CPU.</li>
+  </ul>
+</div>
+
+</main></body></html>

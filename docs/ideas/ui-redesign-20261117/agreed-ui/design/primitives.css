@@ -1,0 +1,576 @@
+/* MixPi device primitives (builder C, UI review round 1). Device pixels, 800x480.
+ * Needs tokens.css. Every rule is scoped by an .mx- class.
+ *
+ * Buttons    <button class="mx-btn mx-btn--caution">EJECT</button>
+ *            modifiers --confirm --sound --deck1 --deck2 --play --cue --caution --danger --ghost
+ *            states .is-on (lit or chosen: see-through role tint, 2 px role border, light role text),
+ *            .is-disabled, .is-pressed (shows a press; same as :active)
+ *            44 px tall, radius 3, Ubuntu Condensed 15 px uppercase.
+ * Close      <button class="mx-close" aria-label="Close"></button>  44x44, red ✕ drawn in CSS, no outline at rest.
+ * Tabs       <nav class="mx-tabs"><span class="mx-tab is-on">DECKS</span>…</nav>  48 px bar.
+ * Segmented  <div class="mx-seg"><span class="mx-seg-opt is-on">RB FAST</span>…</div>
+ * Slider     <div class="mx-slider" style="--v:.4"><i class="mx-slider-fill"></i><i class="mx-slider-thumb"></i></div>
+ *            --v 0..1; the fill is full height and ends at the thumb's centre. Width comes from the parent.
+ * Menu       <div class="mx-menu"><div class="mx-menu-item is-on has-sub">…</div></div>  rows 52 px.
+ *            .mx-menu-item--danger; optional .mx-menu-note (dim text pushed right), .mx-tick (tick box).
+ *            A ticked row (.is-on holding .mx-tick) shows the tick and a slight background, no left edge.
+ * Chips      <span class="mx-chip mx-chip--sync">SYNC</span>
+ *            --usb (plain, NO USB) --ready --inuse --caution (EJECTING) --sync --master; .is-on = solid (SAFE TO REMOVE).
+ *            Pills: chips are indicators and cannot be pressed.
+ * Popover    <div class="mx-popover">                    fills the nearest positioned box, dims it
+ *              <div class="mx-popover-sheet">
+ *                <div class="mx-popover-head"><span class="mx-popover-title">…</span><button class="mx-close"></button></div>
+ *                <div class="mx-popover-body">…</div>
+ *                <div class="mx-popover-foot"><button class="mx-btn">CANCEL</button><button class="mx-btn mx-btn--danger">CLEAR (2)</button></div>
+ * Toggle     <button class="mx-toggle is-on"></button>  88x44, says ON or OFF.
+ * Deck row   <div class="mx-deckrow mx-deckrow--deck1">   72 px, two lines, flat children in this order:
+ *              .mx-deckrow-num     the 1 or 2 badge
+ *              .mx-deckrow-title   track title (white)
+ *              .mx-deckrow-artist  artist (dim), right after the title
+ *              .mx-deckrow-chips   holds .mx-chip--sync / --master, pushed to the right
+ *              .mx-deckrow-time    second line: remaining time; optional data-label caption above
+ *              .mx-deckrow-bpm     BPM box
+ *              .mx-deckrow-pitch   ±% pitch; optional data-label caption above
+ *              .mx-deckrow-key     key
+ *            The artist shrinks with "…" first, then the title, so chips never get pushed out.
+ */
+
+/* ---------- Screen ---------- */
+.mx-screen {
+  position: relative;
+  box-sizing: border-box;
+  width: 800px;
+  height: 480px;
+  overflow: hidden;
+  background: var(--mx-bg);
+  color: var(--mx-text);
+  font: 400 15px/1.25 var(--mx-font-text);
+  -webkit-font-smoothing: antialiased;
+}
+.mx-screen *, .mx-screen *::before, .mx-screen *::after { box-sizing: border-box; }
+.mx-screen button { font: inherit; color: inherit; }
+
+/* ---------- Button ---------- */
+.mx-btn {
+  --mx-tone: var(--mx-line-strong);
+  --mx-tone-text: var(--mx-text);
+  --mx-tone-surface: var(--mx-surface-3);
+  --mx-lit: var(--mx-accent);
+  --mx-lit-text: var(--mx-accent-lit);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: 44px;
+  min-width: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  color: var(--mx-text);
+  font: 700 15px/1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+}
+.mx-btn:active, .mx-btn.is-pressed { background: var(--mx-surface-3); }
+
+/* Confirm: muted accent fill, dark text */
+.mx-btn--confirm {
+  background: var(--mx-accent);
+  border-color: var(--mx-accent);
+  color: var(--mx-ink);
+}
+.mx-btn--confirm:active, .mx-btn--confirm.is-pressed {
+  background: var(--mx-accent-press);
+  border-color: var(--mx-accent-press);
+}
+
+/* Sound family: tone outline and tone text at rest, dark tint when pressed */
+.mx-btn--sound { --mx-tone: var(--mx-info); --mx-tone-text: var(--mx-info-text); --mx-tone-surface: var(--mx-info-surface); --mx-lit: var(--mx-info); --mx-lit-text: var(--mx-info-lit); }
+.mx-btn--deck1 { --mx-tone: var(--mx-deck1); --mx-tone-text: var(--mx-deck1-text); --mx-tone-surface: var(--mx-deck1-surface); --mx-lit: var(--mx-deck1); --mx-lit-text: var(--mx-deck1-lit); }
+.mx-btn--deck2 { --mx-tone: var(--mx-deck2); --mx-tone-text: var(--mx-deck2-text); --mx-tone-surface: var(--mx-deck2-surface); --mx-lit: var(--mx-deck2); --mx-lit-text: var(--mx-deck2-lit); }
+.mx-btn--play  { --mx-tone: var(--mx-play);  --mx-tone-text: var(--mx-play-text);  --mx-tone-surface: var(--mx-play-surface); --mx-lit: var(--mx-play); --mx-lit-text: var(--mx-play-lit); font-size: 19px; }
+.mx-btn--cue   { --mx-tone: var(--mx-cue);   --mx-tone-text: var(--mx-cue-text);   --mx-tone-surface: var(--mx-cue-surface); --mx-lit: var(--mx-cue); --mx-lit-text: var(--mx-cue-lit); }
+.mx-btn--caution { --mx-lit: var(--mx-caution); --mx-lit-text: var(--mx-caution-lit); }
+.mx-btn--danger  { --mx-lit: var(--mx-danger);  --mx-lit-text: var(--mx-danger-lit); }
+.mx-btn--sound, .mx-btn--deck1, .mx-btn--deck2, .mx-btn--play, .mx-btn--cue {
+  border-color: color-mix(in srgb, var(--mx-tone) 60%, var(--mx-surface-2));
+  color: var(--mx-tone-text);
+}
+.mx-btn--sound:active, .mx-btn--deck1:active, .mx-btn--deck2:active, .mx-btn--play:active, .mx-btn--cue:active,
+.mx-btn--sound.is-pressed, .mx-btn--deck1.is-pressed, .mx-btn--deck2.is-pressed, .mx-btn--play.is-pressed, .mx-btn--cue.is-pressed {
+  background: var(--mx-tone-surface);
+  border-color: var(--mx-tone);
+}
+
+/* Caution: amber on its own dark amber tint; solid amber only under the finger */
+.mx-btn--caution {
+  background: var(--mx-caution-surface);
+  border-color: var(--mx-caution);
+  color: var(--mx-caution-text);
+}
+.mx-btn--caution:active, .mx-btn--caution.is-pressed {
+  background: var(--mx-caution);
+  border-color: var(--mx-caution);
+  color: var(--mx-ink);
+}
+
+/* Danger: red on a dark red tint; solid red when pressed */
+.mx-btn--danger {
+  background: var(--mx-danger-surface);
+  border-color: var(--mx-danger);
+  color: var(--mx-danger-text);
+}
+.mx-btn--danger:active, .mx-btn--danger.is-pressed {
+  background: var(--mx-danger);
+  border-color: var(--mx-danger);
+  color: var(--mx-ink);
+}
+
+/* Lit or chosen, every role: a see-through tint of the role colour, never a flat fill.
+ * The 2 px role border (1 px border + 1 px inset) and the lighter text set it apart from rest. */
+.mx-btn.is-on {
+  background: color-mix(in srgb, var(--mx-lit) var(--mx-lit-alpha), transparent);
+  border-color: var(--mx-lit);
+  box-shadow: inset 0 0 0 1px var(--mx-lit);
+  color: var(--mx-lit-text);
+}
+.mx-btn.is-on:active, .mx-btn.is-on.is-pressed {
+  background: color-mix(in srgb, var(--mx-lit) 40%, transparent);
+}
+
+/* Ghost: a quiet Navigate button, outlined on a transparent background */
+.mx-btn--ghost { background: transparent; border-color: var(--mx-line-strong); color: var(--mx-text); }
+.mx-btn--ghost:active, .mx-btn--ghost.is-pressed { background: var(--mx-surface-3); }
+.mx-btn--ghost.is-on { background: transparent; border-color: var(--mx-line-strong); color: var(--mx-accent); box-shadow: inset 0 -3px 0 var(--mx-accent); }
+
+/* Disabled wins over every role */
+.mx-btn.is-disabled, .mx-btn.is-disabled:active {
+  background: var(--mx-surface-off);
+  border-color: var(--mx-line);
+  border-style: dashed;
+  color: var(--mx-text-off);
+  filter: none;
+  box-shadow: none;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ---------- Close: neutral square, red ✕ glyph ---------- */
+.mx-close {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent; /* no outline at rest */
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  font-size: 0;
+  color: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.mx-close::before, .mx-close::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 2.5px;
+  margin: -1.25px 0 0 -10px;
+  border-radius: 1px;
+  background: var(--mx-danger-text);
+  transform: rotate(45deg);
+}
+.mx-close::after { transform: rotate(-45deg); }
+.mx-close:active, .mx-close.is-pressed { background: var(--mx-danger-surface); border-color: var(--mx-danger); }
+.mx-close.is-disabled { background: var(--mx-surface-off); pointer-events: none; }
+.mx-close.is-disabled::before, .mx-close.is-disabled::after { background: var(--mx-text-off); }
+
+/* ---------- Tabs (top bar) ---------- */
+.mx-tabs {
+  display: flex;
+  align-items: stretch;
+  box-sizing: border-box;
+  height: 48px;
+  background: var(--mx-bg);
+  border-bottom: 1px solid var(--mx-line);
+}
+.mx-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 88px;
+  padding: 3px 18px 0;
+  border-bottom: 3px solid transparent;
+  color: var(--mx-text-dim);
+  font: 700 18px/1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mx-tab:active, .mx-tab.is-pressed { color: var(--mx-text); background: var(--mx-surface); }
+.mx-tab.is-on { color: var(--mx-text); border-bottom-color: var(--mx-accent); }
+.mx-tab.is-disabled { color: var(--mx-text-off); pointer-events: none; }
+
+/* ---------- Segmented choice ---------- */
+.mx-seg {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 44px;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  overflow: hidden;
+}
+.mx-seg-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 64px;
+  padding: 0 16px;
+  border-left: 1px solid var(--mx-line-strong);
+  color: var(--mx-text);
+  font: 700 15px/1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mx-seg-opt:first-child { border-left: 0; }
+.mx-seg-opt:active, .mx-seg-opt.is-pressed { background: var(--mx-surface-3); }
+.mx-seg-opt.is-on {
+  background: color-mix(in srgb, var(--mx-accent) var(--mx-lit-alpha), transparent);
+  color: var(--mx-accent-lit);
+  box-shadow: inset 0 0 0 2px var(--mx-accent);
+}
+.mx-seg-opt.is-disabled { background: var(--mx-surface-off); color: var(--mx-text-off); pointer-events: none; }
+
+/* ---------- Slider: full-height fill up to the thumb's centre ---------- */
+.mx-slider {
+  --v: 0.5;
+  --mx-thumb-w: 24px;
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  height: 44px;
+  min-width: 120px;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  overflow: hidden;
+  cursor: pointer;
+}
+.mx-slider-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--mx-thumb-w) / 2 + (100% - var(--mx-thumb-w)) * var(--v));
+  background: var(--mx-slider-fill);
+}
+.mx-slider-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: calc((100% - var(--mx-thumb-w)) * var(--v));
+  width: var(--mx-thumb-w);
+  border-radius: var(--mx-radius-sm);
+  background: var(--mx-text);
+  box-shadow: 0 0 0 1px var(--mx-bg);
+}
+.mx-slider-thumb::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--mx-surface-3);
+}
+.mx-slider:active .mx-slider-thumb, .mx-slider.is-pressed .mx-slider-thumb { background: var(--mx-accent); }
+.mx-slider.is-disabled { background: var(--mx-surface-off); border-color: var(--mx-line); pointer-events: none; }
+.mx-slider.is-disabled .mx-slider-fill { background: var(--mx-surface-3); }
+.mx-slider.is-disabled .mx-slider-thumb { background: var(--mx-text-off); }
+
+/* ---------- Menu and list rows ---------- */
+.mx-menu {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: var(--mx-surface);
+}
+.mx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  min-height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--mx-line);
+  color: var(--mx-text);
+  font: 400 16px/1.2 var(--mx-font-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.mx-menu-item:active, .mx-menu-item.is-pressed { background: var(--mx-surface-3); }
+.mx-menu-item.is-on {
+  background: var(--mx-surface-2);
+  box-shadow: inset 4px 0 0 var(--mx-accent);
+  font-weight: 600;
+}
+/* Ticked rows: the tick and the slight background say it; no left edge */
+.mx-menu-item.is-on:has(.mx-tick) { box-shadow: none; font-weight: 400; }
+.mx-menu-item.has-sub::after {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-left: auto;
+  margin-right: 4px;
+  border-top: 2px solid var(--mx-text-dim);
+  border-right: 2px solid var(--mx-text-dim);
+  transform: rotate(45deg);
+}
+.mx-menu-item.has-sub:has(.mx-menu-note)::after { margin-left: 0; }
+.mx-menu-item--danger { color: var(--mx-danger-text); }
+.mx-menu-item--danger:active, .mx-menu-item--danger.is-pressed { background: var(--mx-danger-surface); }
+.mx-menu-item.is-disabled { color: var(--mx-text-off); pointer-events: none; }
+.mx-menu-note { margin-left: auto; color: var(--mx-text-dim); font-size: 14px; }
+.mx-tick {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--mx-text-dim);
+  border-radius: var(--mx-radius-sm);
+}
+.mx-menu-item.is-on .mx-tick, .mx-tick.is-on { background: var(--mx-accent); border-color: var(--mx-accent); }
+.mx-menu-item.is-on .mx-tick::after, .mx-tick.is-on::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 6px;
+  height: 11px;
+  border-right: 2.5px solid var(--mx-ink);
+  border-bottom: 2.5px solid var(--mx-ink);
+  transform: rotate(45deg);
+}
+
+/* ---------- Chips ---------- */
+.mx-chip {
+  --mx-tone: var(--mx-line-strong);
+  --mx-tone-text: var(--mx-text-dim);
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--mx-tone);
+  border-radius: 999px; /* pill: an indicator, not a button */
+  background: transparent;
+  color: var(--mx-tone-text);
+  font: 700 13px/1 var(--mx-font-ui);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mx-chip--usb { --mx-tone: var(--mx-line-strong); --mx-tone-text: var(--mx-text-dim); }
+.mx-chip--ready { --mx-tone: var(--mx-play); --mx-tone-text: var(--mx-play-text); }
+.mx-chip--inuse { --mx-tone: var(--mx-info); --mx-tone-text: var(--mx-text); background: var(--mx-info-surface); }
+.mx-chip--caution { --mx-tone: var(--mx-caution); --mx-tone-text: var(--mx-caution-text); background: var(--mx-caution-surface); }
+.mx-chip--sync { --mx-tone: var(--mx-info); --mx-tone-text: var(--mx-info-text); }
+.mx-chip--master { --mx-tone: var(--mx-accent); --mx-tone-text: var(--mx-accent); }
+.mx-chip.is-on { background: var(--mx-tone); color: var(--mx-ink); }
+
+/* ---------- Popover ---------- */
+.mx-popover {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--mx-scrim);
+}
+.mx-popover-sheet {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 480px;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.mx-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 6px 6px 6px 16px;
+  border-bottom: 1px solid var(--mx-line);
+}
+.mx-popover-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--mx-text);
+  font: 700 20px/1.1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mx-popover-head .mx-close { margin-left: auto; }
+.mx-popover-body { flex: 1; min-height: 0; overflow-y: auto; }
+.mx-popover-body .mx-menu-item:last-child { border-bottom: 0; }
+.mx-popover-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--mx-line);
+  background: var(--mx-surface);
+}
+
+/* ---------- Toggle ---------- */
+.mx-toggle {
+  position: relative;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 88px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  font-size: 0;
+  cursor: pointer;
+  appearance: none;
+}
+.mx-toggle::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--mx-radius-sm);
+  background: var(--mx-text-dim);
+}
+.mx-toggle::after {
+  content: "OFF";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  color: var(--mx-text-dim);
+  font: 700 15px/1 var(--mx-font-ui);
+  letter-spacing: 0.04em;
+}
+.mx-toggle:active, .mx-toggle.is-pressed { background: var(--mx-surface-3); }
+.mx-toggle.is-on { background: var(--mx-accent-surface); border-color: var(--mx-accent); }
+.mx-toggle.is-on::before { left: auto; right: 5px; background: var(--mx-accent); }
+.mx-toggle.is-on::after { content: "ON"; right: auto; left: 12px; color: var(--mx-accent); }
+.mx-toggle.is-disabled { background: var(--mx-surface-off); border-color: var(--mx-line); border-style: dashed; pointer-events: none; }
+.mx-toggle.is-disabled::before { background: var(--mx-surface-3); }
+.mx-toggle.is-disabled::after { color: var(--mx-text-off); }
+
+/* ---------- Deck row ---------- */
+.mx-deckrow {
+  --mx-deck: var(--mx-deck1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: space-between;
+  column-gap: 6px;
+  row-gap: 0;
+  box-sizing: border-box;
+  height: 72px;
+  min-width: 0;
+  padding: 3px 6px 4px;
+  background: var(--mx-surface);
+  color: var(--mx-text);
+  font: 400 16px/1.2 var(--mx-font-text);
+}
+.mx-deckrow--deck2 { --mx-deck: var(--mx-deck2); }
+/* Line break between the head line and the stats line */
+.mx-deckrow::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
+.mx-deckrow-num, .mx-deckrow-title, .mx-deckrow-artist, .mx-deckrow-chips { order: 1; }
+.mx-deckrow-time, .mx-deckrow-bpm, .mx-deckrow-pitch, .mx-deckrow-key { order: 3; }
+.mx-deckrow-num {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--mx-radius-sm);
+  background: var(--mx-deck);
+  color: var(--mx-ink);
+  font: 700 14px/1 var(--mx-font-ui);
+}
+.mx-deckrow-title, .mx-deckrow-artist {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Title and artist start from zero and grow up to their own width. The title takes
+ * space first (grow 1000), the artist gets what is left, so the artist is cut with "…"
+ * first and the title only after it. Starting from zero also keeps the chips on line one. */
+.mx-deckrow-title { flex: 1000 1 0; max-width: max-content; min-width: 3.5em; color: var(--mx-text); }
+.mx-deckrow-artist { flex: 1 1 0; max-width: max-content; min-width: 2.2em; color: var(--mx-text-dim); font-size: 14px; }
+.mx-deckrow-chips { flex: none; display: inline-flex; gap: 4px; margin-left: auto; }
+/* Optional caption over the time and pitch: data-label="REMAINING · TAP", data-label="±8%".
+ * Drawn in the space between the two lines, so the row stays 72 px and line one is unchanged. */
+.mx-deckrow-time, .mx-deckrow-pitch { position: relative; }
+.mx-deckrow-time[data-label]::before, .mx-deckrow-pitch[data-label]::before {
+  content: attr(data-label);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 2px);
+  color: var(--mx-text-dim);
+  font: 700 11px/1 var(--mx-font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mx-deckrow-time { font: 400 21px/1 var(--mx-font-num); color: var(--mx-text); }
+.mx-deckrow-bpm {
+  padding: 3px 8px;
+  border-radius: var(--mx-radius);
+  background: var(--mx-text);
+  color: var(--mx-ink);
+  font: 700 24px/1 var(--mx-font-num);
+}
+.mx-deckrow-pitch { font: 400 19px/1 var(--mx-font-num); color: var(--mx-text); }
+.mx-deckrow-key { margin-left: auto; font: 400 17px/1 var(--mx-font-num); color: var(--mx-text); }

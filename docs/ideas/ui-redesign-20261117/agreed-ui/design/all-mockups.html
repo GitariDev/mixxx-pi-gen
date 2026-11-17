@@ -1,0 +1,929 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Mockups preview</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Ubuntu+Condensed&family=Ubuntu+Mono:wght@400;700&family=Ubuntu:wght@400;500;700&display=swap">
+<!-- C's tokens.css + primitives.css, then layout.css, inlined so html_preview sees them -->
+<style>/* MixPi device tokens (builder C, UI review round 1).
+ * The device screen is always dark, in both page themes.
+ * Names from docs/ideas/UI-REVIEW-1-20261117.md section 3 are kept; values are tuned.
+ * Extra tokens (marked +) carry the tints and text tones the roles need.
+ *
+ * Today's skin, for comparison (mixpi-performance.qss 1-5): bg #0a0d12, panels
+ * #121821/#19212d, line #2b3646, text #eef2f7, lime #b5e15c, deck 1 #4aa8ff,
+ * deck 2 #ff8f3f, safe #43d17a, warning #ffb020, danger #ff5468, radius 6.
+ *
+ * Warm hues are kept apart by hue and by fill style:
+ *   deck 2 orange  #d6784a  hue 20  identity: the solid "2" badge; neutral at rest
+ *   caution amber  #dfa33a  hue 38  on its own dark amber tint even at rest;
+ *                                   the only warm colour that goes solid (while pressed)
+ *   cue yellow     #cbb551  hue 49  CUE only
+ */
+:root {
+  /* Surfaces */
+  --mx-bg: #0d1014;
+  --mx-surface: #161a20;
+  --mx-surface-2: #1d222a;
+  --mx-surface-3: #262c35;        /* + pressed neutral */
+  --mx-surface-off: #13161b;      /* + disabled fill */
+  --mx-line: #2c333d;
+  --mx-line-strong: #3a424e;      /* + button and field borders */
+  --mx-scrim: rgba(5, 7, 9, 0.66);/* + popover backdrop */
+
+  /* Text */
+  --mx-text: #e4e7ec;
+  --mx-text-dim: #949dab;
+  --mx-text-off: #7f8896;         /* + disabled text, still 5:1 */
+  --mx-ink: #0d1014;              /* + dark text on solid fills */
+
+  /* Accent: selection, chosen, confirm */
+  --mx-accent: #a3c45e;
+  --mx-accent-press: #8fad50;     /* + confirm pressed */
+  --mx-accent-surface: #253019;
+  --mx-slider-fill: #5d7238;      /* + slider level, full height */
+
+  /* Decks */
+  --mx-deck1: #5b95d4;
+  --mx-deck1-text: #9cc2ec;       /* + deck 1 label on dark */
+  --mx-deck1-surface: #172536;    /* + deck 1 pressed tint */
+  --mx-deck2: #d6784a;
+  --mx-deck2-text: #ebb08e;       /* + deck 2 label on dark */
+  --mx-deck2-surface: #35201a;    /* + deck 2 pressed tint */
+
+  /* Transport */
+  --mx-play: #5fae6e;
+  --mx-play-text: #7cc58a;        /* + */
+  --mx-play-surface: #172a1d;     /* + */
+  --mx-cue: #cbb551;
+  --mx-cue-text: #d9c56a;         /* + */
+  --mx-cue-surface: #2c2912;      /* + */
+
+  /* Caution: eject, stop, hide (takes away, can be redone) */
+  --mx-caution: #dfa33a;
+  --mx-caution-text: #e8b65c;     /* + */
+  --mx-caution-surface: #30260e;
+
+  /* Danger: clear, delete, the close glyph (cannot be undone) */
+  --mx-danger: #d0574d;
+  --mx-danger-text: #ec7f74;      /* + */
+  --mx-danger-surface: #34191b;
+
+  /* Info: SYNC, scan, in use */
+  --mx-info: #5aa4c4;
+  --mx-info-text: #86c0d8;        /* + */
+  --mx-info-surface: #13272f;     /* + */
+
+  /* Lit and chosen: a see-through tint of the role colour (--mx-lit-alpha over whatever
+   * is behind), the role colour as a 2 px border, and a light role-colour text. */
+  --mx-lit-alpha: 26%;            /* + */
+  --mx-accent-lit: #bcd88a;       /* + */
+  --mx-info-lit: #a3d2e6;         /* + */
+  --mx-play-lit: #9bd6a6;         /* + */
+  --mx-cue-lit: #e3d58a;          /* + */
+  --mx-deck1-lit: #b3d1f2;        /* + */
+  --mx-deck2-lit: #f2c2a6;        /* + */
+  --mx-caution-lit: #f0c983;      /* + */
+  --mx-danger-lit: #f4a59d;       /* + */
+
+  /* Shape and type */
+  --mx-radius: 3px;
+  --mx-radius-sm: 2px;
+  --mx-font-ui: "Ubuntu Condensed", "Ubuntu", "Arial Narrow", sans-serif;
+  --mx-font-text: "Open Sans", "Ubuntu", "Segoe UI", sans-serif;
+  --mx-font-num: "Ubuntu Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+}
+
+/* MixPi device primitives (builder C, UI review round 1). Device pixels, 800x480.
+ * Needs tokens.css. Every rule is scoped by an .mx- class.
+ *
+ * Buttons    <button class="mx-btn mx-btn--caution">EJECT</button>
+ *            modifiers --confirm --sound --deck1 --deck2 --play --cue --caution --danger --ghost
+ *            states .is-on (lit or chosen: see-through role tint, 2 px role border, light role text),
+ *            .is-disabled, .is-pressed (shows a press; same as :active)
+ *            44 px tall, radius 3, Ubuntu Condensed 15 px uppercase.
+ * Close      <button class="mx-close" aria-label="Close"></button>  44x44, red ✕ drawn in CSS, no outline at rest.
+ * Tabs       <nav class="mx-tabs"><span class="mx-tab is-on">DECKS</span>…</nav>  48 px bar.
+ * Segmented  <div class="mx-seg"><span class="mx-seg-opt is-on">RB FAST</span>…</div>
+ * Slider     <div class="mx-slider" style="--v:.4"><i class="mx-slider-fill"></i><i class="mx-slider-thumb"></i></div>
+ *            --v 0..1; the fill is full height and ends at the thumb's centre. Width comes from the parent.
+ * Menu       <div class="mx-menu"><div class="mx-menu-item is-on has-sub">…</div></div>  rows 52 px.
+ *            .mx-menu-item--danger; optional .mx-menu-note (dim text pushed right), .mx-tick (tick box).
+ *            A ticked row (.is-on holding .mx-tick) shows the tick and a slight background, no left edge.
+ * Chips      <span class="mx-chip mx-chip--sync">SYNC</span>
+ *            --usb (plain, NO USB) --ready --inuse --caution (EJECTING) --sync --master; .is-on = solid (SAFE TO REMOVE).
+ *            Pills: chips are indicators and cannot be pressed.
+ * Popover    <div class="mx-popover">                    fills the nearest positioned box, dims it
+ *              <div class="mx-popover-sheet">
+ *                <div class="mx-popover-head"><span class="mx-popover-title">…</span><button class="mx-close"></button></div>
+ *                <div class="mx-popover-body">…</div>
+ *                <div class="mx-popover-foot"><button class="mx-btn">CANCEL</button><button class="mx-btn mx-btn--danger">CLEAR (2)</button></div>
+ * Toggle     <button class="mx-toggle is-on"></button>  88x44, says ON or OFF.
+ * Deck row   <div class="mx-deckrow mx-deckrow--deck1">   72 px, two lines, flat children in this order:
+ *              .mx-deckrow-num     the 1 or 2 badge
+ *              .mx-deckrow-title   track title (white)
+ *              .mx-deckrow-artist  artist (dim), right after the title
+ *              .mx-deckrow-chips   holds .mx-chip--sync / --master, pushed to the right
+ *              .mx-deckrow-time    second line: remaining time; optional data-label caption above
+ *              .mx-deckrow-bpm     BPM box
+ *              .mx-deckrow-pitch   ±% pitch; optional data-label caption above
+ *              .mx-deckrow-key     key
+ *            The artist shrinks with "…" first, then the title, so chips never get pushed out.
+ */
+
+/* ---------- Screen ---------- */
+.mx-screen {
+  position: relative;
+  box-sizing: border-box;
+  width: 800px;
+  height: 480px;
+  overflow: hidden;
+  background: var(--mx-bg);
+  color: var(--mx-text);
+  font: 400 15px/1.25 var(--mx-font-text);
+  -webkit-font-smoothing: antialiased;
+}
+.mx-screen *, .mx-screen *::before, .mx-screen *::after { box-sizing: border-box; }
+.mx-screen button { font: inherit; color: inherit; }
+
+/* ---------- Button ---------- */
+.mx-btn {
+  --mx-tone: var(--mx-line-strong);
+  --mx-tone-text: var(--mx-text);
+  --mx-tone-surface: var(--mx-surface-3);
+  --mx-lit: var(--mx-accent);
+  --mx-lit-text: var(--mx-accent-lit);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: 44px;
+  min-width: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  color: var(--mx-text);
+  font: 700 15px/1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+}
+.mx-btn:active, .mx-btn.is-pressed { background: var(--mx-surface-3); }
+
+/* Confirm: muted accent fill, dark text */
+.mx-btn--confirm {
+  background: var(--mx-accent);
+  border-color: var(--mx-accent);
+  color: var(--mx-ink);
+}
+.mx-btn--confirm:active, .mx-btn--confirm.is-pressed {
+  background: var(--mx-accent-press);
+  border-color: var(--mx-accent-press);
+}
+
+/* Sound family: tone outline and tone text at rest, dark tint when pressed */
+.mx-btn--sound { --mx-tone: var(--mx-info); --mx-tone-text: var(--mx-info-text); --mx-tone-surface: var(--mx-info-surface); --mx-lit: var(--mx-info); --mx-lit-text: var(--mx-info-lit); }
+.mx-btn--deck1 { --mx-tone: var(--mx-deck1); --mx-tone-text: var(--mx-deck1-text); --mx-tone-surface: var(--mx-deck1-surface); --mx-lit: var(--mx-deck1); --mx-lit-text: var(--mx-deck1-lit); }
+.mx-btn--deck2 { --mx-tone: var(--mx-deck2); --mx-tone-text: var(--mx-deck2-text); --mx-tone-surface: var(--mx-deck2-surface); --mx-lit: var(--mx-deck2); --mx-lit-text: var(--mx-deck2-lit); }
+.mx-btn--play  { --mx-tone: var(--mx-play);  --mx-tone-text: var(--mx-play-text);  --mx-tone-surface: var(--mx-play-surface); --mx-lit: var(--mx-play); --mx-lit-text: var(--mx-play-lit); font-size: 19px; }
+.mx-btn--cue   { --mx-tone: var(--mx-cue);   --mx-tone-text: var(--mx-cue-text);   --mx-tone-surface: var(--mx-cue-surface); --mx-lit: var(--mx-cue); --mx-lit-text: var(--mx-cue-lit); }
+.mx-btn--caution { --mx-lit: var(--mx-caution); --mx-lit-text: var(--mx-caution-lit); }
+.mx-btn--danger  { --mx-lit: var(--mx-danger);  --mx-lit-text: var(--mx-danger-lit); }
+.mx-btn--sound, .mx-btn--deck1, .mx-btn--deck2, .mx-btn--play, .mx-btn--cue {
+  border-color: color-mix(in srgb, var(--mx-tone) 60%, var(--mx-surface-2));
+  color: var(--mx-tone-text);
+}
+.mx-btn--sound:active, .mx-btn--deck1:active, .mx-btn--deck2:active, .mx-btn--play:active, .mx-btn--cue:active,
+.mx-btn--sound.is-pressed, .mx-btn--deck1.is-pressed, .mx-btn--deck2.is-pressed, .mx-btn--play.is-pressed, .mx-btn--cue.is-pressed {
+  background: var(--mx-tone-surface);
+  border-color: var(--mx-tone);
+}
+
+/* Caution: amber on its own dark amber tint; solid amber only under the finger */
+.mx-btn--caution {
+  background: var(--mx-caution-surface);
+  border-color: var(--mx-caution);
+  color: var(--mx-caution-text);
+}
+.mx-btn--caution:active, .mx-btn--caution.is-pressed {
+  background: var(--mx-caution);
+  border-color: var(--mx-caution);
+  color: var(--mx-ink);
+}
+
+/* Danger: red on a dark red tint; solid red when pressed */
+.mx-btn--danger {
+  background: var(--mx-danger-surface);
+  border-color: var(--mx-danger);
+  color: var(--mx-danger-text);
+}
+.mx-btn--danger:active, .mx-btn--danger.is-pressed {
+  background: var(--mx-danger);
+  border-color: var(--mx-danger);
+  color: var(--mx-ink);
+}
+
+/* Lit or chosen, every role: a see-through tint of the role colour, never a flat fill.
+ * The 2 px role border (1 px border + 1 px inset) and the lighter text set it apart from rest. */
+.mx-btn.is-on {
+  background: color-mix(in srgb, var(--mx-lit) var(--mx-lit-alpha), transparent);
+  border-color: var(--mx-lit);
+  box-shadow: inset 0 0 0 1px var(--mx-lit);
+  color: var(--mx-lit-text);
+}
+.mx-btn.is-on:active, .mx-btn.is-on.is-pressed {
+  background: color-mix(in srgb, var(--mx-lit) 40%, transparent);
+}
+
+/* Ghost: a quiet Navigate button, outlined on a transparent background */
+.mx-btn--ghost { background: transparent; border-color: var(--mx-line-strong); color: var(--mx-text); }
+.mx-btn--ghost:active, .mx-btn--ghost.is-pressed { background: var(--mx-surface-3); }
+.mx-btn--ghost.is-on { background: transparent; border-color: var(--mx-line-strong); color: var(--mx-accent); box-shadow: inset 0 -3px 0 var(--mx-accent); }
+
+/* Disabled wins over every role */
+.mx-btn.is-disabled, .mx-btn.is-disabled:active {
+  background: var(--mx-surface-off);
+  border-color: var(--mx-line);
+  border-style: dashed;
+  color: var(--mx-text-off);
+  filter: none;
+  box-shadow: none;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ---------- Close: neutral square, red ✕ glyph ---------- */
+.mx-close {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent; /* no outline at rest */
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  font-size: 0;
+  color: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.mx-close::before, .mx-close::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 2.5px;
+  margin: -1.25px 0 0 -10px;
+  border-radius: 1px;
+  background: var(--mx-danger-text);
+  transform: rotate(45deg);
+}
+.mx-close::after { transform: rotate(-45deg); }
+.mx-close:active, .mx-close.is-pressed { background: var(--mx-danger-surface); border-color: var(--mx-danger); }
+.mx-close.is-disabled { background: var(--mx-surface-off); pointer-events: none; }
+.mx-close.is-disabled::before, .mx-close.is-disabled::after { background: var(--mx-text-off); }
+
+/* ---------- Tabs (top bar) ---------- */
+.mx-tabs {
+  display: flex;
+  align-items: stretch;
+  box-sizing: border-box;
+  height: 48px;
+  background: var(--mx-bg);
+  border-bottom: 1px solid var(--mx-line);
+}
+.mx-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 88px;
+  padding: 3px 18px 0;
+  border-bottom: 3px solid transparent;
+  color: var(--mx-text-dim);
+  font: 700 18px/1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mx-tab:active, .mx-tab.is-pressed { color: var(--mx-text); background: var(--mx-surface); }
+.mx-tab.is-on { color: var(--mx-text); border-bottom-color: var(--mx-accent); }
+.mx-tab.is-disabled { color: var(--mx-text-off); pointer-events: none; }
+
+/* ---------- Segmented choice ---------- */
+.mx-seg {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 44px;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  overflow: hidden;
+}
+.mx-seg-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 64px;
+  padding: 0 16px;
+  border-left: 1px solid var(--mx-line-strong);
+  color: var(--mx-text);
+  font: 700 15px/1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mx-seg-opt:first-child { border-left: 0; }
+.mx-seg-opt:active, .mx-seg-opt.is-pressed { background: var(--mx-surface-3); }
+.mx-seg-opt.is-on {
+  background: color-mix(in srgb, var(--mx-accent) var(--mx-lit-alpha), transparent);
+  color: var(--mx-accent-lit);
+  box-shadow: inset 0 0 0 2px var(--mx-accent);
+}
+.mx-seg-opt.is-disabled { background: var(--mx-surface-off); color: var(--mx-text-off); pointer-events: none; }
+
+/* ---------- Slider: full-height fill up to the thumb's centre ---------- */
+.mx-slider {
+  --v: 0.5;
+  --mx-thumb-w: 24px;
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  height: 44px;
+  min-width: 120px;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  overflow: hidden;
+  cursor: pointer;
+}
+.mx-slider-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--mx-thumb-w) / 2 + (100% - var(--mx-thumb-w)) * var(--v));
+  background: var(--mx-slider-fill);
+}
+.mx-slider-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: calc((100% - var(--mx-thumb-w)) * var(--v));
+  width: var(--mx-thumb-w);
+  border-radius: var(--mx-radius-sm);
+  background: var(--mx-text);
+  box-shadow: 0 0 0 1px var(--mx-bg);
+}
+.mx-slider-thumb::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--mx-surface-3);
+}
+.mx-slider:active .mx-slider-thumb, .mx-slider.is-pressed .mx-slider-thumb { background: var(--mx-accent); }
+.mx-slider.is-disabled { background: var(--mx-surface-off); border-color: var(--mx-line); pointer-events: none; }
+.mx-slider.is-disabled .mx-slider-fill { background: var(--mx-surface-3); }
+.mx-slider.is-disabled .mx-slider-thumb { background: var(--mx-text-off); }
+
+/* ---------- Menu and list rows ---------- */
+.mx-menu {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: var(--mx-surface);
+}
+.mx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  min-height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--mx-line);
+  color: var(--mx-text);
+  font: 400 16px/1.2 var(--mx-font-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.mx-menu-item:active, .mx-menu-item.is-pressed { background: var(--mx-surface-3); }
+.mx-menu-item.is-on {
+  background: var(--mx-surface-2);
+  box-shadow: inset 4px 0 0 var(--mx-accent);
+  font-weight: 600;
+}
+/* Ticked rows: the tick and the slight background say it; no left edge */
+.mx-menu-item.is-on:has(.mx-tick) { box-shadow: none; font-weight: 400; }
+.mx-menu-item.has-sub::after {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-left: auto;
+  margin-right: 4px;
+  border-top: 2px solid var(--mx-text-dim);
+  border-right: 2px solid var(--mx-text-dim);
+  transform: rotate(45deg);
+}
+.mx-menu-item.has-sub:has(.mx-menu-note)::after { margin-left: 0; }
+.mx-menu-item--danger { color: var(--mx-danger-text); }
+.mx-menu-item--danger:active, .mx-menu-item--danger.is-pressed { background: var(--mx-danger-surface); }
+.mx-menu-item.is-disabled { color: var(--mx-text-off); pointer-events: none; }
+.mx-menu-note { margin-left: auto; color: var(--mx-text-dim); font-size: 14px; }
+.mx-tick {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--mx-text-dim);
+  border-radius: var(--mx-radius-sm);
+}
+.mx-menu-item.is-on .mx-tick, .mx-tick.is-on { background: var(--mx-accent); border-color: var(--mx-accent); }
+.mx-menu-item.is-on .mx-tick::after, .mx-tick.is-on::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 6px;
+  height: 11px;
+  border-right: 2.5px solid var(--mx-ink);
+  border-bottom: 2.5px solid var(--mx-ink);
+  transform: rotate(45deg);
+}
+
+/* ---------- Chips ---------- */
+.mx-chip {
+  --mx-tone: var(--mx-line-strong);
+  --mx-tone-text: var(--mx-text-dim);
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--mx-tone);
+  border-radius: 999px; /* pill: an indicator, not a button */
+  background: transparent;
+  color: var(--mx-tone-text);
+  font: 700 13px/1 var(--mx-font-ui);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mx-chip--usb { --mx-tone: var(--mx-line-strong); --mx-tone-text: var(--mx-text-dim); }
+.mx-chip--ready { --mx-tone: var(--mx-play); --mx-tone-text: var(--mx-play-text); }
+.mx-chip--inuse { --mx-tone: var(--mx-info); --mx-tone-text: var(--mx-text); background: var(--mx-info-surface); }
+.mx-chip--caution { --mx-tone: var(--mx-caution); --mx-tone-text: var(--mx-caution-text); background: var(--mx-caution-surface); }
+.mx-chip--sync { --mx-tone: var(--mx-info); --mx-tone-text: var(--mx-info-text); }
+.mx-chip--master { --mx-tone: var(--mx-accent); --mx-tone-text: var(--mx-accent); }
+.mx-chip.is-on { background: var(--mx-tone); color: var(--mx-ink); }
+
+/* ---------- Popover ---------- */
+.mx-popover {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--mx-scrim);
+}
+.mx-popover-sheet {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 480px;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.mx-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 6px 6px 6px 16px;
+  border-bottom: 1px solid var(--mx-line);
+}
+.mx-popover-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--mx-text);
+  font: 700 20px/1.1 var(--mx-font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mx-popover-head .mx-close { margin-left: auto; }
+.mx-popover-body { flex: 1; min-height: 0; overflow-y: auto; }
+.mx-popover-body .mx-menu-item:last-child { border-bottom: 0; }
+.mx-popover-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--mx-line);
+  background: var(--mx-surface);
+}
+
+/* ---------- Toggle ---------- */
+.mx-toggle {
+  position: relative;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 88px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--mx-line-strong);
+  border-radius: var(--mx-radius);
+  background: var(--mx-surface-2);
+  font-size: 0;
+  cursor: pointer;
+  appearance: none;
+}
+.mx-toggle::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--mx-radius-sm);
+  background: var(--mx-text-dim);
+}
+.mx-toggle::after {
+  content: "OFF";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  color: var(--mx-text-dim);
+  font: 700 15px/1 var(--mx-font-ui);
+  letter-spacing: 0.04em;
+}
+.mx-toggle:active, .mx-toggle.is-pressed { background: var(--mx-surface-3); }
+.mx-toggle.is-on { background: var(--mx-accent-surface); border-color: var(--mx-accent); }
+.mx-toggle.is-on::before { left: auto; right: 5px; background: var(--mx-accent); }
+.mx-toggle.is-on::after { content: "ON"; right: auto; left: 12px; color: var(--mx-accent); }
+.mx-toggle.is-disabled { background: var(--mx-surface-off); border-color: var(--mx-line); border-style: dashed; pointer-events: none; }
+.mx-toggle.is-disabled::before { background: var(--mx-surface-3); }
+.mx-toggle.is-disabled::after { color: var(--mx-text-off); }
+
+/* ---------- Deck row ---------- */
+.mx-deckrow {
+  --mx-deck: var(--mx-deck1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: space-between;
+  column-gap: 6px;
+  row-gap: 0;
+  box-sizing: border-box;
+  height: 72px;
+  min-width: 0;
+  padding: 3px 6px 4px;
+  background: var(--mx-surface);
+  color: var(--mx-text);
+  font: 400 16px/1.2 var(--mx-font-text);
+}
+.mx-deckrow--deck2 { --mx-deck: var(--mx-deck2); }
+/* Line break between the head line and the stats line */
+.mx-deckrow::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
+.mx-deckrow-num, .mx-deckrow-title, .mx-deckrow-artist, .mx-deckrow-chips { order: 1; }
+.mx-deckrow-time, .mx-deckrow-bpm, .mx-deckrow-pitch, .mx-deckrow-key { order: 3; }
+.mx-deckrow-num {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--mx-radius-sm);
+  background: var(--mx-deck);
+  color: var(--mx-ink);
+  font: 700 14px/1 var(--mx-font-ui);
+}
+.mx-deckrow-title, .mx-deckrow-artist {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Title and artist start from zero and grow up to their own width. The title takes
+ * space first (grow 1000), the artist gets what is left, so the artist is cut with "…"
+ * first and the title only after it. Starting from zero also keeps the chips on line one. */
+.mx-deckrow-title { flex: 1000 1 0; max-width: max-content; min-width: 3.5em; color: var(--mx-text); }
+.mx-deckrow-artist { flex: 1 1 0; max-width: max-content; min-width: 2.2em; color: var(--mx-text-dim); font-size: 14px; }
+.mx-deckrow-chips { flex: none; display: inline-flex; gap: 4px; margin-left: auto; }
+/* Optional caption over the time and pitch: data-label="REMAINING · TAP", data-label="±8%".
+ * Drawn in the space between the two lines, so the row stays 72 px and line one is unchanged. */
+.mx-deckrow-time, .mx-deckrow-pitch { position: relative; }
+.mx-deckrow-time[data-label]::before, .mx-deckrow-pitch[data-label]::before {
+  content: attr(data-label);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 2px);
+  color: var(--mx-text-dim);
+  font: 700 11px/1 var(--mx-font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mx-deckrow-time { font: 400 21px/1 var(--mx-font-num); color: var(--mx-text); }
+.mx-deckrow-bpm {
+  padding: 3px 8px;
+  border-radius: var(--mx-radius);
+  background: var(--mx-text);
+  color: var(--mx-ink);
+  font: 700 24px/1 var(--mx-font-num);
+}
+.mx-deckrow-pitch { font: 400 19px/1 var(--mx-font-num); color: var(--mx-text); }
+.mx-deckrow-key { margin-left: auto; font: 400 17px/1 var(--mx-font-num); color: var(--mx-text); }
+</style><style>/* layout.css: builder B, screen mockup layout. Only .mxl- classes, all under .mx-screen.
+   Uses device tokens --mx-*; never restyles .mx- primitives. */
+
+/* ---------- screen ---------- */
+.mx-screen.mxl-scr { display: flex; flex-direction: column; }
+.mx-screen .mxl-main { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.mx-screen .mxl-ic { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mx-screen .mxl-dim-t { color: var(--mx-text-dim); }
+.mx-screen .mxl-grow { flex: 1 1 auto; min-width: 0; }
+
+/* ---------- top bar ---------- */
+.mx-screen .mxl-top { display: flex; align-items: center; height: 48px; flex: none;
+  border-bottom: 1px solid var(--mx-line); background: var(--mx-bg); }
+.mx-screen .mxl-top .mx-tabs { flex: none; }
+.mx-screen .mxl-topr { display: flex; align-items: center; gap: 8px; margin-left: auto; padding-right: 6px; }
+.mx-screen .mxl-usb { display: flex; align-items: center; gap: 10px; width: 150px; height: 44px; padding: 0 12px;
+  background: var(--mx-surface-2); border: 1px solid var(--mx-line); border-radius: var(--mx-radius); }
+.mx-screen .mxl-usb .mxl-ic { color: var(--mx-play); }
+.mx-screen .mxl-usb.is-live { border-color: var(--mx-accent); }
+.mx-screen .mxl-usb-t { display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  font-family: var(--mx-font-ui); text-transform: uppercase; }
+.mx-screen .mxl-usb-t b { font-weight: 400; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-screen .mxl-usb-t small { font-size: 12px; color: var(--mx-text-dim); }
+.mx-screen .mxl-usb-t small.is-inuse { color: var(--mx-info); }
+.mx-screen .mxl-usb-t small.is-ready { color: var(--mx-play); }
+.mx-screen .mxl-rec { width: 72px; }
+.mx-screen .mxl-recdot { width: 9px; height: 9px; border-radius: 50%; background: var(--mx-danger); flex: none; }
+.mx-screen .mxl-sq { width: 48px; }
+.mx-screen .mxl-sq44 { width: 44px; }
+.mx-screen .mxl-cpu { display: flex; flex-direction: column; width: 40px; font-family: var(--mx-font-ui); }
+.mx-screen .mxl-cpu small { font-size: 12px; color: var(--mx-text-dim); }
+.mx-screen .mxl-cpu b { font: 700 14px/1.2 var(--mx-font-num); color: var(--mx-accent); }
+
+/* ---------- header row under the top bar ---------- */
+.mx-screen .mxl-head { display: flex; align-items: center; gap: 8px; height: 52px; flex: none; padding: 0 4px 0 12px;
+  border-bottom: 1px solid var(--mx-line); background: var(--mx-surface); }
+.mx-screen .mxl-head--tight { padding-left: 4px; }
+.mx-screen .mxl-title { font: 20px/1 var(--mx-font-ui); text-transform: uppercase; letter-spacing: .02em; white-space: nowrap; }
+.mx-screen .mxl-hint { font-size: 13px; color: var(--mx-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mx-screen .mxl-right { margin-left: auto; }
+
+/* search field (not in the primitive API) */
+.mx-screen .mxl-search { display: flex; align-items: center; height: 44px; padding: 0 12px; flex: 1 1 auto; min-width: 0;
+  background: var(--mx-bg); border: 1px solid var(--mx-line); border-radius: var(--mx-radius);
+  font: 16px/1 var(--mx-font-ui); color: var(--mx-text-dim); text-transform: uppercase; }
+.mx-screen .mxl-search::after { content: "\25BE"; margin-left: auto; font-size: 14px; }
+.mx-screen .mxl-search--fixed { flex: 0 0 236px; }
+
+/* ---------- number badges (deck / pad) ---------- */
+.mx-screen .mxl-num { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  min-width: 20px; height: 20px; padding: 0 4px; border-radius: var(--mx-radius-sm);
+  font: 700 14px/1 var(--mx-font-ui); color: #0d1014; }
+.mx-screen .mxl-num--d1 { background: var(--mx-deck1); }
+.mx-screen .mxl-num--d2 { background: var(--mx-deck2); }
+.mx-screen .mxl-num--lg { min-width: 32px; height: 32px; font-size: 18px; }
+
+/* ---------- deck rows, waveforms, transport ---------- */
+.mx-screen .mxl-decks { display: grid; grid-template-columns: 1fr 1fr; flex: none; }
+.mx-screen .mxl-decks > .mx-deckrow { min-width: 0; }
+/* place and size the whole C deck row; its inside is C's */
+.mx-screen .mxl-dr { height: 72px; overflow: hidden; }
+.mx-screen .mxl-dr + .mxl-dr { border-left: 1px solid var(--mx-line); }
+/* Tracks: today's thin strip (badge + title per deck) above the overview waveforms */
+.mx-screen .mxl-strip { display: grid; grid-template-columns: 1fr 1fr; height: 26px; flex: none;
+  border-top: 1px solid var(--mx-line); background: var(--mx-surface); }
+.mx-screen .mxl-strip-d { display: flex; align-items: center; gap: 6px; padding: 0 4px; min-width: 0; }
+.mx-screen .mxl-strip-t { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+.mx-screen .mxl-wave { display: grid; grid-template-columns: 1fr 1fr; height: 48px; flex: none; background: #050608; }
+.mx-screen .mxl-wave-d { position: relative; display: flex; align-items: center; gap: 4px; padding: 0 2px; overflow: hidden; }
+.mx-screen .mxl-wave-d::before { content: ""; position: absolute; inset: 6px 0;
+  background: repeating-linear-gradient(90deg, rgba(5,6,8,.75) 0 1px, transparent 1px 3px),
+              linear-gradient(90deg, #3fb6b0, #e0587a 22%, #8fd36a 40%, #4aa8e8 58%, #e8508c 78%, #f0609e);
+  -webkit-mask: linear-gradient(180deg, transparent, #000 25%, #000 75%, transparent);
+          mask: linear-gradient(180deg, transparent, #000 25%, #000 75%, transparent); opacity: .85; }
+.mx-screen .mxl-wave-d--2::before { background: repeating-linear-gradient(90deg, rgba(5,6,8,.75) 0 1px, transparent 1px 3px),
+  linear-gradient(90deg, #4aa0e0, #d64f7c 30%, #e04a6a 60%, #ff5ca8); }
+.mx-screen .mxl-wave-d::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #fff; }
+.mx-screen .mxl-wave-d--2::after { left: 0; }
+.mx-screen .mxl-wave-d > * { position: relative; z-index: 1; }
+
+.mx-screen .mxl-trn { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; height: 52px; padding: 4px; flex: none; }
+.mx-screen .mxl-trn-d { display: grid; grid-template-columns: 44px 52px 56px 56px 72px 1fr; gap: 4px; }
+
+/* ---------- tables / lists ---------- */
+.mx-screen .mxl-tbl { position: relative; display: flex; flex-direction: column; overflow: hidden; background: #000; }
+.mx-screen .mxl-th, .mx-screen .mxl-row { display: grid; grid-template-columns: var(--cols); align-items: center; padding-right: 22px; }
+.mx-screen .mxl-th { height: 34px; flex: none; background: var(--mx-surface-2); border-bottom: 1px solid var(--mx-line);
+  font: 15px/1 var(--mx-font-ui); text-transform: uppercase; color: var(--mx-text); }
+.mx-screen .mxl-th > span { padding: 0 6px; border-right: 1px solid var(--mx-line); line-height: 34px; white-space: nowrap; overflow: hidden; }
+.mx-screen .mxl-row { height: 34px; flex: none; font-size: 15px; }
+.mx-screen .mxl-row:nth-child(odd) { background: var(--mx-surface); }
+.mx-screen .mxl-row > span { padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-screen .mxl-row.is-sel { background: color-mix(in srgb, var(--mx-deck1) 32%, var(--mx-bg)); }
+.mx-screen .mxl-r { text-align: right; }
+.mx-screen .mxl-tbl--tracks { --cols: 1fr 200px 64px 46px; }
+.mx-screen .mxl-tbl--narrow { --cols: 1fr 130px 52px 40px; }
+.mx-screen .mxl-tbl--samples { --cols: 1fr 90px 96px 96px; }
+.mx-screen .mxl-sb { position: absolute; right: 4px; top: 38px; bottom: 4px; width: 12px; border-radius: 6px; background: var(--mx-surface-2); }
+.mx-screen .mxl-sb::after { content: ""; position: absolute; left: 2px; right: 2px; top: 2px; height: var(--thumb, 40%);
+  border-radius: 4px; background: #5b6472; }
+
+/* ---------- Loop panel ---------- */
+.mx-screen .mxl-loop6 { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; padding: 4px 4px 0; }
+.mx-screen .mxl-loop2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px 4px 0; }
+/* ½ and ×2 change the loop size: a green border, like the chosen size above */
+.mx-screen .mxl-size { border-color: color-mix(in srgb, var(--mx-accent) 60%, var(--mx-surface-2)); }
+
+/* ---------- Tracks ---------- */
+.mx-screen .mxl-tracks { display: flex; flex-direction: column; height: 100%; }
+.mx-screen .mxl-tracks .mxl-tbl { flex: 1 1 auto; min-height: 0; }
+.mx-screen .mxl-loadrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; height: 52px; padding: 4px; flex: none;
+  border-top: 1px solid var(--mx-line); }
+.mx-screen .mxl-loadrow-d { display: grid; grid-template-columns: 84px 1fr 68px 68px; gap: 4px; align-items: center; min-width: 0; }
+.mx-screen .mxl-loadrow-name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; }
+
+/* side menu (Sources) */
+.mx-screen .mxl-side { position: absolute; left: 0; top: 0; bottom: 0; width: 320px; z-index: 3; display: flex; flex-direction: column;
+  background: var(--mx-surface); border-right: 1px solid var(--mx-line); box-shadow: 8px 0 24px rgba(0,0,0,.5); }
+.mx-screen .mxl-side-head { display: flex; align-items: center; gap: 8px; height: 52px; flex: none; padding: 0 8px;
+  border-bottom: 1px solid var(--mx-line); }
+.mx-screen .mxl-side-head .mx-btn { min-width: 88px; }
+.mx-screen .mxl-place { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mx-screen .mxl-side .mx-menu { overflow: hidden; }
+/* a scroll bar whenever the list is longer than the panel */
+.mx-screen .mxl-side:has(.mxl-sb) .mx-menu { margin-right: 18px; }
+.mx-screen .mxl-side .mxl-sb { top: 56px; bottom: 4px; }
+.mx-screen .mxl-side--right { left: auto; right: 0; border-right: 0; border-left: 1px solid var(--mx-line); box-shadow: -8px 0 24px rgba(0,0,0,.5); }
+.mx-screen .mxl-beside { position: absolute; left: 320px; right: 0; top: 0; bottom: 0; }
+.mx-screen .mxl-mi-ic { display: inline-flex; color: var(--mx-deck2); }
+.mx-screen .mxl-mi-tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mx-screen .mxl-mi-tx b { font-weight: 600; font-size: 16px; }
+.mx-screen .mxl-mi-tx small { font-size: 12px; color: var(--mx-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Edit sources rows */
+.mx-screen .mxl-erow-ctl { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.mx-screen .mxl-erow-ctl .mx-btn { width: 84px; }
+.mx-screen .mxl-star { width: 48px; }
+.mx-screen .mxl-erow-off .mxl-mi-tx, .mx-screen .mxl-erow-off .mxl-mi-ic { opacity: .45; }
+.mx-screen .mxl-erow-tag { font: 12px/1 var(--mx-font-ui); color: var(--mx-accent); text-transform: uppercase; }
+
+/* ---------- Sampler ---------- */
+.mx-screen .mxl-pads { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: 104px 104px; height: 208px; flex: none; }
+.mx-screen .mxl-pad { display: flex; flex-direction: column; padding: 6px 6px 4px; min-width: 0;
+  border-right: 1px solid var(--mx-line); border-bottom: 1px solid var(--mx-line); background: var(--mx-surface); }
+.mx-screen .mxl-pad.is-empty { background: var(--mx-bg); }
+.mx-screen .mxl-pad.is-playing { box-shadow: inset 0 0 0 2px var(--mx-play); }
+.mx-screen .mxl-pad-h { display: flex; align-items: center; gap: 8px; height: 24px; font: 15px/1 var(--mx-font-ui); }
+.mx-screen .mxl-pad-dur { margin-left: auto; font: 13px/1 var(--mx-font-num); color: var(--mx-text-dim); }
+.mx-screen .mxl-pad-name { height: 24px; padding-top: 4px; font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-screen .mxl-pad-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: auto; }
+.mx-screen .mxl-pad-empty { margin: auto 0; text-align: center; font-size: 14px; color: var(--mx-text-dim); padding-bottom: 14px; }
+
+/* clear-samples popover: only my own bits; the sheet, scrim and tick are C's */
+.mx-screen .mxl-popnote { padding: 10px 16px 12px; font-size: 13px; color: var(--mx-text-dim); }
+.mx-screen .mxl-w24 { width: 24px; flex: none; }
+.mx-screen .mxl-w120 { min-width: 120px; }
+.mx-screen .mxl-strong { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- Load sample ---------- */
+.mx-screen .mxl-srcrow { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 8px; flex: none;
+  border-bottom: 1px solid var(--mx-line); }
+.mx-screen .mxl-srcrow .mx-btn { min-width: 124px; }
+.mx-screen .mxl-foot { display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 8px 0 12px; flex: none;
+  border-top: 1px solid var(--mx-line); background: var(--mx-surface); }
+.mx-screen .mxl-foot .mx-btn--confirm { width: 244px; }
+
+/* ---------- FX ---------- */
+.mx-screen .mxl-fxrow { display: flex; align-items: center; gap: 10px; height: 54px; padding: 0 8px; flex: none; }
+.mx-screen .mxl-fxrow .mx-seg-opt { min-width: 120px; }
+.mx-screen .mxl-fxrow--mode .mx-seg-opt { min-width: 196px; }
+.mx-screen .mxl-lbl { font: 14px/1 var(--mx-font-ui); color: var(--mx-text-dim); text-transform: uppercase; }
+.mx-screen .mxl-fxrow .mx-slider { flex: 1 1 auto; }
+.mx-screen .mxl-fxboxes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 4px 8px 6px; height: 146px; flex: none; }
+.mx-screen .mxl-fxbox { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px 8px; min-width: 0;
+  background: var(--mx-surface); border: 1px solid var(--mx-line); border-radius: var(--mx-radius); }
+.mx-screen .mxl-fxbox-h { display: flex; justify-content: space-between; height: 16px; font: 13px/16px var(--mx-font-ui); text-transform: uppercase; color: var(--mx-text-dim); }
+.mx-screen .mxl-fxbox-h i { font-style: normal; text-transform: none; }
+.mx-screen .mxl-fxbox-r { display: flex; gap: 6px; }
+.mx-screen .mxl-fxbox-r .mxl-onoff { flex: none; width: 76px; }
+/* select-like field (not in the primitive API) */
+.mx-screen .mxl-select { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; height: 44px; padding: 0 10px;
+  background: var(--mx-surface-2); border: 1px solid var(--mx-line); border-radius: var(--mx-radius);
+  font: 17px/1 var(--mx-font-ui); text-transform: uppercase; white-space: nowrap; overflow: hidden; }
+.mx-screen .mxl-select > span { overflow: hidden; text-overflow: ellipsis; }
+.mx-screen .mxl-select::after { content: "\25BE"; margin-left: auto; padding-left: 6px; color: var(--mx-text-dim); font-size: 14px; }
+.mx-screen .mxl-select.is-empty { color: var(--mx-text-dim); }
+
+/* ---------- Settings ---------- */
+.mx-screen .mxl-set { display: grid; grid-template-columns: 200px 1fr; height: 100%; }
+.mx-screen .mxl-rail { border-right: 1px solid var(--mx-line); }
+.mx-screen .mxl-srows { padding: 8px 14px; display: flex; flex-direction: column; gap: 10px; }
+.mx-screen .mxl-srow { display: grid; grid-template-columns: 196px 1fr; gap: 12px; align-items: start; }
+.mx-screen .mxl-srow-l b { display: block; font-weight: 600; font-size: 16px; }
+.mx-screen .mxl-srow-l small { display: block; margin-top: 2px; font-size: 12px; line-height: 1.3; color: var(--mx-text-dim); }
+.mx-screen .mxl-srow .mx-seg-opt { min-width: 92px; }
+.mx-screen .mxl-srow-slider { display: flex; align-items: center; gap: 12px; }
+.mx-screen .mxl-srow-slider .mx-slider { flex: 1 1 auto; }
+.mx-screen .mxl-val { width: 44px; font: 700 18px/1 var(--mx-font-num); text-align: right; }
+.mx-screen .mxl-w180 { width: 180px; }
+.mx-screen .mxl-mfilter { margin-left: 20px; }
+.mx-screen .mxl-srow--wide { grid-template-columns: 196px 1fr; }
+.mx-screen .mxl-srow-sub { grid-column: 1 / -1; font-size: 12px; line-height: 1.35; color: var(--mx-text-dim);
+  padding: 6px 10px; border-left: 2px solid var(--mx-accent); background: var(--mx-surface); }
+
+/* ---------- Media ---------- */
+.mx-screen .mxl-drives { position: relative; height: 100%; display: flex; flex-direction: column; }
+.mx-screen .mxl-drives-list { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 10px 28px 0 12px;
+  display: flex; flex-direction: column; gap: 10px; }
+.mx-screen .mxl-drive { flex: none; display: grid; grid-template-columns: 40px 1fr auto; grid-template-rows: 48px 48px; gap: 10px 12px;
+  padding: 12px 14px; background: var(--mx-surface); border: 1px solid var(--mx-line); border-radius: var(--mx-radius); }
+.mx-screen .mxl-drive > .mxl-ic { width: 36px; height: 36px; align-self: center; color: var(--mx-text); }
+.mx-screen .mxl-drive-n { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; }
+.mx-screen .mxl-drive-n b { font: 22px/1 var(--mx-font-ui); text-transform: uppercase; letter-spacing: .02em; }
+.mx-screen .mxl-drive-n small { font-size: 13px; color: var(--mx-text-dim); }
+.mx-screen .mxl-drive > .mx-chip { align-self: center; }
+.mx-screen .mxl-drive-btns { grid-column: 2 / -1; display: flex; gap: 8px; align-items: center; }
+.mx-screen .mxl-drive-btns .mx-btn { width: 160px; }
+.mx-screen .mxl-drives .mxl-sb { top: 10px; bottom: 6px; --thumb: 62%; }
+.mx-screen .mxl-drives-foot { display: flex; align-items: center; gap: 8px; height: 40px; flex: none; padding: 0 14px;
+  border-top: 1px solid var(--mx-line); background: var(--mx-surface); font-size: 14px; color: var(--mx-text-dim); }
+.mx-screen .mxl-drives-foot b { font-weight: 600; color: var(--mx-text); }
+</style>
+<style>body{margin:0;padding:16px;background:#22262c;color:#ccc;font:13px sans-serif} .lbl{margin:14px 0 4px} .box{width:800px;height:480px;outline:1px dashed #f0f}</style>
+</head><body><!-- fragments.html: builder B, one <template> per mockup (800x480 .mx-screen). -->
+<template id="mx-m-loop"><div class="mx-screen mxl-scr mxl-loop"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab is-on">DECKS</span><span class="mx-tab">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>USB</b><small class="">NO USB</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head mxl-head--tight" style="gap:10px"><span class="mxl-num mxl-num--d1 mxl-num--lg">1</span><span class="mxl-title" style="margin-right:20px">Deck 1</span><div class="mx-seg"><span class="mx-seg-opt is-on" style="min-width:96px">LOOP</span><span class="mx-seg-opt" style="min-width:96px">JUMP</span><span class="mx-seg-opt" style="min-width:96px">CUES</span></div><span class="mxl-right"><button class="mx-close" aria-label="Close"></button></span></div><div class="mxl-main"><div class="mxl-loop6"><span class="mx-btn">1/32</span><span class="mx-btn">1/16</span><span class="mx-btn">1/8</span><span class="mx-btn">1/4</span><span class="mx-btn">1/2</span><span class="mx-btn">1</span><span class="mx-btn">2</span><span class="mx-btn is-on">4</span><span class="mx-btn">8</span><span class="mx-btn">16</span><span class="mx-btn">32</span><span class="mx-btn">64</span></div><div class="mxl-loop2"><span class="mx-btn mxl-size">½</span><span class="mx-btn mxl-size">×2</span></div><div class="mxl-loop2"><span class="mx-btn mx-btn--danger">EXIT LOOP</span><span class="mx-btn mx-btn--sound">RELOOP</span></div></div><div class="mxl-decks"><div class="mx-deckrow mx-deckrow--deck1 mxl-dr"><span class="mx-deckrow-num">1</span><span class="mx-deckrow-title">Your Body</span><span class="mx-deckrow-artist">Biscits</span><span class="mx-deckrow-chips"><span class="mx-chip mx-chip--sync">SYNC</span><span class="mx-chip mx-chip--master">MASTER</span></span><span class="mx-deckrow-time" data-label="REMAINING · TAP">−3:42.52</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">−7.1</span><span class="mx-deckrow-key">1B (B)</span></div><div class="mx-deckrow mx-deckrow--deck2 mxl-dr"><span class="mx-deckrow-num">2</span><span class="mx-deckrow-title">YOU'RE THE ONE</span><span class="mx-deckrow-artist">KAYTRANADA / Syd</span><span class="mx-deckrow-time" data-label="REMAINING · TAP">−3:47.76</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">0.0</span><span class="mx-deckrow-key">8A (Am)</span></div></div><div class="mxl-wave"><div class="mxl-wave-d"><span class="mx-btn mxl-sq44">−</span><span class="mxl-grow"></span><span class="mx-btn mxl-sq44">+</span></div><div class="mxl-wave-d mxl-wave-d--2"></div></div><div class="mxl-trn"><div class="mxl-trn-d"><span class="mx-btn">KEY</span><span class="mx-btn mx-btn--deck1 is-on">Q</span><span class="mx-btn mx-btn--deck1 is-on">SYNC</span><span class="mx-btn mx-btn--sound is-on">LOOP</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div><div class="mxl-trn-d"><span class="mx-btn">KEY</span><span class="mx-btn mx-btn--deck2 is-on">Q</span><span class="mx-btn">SYNC</span><span class="mx-btn mx-btn--sound">LOOP</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div></div></div></template>
+<template id="mx-m-tracks"><div class="mx-screen mxl-scr mxl-tracks"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab is-on">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>USB</b><small class="">NO USB</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head mxl-head--tight"><span class="mxl-search">Search…</span><span class="mx-btn mxl-sq" aria-label="Actions"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg></span><span class="mx-btn mxl-sq" aria-label="Sources"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></span></div><div class="mxl-main"><div class="mxl-tracks"><div class="mxl-tbl mxl-tbl--tracks"><div class="mxl-th"><span>Title ▴</span><span>Artist</span><span class="mxl-r">BPM</span><span>Key</span></div><div class="mxl-row is-sel"><span>Your Body</span><span>Biscits</span><span class="mxl-r">–</span><span>–</span></div><div class="mxl-row"><span>YOU'RE THE ONE</span><span>KAYTRANADA / Syd</span><span class="mxl-r">118.0</span><span>Am</span></div><div class="mxl-row"><span>Yo Soy Abacua</span><span>Willie Rosario and His Orchestra</span><span class="mxl-r">–</span><span>C</span></div><div class="mxl-row"><span>Yiriyiribon - Mambo Afro</span><span>Beny Moré / Orquesta Aragon</span><span class="mxl-r">163.5</span><span>Gm</span></div><div class="mxl-row"><span>Yetikimt Abeba</span><span>The Roha Band</span><span class="mxl-r">–</span><span>E♭</span></div><div class="mxl-row"><span>Yetikimt Abeba</span><span>The Roha Band</span><span class="mxl-r">–</span><span>E♭</span></div><div class="mxl-sb" style="--thumb:30%"></div></div><div class="mxl-strip"><div class="mxl-strip-d"><span class="mxl-num mxl-num--d1">1</span><span class="mxl-strip-t">Your Body</span></div><div class="mxl-strip-d"><span class="mxl-num mxl-num--d2">2</span><span class="mxl-strip-t">YOU&#39;RE THE ONE</span></div></div><div class="mxl-wave"><div class="mxl-wave-d"></div><div class="mxl-wave-d mxl-wave-d--2"></div></div><div class="mxl-loadrow"><div class="mxl-loadrow-d"><span class="mx-btn mx-btn--deck1">LOAD 1</span><span class="mxl-loadrow-name">Your Body</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div><div class="mxl-loadrow-d"><span class="mx-btn mx-btn--deck2">LOAD 2</span><span class="mxl-loadrow-name">YOU&#39;RE THE ONE</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div></div></div></div></div></template>
+<template id="mx-m-sources-top"><div class="mx-screen mxl-scr mxl-tracks"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab is-on">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>MANTACORE</b><small class="is-ready">READY</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head mxl-head--tight"><span class="mxl-search">Search…</span><span class="mx-btn mxl-sq" aria-label="Actions"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg></span><button class="mx-close" aria-label="Close Sources"></button></div><div class="mxl-main"><div class="mxl-tracks"><div class="mxl-grow" style="display:flex;min-height:0;padding-right:320px"><div style="flex:1 1 auto" class="mxl-tbl mxl-tbl--narrow"><div class="mxl-th"><span>Title ▴</span><span>Artist</span><span class="mxl-r">BPM</span><span>Key</span></div><div class="mxl-row is-sel"><span>Your Body</span><span>Biscits</span><span class="mxl-r">–</span><span>–</span></div><div class="mxl-row"><span>YOU'RE THE ONE</span><span>KAYTRANADA / Syd</span><span class="mxl-r">118.0</span><span>Am</span></div><div class="mxl-row"><span>Yo Soy Abacua</span><span>Willie Rosario and His Orchestra</span><span class="mxl-r">–</span><span>C</span></div><div class="mxl-row"><span>Yiriyiribon - Mambo Afro</span><span>Beny Moré / Orquesta Aragon</span><span class="mxl-r">163.5</span><span>Gm</span></div><div class="mxl-row"><span>Yetikimt Abeba</span><span>The Roha Band</span><span class="mxl-r">–</span><span>E♭</span></div><div class="mxl-row"><span>Yetikimt Abeba</span><span>The Roha Band</span><span class="mxl-r">–</span><span>E♭</span></div><div class="mxl-sb" style="--thumb:30%"></div></div></div><div class="mxl-strip"><div class="mxl-strip-d"><span class="mxl-num mxl-num--d1">1</span><span class="mxl-strip-t">Your Body</span></div><div class="mxl-strip-d"><span class="mxl-num mxl-num--d2">2</span><span class="mxl-strip-t">YOU&#39;RE THE ONE</span></div></div><div class="mxl-wave"><div class="mxl-wave-d"></div><div class="mxl-wave-d mxl-wave-d--2"></div></div><div class="mxl-loadrow"><div class="mxl-loadrow-d"><span class="mx-btn mx-btn--deck1">LOAD 1</span><span class="mxl-loadrow-name">Your Body</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div><div class="mxl-loadrow-d"><span class="mx-btn mx-btn--deck2">LOAD 2</span><span class="mxl-loadrow-name">YOU&#39;RE THE ONE</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div></div></div><div class="mxl-side mxl-side--right"><div class="mxl-side-head"><span class="mx-btn"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>BACK</span><span class="mx-btn"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h10M3 11h8M3 16h5"/><path d="M12 20l.6-3L19 10.6l2.4 2.4L15 19.4z"/></svg>EDIT</span></div><div class="mx-menu"><div class="mx-menu-item has-sub is-on"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l10-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></span><span class="mxl-mi-tx"><b>This Pi</b><small>Tracks</small></span></div><div class="mx-menu-item has-sub"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg></span><span class="mxl-mi-tx"><b>MANTACORE</b><small>USB · rekordbox</small></span></div><div class="mx-menu-item has-sub"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v4h4"/><path d="M12 8v4l3 2"/></svg></span><span class="mxl-mi-tx"><b>History</b><small>Played tracks by date</small></span></div><div class="mx-menu-item has-sub"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg></span><span class="mxl-mi-tx"><b>Folders</b><small>Browse files and drives</small></span></div><div class="mx-menu-item"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10"/></svg></span><span class="mxl-mi-tx"><b>Samples</b><small>Sounds for the pads</small></span></div><div class="mx-menu-item has-sub"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/></svg></span><span class="mxl-mi-tx"><b>More</b><small>Analyse</small></span></div></div></div></div></div></template>
+<template id="mx-m-sources-sub"><div class="mx-screen mxl-scr mxl-tracks"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab is-on">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>MANTACORE</b><small class="is-ready">READY</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head mxl-head--tight"><span class="mxl-search">Search…</span><span class="mx-btn mxl-sq" aria-label="Actions"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg></span><button class="mx-close" aria-label="Close Sources"></button></div><div class="mxl-main"><div class="mxl-tracks"><div class="mxl-grow" style="display:flex;min-height:0;padding-right:320px"><div style="flex:1 1 auto" class="mxl-tbl mxl-tbl--narrow"><div class="mxl-th"><span>Title ▴</span><span>Artist</span><span class="mxl-r">BPM</span><span>Key</span></div><div class="mxl-row is-sel"><span>Lowland Sunrise</span><span>Kemi Adaora</span><span class="mxl-r">120.0</span><span>6A</span></div><div class="mxl-row"><span>Harmattan Drift</span><span>Sello Mabena</span><span class="mxl-r">121.0</span><span>9A</span></div><div class="mxl-row"><span>Copper Keys</span><span>Ndaba & Lua</span><span class="mxl-r">120.0</span><span>4A</span></div><div class="mxl-row"><span>Night Market</span><span>Okello Rae</span><span class="mxl-r">122.0</span><span>11B</span></div><div class="mxl-row"><span>Still Water Dub</span><span>Amara Kiel</span><span class="mxl-r">119.0</span><span>8A</span></div><div class="mxl-row"><span>Long Road Home</span><span>Tunde Vale</span><span class="mxl-r">120.0</span><span>2A</span></div><div class="mxl-sb" style="--thumb:30%"></div></div></div><div class="mxl-strip"><div class="mxl-strip-d"><span class="mxl-num mxl-num--d1">1</span><span class="mxl-strip-t">Your Body</span></div><div class="mxl-strip-d"><span class="mxl-num mxl-num--d2">2</span><span class="mxl-strip-t">YOU&#39;RE THE ONE</span></div></div><div class="mxl-wave"><div class="mxl-wave-d"></div><div class="mxl-wave-d mxl-wave-d--2"></div></div><div class="mxl-loadrow"><div class="mxl-loadrow-d"><span class="mx-btn mx-btn--deck1">LOAD 1</span><span class="mxl-loadrow-name">Your Body</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div><div class="mxl-loadrow-d"><span class="mx-btn mx-btn--deck2">LOAD 2</span><span class="mxl-loadrow-name">YOU&#39;RE THE ONE</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div></div></div><div class="mxl-side mxl-side--right"><div class="mxl-side-head"><span class="mx-btn"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>BACK</span><span class="mxl-place">MANTACORE › rekordbox</span></div><div class="mx-menu"><div class="mx-menu-item"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l10-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></span><span class="mxl-mi-tx"><b>Tracks</b></span></div><div class="mx-menu-item has-sub"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1"/></svg></span><span class="mxl-mi-tx"><b>Playlists</b></span></div><div class="mx-menu-item is-on"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1"/></svg></span><span class="mxl-mi-tx"><b>Afro house</b></span><span class="mx-menu-note">48</span></div><div class="mx-menu-item"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1"/></svg></span><span class="mxl-mi-tx"><b>Warm-up</b></span><span class="mx-menu-note">31</span></div><div class="mx-menu-item"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1"/></svg></span><span class="mxl-mi-tx"><b>Peak time</b></span><span class="mx-menu-note">26</span></div><div class="mx-menu-item"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1"/></svg></span><span class="mxl-mi-tx"><b>Closing</b></span><span class="mx-menu-note">22</span></div><div class="mx-menu-item"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1"/></svg></span><span class="mxl-mi-tx"><b>Afro tech</b></span><span class="mx-menu-note">40</span></div><div class="mx-menu-item has-sub"><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v4h4"/><path d="M12 8v4l3 2"/></svg></span><span class="mxl-mi-tx"><b>History</b></span></div></div><div class="mxl-sb" style="--thumb:68%"></div></div></div></div></template>
+<template id="mx-m-sources-edit"><div class="mx-screen mxl-scr mxl-edit"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab is-on">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>MANTACORE</b><small class="is-ready">READY</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head"><span class="mxl-title">Edit sources</span><span class="mxl-hint">Switch sources on or off, set the order, ★ where Tracks starts.</span><span class="mxl-right" style="display:flex;gap:8px"><span class="mx-btn mx-btn--confirm" style="width:96px">DONE</span><button class="mx-close" aria-label="Close"></button></span></div><div class="mxl-main"><div class="mx-menu"><div class="mx-menu-item"><span class="mx-btn mxl-star is-on" aria-label="Start here">★</span><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l10-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></span><span class="mxl-mi-tx"><b>This Pi</b><small class="mxl-erow-tag">Tracks starts here</small></span><span class="mxl-erow-ctl"><button class="mx-toggle is-on" aria-label="On"></button><span class="mx-btn is-disabled">▲ UP</span><span class="mx-btn">▼ DOWN</span></span></div><div class="mx-menu-item"><span class="mx-btn mxl-star" aria-label="Start here">☆</span><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg></span><span class="mxl-mi-tx"><b>MANTACORE</b><small>USB · rekordbox</small></span><span class="mxl-erow-ctl"><button class="mx-toggle is-on" aria-label="On"></button><span class="mx-btn">▲ UP</span><span class="mx-btn">▼ DOWN</span></span></div><div class="mx-menu-item"><span class="mx-btn mxl-star" aria-label="Start here">☆</span><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v4h4"/><path d="M12 8v4l3 2"/></svg></span><span class="mxl-mi-tx"><b>History</b><small>Played tracks by date</small></span><span class="mxl-erow-ctl"><button class="mx-toggle is-on" aria-label="On"></button><span class="mx-btn">▲ UP</span><span class="mx-btn">▼ DOWN</span></span></div><div class="mx-menu-item mxl-erow-off"><span class="mx-btn mxl-star" aria-label="Start here">☆</span><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg></span><span class="mxl-mi-tx"><b>Folders</b><small>Browse files and drives</small></span><span class="mxl-erow-ctl"><button class="mx-toggle" aria-label="Off"></button><span class="mx-btn">▲ UP</span><span class="mx-btn">▼ DOWN</span></span></div><div class="mx-menu-item"><span class="mx-btn mxl-star" aria-label="Start here">☆</span><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10"/></svg></span><span class="mxl-mi-tx"><b>Samples</b><small>Sounds for the pads</small></span><span class="mxl-erow-ctl"><button class="mx-toggle is-on" aria-label="On"></button><span class="mx-btn">▲ UP</span><span class="mx-btn">▼ DOWN</span></span></div><div class="mx-menu-item"><span class="mx-btn mxl-star" aria-label="Start here">☆</span><span class="mxl-mi-ic"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/></svg></span><span class="mxl-mi-tx"><b>More</b><small>Analyse</small></span><span class="mxl-erow-ctl"><button class="mx-toggle is-on" aria-label="On"></button><span class="mx-btn">▲ UP</span><span class="mx-btn is-disabled">▼ DOWN</span></span></div></div></div></div></template>
+<template id="mx-m-sampler"><div class="mx-screen mxl-scr mxl-sampler"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab is-on">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>USB</b><small class="">NO USB</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head mxl-head--tight"><span class="mx-btn mx-btn--confirm" style="width:168px">+ LOAD SAMPLE</span><span class="mx-btn mx-btn--danger" style="width:150px">CLEAR SAMPLES…</span><span class="mxl-hint mxl-right" style="padding-right:8px">Starlight SAMPLER mode: deck A pads 1-4 · deck B pads 5-8</span></div><div class="mxl-main"><div class="mxl-pads"><div class="mxl-pad is-playing"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d1">1</span><span>A1</span><span class="mxl-pad-dur">0:18</span></div><div class="mxl-pad-name">Times' up</div><div class="mxl-pad-btns"><span class="mx-btn mx-btn--sound is-on">▶ TRIGGER</span><span class="mx-btn mx-btn--caution">■ STOP</span></div></div><div class="mxl-pad"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d1">2</span><span>A2</span><span class="mxl-pad-dur">0:01</span></div><div class="mxl-pad-name">SNARE9</div><div class="mxl-pad-btns"><span class="mx-btn mx-btn--sound">▶ TRIGGER</span><span class="mx-btn mx-btn--caution">■ STOP</span></div></div><div class="mxl-pad"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d1">3</span><span>A3</span><span class="mxl-pad-dur">0:02</span></div><div class="mxl-pad-name">Air horn.wav</div><div class="mxl-pad-btns"><span class="mx-btn mx-btn--sound">▶ TRIGGER</span><span class="mx-btn mx-btn--caution">■ STOP</span></div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d1">4</span><span>A4</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d2">5</span><span>B1</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d2">6</span><span>B2</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d2">7</span><span>B3</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d2">8</span><span>B4</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div></div></div><div class="mxl-decks"><div class="mx-deckrow mx-deckrow--deck1 mxl-dr"><span class="mx-deckrow-num">1</span><span class="mx-deckrow-title">Your Body</span><span class="mx-deckrow-artist">Biscits</span><span class="mx-deckrow-chips"><span class="mx-chip mx-chip--sync">SYNC</span><span class="mx-chip mx-chip--master">MASTER</span></span><span class="mx-deckrow-time" data-label="REMAINING · TAP">−3:42.52</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">−7.1</span><span class="mx-deckrow-key">1B (B)</span></div><div class="mx-deckrow mx-deckrow--deck2 mxl-dr"><span class="mx-deckrow-num">2</span><span class="mx-deckrow-title">YOU'RE THE ONE</span><span class="mx-deckrow-artist">KAYTRANADA / Syd</span><span class="mx-deckrow-time" data-label="REMAINING · TAP">−3:47.76</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">0.0</span><span class="mx-deckrow-key">8A (Am)</span></div></div><div class="mxl-wave"><div class="mxl-wave-d"></div><div class="mxl-wave-d mxl-wave-d--2"></div></div><div class="mxl-trn"><div class="mxl-trn-d"><span class="mx-btn">KEY</span><span class="mx-btn mx-btn--deck1 is-on">Q</span><span class="mx-btn mx-btn--deck1 is-on">SYNC</span><span class="mx-btn mx-btn--sound">LOOP</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div><div class="mxl-trn-d"><span class="mx-btn">KEY</span><span class="mx-btn mx-btn--deck2 is-on">Q</span><span class="mx-btn">SYNC</span><span class="mx-btn mx-btn--sound">LOOP</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div></div></div></template>
+<template id="mx-m-sampler-clear"><div class="mx-screen mxl-scr mxl-sampler"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab is-on">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>USB</b><small class="">NO USB</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head mxl-head--tight"><span class="mx-btn mx-btn--confirm" style="width:168px">+ LOAD SAMPLE</span><span class="mx-btn mx-btn--danger" style="width:150px">CLEAR SAMPLES…</span><span class="mxl-hint mxl-right" style="padding-right:8px">Starlight SAMPLER mode: deck A pads 1-4 · deck B pads 5-8</span></div><div class="mxl-main"><div class="mxl-pads"><div class="mxl-pad is-playing"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d1">1</span><span>A1</span><span class="mxl-pad-dur">0:18</span></div><div class="mxl-pad-name">Times' up</div><div class="mxl-pad-btns"><span class="mx-btn mx-btn--sound is-on">▶ TRIGGER</span><span class="mx-btn mx-btn--caution">■ STOP</span></div></div><div class="mxl-pad"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d1">2</span><span>A2</span><span class="mxl-pad-dur">0:01</span></div><div class="mxl-pad-name">SNARE9</div><div class="mxl-pad-btns"><span class="mx-btn mx-btn--sound">▶ TRIGGER</span><span class="mx-btn mx-btn--caution">■ STOP</span></div></div><div class="mxl-pad"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d1">3</span><span>A3</span><span class="mxl-pad-dur">0:02</span></div><div class="mxl-pad-name">Air horn.wav</div><div class="mxl-pad-btns"><span class="mx-btn mx-btn--sound">▶ TRIGGER</span><span class="mx-btn mx-btn--caution">■ STOP</span></div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d1">4</span><span>A4</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d2">5</span><span>B1</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d2">6</span><span>B2</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d2">7</span><span>B3</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div><div class="mxl-pad is-empty"><div class="mxl-pad-h"><span class="mxl-num mxl-num--d2">8</span><span>B4</span></div><div class="mxl-pad-empty">+ Empty · tap to load</div></div></div></div><div class="mxl-decks"><div class="mx-deckrow mx-deckrow--deck1 mxl-dr"><span class="mx-deckrow-num">1</span><span class="mx-deckrow-title">Your Body</span><span class="mx-deckrow-artist">Biscits</span><span class="mx-deckrow-chips"><span class="mx-chip mx-chip--sync">SYNC</span><span class="mx-chip mx-chip--master">MASTER</span></span><span class="mx-deckrow-time" data-label="REMAINING · TAP">−3:42.52</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">−7.1</span><span class="mx-deckrow-key">1B (B)</span></div><div class="mx-deckrow mx-deckrow--deck2 mxl-dr"><span class="mx-deckrow-num">2</span><span class="mx-deckrow-title">YOU'RE THE ONE</span><span class="mx-deckrow-artist">KAYTRANADA / Syd</span><span class="mx-deckrow-time" data-label="REMAINING · TAP">−3:47.76</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">0.0</span><span class="mx-deckrow-key">8A (Am)</span></div></div><div class="mxl-wave"><div class="mxl-wave-d"></div><div class="mxl-wave-d mxl-wave-d--2"></div></div><div class="mxl-trn"><div class="mxl-trn-d"><span class="mx-btn">KEY</span><span class="mx-btn mx-btn--deck1 is-on">Q</span><span class="mx-btn mx-btn--deck1 is-on">SYNC</span><span class="mx-btn mx-btn--sound">LOOP</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div><div class="mxl-trn-d"><span class="mx-btn">KEY</span><span class="mx-btn mx-btn--deck2 is-on">Q</span><span class="mx-btn">SYNC</span><span class="mx-btn mx-btn--sound">LOOP</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div></div><div class="mx-popover"><div class="mx-popover-sheet"><div class="mx-popover-head"><span class="mx-popover-title">Clear samples</span><button class="mx-close" aria-label="Close"></button></div><div class="mx-popover-body"><div class="mx-menu"><div class="mx-menu-item"><span class="mx-tick is-on"></span><span class="mxl-num mxl-num--d1">1</span><span class="mxl-w24">A1</span><span class="mxl-strong">Times' up</span><span class="mx-menu-note">0:18</span></div><div class="mx-menu-item"><span class="mx-tick"></span><span class="mxl-num mxl-num--d1">2</span><span class="mxl-w24">A2</span><span class="mxl-strong">SNARE9</span><span class="mx-menu-note">0:01</span></div><div class="mx-menu-item"><span class="mx-tick is-on"></span><span class="mxl-num mxl-num--d1">3</span><span class="mxl-w24">A3</span><span class="mxl-strong">Air horn.wav</span><span class="mx-menu-note">0:02</span></div></div><div class="mxl-popnote">The pads go empty. The files stay where they are.</div></div><div class="mx-popover-foot"><button class="mx-btn mxl-w120">CANCEL</button><button class="mx-btn mx-btn--danger is-on mxl-w120">CLEAR (2)</button></div></div></div></div></template>
+<template id="mx-m-loadsample"><div class="mx-screen mxl-scr mxl-loadsample"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab is-on">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>USB</b><small class="">NO USB</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head"><span class="mxl-title">Load sample</span><span class="mxl-hint" style="flex:none">Pick a sound, then a pad</span><span class="mxl-search">Search…</span><button class="mx-close" aria-label="Close"></button></div><div class="mxl-srcrow"><span class="mx-btn is-on">SAMPLES</span><span class="mx-btn">SOURCES…</span><span class="mxl-hint">Or a list picked in Sources.</span></div><div class="mxl-main" style="display:flex"><div style="flex:1 1 auto" class="mxl-tbl mxl-tbl--samples"><div class="mxl-th"><span>Filename</span><span class="mxl-r">BPM</span><span>Key</span><span>Duration</span></div><div class="mxl-row"><span>MergeFX Sample Sound 101.wav</span><span></span><span class="mxl-r"></span><span>0:01</span></div><div class="mxl-row is-sel"><span>03 - Times' up.flac</span><span></span><span class="mxl-r">6B</span><span>0:18</span></div><div class="mxl-row"><span>Air horn.wav</span><span></span><span class="mxl-r"></span><span>0:02</span></div><div class="mxl-row"><span>SNARE9.wav</span><span></span><span class="mxl-r"></span><span>0:01</span></div><div class="mxl-sb" style="--thumb:100%"></div></div></div><div class="mxl-foot"><span class="mxl-hint">Tap a sound, then load it to a pad.</span><span class="mx-btn mx-btn--confirm mxl-right">LOAD TO PAD…</span></div></div></template>
+<template id="mx-m-fx"><div class="mx-screen mxl-scr mxl-fx"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab">TRACKS</span><span class="mx-tab is-on">FX</span><span class="mx-tab">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>USB</b><small class="">NO USB</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-main"><div class="mxl-fxrow mxl-fxrow--mode"><div class="mx-seg"><span class="mx-seg-opt is-on">FX 1 · DECK A PADS</span><span class="mx-seg-opt">FX 2 · DECK B PADS</span></div><span class="mxl-hint">Starlight FX pads: 1-3 effects · 4 send to deck</span></div><div class="mxl-fxrow"><span class="mxl-lbl">Route</span><div class="mx-seg"><span class="mx-seg-opt is-on">DECK 1 · PAD 4</span><span class="mx-seg-opt">DECK 2</span><span class="mx-seg-opt">MASTER</span></div><span class="mxl-lbl">Mix</span><div class="mx-slider" style="--v:.92"><div class="mx-slider-fill"></div><div class="mx-slider-thumb"></div></div></div><div class="mxl-fxboxes"><div class="mxl-fxbox"><div class="mxl-fxbox-h"><span>Effect 1</span><i>deck A FX pad 1</i></div><div class="mxl-fxbox-r"><span class="mxl-select"><span>Reverb</span></span><span class="mx-btn mx-btn--sound mxl-onoff is-on">ON</span></div><div class="mx-slider" style="--v:0.55"><div class="mx-slider-fill"></div><div class="mx-slider-thumb"></div></div></div><div class="mxl-fxbox"><div class="mxl-fxbox-h"><span>Effect 2</span><i>deck A FX pad 2</i></div><div class="mxl-fxbox-r"><span class="mxl-select"><span>Echo</span></span><span class="mx-btn mx-btn--sound mxl-onoff">OFF</span></div><div class="mx-slider" style="--v:0.3"><div class="mx-slider-fill"></div><div class="mx-slider-thumb"></div></div></div><div class="mxl-fxbox"><div class="mxl-fxbox-h"><span>Effect 3</span><i>deck A FX pad 3</i></div><div class="mxl-fxbox-r"><span class="mxl-select is-empty"><span>Select effect…</span></span><span class="mx-btn mx-btn--sound mxl-onoff">OFF</span></div><div class="mx-slider" style="--v:0.75"><div class="mx-slider-fill"></div><div class="mx-slider-thumb"></div></div></div></div></div><div class="mxl-decks"><div class="mx-deckrow mx-deckrow--deck1 mxl-dr"><span class="mx-deckrow-num">1</span><span class="mx-deckrow-title">Your Body</span><span class="mx-deckrow-artist">Biscits</span><span class="mx-deckrow-chips"><span class="mx-chip mx-chip--sync">SYNC</span><span class="mx-chip mx-chip--master">MASTER</span></span><span class="mx-deckrow-time" data-label="REMAINING · TAP">−3:42.52</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">−7.1</span><span class="mx-deckrow-key">1B (B)</span></div><div class="mx-deckrow mx-deckrow--deck2 mxl-dr"><span class="mx-deckrow-num">2</span><span class="mx-deckrow-title">YOU'RE THE ONE</span><span class="mx-deckrow-artist">KAYTRANADA / Syd</span><span class="mx-deckrow-time" data-label="REMAINING · TAP">−3:47.76</span><span class="mx-deckrow-bpm">118.00</span><span class="mx-deckrow-pitch" data-label="±8%">0.0</span><span class="mx-deckrow-key">8A (Am)</span></div></div><div class="mxl-wave"><div class="mxl-wave-d"></div><div class="mxl-wave-d mxl-wave-d--2"></div></div><div class="mxl-trn"><div class="mxl-trn-d"><span class="mx-btn">KEY</span><span class="mx-btn mx-btn--deck1 is-on">Q</span><span class="mx-btn mx-btn--deck1 is-on">SYNC</span><span class="mx-btn mx-btn--sound">LOOP</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div><div class="mxl-trn-d"><span class="mx-btn">KEY</span><span class="mx-btn mx-btn--deck2 is-on">Q</span><span class="mx-btn">SYNC</span><span class="mx-btn mx-btn--sound">LOOP</span><span class="mx-btn mx-btn--cue">CUE</span><span class="mx-btn mx-btn--play" aria-label="Play">▶</span></div></div></div></template>
+<template id="mx-m-settings-media"><div class="mx-screen mxl-scr mxl-settings"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>USB</b><small class="">NO USB</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq is-on" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head mxl-head--tight" style="padding-left:16px"><span class="mxl-title">Settings</span><span class="mxl-hint" style="margin-left:24px">Every change saves within a second.</span><span class="mxl-right"><button class="mx-close" aria-label="Close"></button></span></div><div class="mxl-main"><div class="mxl-set"><div class="mx-menu mxl-rail"><div class="mx-menu-item">PLAYBACK</div><div class="mx-menu-item">INTERFACE</div><div class="mx-menu-item is-on">MEDIA</div><div class="mx-menu-item">ADVANCED</div></div><div class="mxl-srows"><div class="mxl-srow"><div class="mxl-srow-l"><b>Scan bar</b><small>Hidden: the % shows on the USB chip</small></div><div><div class="mx-seg"><span class="mx-seg-opt is-on">SHOW</span><span class="mx-seg-opt">HIDE</span></div></div></div><div class="mxl-srow"><div class="mxl-srow-l"><b>RAM cache</b><small>MB. Also the room for handover copies. Next launch.</small></div><div><div class="mx-seg"><span class="mx-seg-opt">OFF</span><span class="mx-seg-opt">512</span><span class="mx-seg-opt is-on">1024</span></div></div></div><div class="mxl-srow"><div class="mxl-srow-l"><b>Eject</b><small>Safe eject on this card</small></div><div><button class="mx-toggle is-on" aria-label="On"></button></div></div><div class="mxl-srow"><div class="mxl-srow-l"><b>Plugging in a drive</b><small>What happens when a drive goes in</small></div><div><div class="mx-seg"><span class="mx-seg-opt is-on">ASK</span><span class="mx-seg-opt">AUTO LOAD</span></div></div><div class="mxl-srow-sub">ASK shows a small strip with LOAD and DISMISS. AUTO LOAD opens the drive at once.</div></div></div></div></div></div></template>
+<template id="mx-m-settings-interface"><div class="mx-screen mxl-scr mxl-settings"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>USB</b><small class="">NO USB</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq is-on" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head mxl-head--tight" style="padding-left:16px"><span class="mxl-title">Settings</span><span class="mxl-hint" style="margin-left:24px">Every change saves within a second.</span><span class="mxl-right"><button class="mx-close" aria-label="Close"></button></span></div><div class="mxl-main"><div class="mxl-set"><div class="mx-menu mxl-rail"><div class="mx-menu-item">PLAYBACK</div><div class="mx-menu-item is-on">INTERFACE</div><div class="mx-menu-item">MEDIA</div><div class="mx-menu-item">ADVANCED</div></div><div class="mxl-srows"><div class="mxl-srow"><div class="mxl-srow-l"><b>Desktop bar</b><small>Desktop · Mixxx · Speaker · Settings</small></div><div><span class="mx-btn mxl-w180">Show top bar</span></div></div><div class="mxl-srow"><div class="mxl-srow-l"><b>Deck time</b><small>Tap the time on a deck to switch</small></div><div><div class="mx-seg"><span class="mx-seg-opt">ELAPSED</span><span class="mx-seg-opt is-on">REMAINING</span></div></div></div><div class="mxl-srow"><div class="mxl-srow-l"><b>Brightness</b><small>Screen backlight</small></div><div><div class="mxl-srow-slider"><div class="mx-slider" style="--v:.8"><i class="mx-slider-fill"></i><i class="mx-slider-thumb"></i></div><span class="mxl-val">80%</span></div></div></div><div class="mxl-srow"><div class="mxl-srow-l"><b>Night dim</b><small>Drops the screen to a low level for dark rooms</small></div><div><div class="mx-seg"><span class="mx-seg-opt is-on">OFF</span><span class="mx-seg-opt">ON</span></div></div></div><div class="mxl-srow"><div class="mxl-srow-l"><b>CPU readout</b><small>The CPU % at the top right</small></div><div><div class="mx-seg"><span class="mx-seg-opt is-on">SHOW</span><span class="mx-seg-opt">HIDE</span></div></div></div></div></div></div></div></template>
+<template id="mx-m-media"><div class="mx-screen mxl-scr mxl-media"><div class="mxl-top"><div class="mx-tabs"><span class="mx-tab">DECKS</span><span class="mx-tab">TRACKS</span><span class="mx-tab">FX</span><span class="mx-tab">SAMPLER</span></div><div class="mxl-topr"><div class="mxl-usb is-live"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><span class="mxl-usb-t"><b>MANTACORE</b><small class="is-inuse">IN USE</small></span></div><span class="mx-btn mxl-rec"><i class="mxl-recdot"></i>REC</span><span class="mx-btn mxl-sq" aria-label="Settings"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9"/><circle cx="12" cy="12" r="6.6"/></svg></span><span class="mxl-cpu"><small>CPU</small><b>3%</b></span></div></div><div class="mxl-head" style="padding-left:16px"><span class="mxl-title">USB &amp; Media</span><div class="mx-seg mxl-mfilter"><span class="mx-seg-opt is-on">ALL</span><span class="mx-seg-opt">READY</span><span class="mx-seg-opt">IN USE</span></div><span class="mxl-right"><button class="mx-close" aria-label="Close"></button></span></div><div class="mxl-main"><div class="mxl-drives"><div class="mxl-drives-list"><div class="mxl-drive"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><div class="mxl-drive-n"><b>MANTACORE</b><small>58.6 GB</small></div><span class="mx-chip mx-chip--inuse">IN USE</span><div class="mxl-drive-btns"><span class="mx-btn"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1"/></svg>OPEN</span><span class="mx-btn mx-btn--caution"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5l7 8H5z"/><path d="M5 18h14"/></svg>EJECT</span></div></div><div class="mxl-drive"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><div class="mxl-drive-n"><b>SPARE</b><small>32 GB</small></div><span class="mx-chip mx-chip--ready">READY</span><div class="mxl-drive-btns"><span class="mx-btn"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1"/></svg>OPEN</span><span class="mx-btn mx-btn--caution"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5l7 8H5z"/><path d="M5 18h14"/></svg>EJECT</span></div></div><div class="mxl-drive"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v15"/><circle cx="12" cy="19.5" r="1.8"/><path d="M12 14l-5-3V8"/><path d="M12 12l5-3V6"/><rect x="5.5" y="6" width="3" height="2.5"/><circle cx="17" cy="5" r="1.4"/><path d="M10 5l2-2.5L14 5"/></svg><div class="mxl-drive-n"><b>KINGSTON</b><small>16 GB</small></div><span class="mx-chip mx-chip--ready">READY</span><div class="mxl-drive-btns"><span class="mx-btn"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7h11M9 12h11M9 17h11M4 7h1M4 12h1M4 17h1"/></svg>OPEN</span><span class="mx-btn mx-btn--caution"><svg class="mxl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5l7 8H5z"/><path d="M5 18h14"/></svg>EJECT</span></div></div><div class="mxl-sb"></div></div><div class="mxl-drives-foot"><b>2 tracks</b> playing from Pi memory</div></div></div></div></template>
+<div id="out"></div>
+<script>
+const FROM=0;
+const out=document.getElementById('out');
+[...document.querySelectorAll('template[id^="mx-"]')].slice(FROM).forEach(t=>{
+  const l=document.createElement('div');l.className='lbl';l.textContent=t.id;out.appendChild(l);
+  const b=document.createElement('div');b.className='box';b.appendChild(t.content.cloneNode(true));out.appendChild(b);
+});
+// overflow check: report any descendant whose box leaves the 800x480 frame or whose text is clipped
+const probs=[];
+document.querySelectorAll('.box').forEach((b,i)=>{
+  const s=b.firstElementChild, r=s.getBoundingClientRect();
+  if(s.scrollWidth>800||s.scrollHeight>480) probs.push(b.previousSibling.textContent+': screen scroll '+s.scrollWidth+'x'+s.scrollHeight);
+  s.querySelectorAll('.mx-btn,.mx-seg-opt,.mx-close,.mx-toggle').forEach(e=>{
+    const er=e.getBoundingClientRect();
+    if(er.height<44&&!e.classList.contains('mx-seg-opt')) probs.push(b.previousSibling.textContent+': small target '+e.textContent+' '+er.width.toFixed(0)+'x'+er.height.toFixed(0));
+    if(er.width<44) probs.push(b.previousSibling.textContent+': narrow target '+e.textContent+' '+er.width.toFixed(0));
+    if(e.scrollWidth>e.clientWidth+1) probs.push(b.previousSibling.textContent+': clipped '+e.textContent);
+  });
+});
+document.querySelectorAll('.box').forEach(b=>{const a=b.querySelector('.mx-deckrow--deck1 .mx-deckrow-artist');if(a)probs.push(b.previousSibling.textContent+': deck1 artist '+(a.scrollWidth>a.clientWidth?'cut':'full')+' '+a.clientWidth+'/'+a.scrollWidth);});
+console.log(probs.length?probs.join(' | '):'no problems');
+</script></body></html>

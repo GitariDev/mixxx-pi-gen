@@ -13,6 +13,7 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Wave 2 media (N3) | `7f6b677` | 679 run, OK (135 platform skips) | 164/164, 0 skips | Media page, chip state, insert ping, Safe strip, handover, gated engine-A eject |
 | Wave 2 browse (N4) | `c4a00bd` | 689 run, OK (137 platform skips) | 174/174, 0 skips | Load sample keeps its own place, grouped Sources |
 | Wave 2 final skin | `67341f2` | skin + sample-browser modules OK | not needed (skin only) | USB source button; Choose pad from Tracks returns to Tracks |
+| Post-B and council R1 repairs | `fb1a119` | 710 run, OK (141 platform skips) | 190/190, 0 skips | 42 patches. Skin: EDIT LIST command no longer drives the label, waveforms hidden for every screen ≠ 0, chip writes screen 2 first, USB/SYNC chips, ±N% caption. Native: Media page under the skin root (styled) and opened after the screen write; tempo range saved to `[Controls],RateRangePercent`; late top-bar confirm re-checked; media lists keep their widgets and scroll, drag-scroll with 24 px bars, bounded handover and eject-user lists, `mixpi_from_usb`; scan strip moves to the deck-info row while a tool panel is open; `sidebar_sources_editing` set with setAndConfirm (read-only control) |
 
 ## Wave 0 on the test card (build 2)
 
@@ -80,3 +81,13 @@ The checks ran 10:33-11:18, with 2 reboots and 64.7-70.1 °C, `throttled=0x0` th
   5. F-14: the first Show top bar after a start once raised "Top bar was not confirmed" (1 of 3 tries).
 - **BLOCKED (drive):** MANTACORE flapped again when its port was enabled (16 disconnects in 17 s; the port is disabled again). Blocked: R-4 insert ping, LOAD/DISMISS and chip states; R-5 handover and the Q3 RAM-copy gate; R-6 eject and the Safe strip; the R-9 drive tile; the R-15 pop-up check; the R-20 storm.
 - **Owner state restored:** RB Fast, pads 1-2 only, Sources and scan bar as found, time remaining, stereo routing, top bar hidden, Mixxx on DECKS. The eject gate stays.
+
+## Council round 1 (at `24d2b3a`, build B on the card)
+
+| Seat | Score | Main blockers |
+|---|---|---|
+| Claude Opus 5.5 xhigh | 6 | repairs unbuilt; tempo range; F-14 cause; Q3 gate before C; evidence on the card only; build count; two unlisted deck-row departures |
+| Claude Fable 5.2 high | 6 | tempo + F-14 open; repairs unbuilt; media never on hardware (≤ 8 without a drive or a written deferral); scan strip over the focused waveform |
+| GPT-6.1 Sol xhigh | 6 | repairs on C; six drive checks + Q3 gate; Media list refresh/scroll/overflow; screenshots and hands-on Starlight |
+
+Reports: `deploy/ui-redesign-20261117/council/round1-*.md`. Every code finding is repaired at `fb1a119`. Build B's screenshots are now on the Mac (`acceptance-B/shots/`), and the Starlight steps are marked NOT RUN. Still needed: build C (a 4th pi-gen run, owner's yes asked), a working USB drive (owner asked), and a short hands-on Starlight session (owner asked).

@@ -132,6 +132,15 @@ class Library : public QObject {
     // (tests/native/source_groups_test.cpp checks them).
     QModelIndex sourceRow(const QString&) const { return {}; }
     QList<QModelIndex> driveRows() { return {}; }
+    LibraryInterface::BrowsePlace sampleSourcePlace(int) { return {}; }
+    // mixxx-sources-menu-fixes.patch: ★ on the drive row and on Samples
+    // (tests/native/source_groups_test.cpp checks them); here no start tile.
+    struct StartDrive {
+        int requests = 0;
+        void openStartDrive() { ++requests; }
+    };
+    StartDrive* m_pMixpiMedia = nullptr;
+    bool showStartTile(const QString&) { return false; }
 #endif
     void onSkinLoadFinished();
     void setTrackTableFont(const QFont&) {}

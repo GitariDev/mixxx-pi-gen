@@ -68,6 +68,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-settings-fixes.patch",
             "mixxx-scan-strip-fixes.patch",
             "mixxx-sources-edit-done.patch",
+            "mixxx-media-lists.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -78,6 +79,7 @@ class PackageRecipeTests(unittest.TestCase):
 # check expands them). Every other patch must apply to pristine upstream on
 # its own, and every listed patch must actually need its prerequisites.
 PREREQUISITES = {
+    "mixxx-media-lists.patch": ["mixxx-media-handover.patch"],
     "mixxx-scan-strip-fixes.patch": ["mixxx-scan-progress.patch"],
     "mixxx-sources-edit-done.patch": ["mixxx-source-groups.patch"],
     "mixxx-settings-fixes.patch": ["mixxx-performance-settings.patch", "mixxx-acceptance-fixes.patch"],

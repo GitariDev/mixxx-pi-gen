@@ -53,7 +53,9 @@ class ScanProgressPatchTests(unittest.TestCase):
         for text in ('"ScanBarHidden"', '"scan_active"', '"scan_percent"', '"scan_bar_hidden"',
                      'QStringLiteral("screen")', 'tr("Scanning · %1")', 'tr("Hide")', 'tr("Cancel")',
                      'Qt::ElideRight', 'painter.fillRect(rect(), kStripBackground);',
-                     'pHost->height() - kTransportHeight - kStripHeight',
+                     # Above the transport row (mixxx-scan-strip-fixes.patch moves it
+                     # over the deck info while a tool panel is open).
+                     'pHost->height() - kTransportHeight',
                      'mixxx::Duration::fromSeconds(2)'):
             self.assertIn(text, dialog)
         self.assertNotIn('Qt::ElideMiddle', dialog)
@@ -64,6 +66,17 @@ class ScanProgressPatchTests(unittest.TestCase):
                         scanner.index('queueTask(new RecursiveScanDirectoryTask(', start))
         self.assertEqual(scanner.count('if (m_scanPercent.folderDone())'), 2)
         self.assertIn('new LibraryScannerDlg(pConfig)', scanner)
+
+    def test_strip_fixes_move_the_strip_off_a_focused_waveform(self):
+        # Council round 1, blocker 4: mixxx-scan-strip-fixes.patch reads
+        # [MixPi],loop_deck and changes the strip only.
+        fixes = RUNNER.PATCH_DIR / 'mixxx-scan-strip-fixes.patch'
+        self.assertEqual(re.findall(r'^diff --git a/(\S+) b/\S+$', fixes.read_text(), re.MULTILINE),
+                         [SCANNER + 'libraryscannerdlg.h', SCANNER + 'libraryscannerdlg.cpp'])
+        names = patch_names()
+        self.assertLess(names.index('mixxx-scan-progress.patch'), names.index('mixxx-scan-strip-fixes.patch'))
+        self.assertIn('QStringLiteral("loop_deck")', fixes.read_text())
+        self.assertIn('kDeckInfoHeight = 72', fixes.read_text())
 
     @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
     def test_repaint_check_fails_for_a_label_without_its_own_background(self):

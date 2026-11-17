@@ -23,10 +23,11 @@ class QuietScanPatchTests(unittest.TestCase):
              '--mixxx-print-patches'], text=True).split()
         self.assertEqual(names.index('mixxx-quiet-scan.patch'), 19)
         # Later patches leave the scanner dialog to this patch, except
-        # mixxx-scan-progress.patch (R-12), which builds on it.
+        # mixxx-scan-progress.patch (R-12) and mixxx-scan-strip-fixes.patch,
+        # which build on it.
         patch_dir = PATCH.parent
         for later in names[20:]:
-            if later != 'mixxx-scan-progress.patch':
+            if later not in ('mixxx-scan-progress.patch', 'mixxx-scan-strip-fixes.patch'):
                 self.assertNotIn('libraryscannerdlg', (patch_dir / later).read_text(), later)
         # The scan itself (LibraryScanner, tasks, DAO) is left untouched.
         self.assertEqual(re.findall(r'^diff --git a/(\S+) b/\S+$', PATCH.read_text(), re.MULTILINE),

@@ -1,0 +1,68 @@
+diff --git a/src/library/scanner/libraryscannerdlg.h b/src/library/scanner/libraryscannerdlg.h
+--- a/src/library/scanner/libraryscannerdlg.h
++++ b/src/library/scanner/libraryscannerdlg.h
+@@ -66,6 +66,13 @@
+     // The transport row at the bottom of the main window; the strip sits
+     // above it, over the overview row.
+     static constexpr int kTransportHeight = 56;
++    // The overview row above the transport. While a deck's tool panel is
++    // open ([MixPi],loop_deck 1 or 2) the skin shows that deck's focused
++    // waveform there: a native GL surface that no widget may cover.
++    static constexpr int kOverviewHeight = 48;
++    // The deck-info row above the overviews: plain widgets. The strip sits
++    // at its top while a tool panel is open.
++    static constexpr int kDeckInfoHeight = 72;
+ 
+     explicit LibraryScannerDlg(UserSettingsPointer pConfig,
+             QWidget* parent = nullptr,
+@@ -99,6 +106,7 @@
+     void showStrip();
+     void hideStrip();
+     void placeStrip();
++    bool toolPanelOpen() const;
+ 
+     UserSettingsPointer m_pConfig;
+     PerformanceTimer m_timer;
+diff --git a/src/library/scanner/libraryscannerdlg.cpp b/src/library/scanner/libraryscannerdlg.cpp
+--- a/src/library/scanner/libraryscannerdlg.cpp
++++ b/src/library/scanner/libraryscannerdlg.cpp
+@@ -250,9 +250,19 @@
+         showStrip();
+     } else if (!wanted && stripShown()) {
+         hideStrip();
++    } else if (wanted) {
++        // A tool panel opened or closed: move off the focused waveform.
++        placeStrip();
+     }
+ }
+ 
++bool LibraryScannerDlg::toolPanelOpen() const {
++    // [MixPi],loop_deck is the skin's: 0 none, 1 or 2 that deck's tool panel.
++    const auto* pLoopDeck = ControlObject::getControl(
++            ConfigKey(kMixPiGroup, QStringLiteral("loop_deck")), ControlFlag::NoWarnIfMissing);
++    return pLoopDeck && (pLoopDeck->get() == 1 || pLoopDeck->get() == 2);
++}
++
+ void LibraryScannerDlg::showStrip() {
+     if (!m_pStrip) {
+         return;
+@@ -283,10 +293,15 @@
+ void LibraryScannerDlg::placeStrip() {
+     QWidget* pHost = m_pStrip->parentWidget();
+     if (pHost) {
+-        m_pStrip->setGeometry(0,
+-                qMax(0, pHost->height() - kTransportHeight - kStripHeight),
+-                pHost->width(),
+-                kStripHeight);
++        // Above the transport row, over the overviews; with a tool panel
++        // open, over the deck-info row instead (the overview row then holds
++        // a live GL waveform). Never over the transport row.
++        const int bottom = pHost->height() - kTransportHeight -
++                (toolPanelOpen() ? kOverviewHeight + kDeckInfoHeight - kStripHeight : 0);
++        const QRect geometry(0, qMax(0, bottom - kStripHeight), pHost->width(), kStripHeight);
++        if (m_pStrip->geometry() != geometry) {
++            m_pStrip->setGeometry(geometry);
++        }
+     } else {
+         m_pStrip->resize(480, kStripHeight);
+     }

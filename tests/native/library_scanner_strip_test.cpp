@@ -304,6 +304,46 @@ int main(int argc, char** argv) {
         CHECK(hidden->get() == 0);
         emit scanner.scanFinished();
 
+        // Council round 1, blocker 4: with a deck's tool panel open
+        // ([MixPi],loop_deck 1 or 2) the overview row holds that deck's live
+        // GL waveform. The strip then sits over the deck-info row (plain
+        // widgets), moves back when the panel closes, never covers the
+        // transport row, and hides while a full-screen view is open.
+        {
+            ControlObject loopDeck(ConfigKey("[MixPi]", "loop_deck"));
+            emit scanner.scanStarted();
+            advance();
+            emit scanner.progressLoading("/home/pi/Music/Backup/panel.mp3");
+            for (const int height : {480, 444}) {
+                window.resize(800, height);
+                app.processEvents();
+                for (const int deck : {0, 1, 2, 0}) {
+                    for (const int view : {0, 1, 0}) {
+                        loopDeck.setAndConfirm(deck);
+                        screen.setAndConfirm(view);
+                        watch();
+                        const QRect expected(0, deck ? height - 56 - 72 - 48 : height - 56 - 48, 800, 48);
+                        std::cout << "OBSERVE " << height << " loop_deck " << deck << " screen " << view
+                                  << ": strip " << (strip->isVisible() ? "shown" : "hidden") << " at y "
+                                  << strip->geometry().y() << std::endl;
+                        if (view) {
+                            CHECK(strip->isHidden() && active->get() == 1);
+                            continue;
+                        }
+                        CHECK(strip->isVisible() && strip->geometry() == expected);
+                        // Never over the transport row, never over the overview
+                        // row while it holds a focused waveform.
+                        CHECK(strip->geometry().bottom() < height - 56);
+                        CHECK(!deck || strip->geometry().bottom() < height - 56 - 48);
+                    }
+                }
+            }
+            CHECK(strip->geometry() == QRect(0, 444 - 104, 800, 48));
+            window.resize(800, 480);
+            app.processEvents();
+            emit scanner.scanFinished();
+        }
+
         percentChecks(scanner, active, percent, progress, percentLabel);
         const int height = strip->height();
 

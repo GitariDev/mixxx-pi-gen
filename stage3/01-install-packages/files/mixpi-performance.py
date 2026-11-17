@@ -188,6 +188,12 @@ def off_screen(value):
 
 
 SAMPLE_SCREENS = ((SCREEN, SCREEN_AT_MOST_4), (SCREEN, SCREEN_AT_LEAST_3))
+# The browse page's two layouts follow sample mode ([MixPi],sample_load), not a
+# screen number: a native close (N2's auto-close of Sources) writes screen 0
+# and cannot know that Sources was opened from Load sample. With sample_load
+# still 1 the page stays on Load sample; its ✕ or any tab clears sample_load.
+LOAD_MODE = ((SCREEN, '<IsEqual>1</IsEqual><Not/>'), ('[MixPi],sample_load', None))
+TRACKS_MODE = ((SCREEN, '<IsEqual>1</IsEqual><Not/>'), ('[MixPi],sample_load', '<Not/>'))
 
 
 def reset_views(e, keep=(), when='press'):
@@ -703,14 +709,16 @@ def browse_page(library):
     # whose button is hidden still covers what is under it. So the order and the
     # outer conditions are chosen so that, for each screen, the top shown child
     # holds the button that belongs there (tested by the tap model).
+    # Each level holds mutually exclusive children, so a shown child always has
+    # its button: sample mode shows one of the two closes, otherwise the menu.
+    closes = group('MixpiSampleCloses', 'stacked', '48f,48f', [
+        show_when(sample_sources_close, SCREEN, SCREEN_SOURCES),
+        show_when(load_close, SCREEN, SCREEN_SOURCES, negate=True)])
     slot = group('MixpiHeaderSlot', 'stacked', '48f,48f', [
-        when_all(load_close, '48f,48f', *SAMPLE_SCREENS),
-        when_all(sidebar_button, '48f,48f', (SCREEN, SCREEN_AT_MOST_1),
-                 ('[MixPi],sample_load', '<Not/>')),
-        when_all(sample_sources_close, '48f,48f', ('[MixPi],sample_load', None),
-                 on_screen(SCREEN_SOURCES))])
+        show_when(closes, '[MixPi],sample_load'),
+        show_when(sidebar_button, '[MixPi],sample_load', negate=True)])
 
-    crumb = show_when(label('', '220f,48f', 'MixpiTracksCrumb', elide='right'), SCREEN, SCREEN_NONE)
+    crumb = when_all(label('', '220f,48f', 'MixpiTracksCrumb', elide='right'), '220f,48f', *TRACKS_MODE)
     sources_head = group('MixpiSourcesHead', 'horizontal', '0me,48f', [
         label('SOURCES', '120f,48f', 'MixpiScreenTitle'),
         show_when(label('Pick a source, then a list.', '0me,48f', 'MixpiScreenHint', elide='right'),
@@ -720,11 +728,11 @@ def browse_page(library):
     show_when(sources_head, SCREEN, SCREEN_SOURCES)
     load_head = when_all(group('MixpiLoadHead', 'horizontal', '380f,48f', [
         label('LOAD SAMPLE', '150f,48f', 'MixpiScreenTitle'), sample_hints()]),
-        '380f,48f', *SAMPLE_SCREENS)
+        '380f,48f', *LOAD_MODE)
     header = group('MixpiBrowseHeader', 'horizontal', f'0me,{TOP_HEIGHT}f', [
         slot, crumb, sources_head, load_head,
         show_when(search, SCREEN, SCREEN_SOURCES, negate=True),
-        show_when(actions, SCREEN, SCREEN_NONE),
+        when_all(actions, '48f,48f', *TRACKS_MODE),
         show_when(sources, SCREEN, SCREEN_SOURCES)])
 
     # Sources: the sidebar takes the whole area under the header (y 96-480).
@@ -744,12 +752,13 @@ def browse_page(library):
                                   '[MixPi],sample_source_available'))
     add(source_row, label('Shows the list picked in Sources.', '0me,48f', 'MixpiScreenHint',
                           elide='right'))
-    source_row = when_all(source_row, '0me,56f', *SAMPLE_SCREENS)
+    source_row = when_all(source_row, '0me,56f', *LOAD_MODE)
 
     table = show_when(group('MixpiLibraryMain', children=[parts['Library']]),
                       SCREEN, SCREEN_SOURCES, negate=True)
-    titles = show_when(decks(compact=True), SCREEN, SCREEN_NONE)
+    titles = decks(compact=True)
     titles.find('ObjectName').text = 'MixpiTrackTitles'
+    titles = when_all(titles, '0me,28f', *TRACKS_MODE)
 
     choose = button('LOAD TO PAD…', SCREEN, size='250f,56f', push=True, name='MixpiPrimary',
                     transform=f'<IsEqual>{SCREEN_CHOOSE_PAD}</IsEqual>')
@@ -761,7 +770,7 @@ def browse_page(library):
                                            f'LOAD TO PAD {sampler}'), '[MixPi],sample_pad', sampler))
     footer = when_all(group('MixpiSampleFooter', 'horizontal', '0me,64f', [
         label('Tap a sound, then load it to a pad.', '0me,64f', 'MixpiScreenHint', elide='right'),
-        targets, gap('8f,64f')]), '0me,64f', *SAMPLE_SCREENS)
+        targets, gap('8f,64f')]), '0me,64f', *LOAD_MODE)
 
     wrapper = group('LibraryWrapper', children=[header, sources_body, source_row, table, titles, footer])
     # In a stacked group Qt lowers each later child (QStackedLayout::insertWidget),
@@ -1119,7 +1128,9 @@ def build(skin, loop_display='focus'):
     # (plan 4.1): no touch CUE or PLAY under Sources, Load sample or Choose pad.
     bottom = group('MixpiBottom', size=f'0me,{OVERVIEW_HEIGHT + TRANSPORT_HEIGHT}f',
                    children=[summaries, transport])
-    children.append(show_when(bottom, SCREEN, SCREEN_NONE))
+    # Not in sample mode either: Load sample after a native close of Sources.
+    children.append(when_all(bottom, f'0me,{OVERVIEW_HEIGHT + TRANSPORT_HEIGHT}f',
+                             on_screen(SCREEN_NONE), ('[MixPi],sample_load', '<Not/>')))
     ET.indent(root,space='  ')
     output=ET.tostring(root,encoding='unicode')+'\n'
     ET.fromstring(output)

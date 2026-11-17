@@ -1114,10 +1114,48 @@ class PerformanceSkinTests(unittest.TestCase):
                  (Model.state(1), menu),
                  (Model.state(1, **{'[MixPi]__sample_load': 1}), closes['[Sidebar],sidebar_visible']),
                  (Model.state(3), closes['[Tab],sampler']),
-                 (Model.state(3, **{'[MixPi]__sample_load': 0}), closes['[Tab],sampler'])]
+                 # A native close of Sources opened from Load sample: still Load sample.
+                 (Model.state(0, **{'[MixPi]__sample_load': 1, '[Tab]__library': 1}), closes['[Tab],sampler']),
+                 # A native USB open clears sample mode: Tracks, with the menu.
+                 (Model.state(3, **{'[MixPi]__sample_load': 0}), menu)]
         for state, expected in cases:
             top = [b for b in [menu] + list(closes.values()) if self.model.tappable(b, state)]
             self.assertEqual(top, [expected], state)
+
+    def test_menu_is_always_there_on_plain_tracks(self):
+        menu = self.model.one('SidebarButton')
+        # Screen 4 is left out: the Choose pad sheet covers the page by design.
+        for screen in (0, 1, 3):
+            state = Model.state(screen, **{'[MixPi]__sample_load': 0, '[Tab]__library': 1})
+            self.assertTrue(self.model.tappable(menu, state), screen)
+
+    def test_replay_native_close_of_sources_opened_from_load_sample(self):
+        # Build A: SAMPLER, LOAD SAMPLE, SOURCES…, then a leaf in the native rail;
+        # N2's auto-close writes screen 0 and sidebar_visible 0.
+        model, state = self.model, self.start()
+        model.tap(self.tab_button('SAMPLER', state), state)
+        model.tap(self.button_by_text('+  LOAD SAMPLE'), state)
+        model.tap(self.button_by_text('SOURCES…'), state)
+        self.assertEqual((state[SCREEN], state['[Sidebar],sidebar_visible'], state['[MixPi],sample_load']), (1, 1, 1))
+        model.apply(state, [(SCREEN, 0), ('[Sidebar],sidebar_visible', 0)])
+        self.assertEqual(self.shown(state), ['MixpiLoadHead', 'MixpiSearch', 'MixpiSampleSources',
+                                             'MixpiLibraryMain', 'MixpiSampleFooter'])
+        self.assertFalse(model.visible(self.model.one('MixpiBottom'), state))
+        self.assertTrue(self.lit_tab('SAMPLER', state))
+        self.assertFalse(self.lit_tab('TRACKS', state))
+        # LOAD TO PAD… and Choose pad work from here.
+        model.tap(self.shown_button(state, ObjectName='MixpiPrimary', key=SCREEN), state)
+        self.assertEqual(state[SCREEN], 4)
+        self.assertTrue(model.tappable(self.tiles()[0], state))
+        model.tap(self.button_by_text('CANCEL'), state)
+        # Its ✕ returns to the Sampler; TRACKS is plain Tracks with the menu.
+        model.tap(self.shown_button(state, ObjectName='MixpiIconButton', key='[Tab],sampler'), state)
+        self.assertEqual((state[SCREEN], state['[MixPi],sample_load'], state['[Tab],sampler']), (0, 0, 1))
+        model.tap(self.tab_button('TRACKS', state), state)
+        self.assertEqual(self.shown(state), ['SidebarButton', 'MixpiTracksCrumb', 'MixpiSearch',
+                                             'LibraryActionsButton', 'MixpiLibraryMain', 'MixpiTrackTitles'])
+        self.assertTrue(model.visible(self.model.one('MixpiBottom'), state))
+        self.assertTrue(model.tappable(self.model.one('SidebarButton'), state))
 
     # ---------- carried guards ----------
 

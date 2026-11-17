@@ -9,6 +9,10 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Wave 0 baseline | `cdc5c1b` | exit 0 | 135/135, 0 skips | Held options `a8a86fa`, `72e98c4` cherry-picked as `6bda16f`, `cdc5c1b` |
 | Wave 1 integrated | `9d9bf30` | 642 run, OK (133 platform skips) | 153/153, 0 skips | N1 save-on-change + stop unit, N2 Sources rail/edit + scan bar, S shell/pads/Load sample/Sources/icons |
 | Wave 1 skin fix | `ec580e1` | builder: 619 OK | not needed (skin only) | Sampler layout, Choose pad stacking, Sources search, header Back removed, EDIT LIST → DONE |
+| Wave 2 skin + R-14 fix | `2c21ede` | builders green | not needed (skin and system files) | S: deck page, tool panel, FX 1/FX 2, full-screen Settings, chip states, Load sample hand-off, full-height views; N1: logind delay inhibitor |
+| Wave 2 media (N3) | `7f6b677` | 679 run, OK (135 platform skips) | 164/164, 0 skips | Media page, chip state, insert ping, Safe strip, handover, gated engine-A eject |
+| Wave 2 browse (N4) | `c4a00bd` | 689 run, OK (137 platform skips) | 174/174, 0 skips | Load sample keeps its own place, grouped Sources |
+| Wave 2 final skin | `67341f2` | skin + sample-browser modules OK | not needed (skin only) | USB source button; Choose pad from Tracks returns to Tracks |
 
 ## Wave 0 on the test card (build 2)
 

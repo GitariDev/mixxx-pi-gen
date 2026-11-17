@@ -1,0 +1,864 @@
+diff --git a/src/coreservices.cpp b/src/coreservices.cpp
+index 9e2beb2..31ab77f 100644
+--- a/src/coreservices.cpp
++++ b/src/coreservices.cpp
+@@ -361,6 +361,8 @@ CoreServices::~CoreServices() {
+     if (m_isInitialized) {
+         finalize();
+     }
++    // Also when initialize() stopped early: the autosave owns a control.
++    m_pConfigAutosave.reset();
+ 
+     // Tear down remaining stuff that was initialized in the constructor.
+     CLEAR_AND_CHECK_DELETED(m_pKeyboardEventFilter);
+@@ -499,6 +501,10 @@ void CoreServices::initialize(QApplication* pApp) {
+ 
+     m_pControlIndicatorTimer = std::make_shared<mixxx::ControlIndicatorTimer>(this);
+ 
++    // MixPi save on change. Created before the players so that
++    // [MixPi],saved exists for the sampler bank; started once start-up is done.
++    m_pConfigAutosave = std::make_unique<ConfigAutosave>(pConfig);
++
+     auto pChannelHandleFactory = std::make_shared<ChannelHandleFactory>();
+ 
+     emit initializationProgressUpdate(20, tr("effects"));
+@@ -711,6 +717,8 @@ void CoreServices::initialize(QApplication* pApp) {
+         }
+     }
+ 
++    m_pConfigAutosave->start();
++
+     m_isInitialized = true;
+ }
+ 
+@@ -819,6 +827,10 @@ void CoreServices::finalize() {
+     Timer t("CoreServices::~CoreServices");
+     t.start();
+ 
++    // No autosave during shutdown; wait for a write in progress so that the
++    // quit-time save below is the last one.
++    m_pConfigAutosave->stop();
++
+     // Stop all pending library operations
+     qDebug() << t.elapsed(false).debugMillisWithUnit() << "stopping pending Library tasks";
+     m_pTrackCollectionManager->stopLibraryScan();
+@@ -897,6 +909,8 @@ void CoreServices::finalize() {
+ 
+     m_pSkinControls.reset();
+ 
++    m_pConfigAutosave.reset();
++
+     m_pControlIndicatorTimer.reset();
+ 
+     t.elapsed(true);
+diff --git a/src/coreservices.h b/src/coreservices.h
+index b5d5325..9f88d0f 100644
+--- a/src/coreservices.h
++++ b/src/coreservices.h
+@@ -145,6 +145,8 @@ class CoreServices : public QObject {
+ 
+     std::unique_ptr<SkinControls> m_pSkinControls;
+     std::unique_ptr<ControlPushButton> m_pTouchShift;
++    // MixPi save on change: writes mixxx.cfg shortly after each change.
++    std::unique_ptr<ConfigAutosave> m_pConfigAutosave;
+ 
+     Timer m_runtime_timer;
+     const CmdlineArgs& m_cmdlineArgs;
+diff --git a/src/mixer/playermanager.cpp b/src/mixer/playermanager.cpp
+index 5224204..30e7c19 100644
+--- a/src/mixer/playermanager.cpp
++++ b/src/mixer/playermanager.cpp
+@@ -432,7 +432,8 @@ void PlayerManager::addDeckInner() {
+ }
+ 
+ void PlayerManager::loadSamplers() {
+-    m_pSamplerBank->loadSamplerBankFromPath(getDefaultSamplerPath(m_pConfig));
++    // MixPi save on change: from here on the bank is saved after each change.
++    m_pSamplerBank->loadSamplerBankAndAutosave(getDefaultSamplerPath(m_pConfig));
+ }
+ 
+ void PlayerManager::addSampler() {
+@@ -468,6 +469,7 @@ void PlayerManager::addSamplerInner() {
+             &BaseTrackPlayer::trackUnloaded,
+             this,
+             &PlayerManager::slotSaveEjectedTrack);
++    m_pSamplerBank->watchSampler(pSampler);
+ 
+     m_players[handleGroup.handle()] = pSampler;
+     m_samplers.append(pSampler);
+diff --git a/src/mixer/samplerbank.cpp b/src/mixer/samplerbank.cpp
+index 00fc219..fc96b0d 100644
+--- a/src/mixer/samplerbank.cpp
++++ b/src/mixer/samplerbank.cpp
+@@ -4,8 +4,10 @@
+ #include <QFileDialog>
+ #include <QMessageBox>
+ #include <QStandardPaths>
++#include <QTimer>
+ 
+ #include "control/controlpushbutton.h"
++#include "mixer/basetrackplayer.h"
+ #include "mixer/playermanager.h"
+ #include "mixer/sampler.h"
+ #include "moc_samplerbank.cpp"
+@@ -21,6 +23,14 @@ const ConfigKey kConfigkeyLastImportExportDirectory(
+ // lupdate finds the single string here.
+ const char kSamplerFileType[] = QT_TRANSLATE_NOOP("SamplerBank", "Mixxx Sampler Banks (*.xml)");
+ 
++// MixPi save on change.
++constexpr int kAutosaveDelayMs = 1000;
++constexpr int kAutosaveRetryMs = 5000;
++// Start-up bank loads that have not been seen after this long (a missing
++// file, a drive that is not plugged in) no longer hold back the autosave;
++// their locations are still kept in the file.
++constexpr int kStartupLoadGraceMs = 30000;
++
+ } // anonymous namespace
+ 
+ SamplerBank::SamplerBank(UserSettingsPointer pConfig,
+@@ -45,6 +55,57 @@ SamplerBank::SamplerBank(UserSettingsPointer pConfig,
+     m_pCONumSamplers = new ControlProxy(
+             ConfigKey(QStringLiteral("[App]"), QStringLiteral("num_samplers")),
+             this);
++
++    m_pAutosaveTimer = new QTimer(this);
++    m_pAutosaveTimer->setSingleShot(true);
++    connect(m_pAutosaveTimer, &QTimer::timeout, this, &SamplerBank::autosave);
++}
++
++void SamplerBank::watchSampler(BaseTrackPlayer* pSampler) {
++    const QString group = pSampler->getGroup();
++    const auto changed = [this, group] {
++        m_startupLocations.remove(group);
++        scheduleAutosave();
++    };
++    connect(pSampler, &BaseTrackPlayer::loadingTrack, this, changed);
++    connect(pSampler, &BaseTrackPlayer::newTrackLoaded, this, changed);
++    connect(pSampler, &BaseTrackPlayer::playerEmpty, this, changed);
++}
++
++void SamplerBank::loadSamplerBankAndAutosave(const QString& samplerBankPath) {
++    QFile file(samplerBankPath);
++    if (file.open(QIODevice::ReadOnly)) {
++        m_fileDocument = file.readAll();
++        file.close();
++    }
++    m_autosavePath = samplerBankPath;
++    m_sinceStartupLoad.start();
++    loadSamplerBankFromPath(samplerBankPath);
++}
++
++void SamplerBank::scheduleAutosave() {
++    // Never before the start-up load: an early save would wipe the bank.
++    if (m_autosavePath.isEmpty()) {
++        return;
++    }
++    m_pAutosaveTimer->start(kAutosaveDelayMs);
++}
++
++void SamplerBank::autosave() {
++    if (!m_startupLocations.isEmpty() &&
++            m_sinceStartupLoad.elapsed() < kStartupLoadGraceMs) {
++        // A start-up load is still on its way.
++        m_pAutosaveTimer->start(kAutosaveDelayMs);
++        return;
++    }
++    if (bankDocument(true) == m_fileDocument) {
++        return;
++    }
++    if (saveSamplerBankToPath(m_autosavePath)) {
++        mixxx::ConfigAutosave::pulseSaved();
++    } else {
++        m_pAutosaveTimer->start(kAutosaveRetryMs);
++    }
+ }
+ 
+ void SamplerBank::slotSaveSamplerBank(double v) {
+@@ -101,13 +162,21 @@ bool SamplerBank::saveSamplerBankToPath(const QString& samplerBankPath) {
+         return false;
+     }
+ 
+-    QFile file(samplerBankPath);
+-    if (!file.open(QIODevice::WriteOnly)) {
++    const bool autosaveFile = !m_autosavePath.isEmpty() && samplerBankPath == m_autosavePath;
++    const QByteArray document = bankDocument(autosaveFile);
++    // Atomic: samplers.xml is either the old or the new bank, never empty.
++    if (!mixxx::writeFileAtomically(samplerBankPath, document)) {
+         qWarning() << "Error saving sampler bank: Could not write to file"
+                    << samplerBankPath;
+         return false;
+     }
++    if (autosaveFile) {
++        m_fileDocument = document;
++    }
++    return true;
++}
+ 
++QByteArray SamplerBank::bankDocument(bool keepStartupLocations) const {
+     QDomDocument doc(QStringLiteral("SamplerBank"));
+ 
+     QDomElement root = doc.createElement(QStringLiteral("samplerbank"));
+@@ -126,16 +195,17 @@ bool SamplerBank::saveSamplerBankToPath(const QString& samplerBankPath) {
+         if (pTrack) {
+             QString samplerLocation = pTrack->getLocation();
+             samplerNode.setAttribute(QStringLiteral("location"), samplerLocation);
++        } else if (keepStartupLocations) {
++            // A start-up load not seen yet keeps its pad.
++            const auto it = m_startupLocations.constFind(pSampler->getGroup());
++            if (it != m_startupLocations.constEnd()) {
++                samplerNode.setAttribute(QStringLiteral("location"), it.value());
++            }
+         }
+         root.appendChild(samplerNode);
+     }
+ 
+-    QString docStr = doc.toString();
+-
+-    file.write(docStr.toUtf8().constData());
+-    file.close();
+-
+-    return true;
++    return doc.toString().toUtf8();
+ }
+ 
+ void SamplerBank::slotLoadSamplerBank(double v) {
+@@ -225,6 +295,10 @@ bool SamplerBank::loadSamplerBankFromPath(const QString& samplerBankPath) {
+                     if (location.isEmpty()) {
+                         m_pPlayerManager->slotLoadTrackToPlayer(TrackPointer(), group, false);
+                     } else {
++                        if (samplerBankPath == m_autosavePath) {
++                            // Before the load: a cached track loads at once.
++                            m_startupLocations.insert(group, location);
++                        }
+                         m_pPlayerManager->slotLoadLocationToPlayer(location, group, false);
+                     }
+                 }
+diff --git a/src/mixer/samplerbank.h b/src/mixer/samplerbank.h
+index 15af514..d74bb52 100644
+--- a/src/mixer/samplerbank.h
++++ b/src/mixer/samplerbank.h
+@@ -1,13 +1,18 @@
+ #pragma once
+ 
++#include <QByteArray>
++#include <QElapsedTimer>
++#include <QHash>
+ #include <QObject>
+ #include <memory>
+ 
+ #include "preferences/usersettings.h"
+ 
++class BaseTrackPlayer;
+ class ControlObject;
+ class ControlProxy;
+ class PlayerManager;
++class QTimer;
+ 
+ // TODO(Be): Replace saving/loading an XML file with saving/loading to the database.
+ //           That should be part of a larger project to implement
+@@ -21,14 +26,35 @@ class SamplerBank : public QObject {
+     bool saveSamplerBankToPath(const QString& samplerBankPath);
+     bool loadSamplerBankFromPath(const QString& samplerBankPath);
+ 
++    // MixPi save on change: loads the bank at start-up and from then on
++    // writes it back to the same file 1 s after a sampler loads or ejects a
++    // track. Nothing is written before this has been called.
++    void loadSamplerBankAndAutosave(const QString& samplerBankPath);
++    // Each sampler's load and eject signals start the autosave timer.
++    void watchSampler(BaseTrackPlayer* pSampler);
++
+   private slots:
+     void slotSaveSamplerBank(double v);
+     void slotLoadSamplerBank(double v);
+ 
+   private:
++    QByteArray bankDocument(bool keepStartupLocations) const;
++    bool writeBank(const QString& samplerBankPath, const QByteArray& document);
++    void scheduleAutosave();
++    void autosave();
++
+     UserSettingsPointer m_pConfig;
+     PlayerManager* m_pPlayerManager;
+     std::unique_ptr<ControlObject> m_pCOLoadBank;
+     std::unique_ptr<ControlObject> m_pCOSaveBank;
+     ControlProxy* m_pCONumSamplers;
++
++    QString m_autosavePath;
++    // Sampler group -> location requested from the bank at start-up whose
++    // load has not been seen yet. Until then the bank keeps the location.
++    QHash<QString, QString> m_startupLocations;
++    QElapsedTimer m_sinceStartupLoad;
++    // What the bank file holds, as last read or written.
++    QByteArray m_fileDocument;
++    QTimer* m_pAutosaveTimer;
+ };
+diff --git a/src/preferences/configobject.cpp b/src/preferences/configobject.cpp
+index 81709fa..e76d9bf 100644
+--- a/src/preferences/configobject.cpp
++++ b/src/preferences/configobject.cpp
+@@ -3,9 +3,22 @@
+ #include <QApplication>
+ #include <QDir>
+ #include <QIODevice>
++#include <QSaveFile>
+ #include <QTextStream>
++#include <QThreadPool>
++#include <QTimer>
+ #include <QtDebug>
+ 
++#include <limits>
++#include <utility>
++
++#ifdef Q_OS_UNIX
++#include <fcntl.h>
++#include <unistd.h>
++#endif
++
++#include "control/control.h"
++#include "control/controlobject.h"
+ #include "util/cmdlineargs.h"
+ #include "util/color/rgbcolor.h"
+ #include "util/xml.h"
+@@ -13,7 +26,6 @@
+ 
+ // TODO(rryan): Move to a utility file.
+ namespace {
+-const QString kTempFilenameExtension = QStringLiteral(".tmp");
+ const QString kCMakeCacheFile = QStringLiteral("CMakeCache.txt");
+ const QLatin1String kSourceDirLine = QLatin1String("mixxx_SOURCE_DIR:STATIC=");
+ 
+@@ -118,6 +130,61 @@ QString computeSettingsPath(const QString& configFilename) {
+ }
+ 
+ }  // namespace
++
++namespace mixxx {
++
++bool writeFileAtomically(const QString& filePath, const QByteArray& contents) {
++    const QFileInfo fileInfo(filePath);
++    if (!fileInfo.absoluteDir().exists()) {
++        QDir().mkpath(fileInfo.absolutePath());
++    }
++    // QSaveFile writes a temporary file in the same directory and renames it
++    // over the old file in commit(); the old file is never removed first.
++    // No direct-write fallback: in a read-only directory the write fails and
++    // the old file stays as it was.
++    QSaveFile file(filePath);
++    file.setDirectWriteFallback(false);
++    if (!file.open(QIODevice::WriteOnly)) {
++        qWarning().nospace() << "Could not write " << filePath << ": " << file.errorString();
++        return false;
++    }
++    if (file.write(contents) != contents.size() || !file.flush()) {
++        qWarning().nospace() << "Error while writing " << filePath << ": " << file.errorString();
++        file.cancelWriting();
++        return false;
++    }
++#ifdef Q_OS_UNIX
++    // Qt 6.8 QSaveFile::commit() also calls fdatasync() but ignores its
++    // result; this sync reports a failing disk before the rename.
++    if (::fsync(file.handle()) != 0) {
++        qWarning().nospace() << "Error while syncing " << filePath << ": "
++                             << qt_error_string(errno);
++        file.cancelWriting();
++        return false;
++    }
++#endif
++    if (!file.commit()) {
++        qWarning().nospace() << "Could not replace " << filePath << ": " << file.errorString();
++        return false;
++    }
++#ifdef Q_OS_UNIX
++    // Make the rename itself durable. The new file is in place already, so
++    // a failure here is only logged.
++    const int directory = ::open(QFile::encodeName(fileInfo.absolutePath()).constData(),
++            O_RDONLY | O_DIRECTORY | O_CLOEXEC);
++    if (directory < 0 || ::fsync(directory) != 0) {
++        qWarning().nospace() << "Could not sync the directory of " << filePath << ": "
++                             << qt_error_string(errno);
++    }
++    if (directory >= 0) {
++        ::close(directory);
++    }
++#endif
++    return true;
++}
++
++} // namespace mixxx
++
+ // static
+ ConfigKey ConfigKey::parseCommaSeparated(const QString& key) {
+     int comma = key.indexOf(",");
+@@ -160,7 +227,16 @@ template <class ValueType> ConfigObject<ValueType>::~ConfigObject() {
+ template <class ValueType>
+ void ConfigObject<ValueType>::set(const ConfigKey& k, const ValueType& v) {
+     QWriteLocker lock(&m_valuesLock);
+-    m_values.insert(k, v);
++    auto it = m_values.find(k);
++    if (it == m_values.end()) {
++        m_values.insert(k, v);
++    } else if (it.value().value != v.value) {
++        // The exact text decides: a change of case is a change in the file.
++        it.value() = v;
++    } else {
++        return;
++    }
++    m_changeCount.fetch_add(1, std::memory_order_acq_rel);
+ }
+ 
+ template <class ValueType>
+@@ -178,7 +254,17 @@ bool ConfigObject<ValueType>::exists(const ConfigKey& k) const {
+ template <class ValueType>
+ bool ConfigObject<ValueType>::remove(const ConfigKey& k) {
+     QWriteLocker lock(&m_valuesLock);
+-    return m_values.remove(k) > 0;
++    if (m_values.remove(k) == 0) {
++        return false;
++    }
++    m_changeCount.fetch_add(1, std::memory_order_acq_rel);
++    return true;
++}
++
++template<class ValueType>
++bool ConfigObject<ValueType>::hasUnsavedChanges() const {
++    QReadLocker lock(&m_valuesLock);
++    return m_changeCount.load(std::memory_order_acquire) != m_savedChangeCount;
+ }
+ 
+ template <class ValueType>
+@@ -234,77 +320,56 @@ template <class ValueType> void ConfigObject<ValueType>::reopen(const QString& f
+     if (!m_filename.isEmpty()) {
+         parse();
+     }
++    // What was just read is what the file holds.
++    QWriteLocker lock(&m_valuesLock);
++    m_savedChangeCount = m_changeCount.load(std::memory_order_acquire);
+ }
+ 
+ /// Save the ConfigObject to disk.
+ /// Returns true on success
+ template<class ValueType>
+ bool ConfigObject<ValueType>::save() {
+-    QReadLocker lock(&m_valuesLock); // we only read the m_values here.
+-    QFile tmpFile(m_filename + kTempFilenameExtension);
+-    if (!QDir(QFileInfo(tmpFile).absolutePath()).exists()) {
+-        QDir().mkpath(QFileInfo(tmpFile).absolutePath());
++    // One save at a time: the autosave worker and a save on the GUI thread.
++    QMutexLocker saveLocker(&m_saveMutex);
++    QMap<ConfigKey, ValueType> values;
++    quint64 changeCount;
++    QString filename;
++    {
++        // Only an implicitly shared copy is taken under the lock, so set()
++        // on another thread never waits for the disk.
++        QReadLocker lock(&m_valuesLock);
++        values = m_values;
++        changeCount = m_changeCount.load(std::memory_order_acquire);
++        filename = m_filename;
+     }
+-    if (!tmpFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+-        qWarning() << "Could not write config file: " << tmpFile.fileName();
++    if (filename.isEmpty()) {
++        qWarning() << "Could not write config file: no file name";
+         return false;
+     }
+-    QTextStream stream(&tmpFile);
+-    // UTF-8 is the default in Qt6.
+-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+-    DEBUG_ASSERT(stream.encoding() == QStringConverter::Utf8);
+-#else
+-    stream.setCodec("UTF-8");
+-#endif
+ 
++    // The same text as before: "\n[Group]\n" before each group, then one
++    // "item value" line per key, sorted by the QMap, UTF-8.
++    QString text;
+     QString group = "";
+-
+-    // Since it is legit to have a ConfigObject with 0 values, checking
+-    // the stream.pos alone will yield wrong warnings. We therefore estimate
+-    // a minimum length as an additional safety check.
+-    qint64 minLength = 0;
+-    for (auto i = m_values.constBegin(); i != m_values.constEnd(); ++i) {
++    for (auto i = values.constBegin(); i != values.constEnd(); ++i) {
+         //qDebug() << "group:" << it.key().group << "item" << it.key().item << "val" << it.value()->value;
+         if (i.key().group != group) {
+             group = i.key().group;
+-            stream << "\n"
+-                   << group << "\n";
+-            minLength += i.key().group.length() + 2;
++            text += QStringLiteral("\n") + group + QStringLiteral("\n");
+         }
+-        stream << i.key().item << " " << i.value().value << "\n";
+-        minLength += i.key().item.length() + i.value().value.length() + 1;
+-    }
+-
+-    stream.flush();
+-    // the stream is usually longer, depending on the amount of encoded data.
+-    if (stream.pos() < minLength || QFileInfo(tmpFile).size() != stream.pos()) {
+-        qWarning().nospace() << "Error while writing configuration file: " << tmpFile.fileName();
+-        return false;
++        text += i.key().item + QStringLiteral(" ") + i.value().value + QStringLiteral("\n");
+     }
++    const QByteArray bytes = text.toUtf8();
+ 
+-    tmpFile.close();
+-    if (tmpFile.error() !=
+-            QFile::NoError) { //could be better... should actually say what the error was..
+-        qWarning().nospace() << "Error while writing configuration file: "
+-                             << tmpFile.fileName() << ": " << tmpFile.errorString();
++    if (!mixxx::writeFileAtomically(filename, bytes)) {
+         return false;
+     }
+-
+-    QFile oldConfig(m_filename);
+-    // Trying to remove a file that does not exist would fail
+-    if (oldConfig.exists()) {
+-        if (!oldConfig.remove()) {
+-            qWarning().nospace() << "Could not remove old config file: "
+-                                 << oldConfig.fileName() << ": " << oldConfig.errorString();
+-            return false;
++    {
++        QWriteLocker lock(&m_valuesLock);
++        if (changeCount > m_savedChangeCount) {
++            m_savedChangeCount = changeCount;
+         }
+     }
+-    if (!tmpFile.rename(m_filename)) {
+-        qWarning().nospace() << "Could not rename tmp file to config file: "
+-                             << tmpFile.fileName() << ": " << tmpFile.errorString();
+-        return false;
+-    }
+-
+     return true;
+ }
+ 
+@@ -523,3 +588,183 @@ template<>
+ QString ConfigObject<ConfigValueKbd>::computeResourcePath() {
+     return computeResourcePathImpl();
+ }
++
++namespace {
++
++// ControlDoublePrivate keeps its "persist in configuration" flag private and
++// has no accessor. An explicit template instantiation may name a private
++// member ([temp.spec.general]/6), which is how the autosave reads the flag
++// without changing the control framework.
++using PersistFlag = bool ControlDoublePrivate::*;
++PersistFlag persistFlag();
++template<PersistFlag kMember>
++struct PersistFlagAccess {
++    friend PersistFlag persistFlag() {
++        return kMember;
++    }
++};
++template struct PersistFlagAccess<&ControlDoublePrivate::m_bPersistInConfiguration>;
++
++bool isPersistent(const ControlDoublePrivate& control) {
++    return control.*persistFlag();
++}
++
++void copyPersistentValue(ConfigObject<ConfigValue>* pConfig, ControlDoublePrivate* pControl) {
++    // Exactly what ~ControlDoublePrivate() writes at quit.
++    pConfig->set(pControl->getKey(), QString::number(pControl->get()));
++}
++
++const QString kMixPiGroup = QStringLiteral("[MixPi]");
++const QString kSavedItem = QStringLiteral("saved");
++
++} // namespace
++
++namespace mixxx {
++
++ConfigAutosave::ConfigAutosave(QSharedPointer<ConfigObject<ConfigValue>> pConfig, Timing timing)
++        : m_pConfig(std::move(pConfig)),
++          m_timing(timing),
++          m_pContext(std::make_unique<QObject>()),
++          m_pPollTimer(std::make_unique<QTimer>()),
++          m_pPulseTimer(std::make_unique<QTimer>()),
++          m_pWorker(std::make_unique<QThreadPool>()),
++          // bIgnoreNops = false: every pulse restarts the pulse timer.
++          m_pSaved(std::make_unique<ControlObject>(savedKey(), false)),
++          m_pollsSinceRefresh(0),
++          m_writing(false),
++          m_lastSeenChangeCount(std::numeric_limits<quint64>::max()) {
++    m_pWorker->setMaxThreadCount(1);
++    m_pPollTimer->setInterval(m_timing.pollMs);
++    QObject::connect(m_pPollTimer.get(), &QTimer::timeout, m_pContext.get(), [this] {
++        poll();
++    });
++    m_pPulseTimer->setSingleShot(true);
++    m_pPulseTimer->setInterval(m_timing.savedPulseMs);
++    QObject::connect(m_pPulseTimer.get(), &QTimer::timeout, m_pContext.get(), [this] {
++        m_pSaved->set(0.0);
++    });
++    QObject::connect(m_pSaved.get(),
++            &ControlObject::valueChanged,
++            m_pContext.get(),
++            [this](double value) {
++                if (value > 0.0) {
++                    m_pPulseTimer->start();
++                }
++            });
++}
++
++ConfigAutosave::~ConfigAutosave() {
++    stop();
++}
++
++// static
++ConfigKey ConfigAutosave::savedKey() {
++    return ConfigKey(kMixPiGroup, kSavedItem);
++}
++
++// static
++void ConfigAutosave::pulseSaved() {
++    ControlObject::set(savedKey(), 1.0);
++}
++
++void ConfigAutosave::start() {
++    m_pPollTimer->start();
++}
++
++void ConfigAutosave::stop() {
++    m_pPollTimer->stop();
++    m_pWorker->waitForDone();
++}
++
++// static
++void ConfigAutosave::copyPersistentControls(ConfigObject<ConfigValue>* pConfig) {
++    const QList<QSharedPointer<ControlDoublePrivate>> controls =
++            ControlDoublePrivate::getAllInstances();
++    for (const auto& pControl : controls) {
++        if (isPersistent(*pControl)) {
++            copyPersistentValue(pConfig, pControl.get());
++        }
++    }
++}
++
++void ConfigAutosave::copyPersistentControlsCached() {
++    // Listing every control takes the control hash mutex and touches
++    // thousands of entries, so the list of persist controls is refreshed
++    // only every few polls; their values are read every poll.
++    if (m_pollsSinceRefresh <= 0) {
++        m_persistentControls.clear();
++        const QList<QSharedPointer<ControlDoublePrivate>> controls =
++                ControlDoublePrivate::getAllInstances();
++        for (const auto& pControl : controls) {
++            if (isPersistent(*pControl)) {
++                m_persistentControls.append(pControl.toWeakRef());
++            }
++        }
++        m_pollsSinceRefresh = m_timing.persistentRefreshPolls;
++    }
++    --m_pollsSinceRefresh;
++    for (const auto& pWeak : std::as_const(m_persistentControls)) {
++        if (const auto pControl = pWeak.toStrongRef()) {
++            copyPersistentValue(m_pConfig.get(), pControl.get());
++        }
++    }
++}
++
++void ConfigAutosave::poll() {
++    if (m_writing) {
++        return;
++    }
++    copyPersistentControlsCached();
++    const quint64 changeCount = m_pConfig->changeCount();
++    if (!m_pConfig->hasUnsavedChanges()) {
++        m_lastSeenChangeCount = changeCount;
++        m_sinceFirstUnsaved.invalidate();
++        return;
++    }
++    if (!m_sinceFirstUnsaved.isValid()) {
++        m_sinceFirstUnsaved.start();
++    }
++    if (changeCount != m_lastSeenChangeCount) {
++        m_lastSeenChangeCount = changeCount;
++        m_sinceChange.start();
++    }
++    const bool quiet = m_sinceChange.elapsed() >= m_timing.quietMs;
++    const bool overdue = m_sinceFirstUnsaved.elapsed() >= m_timing.maxDelayMs;
++    if (!quiet && !overdue) {
++        return;
++    }
++    if (m_sinceFailure.isValid() && m_sinceFailure.elapsed() < m_timing.retryMs) {
++        return;
++    }
++    m_writing = true;
++    const QSharedPointer<ConfigObject<ConfigValue>> pConfig = m_pConfig;
++    QObject* pContext = m_pContext.get();
++    m_pWorker->start([this, pConfig, pContext] {
++        const bool ok = pConfig->save();
++        // Back on the GUI thread. stop() waits for this task, so pContext
++        // outlives the call; a result still queued when pContext is deleted
++        // is dropped with it.
++        QMetaObject::invokeMethod(
++                pContext, [this, ok] { writeFinished(ok); }, Qt::QueuedConnection);
++    });
++}
++
++void ConfigAutosave::writeFinished(bool ok) {
++    m_writing = false;
++    if (!ok) {
++        // ConfigObject::save() has logged why.
++        m_sinceFailure.start();
++        return;
++    }
++    m_sinceFailure.invalidate();
++    // Changes made while the file was written start a new window.
++    if (m_pConfig->hasUnsavedChanges()) {
++        m_sinceFirstUnsaved.start();
++    } else {
++        m_sinceFirstUnsaved.invalidate();
++    }
++    qDebug() << "ConfigAutosave: saved" << m_pConfig->getSettingsPath();
++    pulseSaved();
++}
++
++} // namespace mixxx
+diff --git a/src/preferences/configobject.h b/src/preferences/configobject.h
+index f2a7059..2b1686d 100644
+--- a/src/preferences/configobject.h
++++ b/src/preferences/configobject.h
+@@ -1,12 +1,18 @@
+ #pragma once
+ 
+ #include <QDomNode>
++#include <QElapsedTimer>
+ #include <QHash>
+ #include <QKeySequence>
+ #include <QMap>
+ #include <QMetaType>
++#include <QMutex>
+ #include <QReadWriteLock>
++#include <QSharedPointer>
+ #include <QString>
++#include <QWeakPointer>
++#include <atomic>
++#include <memory>
+ #include <type_traits>
+ 
+ #include "util/assert.h"
+@@ -188,8 +194,20 @@ template <class ValueType> class ConfigObject {
+     QMultiHash<ValueType, ConfigKey> transpose() const;
+ 
+     void reopen(const QString& file);
++    // Writes the file atomically: a temporary file in the same directory is
++    // synced to disk and then renamed over the old file, so the file on disk
++    // is always either the old or the new version. Safe to call from any
++    // thread; concurrent saves run one after the other.
+     bool save();
+ 
++    // MixPi save on change: counts real changes (a new key, a different
++    // value, a removed key). Setting a key to its current value is no change.
++    quint64 changeCount() const {
++        return m_changeCount.load(std::memory_order_acquire);
++    }
++    // True when a change was made after the last load or successful save.
++    bool hasUnsavedChanges() const;
++
+     static QString computeResourcePath();
+ 
+     // Returns the resource path -- the path where controller presets, skins,
+@@ -211,6 +229,12 @@ template <class ValueType> class ConfigObject {
+     // We use QMap because we want a sorted list in mixxx.cfg
+     QMap<ConfigKey, ValueType> m_values;
+     mutable QReadWriteLock m_valuesLock;
++    // Raised under the write lock of m_valuesLock.
++    std::atomic<quint64> m_changeCount{0};
++    // The change count that the file on disk holds; guarded by m_valuesLock.
++    quint64 m_savedChangeCount = 0;
++    // Serializes save(): the autosave worker and a save on the GUI thread.
++    QMutex m_saveMutex;
+     QString m_filename;
+     const QString m_resourcePath;
+     const QString m_settingsPath;
+@@ -237,3 +261,87 @@ void ConfigObject<ConfigValue>::setValue(const ConfigKey& key, const QString& va
+ template<>
+ template<>
+ void ConfigObject<ConfigValue>::setValue(const ConfigKey& key, const bool& value);
++
++class ControlDoublePrivate;
++class ControlObject;
++class QObject;
++class QThreadPool;
++class QTimer;
++
++namespace mixxx {
++
++/// Replaces filePath with contents atomically and durably: a temporary file
++/// in the same directory is written and synced, renamed over the old file,
++/// and the directory is synced. On failure the old file is untouched and a
++/// warning is logged.
++bool writeFileAtomically(const QString& filePath, const QByteArray& contents);
++
++struct ConfigAutosaveTiming {
++    // A change is seen within pollMs and written quietMs after it was seen,
++    // so a single change is on disk 1.0 to about 1.3 s after it was made.
++    int pollMs = 250;
++    int quietMs = 1000;
++    int maxDelayMs = 5000;
++    int retryMs = 5000;
++    int savedPulseMs = 2000;
++    // The list of persist controls is rebuilt every 10 s.
++    int persistentRefreshPolls = 40;
++};
++
++/// MixPi save on change: writes mixxx.cfg shortly after a setting changes,
++/// so a power cut or a killed process does not lose it.
++///
++/// Runs on the GUI thread. Every poll it copies the current values of all
++/// controls marked "persist" into the config (the values the quit-time save
++/// would write) and then, when the config holds unsaved changes, it saves
++/// once no change has been seen for quietMs, or at the latest maxDelayMs
++/// after the first unsaved change. The write itself runs on a worker
++/// thread, never on the GUI or the audio thread. Nothing is written while
++/// nothing changes. After each successful write [MixPi],saved is 1 for
++/// savedPulseMs.
++class ConfigAutosave final {
++  public:
++    using Timing = ConfigAutosaveTiming;
++
++    explicit ConfigAutosave(QSharedPointer<ConfigObject<ConfigValue>> pConfig,
++            Timing timing = Timing());
++    ~ConfigAutosave();
++    ConfigAutosave(const ConfigAutosave&) = delete;
++    ConfigAutosave& operator=(const ConfigAutosave&) = delete;
++
++    void start();
++    /// Stops polling and waits for a write in progress. Call it before the
++    /// quit-time save.
++    void stop();
++
++    /// Copies the current value of every live persist control into pConfig,
++    /// in the format ~ControlDoublePrivate writes at quit.
++    static void copyPersistentControls(ConfigObject<ConfigValue>* pConfig);
++
++    /// Sets [MixPi],saved to 1; the ConfigAutosave that owns the control
++    /// sets it back to 0 after savedPulseMs. Used by the sampler bank too.
++    static void pulseSaved();
++    static ConfigKey savedKey();
++
++  private:
++    void poll();
++    void copyPersistentControlsCached();
++    void writeFinished(bool ok);
++
++    const QSharedPointer<ConfigObject<ConfigValue>> m_pConfig;
++    const Timing m_timing;
++    std::unique_ptr<QObject> m_pContext;
++    std::unique_ptr<QTimer> m_pPollTimer;
++    std::unique_ptr<QTimer> m_pPulseTimer;
++    std::unique_ptr<QThreadPool> m_pWorker;
++    std::unique_ptr<ControlObject> m_pSaved;
++    QList<QWeakPointer<ControlDoublePrivate>> m_persistentControls;
++    int m_pollsSinceRefresh;
++    bool m_writing;
++    quint64 m_lastSeenChangeCount;
++    QElapsedTimer m_sinceChange;
++    QElapsedTimer m_sinceFirstUnsaved;
++    QElapsedTimer m_sinceFailure;
++};
++
++} // namespace mixxx

@@ -14,6 +14,8 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Wave 2 browse (N4) | `c4a00bd` | 689 run, OK (137 platform skips) | 174/174, 0 skips | Load sample keeps its own place, grouped Sources |
 | Wave 2 final skin | `67341f2` | skin + sample-browser modules OK | not needed (skin only) | USB source button; Choose pad from Tracks returns to Tracks |
 | Post-B and council R1 repairs | `fb1a119` | 710 run, OK (141 platform skips) | 190/190, 0 skips | 42 patches. Skin: EDIT LIST command no longer drives the label, waveforms hidden for every screen ≠ 0, chip writes screen 2 first, USB/SYNC chips, ±N% caption. Native: Media page under the skin root (styled) and opened after the screen write; tempo range saved to `[Controls],RateRangePercent`; late top-bar confirm re-checked; media lists keep their widgets and scroll, drag-scroll with 24 px bars, bounded handover and eject-user lists, `mixpi_from_usb`; scan strip moves to the deck-info row while a tool panel is open; `sidebar_sources_editing` set with setAndConfirm (read-only control) |
+| Build C baseline | `ef0874d` | 710 run, OK (141 platform skips) | 190/190, 0 skips | Handoff state of thread 2 |
+| Wave C1 integrated | `d3c1reg` | 732 run; 1 error in `test_chroot_runtime` (5 s timeout while the native gate ran), then 3 of 3 OK alone | 206/206, 0 skips | S1 skin (U-1, U-2, U-3, U-6, U-7 skin, Settings header), N-A Sources side menu and edit list, N-B Media page and `drive_insert` |
 
 ## Wave 0 on the test card (build 2)
 
@@ -137,3 +139,21 @@ Control names fixed now, so the skin and native builders can work in parallel:
 - U-5: `[MixPi],sampler_clear_open`, `[MixPi],sampler_clear_tick1`…`8`, `[MixPi],sampler_clear_count`, `[MixPi],sampler_clear`.
 
 Then: registration commit, both gates, skin preview, native renders next to the mockups, Mac free space at least 20 GB, then **build C** (the 4th pi-gen run, approved), in-place update, acceptance C, conformance pass, council round 2.
+
+### Wave C1 result (2026-11-17, 22:40-23:35)
+
+- **Builders** (Claude Opus 5.5 medium, own worktrees): S1 skin `7680c14`, `99aee21`; N-A Sources `1f7e2b9`, `5b1a61f`; N-B Media `489f581`, `457c1f0`; registration by the orchestrator.
+- **Native renders next to the mockups:** the side menu and the edit list (N-A) and the Media page (N-B) match `m-sources-top`, `m-sources-edit` and `m-media` in structure, order, copy, roles and colours.
+- **Skin preview on the card** (build B's native, `waveC/c1-preview/`): the tool panel, Tracks, FX, Load sample and the Settings header match their mockups. Deviations found, all for wave C2:
+  - the deck row shows the badge centred, with the title only (FX, Sampler) or nothing (tool panel open), and never the artist;
+  - the Settings rail labels are centred (drawn left-aligned);
+  - Settings › Media Eject shows a plain ON label (drawn as a toggle);
+  - the FX selector's ▾ sits in a separate box, and "SELECT EFFECT…" is not dim (needs a native property);
+  - the open effect list and the Arrange dialog tick keep build B's colours (tests lock them).
+- **Deviations the builders reported, for wave C2:** no counts on rekordbox lists; ★ disabled on the drive and Samples rows (Mixxx could only start Tracks at a top-level source).
+- **Owner questions (no change without the owner):**
+  1. The edit list shows the six top rows as drawn, so This Pi's own lists (Playlists, Crates, Auto DJ) and More's (iTunes, Serato) can no longer be switched on or off on screen. Build B could.
+  2. ★ on a switched-off row is drawn disabled.
+  3. With the desktop top bar shown (800×444) the tool panel's EXIT LOOP / RELOOP row is cut off.
+  4. Under the READY and IN USE filters, a drive that is ejecting or safe to remove still shows (so it does not vanish mid-eject).
+- **Card note:** the deck time showed REMAINING while `mixxx.cfg` held `PositionDisplay 0`, so the restart came up ELAPSED. One tap saved `PositionDisplay 1` within 5 s, so the save path works. The earlier state was live only.

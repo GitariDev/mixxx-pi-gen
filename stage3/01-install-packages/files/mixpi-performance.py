@@ -14,13 +14,13 @@ import xml.etree.ElementTree as ET
 
 BEGIN = '/* MixPi performance BEGIN */'
 END = '/* MixPi performance END */'
-# Redesign radius 6 (UI-REDESIGN-PLAN R-1 step 5, spec section 10). It
-# replaces the 2 px corners of the field-fix round.
+# Agreed UI radius 3 (AGREED-UI-SPEC section 1, --mx-radius). It replaces
+# build B's 6 px corners.
 NAVIGATION_STYLE = '''/* MixPi native navigation */
-#MixpiButton, #MixpiPlay, #MixpiRecord, #MixpiUsbChip, #MixpiPrimary,
+#MixpiButton, #MixpiPlay, #MixpiRecord, #MixpiUsbChip, #MixpiPrimary, #MixpiClose,
 #LibraryWrapper #LibraryActionsButton, #LibraryWrapper #SidebarButton,
 #LibraryWrapper #LibrarySourcesButton, #LibraryWrapper #LibraryBackButton {
-    border-radius: 6px;
+    border-radius: 3px;
 }
 '''
 # [MixPi],screen (plan 4.1): which full-screen view is open. Skin-only, not saved.
@@ -43,13 +43,16 @@ SAMPLER_INFO = 72
 # Icons the generator writes into the skin (R-11): 24 px glyphs from the
 # prototype, centred in 48 px buttons, drawn unscaled (FIXED) by WPushButton.
 ICON_STROKE = 'fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"'
+# The close control (AGREED-UI-SPEC section 1): a red ✕ in --mx-danger-text,
+# two 20 x 2.5 px strokes crossing at the centre.
+CLOSE_STROKES = ('<path d="M4.93 4.93 19.07 19.07M19.07 4.93 4.93 19.07" '
+                 'stroke-width="2.5" stroke-linecap="butt"/>')
 ICONS = {
-    'mixpi-icon-menu.svg': (48, 48, '#eef2f7', '<path d="M4 7h16M4 12h16M4 17h16"/>'),
-    'mixpi-icon-close.svg': (48, 48, '#b5e15c', '<path d="M6 6l12 12M18 6 6 18"/>'),
-    'mixpi-icon-close-plain.svg': (48, 48, '#eef2f7', '<path d="M6 6l12 12M18 6 6 18"/>'),
-    'mixpi-icon-pen.svg': (48, 48, '#eef2f7',
+    'mixpi-icon-menu.svg': (48, 48, '#e4e7ec', '<path d="M4 7h16M4 12h16M4 17h16"/>'),
+    'mixpi-icon-close.svg': (48, 48, '#ec7f74', CLOSE_STROKES),
+    'mixpi-icon-pen.svg': (48, 48, '#e4e7ec',
         '<path d="M4 20h4L19.4 8.6a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.6 7.4l2 2"/>'),
-    'mixpi-icon-gear.svg': (48, 48, '#eef2f7',
+    'mixpi-icon-gear.svg': (48, 48, '#e4e7ec',
         '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08'
         'a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74'
         'l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 '
@@ -58,7 +61,7 @@ ICONS = {
         'l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25'
         'a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
     # The chip's labels sit right of the icon (R-4).
-    'mixpi-icon-usb.svg': (USB_CHIP, 48, '#43d17a',
+    'mixpi-icon-usb.svg': (USB_CHIP, 48, '#5fae6e',
         '<circle cx="12" cy="19.5" r="2"/><path d="M12 17.5V3.5M9.5 6 12 3.5 14.5 6M12 14.5 7.5 12V9.2'
         'M12 12.6l4.5-2.6V8"/><rect x="15" y="5.6" width="3" height="2.4" rx=".4"/>'
         '<circle cx="7.5" cy="8" r="1.2"/>'),
@@ -79,12 +82,17 @@ JUMPS = (1, 2, 4, 8, 16, 32)
 JUMP_WIDTH, JUMP_HEIGHT = 107, 56
 CUE_TILE = (196, 70)
 # Transport per deck (plan R-16): KEY 48, Q 48, SYNC 60, LOOP 60, CUE 76, ▶ the rest.
-# Tracks: LOAD 104 and the deck title in a 230 px cell, then CUE.
+# Tracks (spec s3, m-tracks.png): LOAD n 84 · the track name · CUE 68 · ▶ 68.
 TRANSPORT = {'KEY': 48, 'Q': 48, 'SYNC': 60, 'LOOP': 60, 'CUE': 76}
-LOAD_WIDTH, LOAD_CELL = 104, 230
+LOAD_WIDTH, TRACKS_CUE, TRACKS_PLAY = 84, 68, 68
 SETTINGS_RAIL = 200
-# Load sample source row: 8 + 4 x (button + 6) + SOURCES… = 680 of 800.
-SOURCE_ROW = {'SAMPLES': 130, 'THIS PI': 120, 'USB': 96, 'RECORDINGS': 150, 'SOURCES…': 152}
+# Load sample source row (spec s7, m-loadsample.png): 8 + SAMPLES 124 + 8 + SOURCES… 124.
+SOURCE_ROW = {'SAMPLES': 124, 'SOURCES…': 124}
+# Segments (LOOP / JUMP / CUES, FX 1 / FX 2, routes) are one joined control.
+SEGMENT_NAMES = ('MixpiSegFirst', 'MixpiSegMid', 'MixpiSegLast')
+# Sliders (spec s8): the fill runs the full height of the track up to the
+# thumb's centre. The 48 px widget is the track; the thumb is 24 px wide.
+SLIDER_HEIGHT, THUMB_WIDTH = 48, 24
 SETTINGS_PAGES = (('PLAYBACK', 0), ('INTERFACE', 1), ('MEDIA', 2), ('ADVANCED', 3))
 # The USB chip's second line, per [MixPi],media_state (R-4).
 MEDIA_STATES = ('NO USB', 'READY', 'IN USE', 'EJECTING', 'SAFE TO REMOVE')
@@ -253,6 +261,22 @@ def button(text, key, *, size='0me,48f', momentary=False,
     return e
 
 
+def close_button(key, transform='<Not/>'):
+    """The close control (spec section 1): a 48 px square with the red ✕, at
+    the right end of its header. It only writes KEY; it shows no state."""
+    b = button('', key, size='48f,48f', push=True, name='MixpiClose', transform=transform)
+    b.find('Connection/ConnectValueToWidget').text = 'false'
+    return icon_states(b, 'mixpi-icon-close.svg', 'mixpi-icon-close.svg')
+
+
+def segments(buttons):
+    """Join buttons into one segmented control: first, middle and last names."""
+    for index, b in enumerate(buttons):
+        position = 0 if index == 0 else 2 if index == len(buttons) - 1 else 1
+        b.find('ObjectName').text = SEGMENT_NAMES[position]
+    return buttons
+
+
 def label(text, size='0me,0me', name='MixpiLabel', align=None, elide=None):
     e = node('Label')
     prop(e, 'Text', text)
@@ -342,17 +366,22 @@ def deck_info(channel, compact=False, size=None):
     """R-16 deck info. Compact: the 28 px title strip on Tracks. Full: 72 px,
     row 1 badge, title, dim artist and display chips; row 2 time, BPM, tempo, key."""
     key = f'[Channel{channel}]'
-    badge = label(str(channel), '28f,28f' if compact else '28f,24f', f'MixpiDeckNumber{channel}',
+    badge = label(str(channel), '28f,28f' if compact else '24f,24f', f'MixpiDeckNumber{channel}',
                   align='center')
     if compact:
         title = typed('TrackProperty', channel, '0me,28f', 'MixpiDeckTitle',
                       Property='title', Elide='right', TooltipId='track_title')
         head = group('MixpiTitleStrip', 'horizontal', '0me,28f', [badge, title])
         return group('MixpiDeckInfo', size=size or '400me,28f', children=[head])
-    title = typed('TrackProperty', channel, '0me,24f', 'MixpiDeckTitle',
+    # Spec s6 deck row: the title, then the dimmer artist right after it, then
+    # the chips at the right end. The title is Maximum (it never grows past its
+    # text; WLabel's size hint is the whole text) and the artist is Ignored (no
+    # size hint, but it takes all the spare width). So when the chips need room,
+    # Qt's layout takes it from the artist first ("…"), and only then from the
+    # title, down to the title's explicit 1 px minimum.
+    title = typed('TrackProperty', channel, '1max,24f', 'MixpiDeckTitle',
                   Property='title', Elide='right', TooltipId='track_title')
-    # The chips have fixed widths; the title and the dim artist elide to make room.
-    artist = typed('TrackProperty', channel, '0max,24f', 'MixpiDeckArtist',
+    artist = typed('TrackProperty', channel, '0i,24f', 'MixpiDeckArtist',
                    Property='artist', Elide='right', TooltipId='track_title')
     head = group('MixpiTitleStrip', 'horizontal', f'0me,{DECK_TITLE}f', [
         badge, title, artist] + [chip(text, f'{key},{control}', f'{width}f,22f', name)
@@ -402,21 +431,22 @@ def wave_row(channel, visual):
 
 
 def tool_tabs(channel):
+    """LOOP / JUMP / CUES: one segmented control (spec s2), Choose role."""
     tabs = []
-    for index, (text, value) in enumerate((('LOOP', 0), ('JUMP', 1), ('CUES', 2))):
-        b = preset(text, '[MixPi],tool_tab', value, size='100f,48f')
-        b.find('ObjectName').text = f'MixpiToolTab{channel}'
+    for text, value in (('LOOP', 0), ('JUMP', 1), ('CUES', 2)):
+        b = preset(text, '[MixPi],tool_tab', value, size='96f,48f')
         write(b, '[MixPi],cue_clear', 0)
-        tabs += ([gap('6f,48f')] if index else []) + [b]
-    return tabs
+        tabs.append(b)
+    return segments(tabs)
 
 
 def cue_clear_toggle():
     """CLEAR switches cue taps to clear (skin-only [MixPi],cue_clear). Two
-    set-value buttons in one place, never a two-state toggle (F-1)."""
+    set-value buttons in one place, never a two-state toggle (F-1). CLEAR is
+    Danger (spec section 1 roles); the cue tap that follows is the confirm."""
     on = button('CLEAR', '[MixPi],cue_clear', size='90f,48f', push=True, transform='<Not/>',
-                display='[MixPi],cue_clear')
-    off = button('CLEAR', '[MixPi],cue_clear', size='90f,48f', push=True)
+                display='[MixPi],cue_clear', name='MixpiDanger')
+    off = button('CLEAR', '[MixPi],cue_clear', size='90f,48f', push=True, name='MixpiDanger')
     off.find('Connection/ConnectValueToWidget').text = 'false'
     show_when(on, '[MixPi],cue_clear')
     # Qt puts the first child of a stacked group on top: ON covers OFF while set.
@@ -443,35 +473,42 @@ def cue_tile(channel, number):
 def tool_panel(channel, loop_display='focus'):
     """R-16 tool panel (LOOP · JUMP · CUES) over the waveform rows, opened by LOOP."""
     key = f'[Channel{channel}]'
-    close = button('×  CLOSE', '[MixPi],loop_deck', size='110f,48f', transform='<Not/>', push=True)
     # Closing only writes zero; it does not mirror the selected deck into its state.
-    close.find('Connection/ConnectValueToWidget').text = 'false'
+    close = close_button('[MixPi],loop_deck')
     write(close, '[MixPi],cue_clear', 0)
     heading = f'DECK {channel}'
+    # Spec s2 header: the deck badge, "DECK n", the LOOP / JUMP / CUES
+    # segments, and the close ✕ at the right end (CLEAR stays left of it on CUES).
     header = group('MixpiToolHeader', 'horizontal', '0me,48f', [
-        gap('8f,48f'), label(str(channel), '34f,34f', f'MixpiWaveBadge{channel}', align='center'),
-        label(heading, '90f,48f', 'MixpiToolTitle')] + tool_tabs(channel) + [
-        gap('0me,48f'), cue_clear_toggle(), gap('10f,48f'), close, gap('8f,48f')])
-    # LOOP: today's 12 sizes, then ½, ×2, EXIT, RELOOP (same controls and rules).
-    loop = group('MixpiLoopBody', size='0me,156f')
+        gap('4f,48f'), label(str(channel), '32f,32f', f'MixpiWaveBadge{channel}', align='center'),
+        label(heading, '96f,48f', 'MixpiToolTitle')] + tool_tabs(channel) + [
+        gap('0me,48f'), cue_clear_toggle(), gap('8f,48f'), close, gap('4f,48f')])
+    # LOOP (spec s2): the 12 sizes in two rows of six (Choose), then ½ and ×2
+    # (neutral, green border), then EXIT LOOP (Danger) and RELOOP (Sound).
+    loop = group('MixpiLoopBody', size='0me,204f')
     for index, offset in enumerate((0, 6)):
         row = group('MixpiLoopRow', 'horizontal', '0me,48f')
         for text, value in LOOPS[offset:offset+6]:
             add(row, button(text, f'{key},beatloop_{value}_activate', momentary=True,
                             display=f'{key},beatloop_{value}_enabled'))
-        add(loop, *([gap('0me,6f')] if index else []), row)
+        add(loop, *([gap('0me,4f')] if index else []), row)
+    sizes = group('MixpiLoopSizes', 'horizontal', '0me,48f', [
+        button('½', f'{key},loop_halve', momentary=True, name='MixpiSize'),
+        button('×2', f'{key},loop_double', momentary=True, name='MixpiSize')])
     tools = group('MixpiLoopTools', 'horizontal', '0me,48f', [
-        button('½', f'{key},loop_halve', momentary=True),
-        button('×2', f'{key},loop_double', momentary=True),
-        button('EXIT', f'{key},loop_exit', momentary=True, display=f'{key},loop_enabled'),
-        button('RELOOP', f'{key},reloop_toggle', momentary=True, display=f'{key},loop_enabled')])
+        button('EXIT LOOP', f'{key},loop_exit', momentary=True, display=f'{key},loop_enabled',
+               name='MixpiDanger'),
+        button('RELOOP', f'{key},reloop_toggle', momentary=True, display=f'{key},loop_enabled',
+               name='MixpiSound')])
     # Reloop jumps back to the saved loop. Disable it while already looping,
     # so a second tap cannot turn looping off (Exit has its own command).
-    connection(tools.find('Children')[3], f'{key},loop_enabled', transform='<Not/>', bind='enabled')
-    add(loop, gap('0me,6f'), tools)
+    connection(tools.find('Children')[1], f'{key},loop_enabled', transform='<Not/>', bind='enabled')
+    add(loop, gap('0me,4f'), sizes, gap('0me,4f'), tools)
     show_when(loop, '[MixPi],tool_tab', 0)
     # JUMP: beatjump_N_backward / _forward, two labelled rows of six (plan 5.3 hit map).
-    jump = group('MixpiJumpBody', size='0me,140f')
+    # JUMP and CUES keep build B's layout (spec s2): their rows still start at
+    # y 106, 6 px under the header's old bottom edge.
+    jump = group('MixpiJumpBody', size='0me,146f', children=[gap('0me,6f')])
     for index, (direction, caption) in enumerate((('backward', '◀  BACK'), ('forward', 'FORWARD  ▶'))):
         row = group('MixpiJumpRow', 'horizontal', f'0me,{JUMP_HEIGHT}f', [
             gap('8f,56f'), label(caption, '110f,56f', 'MixpiCaption'), gap('6f,56f')])
@@ -485,7 +522,7 @@ def tool_panel(channel, loop_display='focus'):
     add(jump, label('Beats. Quantize keeps the jump on the grid.', '0me,22f', 'MixpiScreenHint'))
     show_when(jump, '[MixPi],tool_tab', 1)
     # CUES: hot cues 1-8 as 4x2 tiles; CLEAR switches a tap to hotcue_N_clear.
-    cues = group('MixpiCuesBody', size='0me,162f')
+    cues = group('MixpiCuesBody', size='0me,168f', children=[gap('0me,6f')])
     for index, first in enumerate((1, 5)):
         add(cues, *([gap('0me,6f')] if index else []),
             group('MixpiCueRow', 'horizontal', f'0me,{CUE_TILE[1]}f',
@@ -493,8 +530,13 @@ def tool_panel(channel, loop_display='focus'):
     add(cues, label("Pads 1-4 match the Starlight's hot cue pads. 5-8 are screen only.",
                     '0me,16f', 'MixpiScreenHint'))
     show_when(cues, '[MixPi],tool_tab', 2)
-    panel = group('MixpiLoopPanel', children=[
-        gap('0me,4f'), header, gap('0me,6f'), loop, jump, cues, gap('0me,0me')])
+    # 48 header + 4 + 204 loop body = 256, the waveform area at 800x480. The
+    # panel's height is Ignored, so it adds nothing to the page's minimum: at
+    # 800x444 (desktop bar shown) the area is 220 px and the EXIT LOOP and
+    # RELOOP row is cut off at the bottom (48 px rows cannot fit there; an
+    # owner question in the C1 report). JUMP and CUES still fit at 444.
+    panel = group('MixpiLoopPanel', size='0me,0i', children=[
+        header, gap('0me,4f'), loop, jump, cues, gap('0me,0me')])
     connection(panel, '[MixPi],loop_deck', transform=f'<IsEqual>{channel}</IsEqual>', bind='visible')
     return panel
 
@@ -504,10 +546,19 @@ def loops(channel, loop_display='focus'):
     return tool_panel(channel, loop_display)
 
 
-def slider(key, name='MixpiDepth', size='0me,48f'):
+def slider(key, name='MixpiDepth', size=f'0me,{SLIDER_HEIGHT}f'):
+    """Spec s8 slider: the widget is the track (QSS: surface-2, a 1 px border).
+    The fill, --mx-slider-fill, runs the full inner height from the left end
+    to the thumb's centre. WSliderComposed draws the handle between 0 and
+    width - 24 and the bar from BarMargins' start to start + value x (width -
+    start - end); with margins 0,24 the bar (a pen as wide as the inner
+    height, on the middle axis) ends at the thumb's left edge, and the handle
+    image carries the fill colour on its left half, up to its centre."""
     e = node('SliderComposed')
     for k, v in dict(ObjectName=name, Size=size, Horizontal='true',
-                     Handle='mixpi-slider-handle.svg', BarColor='#b5e15c', BarWidth=8).items():
+                     Handle='mixpi-slider-handle.svg', BarColor='#5d7238',
+                     BarWidth=SLIDER_HEIGHT - 2, BarAxisPos=SLIDER_HEIGHT // 2,
+                     BarMargins=f'0,{THUMB_WIDTH}').items():
         prop(e, k, v)
     connection(e, key)
     return e
@@ -518,11 +569,12 @@ def fx_unit(unit):
     rack = f'[EffectRack1_EffectUnit{unit}]'
     deck = 'A' if unit == 1 else 'B'
     routes = ['[Channel1]', '[Channel2]', '[Master]']
-    header = group('MixpiFxHeader', 'horizontal', '0me,56f', [gap('8f,56f'), label('ROUTE', '56f,48f', 'MixpiCaption')])
+    header = group('MixpiFxHeader', 'horizontal', '0me,56f', [gap('8f,56f'), label('ROUTE', '48f,48f', 'MixpiCaption')])
+    buttons = []
     for index, (route, text) in enumerate(zip(routes, ['DECK 1', 'DECK 2', 'MASTER'])):
         key = f'{rack},group_{route}_enable'
         own = index == unit - 1
-        b = button(f'{text} · PAD 4' if own else text, key, size='150f,48f' if own else '120f,48f',
+        b = button(f'{text} · PAD 4' if own else text, key, size='120f,48f',
                    push=True, display=key)
         # Disable other routes before enabling this one. Touch selection is
         # exclusive without changing per-effect depth or enable controls.
@@ -532,9 +584,11 @@ def fx_unit(unit):
             if other != route:
                 connection(b, f'{rack},group_{other}_enable', read=False, transform='<Not/>')
         b.append(first)
-        add(header, b)
+        buttons.append(b)
+    # Spec s8: the route segments, then MIX and its slider.
+    add(header, *segments(buttons), gap('10f,56f'))
     add(header, group('MixpiFxMix', 'horizontal', '0me,56f', [
-        label('MIX', '48f,48f', 'MixpiCaption'), slider(f'{rack},mix', size='0me,48f')]))
+        label('MIX', '40f,48f', 'MixpiCaption'), slider(f'{rack},mix')]))
     cards = group('MixpiFxCards', 'horizontal', '0me,144f')
     for slot in range(1, 4):
         effect = f'[EffectRack1_EffectUnit{unit}_Effect{slot}]'
@@ -542,13 +596,17 @@ def fx_unit(unit):
         for k, v in dict(ObjectName='MixpiEffectSelector', EffectRack=1,
                          EffectUnit=unit, Effect=slot, Elide='right', Size='0me,48f').items():
             prop(select, k, v)
+        # Spec s8: the effect ON/OFF is a button (Sound), lit and reading ON
+        # when on, reading OFF at rest. Not a switch.
+        on_off = button('OFF', f'{effect},enabled', size='76f,48f', state_labels=('OFF', 'ON'),
+                        name='MixpiSound')
         add(cards, group('MixpiFxCard', children=[
             group('MixpiFxCardHead', 'horizontal', '0me,22f', [
                 label(f'EFFECT {slot}', '0me,22f', 'MixpiCaption'),
                 label(f'deck {deck} FX pad {slot}', '120f,22f', 'MixpiFxPad', align='right')]),
-            group('MixpiFxCardRow', 'horizontal', '0me,48f', [
-                select, button('OFF', f'{effect},enabled', size='64f,48f', state_labels=('OFF', 'ON'))]),
-            slider(f'{effect},meta')]))
+            group('MixpiFxCardRow', 'horizontal', '0me,48f', [select, on_off]),
+            group('MixpiFxCardSlider', 'horizontal', f'0me,{SLIDER_HEIGHT}f', [
+                gap('2f,48f'), slider(f'{effect},meta'), gap('2f,48f')])]))
     return show_when(group('MixpiFxUnit', size='0me,200f', children=[header, cards]),
                      '[MixPi],fx_unit', unit)
 
@@ -557,9 +615,10 @@ def fx():
     """R-17 and owner answer 5: FX 1 (deck A pads) and FX 2 (deck B pads), each
     with today's exclusive DECK 1 / DECK 2 / MASTER switcher, MIX and 3 cards."""
     switch = group('MixpiFxSwitch', 'horizontal', '0me,56f', [gap('8f,56f')])
-    for index, (text, unit) in enumerate((('FX 1 · DECK A PADS', 1), ('FX 2 · DECK B PADS', 2))):
-        add(switch, *([gap('6f,48f')] if index else []),
-            preset(text, '[MixPi],fx_unit', unit, size='206f,48f'))
+    # Spec s8 mode segments, then the hint.
+    add(switch, *segments([preset(text, '[MixPi],fx_unit', unit, size='196f,48f')
+                           for text, unit in (('FX 1 · DECK A PADS', 1), ('FX 2 · DECK B PADS', 2))]),
+        gap('2f,48f'))
     add(switch, label('Starlight FX pads: 1-3 effects · 4 send to deck',
                       '0me,48f', 'MixpiScreenHint', elide='right'))
     return group('MixpiFx', size='0me,256f', children=[switch, fx_unit(1), fx_unit(2)])
@@ -597,14 +656,13 @@ def choices(key, items, width=96):
 
 def settings():
     """R-18: Settings is a full screen (screen 5) with a rail of four panes."""
-    close = button('', SCREEN, size='48f,48f', push=True, name='MixpiIconButton', transform='<Not/>')
-    close.find('Connection/ConnectValueToWidget').text = 'false'
-    icon_states(close, 'mixpi-icon-close-plain.svg', 'mixpi-icon-close-plain.svg')
+    # Spec s11/s12 header: "SETTINGS", the hint, and the close ✕ at the right.
     header = group('MixpiSettingsHeader', 'horizontal', f'0me,{TOP_HEIGHT}f', [
-        close, label('SETTINGS', '150f,48f', 'MixpiScreenTitle'),
+        gap('4f,48f'), label('SETTINGS', '110f,48f', 'MixpiScreenTitle'),
         label('Every change saves within a second.', '0me,48f', 'MixpiScreenHint', elide='right'),
         # R-13 pulses [MixPi],saved for 2 s after each save.
-        show_when(label('Saved', '90f,48f', 'MixpiSavedNote', align='center'), '[MixPi],saved')])
+        show_when(label('Saved', '90f,48f', 'MixpiSavedNote', align='center'), '[MixPi],saved'),
+        close_button(SCREEN), gap('4f,48f')])
     rail = group('MixpiSettingsRail', size=f'{SETTINGS_RAIL}f,0me')
     for text, value in SETTINGS_PAGES:
         b = preset(text, '[MixPi],settings_page', value, size=f'{SETTINGS_RAIL}f,56f')
@@ -709,7 +767,8 @@ def browse_page(library):
     # so the skin's LibraryBackButton is left out.
     sidebar_button = parts['SidebarButton']
 
-    # ☰ / ✕ (R-11): the existing two-state key; open also writes screen 1.
+    # ☰ / ✕ (R-11, spec s5): the existing two-state key; open also writes
+    # screen 1. Open, it is the standard close control (QSS-T: no lit state).
     fixed_size(sidebar_button, '48f,48f')
     icon_states(sidebar_button, 'mixpi-icon-menu.svg', 'mixpi-icon-close.svg')
     connection(sidebar_button, SCREEN, read=False, transform=f'<IsEqual>{SCREEN_SOURCES}</IsEqual>')
@@ -733,21 +792,16 @@ def browse_page(library):
         else:
             command.find(tag).text = value
     connection(sources, '[Library],sidebar_sources_editing', write=False)
-    fixed_size(search, '250me,40f')
+    fixed_size(search, '250me,44f')
     # A SearchBox takes no Connection (LegacySkinParser::parseSearchBox), so a
     # group carries its visibility.
     search = group('MixpiSearch', 'horizontal', '250me,48f', [search])
 
     # Sources opened from Load sample returns there.
-    sample_sources_close = button('', '[Sidebar],sidebar_visible', size='48f,48f', push=True,
-                                  name='MixpiIconButton', transform='<Not/>')
-    sample_sources_close.find('Connection/ConnectValueToWidget').text = 'false'
+    sample_sources_close = close_button('[Sidebar],sidebar_visible')
     write(sample_sources_close, SCREEN, SCREEN_LOAD_SAMPLE)
-    icon_states(sample_sources_close, 'mixpi-icon-close.svg', 'mixpi-icon-close.svg')
-    load_close = button('', '[Tab],sampler', size='48f,48f', push=True, name='MixpiIconButton')
-    load_close.find('Connection/ConnectValueToWidget').text = 'false'
+    load_close = close_button('[Tab],sampler', transform=None)
     reset_views(load_close)
-    icon_states(load_close, 'mixpi-icon-close-plain.svg', 'mixpi-icon-close-plain.svg')
     # The first shown child is on top and takes the taps, and a shown wrapper
     # whose button is hidden still covers what is under it. So the order and the
     # outer conditions are chosen so that, for each screen, the top shown child
@@ -761,7 +815,6 @@ def browse_page(library):
         show_when(closes, '[MixPi],sample_load'),
         show_when(sidebar_button, '[MixPi],sample_load', negate=True)])
 
-    crumb = when_all(label('', '220f,48f', 'MixpiTracksCrumb', elide='right'), '220f,48f', *TRACKS_MODE)
     sources_head = group('MixpiSourcesHead', 'horizontal', '0me,48f', [
         label('SOURCES', '120f,48f', 'MixpiScreenTitle'),
         show_when(label('Pick a source, then a list.', '0me,48f', 'MixpiScreenHint', elide='right'),
@@ -769,14 +822,20 @@ def browse_page(library):
         show_when(label('Pick the list to load samples from.', '0me,48f', 'MixpiScreenHint',
                         elide='right'), '[MixPi],sample_load')])
     show_when(sources_head, SCREEN, SCREEN_SOURCES)
-    load_head = when_all(group('MixpiLoadHead', 'horizontal', '380f,48f', [
-        label('LOAD SAMPLE', '150f,48f', 'MixpiScreenTitle'), sample_hints()]),
-        '380f,48f', *LOAD_MODE)
+    load_head = when_all(group('MixpiLoadHead', 'horizontal', '310f,48f', [
+        label('LOAD SAMPLE', '130f,48f', 'MixpiScreenTitle'), sample_hints()]),
+        '310f,48f', *LOAD_MODE)
+    actions_cell = when_all(group('MixpiActionsCell', 'horizontal', '56f,48f', [gap('8f,48f'), actions]),
+                            '56f,48f', *TRACKS_MODE)
+    # Spec s3/s5/s7: left to right, the title and hint (Sources, Load sample),
+    # the search (it fills the space), ✎ (Tracks), EDIT LIST (Sources), and the
+    # ☰ / ✕ slot at the right end.
     header = group('MixpiBrowseHeader', 'horizontal', f'0me,{TOP_HEIGHT}f', [
-        slot, crumb, sources_head, load_head,
+        gap('4f,48f'), sources_head, load_head,
         show_when(search, SCREEN, SCREEN_SOURCES, negate=True),
-        when_all(actions, '48f,48f', *TRACKS_MODE),
-        show_when(sources, SCREEN, SCREEN_SOURCES)])
+        actions_cell,
+        show_when(sources, SCREEN, SCREEN_SOURCES),
+        gap('8f,48f'), slot, gap('4f,48f')])
 
     # Sources: the sidebar takes the whole area under the header (y 96-480).
     sidebar = parts['SidebarWrapper']
@@ -790,20 +849,15 @@ def browse_page(library):
     write(open_sources, SCREEN, SCREEN_SOURCES)
     source_row = group('MixpiSampleSources', 'horizontal', '0me,56f', [gap('8f,48f')])
     # N4's sample browser: [MixPi],sample_source reads back what is shown (1
-    # Samples, 2 This Pi, 3 USB, 4 Recordings, 0 a list picked in Sources); the
-    # buttons write 1-4 and light from it. USB shows only while a drive is open.
-    # The three fixed places (N4's test_sample_browser pins this tuple), with USB
-    # (3) between THIS PI and RECORDINGS.
-    places = [('SAMPLES', 1), ('THIS PI', 2), ('RECORDINGS', 4)]
-    places.insert(2, ('USB', 3))
-    for text, value in places:
-        width = SOURCE_ROW[text]
-        b = preset(text, '[MixPi],sample_source', value, size=f'{width}f,48f')
-        cell = group('MixpiSourceCell', 'horizontal', f'{width + 6}f,48f', [b, gap('6f,48f')])
-        conditions = [('[MixPi],sample_source_available', None)]
-        if value == 3:
-            conditions.insert(0, ('[MixPi],sample_drive_available', None))
-        add(source_row, when_all(cell, f'{width + 6}f,48f', *conditions))
+    # Samples, 2 This Pi, 3 USB, 4 Recordings, 0 a list picked in Sources).
+    # Its fixed places are ('SAMPLES', 1), ('THIS PI', 2), ('RECORDINGS', 4)
+    # (N4's test_sample_browser pins that text), and USB is 3. Spec s7 (R-8
+    # override): only SAMPLES has a button here; This Pi and Recordings are
+    # reached through SOURCES…. SAMPLES writes 1 and lights from it.
+    width = SOURCE_ROW['SAMPLES']
+    samples = preset('SAMPLES', '[MixPi],sample_source', 1, size=f'{width}f,48f')
+    cell = group('MixpiSourceCell', 'horizontal', f'{width + 8}f,48f', [samples, gap('8f,48f')])
+    add(source_row, when_all(cell, f'{width + 8}f,48f', ('[MixPi],sample_source_available', None)))
     add(source_row, open_sources,
         label('Or a list picked in Sources.', '0me,48f', 'MixpiScreenHint', elide='right'))
     source_row = when_all(source_row, '0me,56f', *LOAD_MODE)
@@ -872,18 +926,18 @@ def choose_pad():
         for index, tile in enumerate(row):
             cells += ([gap('8f,96f')] if index else []) + [tile]
         rows.append(group('MixpiChooseRow', 'horizontal', '0me,96f', cells + [gap('18f,96f')]))
-    # CANCEL returns where Choose pad came from: Load sample (screen 3) or Tracks (0).
-    cancels = []
+    # The close ✕ at the right of the title (spec section 1; it replaces build
+    # B's CANCEL) returns where Choose pad came from: Load sample (screen 3) or
+    # Tracks (0). One ✕ per origin, exactly one shown.
+    closes = []
     for value, negate in ((SCREEN_LOAD_SAMPLE, False), (SCREEN_NONE, True)):
-        cancel = button('CANCEL', SCREEN, size='120f,48f', push=True,
-                        transform=f'<IsEqual>{value}</IsEqual>' if value else '<Not/>')
-        cancel.find('Connection/ConnectValueToWidget').text = 'false'
-        cancels.append(show_when(cancel, '[MixPi],sample_load', negate=negate))
+        close = close_button(SCREEN, transform=f'<IsEqual>{value}</IsEqual>' if value else '<Not/>')
+        closes.append(show_when(close, '[MixPi],sample_load', negate=negate))
     sheet = group('MixpiChooseSheet', size='720f,340f', children=[
         gap('0me,16f'),
         group('MixpiChooseTitleRow', 'horizontal', '0me,48f', [
             gap('18f,48f'), label('Load to which pad?', '0me,48f', 'MixpiSheetTitle'),
-            *cancels, gap('18f,48f')]),
+            *closes, gap('8f,48f')]),
         gap('0me,12f'), rows[0], gap('0me,8f'), rows[1],
         group('MixpiChooseNoteRow', 'horizontal', '0me,44f', [
             gap('18f,44f'),
@@ -913,9 +967,13 @@ def sampler_pad(sampler):
     trigger = button('', f'{key},cue_gotoandplay', size=f'{width}f,{PAD_TAP}f', momentary=True,
                      display=f'{key},play', name='MixpiPadTap')
     connection(trigger, f'{key},track_loaded', bind='enabled')
-    stop = button('■ STOP', f'{key},stop', size=f'{width // 2}f,{PAD_STRIP}f', momentary=True)
+    # Roles (spec section 1): pad ■ STOP is Caution, CLEAR is Danger. The pad
+    # layout itself is wave C2's (spec s6).
+    stop = button('■ STOP', f'{key},stop', size=f'{width // 2}f,{PAD_STRIP}f', momentary=True,
+                  name='MixpiCaution')
     connection(stop, f'{key},play', bind='enabled')
-    clear = button('× CLEAR', f'{key},eject', size=f'{width // 2}f,{PAD_STRIP}f', momentary=True)
+    clear = button('× CLEAR', f'{key},eject', size=f'{width // 2}f,{PAD_STRIP}f', momentary=True,
+                   name='MixpiDanger')
     connection(clear, f'{key},play', transform='<Not/>', bind='enabled')
     loaded = group('MixpiPadLoaded', size=f'{width}f,{height}f', children=[
         group('MixpiPadTapArea', 'stacked', f'{width}f,{PAD_TAP}f', [trigger, info]),
@@ -1086,11 +1144,11 @@ def topbar():
 
 
 def loop_button(channel):
-    """LOOP opens the tool panel; it is lit while the panel is open, and in the
-    deck colour while a loop plays (a Starlight loop pad shows on screen)."""
+    """LOOP (Sound, info tone) opens the tool panel; it is lit while the panel
+    is open, and while a loop plays (a Starlight loop pad shows on screen)."""
     def one(display, transform):
         b = button('LOOP', '[MixPi],loop_deck', size=f"{TRANSPORT['LOOP']}f,48f", push=True,
-                   transform=f'<IsEqual>{channel}</IsEqual>', name=f'MixpiDeck{channel}')
+                   transform=f'<IsEqual>{channel}</IsEqual>', name='MixpiSound')
         b.find('Connection/ConnectValueToWidget').text = 'false'
         write(b, '[Tab],overview', 1)
         write(b, '[MixPi],sample_load', 0)
@@ -1098,14 +1156,14 @@ def loop_button(channel):
         return b
     is_open = one('[MixPi],loop_deck', f'<IsEqual>{channel}</IsEqual>')
     show_when(is_open, '[MixPi],loop_deck', channel)
-    is_open.find('ObjectName').text = 'MixpiButton'
     looping = one(f'[Channel{channel}],loop_enabled', None)
     pair = group('MixpiLoopPair', 'stacked', f"{TRANSPORT['LOOP']}f,48f", [is_open, looping])
     return show_when(pair, '[Tab],library', negate=True)
 
 
 def transport_row(channel):
-    """The same row on Decks, FX and Sampler; Tracks swaps in LOAD + title + CUE."""
+    """The same row on Decks, FX and Sampler. Tracks (spec s3): LOAD n · the
+    track name · CUE · ▶, with ▶ right of CUE on both decks."""
     key = f'[Channel{channel}]'
     deck_name = f'MixpiDeck{channel}'
     off_tracks = lambda e: show_when(e, '[Tab],library', negate=True)
@@ -1120,17 +1178,19 @@ def transport_row(channel):
     on_tracks(load)
     title = typed('TrackProperty', channel, f'0me,48f', 'MixpiLoadTitle',
                   Property='title', Elide='right', TooltipId='track_title')
-    title_cell = on_tracks(group('MixpiLoadCell', 'horizontal', f'{LOAD_CELL - LOAD_WIDTH}f,48f', [
+    title_cell = on_tracks(group('MixpiLoadCell', 'horizontal', '0me,48f', [
         show_when(title, f'{key},play', negate=True),
         show_when(label('Playing · stop to load', '0me,48f', 'MixpiLoadTitle', elide='right'),
                   f'{key},play')]))
     cue = off_tracks(button('CUE', f'{key},cue_default', size=f"{TRANSPORT['CUE']}f,48f",
                             momentary=True, name='MixpiCue'))
-    tracks_cue = on_tracks(button('CUE', f'{key},cue_default', size='0me,48f', momentary=True,
+    tracks_cue = on_tracks(button('CUE', f'{key},cue_default', size=f'{TRACKS_CUE}f,48f', momentary=True,
                                   name='MixpiCue'))
     play = off_tracks(button('▶', f'{key},play', name='MixpiPlay'))
+    tracks_play = on_tracks(button('▶', f'{key},play', size=f'{TRACKS_PLAY}f,48f', name='MixpiPlay'))
     return group('MixpiDeckButtons', 'horizontal', f'400me,{TRANSPORT_HEIGHT}f', [
-        keylock, quantize, sync, loop_button(channel), cue, load, title_cell, tracks_cue, play])
+        keylock, quantize, sync, loop_button(channel), cue, load, title_cell, tracks_cue, play,
+        tracks_play])
 
 
 def build(skin, loop_display='focus'):
@@ -1221,15 +1281,28 @@ def build(skin, loop_display='focus'):
     (skin/'skin.xml').write_text(output)
     (skin/'style.qss').write_text(css)
     for name,body in {
-        # R-17: 28x44 handles (plan: 28x48 inside the 48 px slider).
-        'mixpi-slider-handle.svg':'<rect x="2" y="2" width="24" height="40" rx="6" fill="#e9eef5" stroke="#121821" stroke-width="2"/>',
-        'mixpi-cpu-on.svg':'<rect width="70" height="16" rx="3" fill="#a6d95c"/>',
-        'mixpi-cpu-off.svg':'<rect width="70" height="16" rx="3" fill="#333b48"/>',
+        # Spec s8 thumb: 24 px wide, 3 px in from the track's top and bottom,
+        # radius 2, a short centre line. Its left half carries the fill colour
+        # over the track's inner height, so the fill reaches the thumb's centre.
+        'mixpi-slider-handle.svg': (
+            f'<rect x="0" y="1" width="{THUMB_WIDTH // 2}" height="{SLIDER_HEIGHT - 2}" fill="#5d7238"/>'
+            f'<rect x="0.5" y="3.5" width="{THUMB_WIDTH - 1}" height="{SLIDER_HEIGHT - 7}" rx="2" '
+            'fill="#e4e7ec" stroke="#0d1014" stroke-width="1"/>'
+            f'<rect x="{THUMB_WIDTH // 2 - 1}" y="13" width="2" height="{SLIDER_HEIGHT - 26}" fill="#262c35"/>'),
+        'mixpi-cpu-on.svg':'<rect width="70" height="16" rx="3" fill="#a3c45e"/>',
+        'mixpi-cpu-off.svg':'<rect width="70" height="16" rx="3" fill="#3a424e"/>',
     }.items():
-        dims='width="28" height="44"' if 'handle' in name else 'width="70" height="16"'
+        dims = (f'width="{THUMB_WIDTH}" height="{SLIDER_HEIGHT}"' if 'handle' in name
+                else 'width="70" height="16"')
         (skin/name).write_text(f'<svg xmlns="http://www.w3.org/2000/svg" {dims}>{body}</svg>\n')
     for name, svg in icon_files().items():
         (skin/name).write_text(svg)
+    # The menu tick (pioneered-menus.qss, spec section 1 ticked rows): dark
+    # ink on the accent box, inside the 22 px indicator's 2 px border.
+    (skin/'mixpi-icon-tick.svg').write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">'
+        '<path d="M3.5 9.5 7.5 13 14.5 5" fill="none" stroke="#0d1014" stroke-width="2.5" '
+        'stroke-linecap="round" stroke-linejoin="round"/></svg>\n')
 
 
 def icon_files():

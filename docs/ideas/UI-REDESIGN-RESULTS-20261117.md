@@ -16,6 +16,7 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Post-B and council R1 repairs | `fb1a119` | 710 run, OK (141 platform skips) | 190/190, 0 skips | 42 patches. Skin: EDIT LIST command no longer drives the label, waveforms hidden for every screen ≠ 0, chip writes screen 2 first, USB/SYNC chips, ±N% caption. Native: Media page under the skin root (styled) and opened after the screen write; tempo range saved to `[Controls],RateRangePercent`; late top-bar confirm re-checked; media lists keep their widgets and scroll, drag-scroll with 24 px bars, bounded handover and eject-user lists, `mixpi_from_usb`; scan strip moves to the deck-info row while a tool panel is open; `sidebar_sources_editing` set with setAndConfirm (read-only control) |
 | Build C baseline | `ef0874d` | 710 run, OK (141 platform skips) | 190/190, 0 skips | Handoff state of thread 2 |
 | Wave C1 integrated | `dda4966` | 732 run; 1 error in `test_chroot_runtime` (5 s timeout while the native gate ran), then 3 of 3 OK alone | 206/206, 0 skips | S1 skin (U-1, U-2, U-3, U-6, U-7 skin, Settings header), N-A Sources side menu and edit list, N-B Media page and `drive_insert` |
+| Wave C2 integrated | `85dc076` | 761 run, OK (146 platform skips) | 227/227, 0 skips (at `123b5e6`; `85dc076` adds only a generator change and its unit test) | 49 patches. S2 skin, N-C controls and saving, N-A2 Sources repairs; the backlight udev rule |
 
 ## Wave 0 on the test card (build 2)
 
@@ -157,3 +158,30 @@ Then: registration commit, both gates, skin preview, native renders next to the 
   3. With the desktop top bar shown (800×444) the tool panel's EXIT LOOP / RELOOP row is cut off.
   4. Under the READY and IN USE filters, a drive that is ejecting or safe to remove still shows (so it does not vanish mid-eject).
 - **Card note:** the deck time showed REMAINING while `mixxx.cfg` held `PositionDisplay 0`, so the restart came up ELAPSED. One tap saved `PositionDisplay 1` within 5 s, so the save path works. The earlier state was live only.
+
+### Wave C2 result (2026-11-17 23:40 to 2026-11-18 00:40)
+
+- **Builders** (Claude Opus 5.5 medium, own worktrees):
+  - S2 skin: `c2fbebc`, `c6a9ac6`, `2fb8864`, `85dc076`.
+  - N-C controls: `b633757`, `76a849d`, `ae8fea5`.
+  - N-A2 Sources repairs: `5f98518`, `2c0e550`, `2d64c6a`, `1efd4cd`.
+  - Registration by the orchestrator: `2ae88f3`, `c845cbc`. Runner cleanup: `123b5e6`.
+- **New patches (49 in all):** `mixxx-effects-save.patch`, `mixxx-save-within-second.patch`, `mixxx-agreed-controls.patch`, `mixxx-sources-menu-fixes.patch`. **New system file:** `stage3/02-desktop/files/udev/99-mixpi-backlight.rules` (the video group may write the backlight level), installed by `03-run.sh`.
+- **Measured on VM b (N-C fixtures):**
+  - A settings change reaches `mixxx.cfg` in 555-686 ms. It was 1395 ms; the save now waits for 500 ms of quiet instead of 1000.
+  - An effect change reaches `effects.xml` in 441-597 ms, and is kept after `SIGKILL`.
+  - A burst of 50 settings changes gives 1 write, and 10 effect changes give 1 write.
+- **Night dim level: 10 % of max** (26 of 255 on the test card), one constant `kNightDimPercent`. Reported to the owner, who may tune it.
+- **Card preview of the skin on build B's native** (`waveC/c2-preview/`):
+  - Matches its mockup: the deck row (badge, title, dimmer artist, then the SYNC and MASTER pills), the Sources header (search, ✎, red ✕) with the table narrowed and the panel over deck 2's half, the Sampler header and pads, Settings › Media (ASK / AUTO LOAD and the note line), Settings › Interface (rows as drawn) and FX (▾ inside the field).
+  - The pad top rows were centred at first; S2 fixed them in `85dc076`, and the fix was checked on the card.
+  - Parts that need build C's native to show: the side menu's content, Clear samples, Brightness, CPU show and hide, and the dim "SELECT EFFECT…".
+- **Rekordbox lists** now have counts, and inside a drive the place reads "MANTACORE › rekordbox". ★ works on the drive row and on Samples.
+- **Listed deviations, with reasons:**
+  - The Clear samples list scrolls by its 24 px bar only, with no drag scrolling. A skin scroll area has none.
+  - ★ is drawn disabled on a switched-off row.
+  - The side menu has no drop shadow; Qt graphics effects are costly on the Pi.
+- **More owner questions (no change without the owner):**
+  5. CLEAR (n) with a ticked pad that is playing: Mixxx refuses to empty a playing pad (build B's × CLEAR was off while a pad played), so that pad keeps playing and stays loaded while the others clear.
+  6. With ★ on the drive row and a drive plugged in, Tracks opens the drive at start (read only). Build B never opened a drive by itself.
+- **Gates:** Mac suite 761 run, OK (146 platform skips) at `85dc076`; native gate 227/227, 0 skips at `123b5e6`.

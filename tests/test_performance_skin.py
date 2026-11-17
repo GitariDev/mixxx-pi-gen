@@ -427,10 +427,9 @@ class PerformanceSkinTests(unittest.TestCase):
 
     # ---------- the browse page: Tracks, Sources, Load sample, Choose pad ----------
 
-    VIEWS = ['MixpiSourcesHead', 'MixpiLoadHead', 'MixpiSearch',
-             'LibraryActionsButton', 'LibrarySourcesButton', 'SidebarButton', 'MixpiSourcesBody',
+    VIEWS = ['MixpiLoadHead', 'MixpiSearch', 'LibraryActionsButton', 'SidebarButton',
              'MixpiSampleSources', 'MixpiLibraryMain', 'MixpiTrackTitles', 'MixpiSampleFooter',
-             'MixpiChooseScrim']
+             'MixpiChooseScrim', 'MixpiSourcesMenu', 'MixpiSourcesRoom', 'MixpiSourcesBottom']
 
     def shown(self, state):
         return [name for name in self.VIEWS if self.model.visible(self.model.one(name), state)]
@@ -472,50 +471,91 @@ class PerformanceSkinTests(unittest.TestCase):
                          [('SearchBox', 4, 680), ('LibraryActionsButton', 684, 56),
                           ('SidebarButton', 748, 48)])
 
-    def test_sources_is_a_full_screen_with_the_sidebar_under_its_header(self):
-        self.assertEqual(self.shown(Model.state(1)),
-                         ['MixpiSourcesHead', 'LibrarySourcesButton', 'SidebarButton',
-                          'MixpiSourcesBody'])
-        # The ☰ became ✕ at the right end of the header (spec s5); the title,
-        # hint and EDIT LIST stay as in build B.
-        self.assertEqual(self.header_layout(Model.state(1)),
-                         [('MixpiSourcesHead', 4, 608), ('LibrarySourcesButton', 612, 128),
+    def test_sources_is_a_side_menu_at_the_right(self):
+        # Spec s5 (m-sources-top.png): the header still reads search, ✎, and
+        # the ☰ turned into ✕ in the same spot; the table narrows to x 0-480
+        # with its scroll bar; the menu is 320 px at x 480-800, y 96-480, over
+        # deck 2's half of the strip and the LOAD row.
+        opened = Model.state(1)
+        self.assertEqual(self.shown(opened),
+                         ['MixpiSearch', 'LibraryActionsButton', 'SidebarButton', 'MixpiLibraryMain',
+                          'MixpiTrackTitles', 'MixpiSourcesMenu', 'MixpiSourcesRoom', 'MixpiSourcesBottom'])
+        self.assertEqual(self.header_layout(opened),
+                         [('SearchBox', 4, 680), ('LibraryActionsButton', 684, 56),
                           ('SidebarButton', 748, 48)])
-        # The native sidebar has its own Back; the header has no Back and no search.
-        self.assertEqual(self.model.by_name('LibraryBackButton'), [])
-        body = self.model.one('MixpiSourcesBody')
+        self.assertTrue(self.model.tappable(self.model.one('SidebarButton'), opened))
+        self.assertTrue(self.model.tappable(self.model.one('LibraryActionsButton'), opened))
+        # The page under the header is a right-overlay: the base, then the menu.
+        wrapper = self.model.one('LibraryWrapper')
+        header, body = wrapper.find('Children')
+        self.assertEqual((header.findtext('ObjectName'), body.findtext('ObjectName'), body.findtext('Layout')),
+                         ('MixpiBrowseHeader', 'MixpiBrowseBody', 'right-overlay'))
+        base, menu = body.find('Children')
+        self.assertEqual(menu, self.model.one('MixpiSourcesMenu'))
+        self.assertEqual(menu.findtext('Size'), '320f,0me')
+        self.assertEqual((menu.findtext('Connection/ConfigKey'), menu.findtext('Connection/Transform/IsEqual')),
+                         (SCREEN, '1'))
+        for screen in (0, 3, 4, 5):
+            self.assertFalse(self.model.visible(menu, Model.state(screen)), screen)
+        # The native menu (N-A): the sidebar, 320 px, with no skin Back, EDIT LIST or title.
         sidebar = self.model.one('SidebarWrapper')
-        self.assertIn(sidebar, list(body.iter()))
-        self.assertEqual(sidebar.findtext('Size'), '0me,0me')
-        self.assertNotIn('290f', ET.tostring(self.model.one('MixpiBrowse'), encoding='unicode'))
+        self.assertEqual(list(menu.find('Children')), [sidebar])
+        self.assertEqual(sidebar.findtext('Size'), '320f,0me')
         self.assertEqual([c.findtext('ObjectName') for c in sidebar.find('Children')], ['LibrarySidebar'])
         self.assertEqual(sidebar.findtext('Connection/ConfigKey'), '[Sidebar],sidebar_visible')
-        wrapper = self.model.one('LibraryWrapper')
-        self.assertEqual([c.findtext('ObjectName') for c in wrapper.find('Children')][:2],
-                         ['MixpiBrowseHeader', 'MixpiSourcesBody'])
-        # The library table is not shown under Sources.
-        self.assertFalse(self.model.visible(self.model.one('Library'), Model.state(1)))
+        # Base rows: the table (with the 320 px room on screen 1), the deck
+        # titles, the screen-1 bottom rows; Load sample's rows around them.
+        self.assertEqual([c.findtext('ObjectName') for c in base.find('Children')],
+                         ['MixpiSampleSources', 'MixpiLibraryMain', 'MixpiTrackTitles', 'MixpiWhen',
+                          'MixpiSampleFooter'])
+        table = self.model.one('MixpiLibraryMain')
+        library, room = table.find('Children')
+        self.assertEqual((table.findtext('Layout'), library.tag, room.findtext('Size')),
+                         ('horizontal', 'Library', '320f,0me'))
+        self.assertTrue(self.model.visible(library, opened))
+        self.assertEqual([self.model.visible(room, Model.state(v)) for v in (0, 1)], [False, True])
+        # The table is 480 wide: its 24 px scroll bar sits at x 456-480.
+        self.assertEqual(800 - SKIN.SOURCES_MENU_WIDTH, 480)
+        # The bottom rows under the menu: both overviews and LOAD n · name ·
+        # CUE · ▶ per deck, as on Tracks; deck 2's half is under the menu
+        # except x 400-480 (m-sources-top.png shows "2 YOU'RE" and LOAD 2 there).
+        bottom = self.model.one('MixpiSourcesBottom')
+        self.assertEqual(bottom.findtext('Size'), '0me,104f')
+        overviews, loads = bottom.find('Children')
+        self.assertEqual([o.findtext('Channel') for o in overviews.iter('Overview')], ['1', '2'])
+        self.assertEqual([o.findtext('Size') for o in overviews.iter('Overview')], ['400me,48f'] * 2)
+        rows = list(loads.find('Children'))
+        for channel, row in enumerate(rows, 1):
+            names = [(b.findtext('State/Text'), b.findtext('Size')) for b in row.iter('PushButton')]
+            self.assertEqual(names, [(f'LOAD {channel}', '84f,48f'), ('CUE', '68f,48f'), ('▶', '68f,48f')])
+            for b in row.iter('PushButton'):
+                self.assertTrue(self.model.tappable(b, opened))
+        for state in (Model.state(0, **{'[Tab]__library': 1}), Model.state(1, **{'[MixPi]__sample_load': 1}),
+                      Model.state(3)):
+            self.assertFalse(self.model.visible(bottom, state))
+        # The overviews hide while the full-screen edit list is open (N-A).
+        editing = dict(opened, **{'[Library],sidebar_sources_editing': 1})
+        self.assertEqual([self.model.visible(o, editing) for o in overviews.iter('Overview')], [False, False])
+        self.assertTrue(self.model.visible(self.model.one('SidebarWrapper'), editing))
+        self.assertEqual(editing[SCREEN], 1)
+        # The root bottom rows are hidden on screen 1, as under every view.
+        self.assertFalse(self.model.visible(self.model.one('MixpiBottom'), opened))
+        # Heights: header 48, table 252 (y 96-348), titles 28, overviews 48, LOAD row 56.
+        self.assertEqual(480 - 48 - 48 - 28 - 104, 252)
 
-    def test_edit_list_and_back_keep_their_native_controls(self):
-        library = ET.parse(self.skin/'library.xml').getroot()
-        original = next(button for button in library.findall('.//PushButton')
-                        if button.findtext('ObjectName') == 'LibrarySourcesButton')
-        edit = self.model.one('LibrarySourcesButton')
-        self.assertEqual(edit.findtext('Size'), '128f,48f')
-        self.assertEqual(edit.findtext('NumberStates'), '2')
-        self.assertEqual([(st.findtext('Number'), st.findtext('Text')) for st in edit.findall('State')],
-                         [('0', 'EDIT LIST'), ('1', 'DONE')])
-        command, display = [c for c in edit.findall('Connection') if c.find('BindProperty') is None]
-        self.assertEqual([(item.tag, item.text) for item in command],
-                         [(item.tag, item.text) for item in original.find('Connection')][:1] +
-                         [('ConnectValueFromWidget', 'true'), ('ConnectValueToWidget', 'false')] +
-                         [(item.tag, item.text) for item in original.find('Connection')][1:])
-        self.assertEqual(self.model.writes(edit), [('[Library],show_sidebar_sources_menu', 1)])
-        self.assertEqual(self.model.writes(edit, 'release'), [])
-        # DONE while the native edit list is open: a read-only display connection.
-        self.assertEqual((display.findtext('ConfigKey'), display.findtext('ConnectValueFromWidget'),
-                          display.findtext('ConnectValueToWidget')),
-                         ('[Library],sidebar_sources_editing', 'false', 'true'))
+    def test_old_sources_screen_is_gone(self):
+        # N-A's handover: no SOURCES title or hints, no EDIT LIST / DONE, no
+        # full-screen body, no skin Back (the native menu has BACK and EDIT).
+        for name in ('MixpiSourcesHead', 'MixpiSourcesBody', 'LibrarySourcesButton', 'LibraryBackButton'):
+            self.assertEqual(self.model.by_name(name), [], name)
+        texts = {t.text for t in self.root.iter('Text')}
+        for text in ('SOURCES', 'Pick a source, then a list.', 'Pick the list to load samples from.',
+                     'EDIT LIST', 'DONE'):
+            self.assertNotIn(text, texts)
+        keys = {k.text for k in self.root.iter('ConfigKey')}
+        self.assertNotIn('[Library],show_sidebar_sources_menu', keys)
+        # MixpiSampleCloses stays, so the ✕ returns to Load sample.
+        self.assertEqual(len(self.model.by_name('MixpiSampleCloses')), 1)
 
     def displayed_text(self, button, events):
         """The state text after control changes: every connection that pushes to
@@ -528,15 +568,6 @@ class PerformanceSkinTests(unittest.TestCase):
                         and c.findtext('ConnectValueToWidget', 'true') == 'true':
                     shown = int(transform(c, float(value))) % len(states)
         return states[shown]
-
-    def test_edit_list_reads_done_while_editing(self):
-        # Build B, R-10: the press opens the native edit list (editing 1), then the
-        # push command falls back to 0 on release; DONE must stay.
-        edit = self.model.one('LibrarySourcesButton')
-        command, editing = '[Library],show_sidebar_sources_menu', '[Library],sidebar_sources_editing'
-        self.assertEqual(self.displayed_text(edit, [(command, 1), (editing, 1), (command, 0)]), 'DONE')
-        self.assertEqual(self.displayed_text(edit, [(command, 1), (editing, 1), (command, 0),
-                                                    (command, 1), (editing, 0), (command, 0)]), 'EDIT LIST')
 
     def test_menu_opens_sources_and_its_x_closes_it(self):
         menu = self.model.one('SidebarButton')
@@ -809,7 +840,7 @@ class PerformanceSkinTests(unittest.TestCase):
     def test_replay_sequence_a_load_sample_then_choose_pad(self):
         model, state = self.model, self.start()
         model.tap(self.tab_button('SAMPLER', state), state)
-        model.tap(self.button_by_text('+  LOAD SAMPLE'), state)
+        model.tap(self.button_by_text('+ LOAD SAMPLE'), state)
         self.assert_load_sample(state)
         model.tap(self.shown_button(state, ObjectName='MixpiPrimary', key=SCREEN), state)  # LOAD TO PAD…
         self.assert_load_sample(state, choose=True)
@@ -823,7 +854,7 @@ class PerformanceSkinTests(unittest.TestCase):
     def test_replay_sequence_b_cancel_close_tracks_actions_then_load_sample(self):
         model, state = self.model, self.start()
         model.tap(self.tab_button('SAMPLER', state), state)
-        model.tap(self.button_by_text('+  LOAD SAMPLE'), state)
+        model.tap(self.button_by_text('+ LOAD SAMPLE'), state)
         model.tap(self.shown_button(state, ObjectName='MixpiPrimary', key=SCREEN), state)
         model.tap(self.cancel(), state)
         self.assert_load_sample(state)
@@ -837,7 +868,7 @@ class PerformanceSkinTests(unittest.TestCase):
         # preview's SAMPLER tap closed the menu, so LOAD SAMPLE then hit the list.
         state['[Library],show_track_menu'] = 0
         model.tap(self.tab_button('SAMPLER', state), state)
-        model.tap(self.button_by_text('+  LOAD SAMPLE'), state)
+        model.tap(self.button_by_text('+ LOAD SAMPLE'), state)
         self.assert_load_sample(state)
         model.tap(self.shown_button(state, ObjectName='MixpiPrimary', key=SCREEN), state)
         self.assert_load_sample(state, choose=True)
@@ -845,7 +876,7 @@ class PerformanceSkinTests(unittest.TestCase):
     def test_overlay_buttons_are_on_top_of_their_labels(self):
         for sampler, pad in enumerate(self.pads(), 1):
             key = f'[Sampler{sampler}]'
-            trigger = next(b for b in pad.iter('PushButton') if b.findtext('ObjectName') == 'MixpiPadTap')
+            trigger = next(b for b in pad.iter('PushButton') if b.findtext('State/Text') == '▶ TRIGGER')
             open_load = next(b for b in pad.iter('PushButton') if b.findtext('ObjectName') == 'MixpiPadLoad')
             self.assertTrue(self.model.tappable(trigger, {'[Tab],sampler': 1, f'{key},track_loaded': 1}))
             self.assertTrue(self.model.tappable(open_load, {'[Tab],sampler': 1}))
@@ -874,21 +905,31 @@ class PerformanceSkinTests(unittest.TestCase):
             badges = [l for l in pad.iter('Label') if l.findtext('ObjectName') == f'MixpiPadBadge{deck}']
             self.assertEqual({l.findtext('Text') for l in badges}, {str(sampler)})
             self.assertIn(f'{deck}{(sampler - 1) % 4 + 1}', [t.text for t in pad.iter('Text')])
-            trigger = next(b for b in pad.iter('PushButton') if b.findtext('ObjectName') == 'MixpiPadTap')
-            self.assertEqual(trigger.findtext('Size'), '200f,56f')
+            # Spec s6: ▶ TRIGGER (Sound, lit while it plays) and ■ STOP
+            # (Caution) side by side; no per-pad CLEAR (CLEAR SAMPLES… replaces it).
+            strip = next(g for g in pad.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiPadStrip')
+            self.assertEqual(strip.findtext('Size'), '200f,48f')
+            self.assertEqual([size(c)[0] for c in strip.find('Children')], [4, 94, 4, 94, 4])
+            trigger, stop = strip.findall('Children/PushButton')
+            self.assertEqual([(b.findtext('State/Text'), b.findtext('ObjectName'), b.findtext('Size'))
+                              for b in (trigger, stop)],
+                             [('▶ TRIGGER', 'MixpiSound', '94f,48f'), ('■ STOP', 'MixpiCaution', '94f,48f')])
             self.assertEqual(self.model.writes(trigger), [(f'{key},cue_gotoandplay', 1)])
             self.assertEqual(self.model.writes(trigger, 'release'), [(f'{key},cue_gotoandplay', 0)])
             display = [c for c in trigger.findall('Connection') if c.findtext('ConnectValueFromWidget') == 'false']
             self.assertEqual(display[-1].findtext('ConfigKey'), f'{key},play')
-            strip = next(g for g in pad.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiPadStrip')
-            self.assertEqual(strip.findtext('Size'), '200f,48f')
-            stop, clear = strip.findall('Children/PushButton')
-            self.assertEqual((stop.findtext('Size'), clear.findtext('Size')), ('100f,48f', '100f,48f'))
             self.assertEqual(self.model.writes(stop), [(f'{key},stop', 1)])
-            self.assertEqual(self.model.writes(clear), [(f'{key},eject', 1)])
-            gate = next(c for c in clear.findall('Connection') if c.findtext('BindProperty') == 'enabled')
-            self.assertEqual(gate.findtext('ConfigKey'), f'{key},play')
-            self.assertIsNotNone(gate.find('Transform/Not'))
+            # As drawn, STOP looks the same on a playing and a stopped pad.
+            self.assertIsNone(next((c for c in stop.findall('Connection')
+                                    if c.findtext('BindProperty') == 'enabled'), None))
+            self.assertFalse(any(k.text.endswith(',eject') for k in pad.iter('ConfigKey')))
+            # The play-coloured edge while the pad plays.
+            loaded = pad.find('Children/WidgetGroup')
+            edge = next(c for c in loaded.findall('Connection') if c.findtext('BindProperty') == 'highlight')
+            self.assertEqual(edge.findtext('ConfigKey'), f'{key},play')
+            # Head 24 + name 24 at the top, the buttons, then the 4 px bottom edge.
+            info, strip_row, rest = loaded.find('Children')
+            self.assertEqual([size(info)[1], size(strip_row)[1], size(rest)[1]], [52, 48, 4])
             # No progress fill and no ⋯ menu (plan 4.2).
             self.assertFalse(any('⋯' in (t.text or '') for t in pad.iter('Text')))
 
@@ -905,11 +946,11 @@ class PerformanceSkinTests(unittest.TestCase):
             final = self.model.final(open_load)
             self.assertEqual((final[SCREEN], final['[MixPi],sample_pad'], final['[MixPi],sample_load'],
                               final['[Tab],library']), (3, sampler, 1, 1))
-            self.assertIn('+  Empty · tap to load', [t.text for t in empty.iter('Text')])
+            self.assertIn('+ Empty · tap to load', [t.text for t in empty.iter('Text')])
 
     def test_load_sample_header_button_opens_the_chooser(self):
-        load = self.button_by_text('+  LOAD SAMPLE')
-        self.assertEqual(load.findtext('Size'), '190f,48f')
+        load = self.button_by_text('+ LOAD SAMPLE')
+        self.assertEqual(load.findtext('Size'), '168f,48f')
         final = self.model.final(load)
         self.assertEqual((final['[Tab],library'], final[SCREEN], final['[MixPi],sample_load'],
                           final['[MixPi],sample_pad']), (1, 3, 1, 0))
@@ -962,10 +1003,10 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertIn('#MixpiClose {\n    background: #1d222a; border: 1px solid #1d222a; border-radius: 3px;', style)
         self.assertIn('#MixpiClose[pressed="true"] { background: #34191b; border-color: #d0574d; }', style)
         # Every close: tool panel, Settings, Load sample, Sources from Load sample,
-        # Choose pad (2). Each is the second-to-last child of its row, before a
-        # small edge gap, so it sits at the right end.
+        # Choose pad (2), Clear samples. Each is the second-to-last child of its
+        # row, before a small edge gap, so it sits at the right end.
         closes = [b for b in self.root.iter('PushButton') if b.findtext('ObjectName') == 'MixpiClose']
-        self.assertEqual(len(closes), 2 + 1 + 2 + 2)
+        self.assertEqual(len(closes), 2 + 1 + 2 + 2 + 1)
         for close in closes:
             self.assertEqual(close.findtext('Size'), '48f,48f')
             self.assertEqual([s.findtext('Unpressed') for s in close.findall('State')],
@@ -979,8 +1020,10 @@ class PerformanceSkinTests(unittest.TestCase):
             after = [c for c in children[children.index(row) + 1:] if c.findtext('ObjectName') != 'MixpiClose']
             self.assertEqual([c.findtext('ObjectName') for c in after], ['MixpiGap'], close)
             self.assertLessEqual(size(after[0])[0], 8)
+        sheet = self.model.one('MixpiClearSheet')
         self.assertFalse([b for b in self.root.iter('PushButton')
-                          if 'CLOSE' in (b.findtext('State/Text') or '') or b.findtext('State/Text') == 'CANCEL'])
+                          if 'CLOSE' in (b.findtext('State/Text') or '') or b.findtext('State/Text') == 'CANCEL'
+                          and b not in list(sheet.iter())])
 
     def lit_tab(self, text, state):
         """The tab on top (Qt: first visible child of a stacked group) and whether it is lit."""
@@ -1132,18 +1175,24 @@ class PerformanceSkinTests(unittest.TestCase):
                 self.assertLessEqual(fixed, 400 - 100)
                 # Spec s6 deck row: badge, title, the artist right after it, then
                 # the chips. The title is Maximum (never wider than its text) with
-                # a 1 px minimum; the artist is Ignored (no hint, all the spare
-                # width), so the artist is cut with "…" first, then the title.
+                # primitives.css's 3.5em minimum; the artist is Ignored (no hint,
+                # all the spare width) with its 2.2em minimum, so the artist is cut
+                # with "…" first, then the title.
                 self.assertEqual([c.tag for c in children[:3]], ['Label', 'TrackProperty', 'TrackProperty'])
                 title, artist = [c for c in children if c.tag == 'TrackProperty']
-                self.assertEqual((title.findtext('Property'), size(title)[0:3:2]), ('title', (1, 'max')))
-                self.assertEqual((artist.findtext('Property'), size(artist)[0:3:2]), ('artist', (0, 'i')))
+                self.assertEqual((title.findtext('Property'), size(title)[0:3:2]), ('title', (56, 'max')))
+                self.assertEqual((artist.findtext('Property'), size(artist)[0:3:2]), ('artist', (31, 'i')))
                 self.assertEqual((title.findtext('Elide'), artist.findtext('Elide')), ('right', 'right'))
                 self.assertFalse([c for c in children if c.tag != 'TrackProperty' and size(c)[2] != 'f'])
         style = (FILES/'mixpi-performance.qss').read_text()
         # SYNC is the info tone on both decks; chips are pills.
         self.assertIn('#MixpiChipSync1, #MixpiChipSync2 { color: #86c0d8; border-color: #5aa4c4; }', style)
         self.assertIn('#MixpiDeckArtist { color: #949dab;', style)
+        # The C1 card preview: WWidgetGroup's default AlignCenter gave the row
+        # only its size hint, centred, so the artist (no hint) never showed.
+        # Vertical alignment only: the row fills its half.
+        self.assertIn("#MixpiTitleStrip { background: #161a20; qproperty-layoutAlignment: 'AlignVCenter'; }",
+                      style)
 
     def tool(self, channel):
         return [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiLoopPanel'][channel - 1]
@@ -1361,9 +1410,10 @@ class PerformanceSkinTests(unittest.TestCase):
         # Spec s8: the fill (#5d7238) fills the full height of the track up to
         # the handle, for MIX and every effect slider.
         sliders = list(self.root.iter('SliderComposed'))
-        self.assertEqual(len(sliders), 2 * 4)
+        self.assertEqual(len(sliders), 2 * 4 + 1)  # FX 1 and 2, and Brightness
         for s in sliders:
-            self.assertEqual(s.findtext('Size'), '0me,48f')
+            self.assertEqual(s.findtext('Size'), '316f,48f' if 'backlight' in s.findtext('Connection/ConfigKey')
+                             else '0me,48f')
             self.assertEqual(s.findtext('BarColor'), '#5d7238')
             # A pen as wide as the inner height (48 less the 1 px border at top
             # and bottom), on the middle axis, from the left end ...
@@ -1387,19 +1437,16 @@ class PerformanceSkinTests(unittest.TestCase):
     def test_styles_use_only_the_agreed_tokens(self):
         # Spec section 1: the colours in design/tokens.css and nothing brighter,
         # plus their documented mixes (60% Sound borders, the 32% selected row)
-        # and the 26% lit tints. Exceptions are kept for native checks this
-        # wave does not own (the effect list, the Arrange tick) and the
-        # Sources/Media sections that other builders replace.
+        # and the 26% lit tints. The effect list and the Arrange tick use the
+        # tokens since wave C2; the old Sources and Media sections are gone.
         tokens = set(re.findall(r'#[0-9a-f]{6}', (ROOT / 'docs/ideas/ui-redesign-20261117/agreed-ui/design/'
                                                   'tokens.css').read_text().lower()))
         derived = {'#6d8349', '#427086', '#426790', '#8c563d', '#457653', '#857a41', '#263b51', '#5b6472'}
-        native = {'#f5f6fa', '#b5e15c', '#101318', '#a9b7c8', '#1f7fd8', '#ffffff'}
+        native = {'#ffffff'}  # the selected track row's text (pioneered-touch.qss)
         lit = {(163, 196, 94), (90, 164, 196), (91, 149, 212), (214, 120, 74), (95, 174, 110),
                (203, 181, 81), (223, 163, 58), (208, 87, 77), (13, 16, 20), (5, 7, 9)}
         for name in ('mixpi-performance.qss', 'pioneered-touch.qss', 'pioneered-menus.qss'):
             text = re.sub(r'/\*.*?\*/', '', (FILES/name).read_text(), flags=re.S)
-            if name == 'pioneered-menus.qss':
-                text = text.split('#MixpiSourceRail, #MixpiSourceTiles {')[0]
             if name == 'pioneered-touch.qss':
                 # The Sources sidebar rules are wave C2's (spec s5).
                 text = re.sub(r'#LibraryWrapper WLibrarySidebar[^{]*\{[^}]*\}', '', text)
@@ -1423,12 +1470,34 @@ class PerformanceSkinTests(unittest.TestCase):
         for screen in range(6):
             self.assertEqual(self.model.visible(settings, {SCREEN: screen}), screen == 5)
             self.assertEqual(self.model.visible(pages, {SCREEN: screen}), screen not in (2, 5))
-        rail = [b for b in settings.iter('PushButton') if b.findtext('ObjectName') == 'MixpiRailButton']
-        self.assertEqual([b.findtext('State/Text') for b in rail], ['PLAYBACK', 'INTERFACE', 'MEDIA', 'ADVANCED'])
-        for value, b in enumerate(rail):
-            self.assertEqual(b.findtext('Size'), '200f,56f')
+        rows = [g for g in settings.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiRailRow']
+        texts = []
+        for value, row in enumerate(rows):
+            # m-settings-media.png: the labels are left-aligned. WPushButton
+            # centres its text, so a clear button sits on a label (stacked,
+            # button first, on top) and the label lights from the page.
+            b, text = row.find('Children')
+            self.assertEqual((row.findtext('Layout'), row.findtext('Size')), ('stacked', '200f,52f'))
+            self.assertEqual((b.tag, b.findtext('ObjectName'), b.findtext('Size')),
+                             ('PushButton', 'MixpiRailButton', '200f,52f'))
+            self.assertEqual(b.findtext('State/Text'), '')
             self.assertEqual(b.findtext('LeftClickIsPushButton'), 'true')
             self.assertEqual(self.model.final(b), {'[MixPi],settings_page': value})
+            self.assertTrue(self.model.tappable(b, {SCREEN: 5}))
+            self.assertEqual((text.tag, text.findtext('ObjectName'), text.find('Alignment')),
+                             ('Label', 'MixpiRailLabel', None))
+            texts.append(text.findtext('Text'))
+            lit = text.find('Connection')
+            self.assertEqual((lit.findtext('ConfigKey'), lit.findtext('BindProperty')),
+                             ('[MixPi],settings_page', 'highlight'))
+            self.assertEqual([transform(lit, v) for v in range(4)], [float(v == value) for v in range(4)])
+        self.assertEqual(texts, ['PLAYBACK', 'INTERFACE', 'MEDIA', 'ADVANCED'])
+        style = (FILES/'mixpi-performance.qss').read_text()
+        label = style.split('#MixpiRailLabel {', 1)[1].split('}', 1)[0]
+        self.assertIn('padding-left: 16px;', label)
+        current = style.split('#MixpiRailLabel[highlight="1"] {', 1)[1].split('}', 1)[0]
+        self.assertIn('border-left: 4px solid #a3c45e; padding-left: 12px; font-weight: 600;', current)
+        self.assertNotIn('text-align', style)
         panes = list(self.model.one('MixpiSettingsPanes').find('Children'))
         for value in range(4):
             state = {SCREEN: 5, '[MixPi],settings_page': value}
@@ -1446,8 +1515,8 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual([size(c)[0] for c in children if size(c)[2] == 'f'], [4, 110, 90, 48, 4])
         saved = next(l for l in settings.iter('Label') if l.findtext('Text') == 'Saved')
         self.assertEqual(saved.findtext('Connection/ConfigKey'), '[MixPi],saved')
-        # Rail tap points (plan 5.3): x 100, y 124/180/236/292.
-        self.assertEqual([48 + 48 + 28 + 56 * i for i in range(4)], [124, 180, 236, 292])
+        # Rail tap points (m-settings-media.png, 52 px rows): x 100, y 122/174/226/278.
+        self.assertEqual([48 + 48 + 26 + 52 * i for i in range(4)], [122, 174, 226, 278])
         attributes = {a.get('config_key'): a for a in self.root.findall('manifest/attributes/attribute')}
         self.assertEqual(attributes['[MixPi],settings_page'].text, '0')
 
@@ -1480,7 +1549,7 @@ class PerformanceSkinTests(unittest.TestCase):
                          [{'[MixPi],cache_mb': v} for v in (0, 512, 1024)])
         texts = [t.text for t in panes[2].iter('Text')]
         self.assertIn('MB. Also the room for handover copies. Next launch.', texts)
-        self.assertIn('A small ping at the bottom with LOAD or DISMISS', texts)
+        self.assertNotIn('A small ping at the bottom with LOAD or DISMISS', texts)
         eject = {l.findtext('Text'): l for l in panes[2].iter('Label') if l.findtext('Text') in ('ON', 'OFF')}
         for value in (0, 1):
             state = {SCREEN: 5, '[MixPi],settings_page': 2, '[MixPi],media_eject_available': value}
@@ -1547,7 +1616,7 @@ class PerformanceSkinTests(unittest.TestCase):
         # N2's auto-close writes screen 0 and sidebar_visible 0.
         model, state = self.model, self.start()
         model.tap(self.tab_button('SAMPLER', state), state)
-        model.tap(self.button_by_text('+  LOAD SAMPLE'), state)
+        model.tap(self.button_by_text('+ LOAD SAMPLE'), state)
         model.tap(self.button_by_text('SOURCES…'), state)
         self.assertEqual((state[SCREEN], state['[Sidebar],sidebar_visible'], state['[MixPi],sample_load']), (1, 1, 1))
         model.apply(state, [(SCREEN, 0), ('[Sidebar],sidebar_visible', 0)])
@@ -1570,6 +1639,11 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertTrue(model.visible(self.model.one('MixpiBottom'), state))
         self.assertTrue(model.tappable(self.model.one('SidebarButton'), state))
 
+    def rail_button(self, text):
+        row = next(g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiRailRow'
+                   and g.find('Children/Label').findtext('Text') == text)
+        return row.find('Children/PushButton')
+
     def test_replay_tab_from_settings_opens_that_tab(self):
         # Build A preview: FX, FX 2, gear, MEDIA, SAMPLER landed on FX.
         for text, page in (('SAMPLER', 'sampler'), ('DECKS', 'overview'), ('TRACKS', 'library'), ('FX', 'fx')):
@@ -1580,8 +1654,7 @@ class PerformanceSkinTests(unittest.TestCase):
             model.tap(self.gear(), state)
             self.assertEqual(state[SCREEN], 5)
             self.assertFalse(model.visible(next(self.root.iter('WidgetStack')), state))
-            media = next(b for b in self.root.iter('PushButton')
-                         if b.findtext('ObjectName') == 'MixpiRailButton' and b.findtext('State/Text') == 'MEDIA')
+            media = self.rail_button('MEDIA')
             model.tap(media, state)
             model.tap(self.tab_button(text, state), state)
             self.assertEqual(state[SCREEN], 0)
@@ -1606,23 +1679,31 @@ class PerformanceSkinTests(unittest.TestCase):
         return 0, True
 
     def test_no_waveform_or_overview_shows_under_a_full_screen_view(self):
-        gl = list(self.root.iter('Visual')) + list(self.root.iter('Overview'))
+        sources = list(self.model.one('MixpiSourcesBottom').iter('Overview'))
+        gl = [e for e in list(self.root.iter('Visual')) + list(self.root.iter('Overview')) if e not in sources]
         self.assertEqual(len(gl), 6)
+        # Sources is a side menu (spec s5): only its own overview copies show.
+        for page in ('overview', 'library', 'fx', 'sampler'):
+            state = {SCREEN: 1, f'[Tab],{page}': 1}
+            self.assertEqual([e for e in sources if self.model.visible(e, state)],
+                             sources if page == 'library' else [])
         for screen in range(1, 6):
             for page in ('overview', 'library', 'fx', 'sampler'):
                 for loop_deck in (0, 1, 2):
                     state = {SCREEN: screen, f'[Tab],{page}': 1, '[MixPi],loop_deck': loop_deck}
                     self.assertEqual([e for e in gl if self.model.visible(e, state)], [], (screen, page, loop_deck))
+                    if screen != 1:
+                        self.assertEqual([e for e in sources if self.model.visible(e, state)], [])
         decks = {SCREEN: 0, '[Tab],overview': 1, '[MixPi],loop_deck': 0}
         self.assertEqual(sum(self.model.visible(e, decks) for e in gl), 4)
 
     def test_full_screen_views_fill_432_under_the_top_bar(self):
-        root_rows = list(self.root.find('Children'))[1:]  # under the top bar
+        root_rows = list(self.model.one('MixpiMain').find('Children'))[1:]  # under the top bar
         wrapper = self.model.one('LibraryWrapper')
         cases = {
             'tracks': (Model.state(0, **{'[Tab]__library': 1}), 104, 48 + 28),
-            'sources': (Model.state(1), 0, 48),
-            'sources from load sample': (Model.state(1, **{'[MixPi]__sample_load': 1}), 0, 48),
+            'sources': (Model.state(1), 0, 48 + 28 + 104),
+            'sources from load sample': (Model.state(1, **{'[MixPi]__sample_load': 1}), 0, 48 + 56 + 64),
             'load sample': (Model.state(3), 0, 48 + 56 + 64),
             'choose pad': (Model.state(4), 0, 48 + 56 + 64),
             'load sample after a native close': (Model.state(0, **{'[MixPi]__sample_load': 1, '[Tab]__library': 1}),
@@ -1635,24 +1716,19 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(sum(p[0] for p in parts), bottom, name)
             self.assertEqual(sum(1 for p in parts if p[1]), 1, name)  # one view takes the rest of 432
             if browse_fixed is not None:
-                rows = [self.reserved(c, state, 1) for c in wrapper.find('Children')]
+                header, body = wrapper.find('Children')
+                base = body.find('Children')[0]
+                rows = [self.reserved(c, state, 1) for c in [header] + list(base.find('Children'))]
                 self.assertEqual(sum(p[0] for p in rows), browse_fixed, name)
                 self.assertTrue(any(p[1] for p in rows), name)
 
-    def test_sources_title_sits_at_the_left_and_the_close_at_the_right(self):
-        # The ✕ moved to the right end (spec section 1), so the title starts
-        # after the header's 4 px edge, and the ✕ ends 4 px before 800.
-        header = self.model.one('MixpiBrowseHeader')
-        for state in (Model.state(1), Model.state(1, **{'[MixPi]__sample_load': 1})):
-            x = 0
-            for child in header.find('Children'):
-                if child.findtext('ObjectName') == 'MixpiSourcesHead':
-                    break
-                x += self.reserved(child, state, 0)[0]
-            self.assertEqual(x, 4)
-            closes = [name for name, *_ in self.header_layout(state)]
-            self.assertIn(closes[-1], ('SidebarButton', 'MixpiClose'))
-            self.assertEqual(self.header_layout(state)[-1][1:], (748, 48))
+    def test_sources_header_keeps_its_layout_and_the_close_at_the_right(self):
+        # From Tracks: search, ✎, ✕ (the ☰'s spot). From Load sample: its title
+        # and hint, search, and the ✕ that returns there.
+        self.assertEqual(self.header_layout(Model.state(1)),
+                         [('SearchBox', 4, 680), ('LibraryActionsButton', 684, 56), ('SidebarButton', 748, 48)])
+        self.assertEqual(self.header_layout(Model.state(1, **{'[MixPi]__sample_load': 1})),
+                         [('MixpiLoadHead', 4, 310), ('SearchBox', 314, 426), ('MixpiClose', 748, 48)])
 
     def test_settings_sub_lines_wrap_and_fx_hint_fits(self):
         style = (FILES/'mixpi-performance.qss').read_text()
@@ -1692,7 +1768,7 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(len(self.root.findall('.//Library')),1)
         self.assertEqual(len(self.root.findall('.//LibrarySidebar')),1)
         self.assertEqual(len(self.root.findall('.//Visual')),4)
-        self.assertEqual(len(self.root.findall('.//Overview')),2)
+        self.assertEqual(len(self.root.findall('.//Overview')),4)
         self.assertEqual(self.root.findall('.//Visual')[0].findtext('BeatColor'),'#40ffffff')
         self.assertIn('original',(self.skin/'.mixpi-performance-original/skin.xml').read_text())
         self.assertEqual((self.skin/'style.qss').read_text().count(SKIN.BEGIN),1)
@@ -1708,8 +1784,12 @@ class PerformanceSkinTests(unittest.TestCase):
         for tag in ('Library', 'LibrarySidebar', 'SearchBox'):
             self.assertEqual(len(wrappers[0].findall('.//' + tag)), 1)
         self.assertEqual(wrappers[0].findall('.//Visual'), [])
-        self.assertEqual(wrappers[0].findall('.//Overview'), [])
-        keys = [key.text for key in wrappers[0].findall('.//ConfigKey')]
+        # Only the Sources copy of the bottom rows (spec s5: the menu covers
+        # deck 2's half of them) brings overviews and deck controls in.
+        bottom = self.model.one('MixpiSourcesBottom')
+        self.assertEqual([o for o in wrappers[0].iter('Overview') if o not in list(bottom.iter())], [])
+        keys = [key.text for e in wrappers[0].iter() if e not in list(bottom.iter())
+                for key in e.findall('Connection/ConfigKey')]
         self.assertNotIn('[Channel1],play', keys)
         self.assertNotIn('[Channel2],play', keys)
 
@@ -1785,12 +1865,22 @@ class PerformanceSkinTests(unittest.TestCase):
         style = (self.skin/'style.qss').read_text()
         self.assertIn('#MixpiEffectSelector QAbstractItemView {', style)
         popup = style.split('#MixpiEffectSelector QAbstractItemView {', 1)[1].split('}', 1)[0]
-        # The open list keeps the colours tests/native/effect_selector_test.cpp
-        # measures; its background is surface-2.
-        for declaration in ('color: #f5f6fa', 'background: #1d222a',
-                            'selection-color: #101318',
-                            'selection-background-color: #b5e15c'):
+        # The open list takes the token colours of every list (C1 preview fix):
+        # text on surface; the current effect is the current menu row.
+        for declaration in ('color: #e4e7ec', 'background: #161a20',
+                            'selection-color: #e4e7ec',
+                            'selection-background-color: #1d222a'):
             self.assertIn(declaration, popup)
+        current = style.split('#MixpiEffectSelector QAbstractItemView::item:selected {', 1)[1].split('}', 1)[0]
+        self.assertIn('border-left: 4px solid #a3c45e;', current)
+        # m-fx.png: the ▾ inside the field, no box of its own; the empty
+        # selector's text is dim (N-C's mixpiEmpty property).
+        drop = style.split('#MixpiEffectSelector::drop-down {', 1)[1].split('}', 1)[0]
+        self.assertIn('border: 0px; background: transparent;', drop)
+        self.assertIn('#MixpiEffectSelector::down-arrow { image: url(skin:/mixpi-icon-caret.svg);', style)
+        self.assertIn('#MixpiEffectSelector[mixpiEmpty="true"] { color: #949dab; }', style)
+        caret = ET.parse(self.skin/'mixpi-icon-caret.svg').getroot()
+        self.assertEqual(caret.find('{http://www.w3.org/2000/svg}path').get('fill'), '#949dab')
         self.assertNotIn('\nQWidget {', style)
 
     # Controls that Mixxx itself creates as toggling ControlPushButtons. A
@@ -1848,7 +1938,7 @@ class PerformanceSkinTests(unittest.TestCase):
             close = commands['[MixPi],loop_deck']
             self.assertIsNotNone(close.find('Connection/Transform/Not'))
             self.assertEqual(close.findtext('Connection/ConnectValueToWidget'), 'false')
-        self.assertEqual(len(self.root.findall('.//Overview')), 2)
+        self.assertEqual(len(self.root.findall('.//Overview')), 4)
 
     def test_paired_keys_are_display_only_opt_in(self):
         for key in self.root.findall('.//Key'):
@@ -1897,8 +1987,9 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(keys, [f'[Channel{channel}],waveform_zoom_up', f'[Channel{channel}],waveform_zoom_down'])
         waves = next(group for group in groups if group.findtext('ObjectName') == 'MixpiWaveforms')
         self.assertEqual(waves.findtext('Connection/Transform/IsEqual'), '0')
+        strips = [o for o in self.root.iter('Overview') if o not in list(self.model.one('MixpiBrowse').iter())]
         for channel in (1, 2):
-            strip = self.root.findall('.//Overview')[channel - 1]
+            strip = strips[channel - 1]
             self.assertEqual(strip.findtext('Connection/Transform/IsEqual'), str(channel))
             self.assertIsNotNone(strip.find('Connection/Transform/Not'))
 
@@ -2002,6 +2093,265 @@ class PerformanceSkinTests(unittest.TestCase):
                 display = [c for c in top[0].findall('Connection') if c.findtext('ConnectValueFromWidget') == 'false']
                 self.assertEqual(display[-1].findtext('ConfigKey'), lit)
                 self.assertEqual(transform(display[-1], 1.0 if lit.endswith('loop_enabled') else float(channel)), 1)
+
+    # ---------- wave C2: Sampler header and the Clear samples popover (spec s6) ----------
+
+    def test_sampler_header_is_load_sample_clear_samples_then_the_hint(self):
+        header = self.model.one('MixpiSamplerHeader')
+        shown = [c for c in header.find('Children') if self.model.visible(c, {'[Tab],sampler': 1})]
+        self.assertEqual([(c.findtext('State/Text') or c.findtext('Text') or c.findtext('ObjectName'),
+                           c.findtext('ObjectName'), c.findtext('Size')) for c in shown],
+                         [('MixpiGap', 'MixpiGap', '4f,48f'),
+                          ('+ LOAD SAMPLE', 'MixpiPrimary', '168f,48f'),
+                          ('MixpiGap', 'MixpiGap', '8f,48f'),
+                          ('CLEAR SAMPLES…', 'MixpiDanger', '150f,48f'),
+                          ('Starlight SAMPLER mode: deck A pads 1-4 · deck B pads 5-8', 'MixpiScreenHint',
+                           '0me,48f'),
+                          ('MixpiGap', 'MixpiGap', '4f,48f')])
+        clear = self.button_by_text('CLEAR SAMPLES…')
+        self.assertEqual(self.model.final(clear), {'[MixPi],sampler_clear_open': 1})
+        self.assertEqual(clear.findtext('Connection/ConnectValueToWidget'), 'false')
+        # m-sampler.png hit map: LOAD SAMPLE x 4-172, CLEAR SAMPLES… x 180-330, y 48-96.
+        self.assertEqual((4, 4 + 168, 4 + 168 + 8, 4 + 168 + 8 + 150), (4, 172, 180, 330))
+
+    def popover_state(self, loaded=(1, 2, 3), ticked=(1, 3), **values):
+        state = dict(Model.state(0, **{'[Tab]__sampler': 1, '[MixPi]__sampler_clear_open': 1}), **values)
+        for n in loaded:
+            state[f'[Sampler{n}],track_loaded'] = 1
+        for n in ticked:
+            state[f'[MixPi],sampler_clear_tick{n}'] = 1
+        state['[MixPi],sampler_clear_count'] = len(set(loaded) & set(ticked))
+        return state
+
+    def test_clear_popover_dims_the_whole_screen_over_everything(self):
+        # m-sampler-clear.png: the scrim covers the top bar and the bottom rows
+        # too, so the root is one stacked group with the popover first (on top).
+        root = self.model.one('MixpiRoot')
+        self.assertEqual(root.findtext('Layout'), 'stacked')
+        self.assertEqual(list(self.root.find('Children')), [root])
+        popover, main = root.find('Children')
+        self.assertEqual((popover.findtext('ObjectName'), main.findtext('ObjectName')),
+                         ('MixpiClearScrim', 'MixpiMain'))
+        # One condition only: a shown wrapper would cover the screen.
+        self.assertEqual([(c.findtext('ConfigKey'), c.findtext('BindProperty')) for c in popover.findall('Connection')],
+                         [('[MixPi],sampler_clear_open', 'visible')])
+        self.assertEqual(popover.findtext('Size'), '0i,0i')  # adds nothing to the 800x444 minimum
+        closed = Model.state(0, **{'[Tab]__sampler': 1})
+        opened = self.popover_state()
+        self.assertFalse(self.model.visible(popover, closed))
+        self.assertTrue(self.model.visible(popover, opened))
+        # While it is open nothing under it takes a tap: tabs, the pads, the transport.
+        under = [b for b in main.iter('PushButton')]
+        self.assertTrue(any(self.model.tappable(b, closed) for b in under))
+        self.assertFalse([b for b in under if self.model.tappable(b, opened)])
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn('#MixpiClearScrim { background: rgba(5, 7, 9, 168); }', style)
+
+    def test_clear_popover_rows_tick_and_clear_the_ticked_pads(self):
+        sheet = self.model.one('MixpiClearSheet')
+        self.assertEqual(sheet.findtext('Size'), '480f,0p')
+        head, scroll, note, foot = sheet.find('Children')
+        # Title "CLEAR SAMPLES" with the close ✕ at the right.
+        title, close, edge = head.find('Children')
+        self.assertEqual((title.findtext('Text'), close.findtext('ObjectName'), edge.findtext('Size')),
+                         ('CLEAR SAMPLES', 'MixpiClose', '4f,56f'))
+        self.assertEqual(self.model.final(close), {'[MixPi],sampler_clear_open': 0})
+        # One row per loaded pad (A1-A4 deck 1 badges, B1-B4 deck 2), in a
+        # scroll list with the 24 px bar.
+        self.assertEqual((scroll.tag, scroll.findtext('ObjectName')), ('Scrollable', 'MixpiClearList'))
+        rows = list(scroll.find('Children/WidgetGroup/Children'))
+        self.assertEqual(len(rows), 8)
+        state = self.popover_state()
+        self.assertEqual([self.model.visible(r, state) for r in rows], [True] * 3 + [False] * 5)
+        for n, row in enumerate(rows, 1):
+            deck = 'A' if n <= 4 else 'B'
+            self.assertEqual(row.findtext('Size'), '0me,52f')
+            self.assertIn(f'{deck}{(n - 1) % 4 + 1}', [t.text for t in row.iter('Text')])
+            badge = next(l for l in row.iter('Label') if l.findtext('ObjectName') == f'MixpiPadBadge{deck}')
+            self.assertEqual(badge.findtext('Text'), str(n))
+            props = [t.findtext('Property') for t in row.iter('TrackProperty')]
+            self.assertEqual(props, ['titleInfo', 'durationTextSeconds'])
+            key = f'[MixPi],sampler_clear_tick{n}'
+            ticked, clear = [b for b in row.iter('PushButton')]
+            for b in (ticked, clear):
+                self.assertEqual(b.findtext('LeftClickIsPushButton'), 'true')
+                self.assertEqual(b.findtext('ObjectName'), 'MixpiClearTick')
+            self.assertEqual(self.model.final(ticked), {key: 0})
+            self.assertEqual(self.model.final(clear), {key: 1})
+            self.assertEqual([s.findtext('Unpressed') for s in ticked.findall('State')], ['mixpi-clear-row-on.svg'])
+            self.assertEqual([s.findtext('Unpressed') for s in clear.findall('State')], ['mixpi-clear-row-off.svg'])
+            if n <= 3:
+                on = n in (1, 3)
+                self.assertEqual((self.model.tappable(ticked, state), self.model.tappable(clear, state)), (on, not on))
+            text = next(g for g in row.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiClearRowText')
+            lit = text.find('Connection')
+            self.assertEqual((lit.findtext('ConfigKey'), lit.findtext('BindProperty')), (key, 'highlight'))
+        # The note, then CANCEL (Navigate) and CLEAR (n) (Danger) at the right.
+        self.assertEqual(note.findtext('Text'), 'The pads go empty. The files stay where they are.')
+        cancel, confirm = foot.iter('PushButton')
+        self.assertEqual((cancel.findtext('State/Text'), cancel.findtext('ObjectName'), cancel.findtext('Size')),
+                         ('CANCEL', 'MixpiButton', '120f,48f'))
+        self.assertEqual(self.model.final(cancel), {'[MixPi],sampler_clear_open': 0})
+        self.assertEqual((confirm.findtext('ObjectName'), confirm.findtext('Size')), ('MixpiClearConfirm', '120f,48f'))
+        self.assertEqual([t.text for t in confirm.iter('Text')], [f'CLEAR ({n})' for n in range(9)])
+        self.assertEqual(self.model.final(confirm), {'[MixPi],sampler_clear': 1})
+        display = [c for c in confirm.findall('Connection') if c.findtext('ConnectValueFromWidget') == 'false']
+        self.assertEqual(display[0].findtext('ConfigKey'), '[MixPi],sampler_clear_count')
+        self.assertEqual(self.displayed_text(confirm, [('[MixPi],sampler_clear_count', 2)]), 'CLEAR (2)')
+        # Not enabled at n = 0.
+        self.assertFalse(self.model.enabled(confirm, self.popover_state(ticked=())))
+        self.assertTrue(self.model.enabled(confirm, state))
+        self.assertTrue(self.model.tappable(confirm, state))
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn('#MixpiClearRowText[highlight="1"] { background: #1d222a; }', style)
+        self.assertNotIn('border-left', style.split('#MixpiClearRowText[highlight="1"]', 1)[1].split('}', 1)[0])
+        self.assertIn('#MixpiClearConfirm:disabled', style)
+        self.assertIn('#MixpiClearList { qproperty-widgetResizable: true; }', style)
+        self.assertIn('#MixpiClearList QScrollBar:vertical {\n    width: 24px;', style)
+        # The tick: the accent box with the ink tick, or the dim empty box.
+        on = ET.parse(self.skin/'mixpi-clear-row-on.svg').getroot()
+        off = ET.parse(self.skin/'mixpi-clear-row-off.svg').getroot()
+        svg = '{http://www.w3.org/2000/svg}'
+        self.assertEqual(on.find(svg + 'rect').get('fill'), '#a3c45e')
+        self.assertEqual(on.find(f'{svg}g/{svg}path').get('stroke'), '#0d1014')
+        self.assertEqual(off.find(svg + 'rect').get('stroke'), '#949dab')
+
+    def test_clear_popover_hit_map(self):
+        # m-sampler-clear.png with three loaded pads: a 480 px sheet centred,
+        # x 160-640; head 56, rows 52, note 40, foot 68 (48 px buttons).
+        rows, height = 3, 56 + 3 * 52 + 40 + 68 + 2
+        top = (480 - height) // 2
+        sheet = self.model.one('MixpiClearSheet')
+        head, scroll, note, foot = sheet.find('Children')
+        self.assertEqual([size(head)[1], size(note)[1], size(foot)[1]], [56, 40, 68])
+        foot_sizes = [size(c)[0] for c in foot.find('Children')]
+        self.assertEqual(foot_sizes[1:], [120, 8, 120, 12])
+        right = 160 + 480 - 1
+        clear_x = right - 12 - 120
+        cancel_x = clear_x - 8 - 120
+        self.assertEqual((cancel_x, clear_x), (379, 507))  # as drawn: 379-499, 507-627
+        close_x = right - 4 - 48
+        self.assertEqual(close_x, 587)
+        self.assertEqual(top, 79)
+        self.assertGreaterEqual(top, 24)
+
+    # ---------- wave C2: Settings rows (spec s11, s12) ----------
+
+    def pane(self, index):
+        return list(self.model.one('MixpiSettingsPanes').find('Children'))[index]
+
+    def setting_rows(self, pane):
+        return [g for g in pane.find('Children') if g.findtext('ObjectName') in ('MixpiSetting', 'MixpiSettingNoteRow')]
+
+    def test_media_settings_follow_the_mockup(self):
+        media = self.pane(2)
+        rows = self.setting_rows(media)
+        self.assertEqual([next(r.iter('Label')).findtext('Text') for r in rows],
+                         ['Scan bar', 'RAM cache', 'Eject', 'Plugging in a drive',
+                          'ASK shows a small strip with LOAD and DISMISS. AUTO LOAD opens the drive at once.'])
+        # The choices are joined segments, as drawn.
+        for row, names in ((rows[0], ['MixpiSegFirst', 'MixpiSegLast']),
+                           (rows[1], ['MixpiSegFirst', 'MixpiSegMid', 'MixpiSegLast']),
+                           (rows[3], ['MixpiSegFirst', 'MixpiSegLast'])):
+            self.assertEqual([b.findtext('ObjectName') for b in row.iter('PushButton')], names)
+        drive = rows[3]
+        self.assertIn('What happens when a drive goes in', [t.text for t in drive.iter('Text')])
+        ask, auto = drive.iter('PushButton')
+        self.assertEqual([(b.findtext('State/Text'), b.findtext('Size'), self.model.final(b)) for b in (ask, auto)],
+                         [('ASK', '96f,48f', {'[MixPi],drive_insert': 0}),
+                          ('AUTO LOAD', '104f,48f', {'[MixPi],drive_insert': 1})])
+        for value in (0, 1):
+            shown = [transform(b.findall('Connection')[-1], float(value)) for b in (ask, auto)]
+            self.assertEqual(shown, [float(value == 0), float(value == 1)])
+        note = next(rows[4].iter('Label'))
+        self.assertEqual((note.findtext('ObjectName'), note.findtext('Size')), ('MixpiSettingNote', '0me,36f'))
+        style = (FILES/'mixpi-performance.qss').read_text()
+        rule = style.split('#MixpiSettingNote {', 1)[1].split('}', 1)[0]
+        self.assertIn('border-left: 2px solid #a3c45e;', rule)
+        self.assertIn('qproperty-wordWrap: true;', rule)
+        # Fits the pane: 4 rows of 66 and the 44 px note under the 48 px header.
+        self.assertLessEqual(4 * 66 + 44, 480 - 96)
+
+    def test_eject_is_an_on_off_toggle_that_cannot_be_pressed(self):
+        # m-settings-media.png: the ON/OFF toggle, "Safe eject on this card".
+        # Rubric criterion 4: it is only an indicator. No button, nothing
+        # written: no setting or skin change opens the eject gate.
+        eject = self.model.one('MixpiEjectState')
+        self.assertEqual(eject.findtext('Size'), '88f,48f')
+        self.assertEqual(list(eject.iter('PushButton')), [])
+        self.assertFalse([c for e in eject.iter() for c in e.findall('Connection')
+                          if c.findtext('BindProperty') is None])
+        on, off = eject.find('Children')
+        self.assertEqual((on.findtext('ObjectName'), off.findtext('ObjectName')), ('MixpiToggleOn', 'MixpiToggleOff'))
+        # ON: the word, then the knob at the right; OFF: the knob, then the word.
+        self.assertEqual([c.findtext('ObjectName') for c in on.find('Children')],
+                         ['MixpiToggleWord', 'MixpiToggleKnobCell'])
+        self.assertEqual([c.findtext('ObjectName') for c in off.find('Children')],
+                         ['MixpiToggleKnobCell', 'MixpiToggleWord'])
+        for value in (0, 1):
+            state = {SCREEN: 5, '[MixPi],settings_page': 2, '[MixPi],media_eject_available': value}
+            self.assertEqual([self.model.visible(g, state) for g in (on, off)], [bool(value), not value])
+        keys = {k.text for k in self.root.iter('ConfigKey')}
+        self.assertFalse(any('eject' in key and key != '[MixPi],media_eject_available'
+                             and not key.startswith('[Sampler') for key in keys), keys)
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn('#MixpiToggleOn { background: #253019; border: 1px solid #a3c45e; }', style)
+        self.assertIn('#MixpiToggleOn #MixpiToggleKnob { background: #a3c45e; }', style)
+
+    def test_interface_settings_follow_the_mockup(self):
+        interface = self.pane(1)
+        rows = self.setting_rows(interface)
+        self.assertEqual([next(r.iter('Label')).findtext('Text') for r in rows],
+                         ['Desktop bar', 'Deck time', 'Brightness', 'Night dim', 'CPU readout'])
+        subs = [[t.text for t in r.iter('Text')][1] for r in rows]
+        self.assertEqual(subs, ['Desktop · Mixxx · Speaker · Settings', 'Tap the time on a deck to switch',
+                                'Screen backlight', 'Drops the screen to a low level for dark rooms',
+                                'The CPU % at the top right'])
+        bar = next(rows[0].iter('PushButton'))
+        self.assertEqual([t.text for t in bar.iter('Text')],
+                         ['SHOW TOP BAR', 'HIDE TOP BAR', 'CHECKING TOP BAR…', 'TOP BAR UNAVAILABLE'])
+        self.assertEqual(bar.findtext('Size'), '180f,48f')
+        writes = self.pane_writes(interface)
+        self.assertEqual([b.findtext('ObjectName') for b in rows[1].iter('PushButton')],
+                         ['MixpiSegFirst', 'MixpiSegLast'])
+        # Brightness: the slider on [MixPi],backlight, enabled by
+        # backlight_available, then the "80%" readout.
+        level = next(rows[2].iter('SliderComposed'))
+        command, gate = level.findall('Connection')
+        self.assertEqual(command.findtext('ConfigKey'), '[MixPi],backlight')
+        self.assertIsNone(command.find('BindProperty'))
+        self.assertEqual((gate.findtext('ConfigKey'), gate.findtext('BindProperty')),
+                         ('[MixPi],backlight_available', 'enabled'))
+        self.assertEqual(level.findtext('BarColor'), '#5d7238')
+        readout = next(rows[2].iter('Number'))
+        self.assertEqual((readout.findtext('Text'), readout.findtext('NumberOfDigits'),
+                          readout.findtext('Connection/ConfigKey'), readout.findtext('Connection/ConnectValueFromWidget')),
+                         ('%1%', '0', '[MixPi],backlight', 'false'))
+        self.assertEqual(readout.findtext('Text').replace('%1', format(80.0, '.0f')), '80%')
+        # Night dim OFF / ON and CPU readout SHOW / HIDE: segments.
+        night = list(rows[3].iter('PushButton'))
+        cpu = list(rows[4].iter('PushButton'))
+        self.assertEqual([(b.findtext('State/Text'), self.model.final(b)) for b in night],
+                         [('OFF', {'[MixPi],night_dim': 0}), ('ON', {'[MixPi],night_dim': 1})])
+        self.assertEqual([(b.findtext('State/Text'), self.model.final(b)) for b in cpu],
+                         [('SHOW', {'[MixPi],show_cpu': 1}), ('HIDE', {'[MixPi],show_cpu': 0})])
+        for buttons in (night, cpu):
+            self.assertEqual([b.findtext('ObjectName') for b in buttons], ['MixpiSegFirst', 'MixpiSegLast'])
+        self.assertEqual(writes['ELAPSED'], {'[Controls],ShowDurationRemaining': 0})
+        # Five rows of 66 fit under the header.
+        self.assertLessEqual(5 * 66, 480 - 96)
+        # Row width: 14 + 190 + 10 + the 316 px slider + the 56 px readout fit the 600 px pane.
+        self.assertLessEqual(14 + 190 + 10 + 316 + 56, 600)
+
+    def test_cpu_readout_shows_only_while_show_cpu_is_one(self):
+        box = self.model.one('MixpiCpuBox')
+        self.assertEqual(box.findtext('Size'), '56f,48f')  # keeps its place either way
+        readout, = box.find('Children')
+        self.assertEqual((readout.findtext('Connection/ConfigKey'), readout.findtext('Connection/BindProperty')),
+                         ('[MixPi],show_cpu', 'visible'))
+        self.assertTrue(self.model.visible(readout, {'[MixPi],show_cpu': 1}))
+        self.assertFalse(self.model.visible(readout, {'[MixPi],show_cpu': 0}))
+        self.assertIn(self.model.one('MixpiCpu'), list(readout.iter()))
 
     @unittest.skipUnless(os.environ.get('PIONEERED_TEST_SKIN'),'pinned upstream checkout optional')
     def test_build_on_pinned_pioneered_preserves_visual_and_overview(self):

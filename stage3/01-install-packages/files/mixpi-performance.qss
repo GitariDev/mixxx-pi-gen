@@ -9,7 +9,7 @@
  * light role text. Sound borders at rest are the tone at 60% over surface-2.
  * Fonts on the image only: Ubuntu Condensed for labels and buttons, Open Sans
  * for body and list text, Ubuntu Mono for numbers. No text under 13 px. */
-#MixpiTopbar, #MixpiTransport, #MixpiDeckButtons, #MixpiBottom { background: #0d1014; }
+#MixpiTopbar, #MixpiTransport, #MixpiDeckButtons, #MixpiBottom, #MixpiSourcesBottom { background: #0d1014; }
 #MixpiTopbar { border-bottom: 1px solid #2c333d; }
 
 /* Navigate (neutral) at rest; every button family starts here. */
@@ -152,26 +152,42 @@
 #MixpiFxPad { color: #949dab; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; }
 #MixpiFxSwitch, #MixpiSettingsHeader { background: #161a20; border-bottom: 1px solid #2c333d; }
 
-/* Settings rail: menu rows. The current row is surface-2 with a 4 px
- * accent edge and semibold text. */
+/* Settings rail: menu rows, the text left-aligned 16 px in (m-settings-media.png).
+ * The label under a clear button carries the text; the current row is
+ * surface-2 with a 4 px accent edge and semibold text. */
 #MixpiSettingsRail { background: #161a20; border-right: 1px solid #2c333d; }
-#MixpiRailButton {
-    border: 0px; border-bottom: 1px solid #2c333d; border-radius: 0px; margin: 0px;
-    background: #161a20; text-align: left; padding-left: 16px;
-    font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: normal;
+#MixpiRailButton { background: transparent; border: 0px; border-radius: 0px; margin: 0px; }
+#MixpiRailButton[pressed="true"] { background: rgba(163, 196, 94, 40); }
+#MixpiRailLabel {
+    color: #e4e7ec; background: #161a20; border: 0px; border-bottom: 1px solid #2c333d;
+    padding-left: 16px; font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: normal;
 }
-#MixpiRailButton[pressed="true"] { background: #262c35; }
-#MixpiRailButton[value="1"] {
-    background: #1d222a; border-left: 4px solid #a3c45e; padding-left: 12px;
-    color: #e4e7ec; font-weight: 600;
+#MixpiRailLabel[highlight="1"] {
+    background: #1d222a; border-left: 4px solid #a3c45e; padding-left: 12px; font-weight: 600;
 }
 #MixpiSettingTitle { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: 600; }
-#MixpiEjectOn, #MixpiEjectOff {
-    font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 15px; font-weight: bold;
-    border-radius: 3px; margin: 2px 0px;
+/* The ON/OFF toggle (primitives.css .mx-toggle), here only an indicator:
+ * OFF is surface-2 with a dim knob at the left and OFF at the right; ON is
+ * accent-surface with an accent border, ON at the left and the accent knob. */
+#MixpiToggleOn, #MixpiToggleOff { border-radius: 3px; margin: 1px 0px; }
+#MixpiToggleOff { background: #1d222a; border: 1px solid #3a424e; }
+#MixpiToggleOn { background: #253019; border: 1px solid #a3c45e; }
+#MixpiToggleWord { font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 15px; font-weight: bold; }
+#MixpiToggleOff #MixpiToggleWord { color: #949dab; }
+#MixpiToggleOn #MixpiToggleWord { color: #a3c45e; }
+#MixpiToggleKnob { border-radius: 2px; }
+#MixpiToggleOff #MixpiToggleKnob { background: #949dab; }
+#MixpiToggleOn #MixpiToggleKnob { background: #a3c45e; }
+/* The note under "Plugging in a drive": dim text, surface, a 2 px accent edge. */
+#MixpiSettingNote {
+    color: #949dab; background: #161a20; border-left: 2px solid #a3c45e; padding: 0px 10px;
+    font-family: "Open Sans", "Ubuntu"; font-size: 13px; qproperty-wordWrap: true;
 }
-#MixpiEjectOn { color: #a3c45e; background: #253019; border: 1px solid #a3c45e; }
-#MixpiEjectOff { color: #949dab; background: #1d222a; border: 1px solid #3a424e; }
+/* The Brightness readout ("80%"). */
+#MixpiSettingValue {
+    color: #e4e7ec; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 18px; font-weight: bold;
+    qproperty-alignment: 'AlignRight | AlignVCenter';
+}
 #MixpiIconButton {
     background: #1d222a; border: 1px solid #3a424e; border-radius: 3px; margin: 0px;
 }
@@ -237,16 +253,62 @@
 #MixpiPadTime { color: #949dab; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 13px; }
 #MixpiPadName { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 15px; font-weight: 600; }
 #MixpiPadEmptyText { color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 14px; }
-#MixpiPadTap, #MixpiPadLoad { background: transparent; border: 0px; margin: 0px; }
-#MixpiPadTap[value="1"] { background: rgba(95, 174, 110, 66); border: 2px solid #5fae6e; }
+#MixpiPadLoad { background: transparent; border: 0px; margin: 0px; }
 #MixpiPadLoad[pressed="true"] { background: rgba(163, 196, 94, 40); }
+/* A playing pad has a 2 px play-coloured edge (m-sampler.png). */
+#MixpiPadLoaded[highlight="1"] { border: 2px solid #5fae6e; }
+#MixpiPadLoaded #MixpiSound, #MixpiPadLoaded #MixpiCaution { font-size: 15px; }
+
+/* Clear samples popover (m-sampler-clear.png): the scrim dims the screen; a
+ * 480 px sheet, title row, the rows, the note and CANCEL / CLEAR (n). */
+#MixpiClearScrim { background: rgba(5, 7, 9, 168); }
+#MixpiClearSheet { background: #161a20; border: 1px solid #3a424e; border-radius: 3px; }
+#MixpiClearHead { border-bottom: 1px solid #2c333d; qproperty-layoutContentsMargins: rect(16 4 2 4); }
+#MixpiClearList, #MixpiClearList > QWidget, #MixpiClearRows { background: #161a20; border: 0px; }
+/* The rows take the list's width, and its height while they fit. */
+#MixpiClearList { qproperty-widgetResizable: true; }
+#MixpiClearRows { qproperty-layoutAlignment: 'AlignTop'; }
+#MixpiClearTick { background: transparent; border: 0px; border-radius: 0px; margin: 0px; }
+#MixpiClearTick[pressed="true"] { background: rgba(163, 196, 94, 40); }
+#MixpiClearRowText { background: #161a20; border-bottom: 1px solid #2c333d; }
+#MixpiClearRowText[highlight="1"] { background: #1d222a; }
+#MixpiClearName { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: 600; }
+#MixpiClearTime {
+    color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 14px;
+    qproperty-alignment: 'AlignRight | AlignVCenter';
+}
+#MixpiClearNote {
+    color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 13px; padding: 0px 16px;
+}
+#MixpiClearFoot { border-top: 1px solid #2c333d; }
+/* CLEAR (n): Danger. Lit (n ticked) as drawn; not enabled at 0. */
+#MixpiClearConfirm {
+    color: #f4a59d; background: rgba(208, 87, 77, 66); border: 2px solid #d0574d;
+    border-radius: 3px; margin: 2px; font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 16px; font-weight: bold;
+}
+#MixpiClearConfirm[pressed="true"] { color: #0d1014; background: #d0574d; }
+#MixpiClearConfirm:disabled { color: #7f8896; background: #13161b; border: 1px dashed #2c333d; }
+/* 24 px scroll bar at the list's right edge (spec section 1). */
+#MixpiClearList QScrollBar:vertical {
+    width: 24px; background: #161a20; border: 0px; border-left: 1px solid #2c333d; margin: 0px;
+}
+#MixpiClearList QScrollBar::handle:vertical {
+    min-height: 56px; background: #5b6472; border: 5px solid #161a20; border-radius: 8px;
+}
+#MixpiClearList QScrollBar::handle:vertical:pressed { background: #a3c45e; }
+#MixpiClearList QScrollBar::add-line, #MixpiClearList QScrollBar::sub-line { height: 0px; width: 0px; }
+#MixpiClearList QScrollBar::add-page, #MixpiClearList QScrollBar::sub-page { background: #161a20; }
 
 #MixpiLabel, #MixpiWaveKey { color: #e4e7ec; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 17px; }
 #MixpiWaveInfo { background: #161a20; border-right: 1px solid #2c333d;
     qproperty-layoutContentsMargins: rect(8 8 4 4); qproperty-layoutSpacing: 6; }
 
-/* Deck row: badge, title, the dimmer artist right after it, then the chips. */
-#MixpiTitleStrip { background: #161a20; }
+/* Deck row: badge, title, the dimmer artist right after it, then the chips.
+ * Vertical alignment only: with WWidgetGroup's default AlignCenter the row
+ * took just its size hint, centred in its half, and the artist (no size
+ * hint) got no width. Without a horizontal alignment the row fills its half. */
+#MixpiTitleStrip { background: #161a20; qproperty-layoutAlignment: 'AlignVCenter'; }
 #MixpiDeckTitle { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 16px; padding-left: 4px; }
 #MixpiDeckArtist { color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 14px; padding-left: 6px; }
 #MixpiDeckNumber1, #MixpiDeckNumber2 {
@@ -276,18 +338,26 @@
     color: #e4e7ec; background: #1d222a; border: 1px solid #2c333d; border-radius: 3px;
     margin: 2px; padding-left: 10px; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 17px;
 }
-/* The open list keeps the colours the native selector check measures
- * (tests/native/effect_selector_test.cpp). */
+/* "SELECT EFFECT…" is dim while the slot is empty (N-C's mixpiEmpty). */
+#MixpiEffectSelector[mixpiEmpty="true"] { color: #949dab; }
+/* The ▾ sits inside the field (m-fx.png): no separate box, dim. */
+#MixpiEffectSelector::drop-down {
+    subcontrol-origin: padding; subcontrol-position: center right;
+    width: 30px; border: 0px; background: transparent;
+}
+#MixpiEffectSelector::down-arrow { image: url(skin:/mixpi-icon-caret.svg); width: 12px; height: 8px; }
+/* The open list: the token colours of every list. The current effect is the
+ * current menu row: surface-2, a 4 px accent edge, semibold. */
 #MixpiEffectSelector QAbstractItemView {
-    color: #f5f6fa; background: #1d222a;
-    selection-color: #101318; selection-background-color: #b5e15c;
+    color: #e4e7ec; background: #161a20; border: 1px solid #3a424e;
+    selection-color: #e4e7ec; selection-background-color: #1d222a;
 }
 #MixpiEffectSelector:disabled, #MixpiEffectSelector QAbstractItemView:disabled {
-    color: #a9b7c8; background: #13161b;
+    color: #7f8896; background: #13161b;
 }
-#MixpiEffectSelector QAbstractItemView::item:disabled { color: #a9b7c8; }
+#MixpiEffectSelector QAbstractItemView::item:disabled { color: #7f8896; }
 #MixpiEffectSelector QAbstractItemView::item:selected {
-    color: #101318; background: #b5e15c;
+    color: #e4e7ec; background: #1d222a; border-left: 4px solid #a3c45e; font-weight: 600;
 }
 #MixpiSettingSelector, #MixpiSettingSelector QAbstractItemView {
     color: #e4e7ec; background: #1d222a; font-size: 17px;

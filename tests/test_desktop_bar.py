@@ -220,4 +220,6 @@ class SettingsButtonStateTests(unittest.TestCase):
     def test_skin_binds_label_and_enabled_state_to_the_two_controls(self):
         generator = (ROOT / 'stage3/01-install-packages/files/mixpi-performance.py').read_text()
         self.assertIn("connection(bar, '[MixPi],desktop_bar_available', bind='enabled')", generator)
-        self.assertIn("state_labels=('Show top bar', 'Hide top bar', 'Checking top bar…',", generator)
+        # Spec s12 (m-settings-interface.png): "SHOW TOP BAR", in upper case
+        # like every button; the other states keep their words (wave C2).
+        self.assertIn("state_labels=('SHOW TOP BAR', 'HIDE TOP BAR', 'CHECKING TOP BAR…',", generator)

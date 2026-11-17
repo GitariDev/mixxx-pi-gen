@@ -52,9 +52,13 @@ int main(int argc, char** argv) {
             require(selector.view()->window()->isVisible() &&
                     selector.view()->window()->isWindow(), "popup retained at both app heights");
         }
-        require(selector.view()->palette().color(QPalette::Text) == QColor("#f5f6fa"), "open text contrast");
-        require(selector.view()->palette().color(QPalette::Highlight) == QColor("#b5e15c"), "selected background contrast");
-        require(selector.view()->palette().color(QPalette::HighlightedText) == QColor("#101318"), "selected text contrast");
+        // The open list takes the agreed token colours of every list: text
+        // #e4e7ec on surface #161a20; the current effect is the current menu
+        // row, surface-2 #1d222a (its accent edge is the item rule's).
+        require(selector.view()->palette().color(QPalette::Text) == QColor("#e4e7ec"), "open text colour");
+        require(selector.view()->palette().color(QPalette::Base) == QColor("#161a20"), "open list surface");
+        require(selector.view()->palette().color(QPalette::Highlight) == QColor("#1d222a"), "current row surface-2");
+        require(selector.view()->palette().color(QPalette::HighlightedText) == QColor("#e4e7ec"), "current row text");
         require(selector.itemData(3, Qt::ToolTipRole).toString().contains(manager.effects->entries[2]->title), "long label remains in tooltip");
         if (argc > 2) popup->grab().save(QString::fromLocal8Bit(argv[2]) + "/effect-open.png");
         selector.view()->setCurrentIndex(selector.model()->index(1, 0));
@@ -72,9 +76,21 @@ int main(int argc, char** argv) {
         selector.setEnabled(false);
         selector.ensurePolished();
         app.processEvents();
-        require(selector.palette().color(QPalette::Disabled, QPalette::ButtonText) == QColor("#a9b7c8"), "disabled contrast");
+        require(selector.palette().color(QPalette::Disabled, QPalette::ButtonText) == QColor("#7f8896"), "disabled text-off");
+        // N-C's mixpiEmpty: the empty selector's text is dim (m-fx.png).
+        selector.setEnabled(true);
+        selector.setProperty("mixpiEmpty", true);
+        selector.style()->unpolish(&selector);
+        selector.style()->polish(&selector);
+        app.processEvents();
+        require(selector.palette().color(QPalette::Active, QPalette::ButtonText) == QColor("#949dab"), "empty selector is dim");
+        selector.setProperty("mixpiEmpty", false);
+        selector.style()->unpolish(&selector);
+        selector.style()->polish(&selector);
+        app.processEvents();
+        require(selector.palette().color(QPalette::Active, QPalette::ButtonText) == QColor("#e4e7ec"), "loaded selector is light");
         if (argc > 2) selector.grab().save(QString::fromLocal8Bit(argv[2]) + "/effect-disabled.png");
-        std::cout << "PASS exact WEffectSelector placeholder, popup/contrast, long label, identity, unload, refocus\n";
+        std::cout << "PASS exact WEffectSelector placeholder, popup token colours, empty dim, long label, identity, unload, refocus\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';
         return 1;

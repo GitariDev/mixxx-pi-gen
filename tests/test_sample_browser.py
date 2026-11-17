@@ -73,7 +73,6 @@ class SampleBrowserPatchTests(unittest.TestCase):
         skin = (RUNNER.PATCH_DIR / 'mixpi-performance.py').read_text()
         for name in ("'[MixPi],sample_source'", "'[MixPi],sample_source_available'", "'[MixPi],sample_load'"):
             self.assertIn(name, skin)
-        self.assertIn("('SAMPLES', 1), ('THIS PI', 2), ('RECORDINGS', 4)", skin)
         self.assertIn('SCREEN_NONE, SCREEN_SOURCES, SCREEN_MEDIA, SCREEN_LOAD_SAMPLE, SCREEN_CHOOSE_PAD', skin)
 
     @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')

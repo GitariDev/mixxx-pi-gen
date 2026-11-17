@@ -38,8 +38,16 @@ TOP_HEIGHT, OVERVIEW_HEIGHT, TRANSPORT_HEIGHT = 48, 48, 56
 PAGES = ('overview', 'library', 'fx', 'sampler')
 USB_CHIP, REC_WIDTH, GEAR, CPU_WIDTH = 150, 72, 48, 56
 TOP_GAPS = (11, 8, 3)
-PAD_SIZE, PAD_TAP, PAD_STRIP = (200, 104), 56, 48
+PAD_SIZE, PAD_STRIP = (200, 104), 48
+# A pad (m-sampler.png): 4 px top, head 24, name 24, the 48 px buttons, 4 px
+# gaps around them.
+PAD_INFO, PAD_GAP = 52, 4
 SAMPLER_INFO = 72
+SAMPLER_LOAD, SAMPLER_CLEAR = 168, 150
+# Clear samples popover (m-sampler-clear.png): a 480 px sheet, 24 px from the
+# screen's edges at most; 52 px rows; the tick drawn 18 px in.
+CLEAR_SHEET_WIDTH, CLEAR_MARGIN = 480, 24
+CLEAR_ROW, CLEAR_TICK_SPACE = 52, 52
 # Icons the generator writes into the skin (R-11): 24 px glyphs from the
 # prototype, centred in 48 px buttons, drawn unscaled (FIXED) by WPushButton.
 ICON_STROKE = 'fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"'
@@ -74,6 +82,7 @@ DECK_STAT_WIDTHS = {'time': 120, 'bpm': 100, 'rate': 60, 'key': 120}
 # 92 px deck column (the waveform widens by 8 px against F-4's 100 px column).
 DECK_TITLE, DECK_STATS = 24, 48
 DECK_INFO = DECK_TITLE + DECK_STATS
+DECK_TITLE_MIN, DECK_ARTIST_MIN = 56, 31
 WAVE_INFO_SIZE = '92f,0me'
 WAVE_KEY_SIZE = '84f,28f'
 # Tool panel hit map (plan 5.3): Jump x 177..742 step 113 at y 134/196; Cues
@@ -86,6 +95,9 @@ CUE_TILE = (196, 70)
 TRANSPORT = {'KEY': 48, 'Q': 48, 'SYNC': 60, 'LOOP': 60, 'CUE': 76}
 LOAD_WIDTH, TRACKS_CUE, TRACKS_PLAY = 84, 68, 68
 SETTINGS_RAIL = 200
+# Spec s11/s12: rail rows are 52 px menu rows; the Desktop bar button is 180 px;
+# the Brightness slider runs to the 56 px "80%" readout at the right.
+RAIL_ROW, DESKTOP_BAR_WIDTH, BRIGHTNESS_SLIDER = 52, 180, 316
 # Load sample source row (spec s7, m-loadsample.png): 8 + SAMPLES 124 + 8 + SOURCES… 124.
 SOURCE_ROW = {'SAMPLES': 124, 'SOURCES…': 124}
 # Segments (LOOP / JUMP / CUES, FX 1 / FX 2, routes) are one joined control.
@@ -211,8 +223,13 @@ SAMPLE_SCREENS = ((SCREEN, SCREEN_AT_MOST_4), (SCREEN, SCREEN_AT_LEAST_3))
 # screen number: a native close (N2's auto-close of Sources) writes screen 0
 # and cannot know that Sources was opened from Load sample. With sample_load
 # still 1 the page stays on Load sample; its ✕ or any tab clears sample_load.
-LOAD_MODE = ((SCREEN, '<IsEqual>1</IsEqual><Not/>'), ('[MixPi],sample_load', None))
-TRACKS_MODE = ((SCREEN, '<IsEqual>1</IsEqual><Not/>'), ('[MixPi],sample_load', '<Not/>'))
+# Sources (screen 1) is a side menu over the right of the page (spec s5), so
+# each layout stays shown under it.
+LOAD_MODE = (('[MixPi],sample_load', None),)
+TRACKS_MODE = (('[MixPi],sample_load', '<Not/>'),)
+# Spec s5 side menu: 320 px at the right (x 480-800), from under the header to
+# the bottom of the screen.
+SOURCES_MENU_WIDTH = 320
 
 
 def reset_views(e, keep=(), when='press'):
@@ -378,10 +395,17 @@ def deck_info(channel, compact=False, size=None):
     # text; WLabel's size hint is the whole text) and the artist is Ignored (no
     # size hint, but it takes all the spare width). So when the chips need room,
     # Qt's layout takes it from the artist first ("…"), and only then from the
-    # title, down to the title's explicit 1 px minimum.
-    title = typed('TrackProperty', channel, '1max,24f', 'MixpiDeckTitle',
+    # title. The minimums are primitives.css's (title 3.5em of 16 px, artist
+    # 2.2em of 14 px). The title's 56 px also keeps its elided text non-empty,
+    # so a new track's text always changes the label and Qt asks the layout
+    # again (at 1 px every title elided to the same empty text and the row kept
+    # its old widths). The strip's layout is not centred (QSS-P: AlignVCenter
+    # only), so the row fills its half and the artist gets the spare width;
+    # WWidgetGroup's default AlignCenter gave the row only its size hint, in
+    # which the Ignored artist has no width (the C1 card preview).
+    title = typed('TrackProperty', channel, f'{DECK_TITLE_MIN}max,24f', 'MixpiDeckTitle',
                   Property='title', Elide='right', TooltipId='track_title')
-    artist = typed('TrackProperty', channel, '0i,24f', 'MixpiDeckArtist',
+    artist = typed('TrackProperty', channel, f'{DECK_ARTIST_MIN}i,24f', 'MixpiDeckArtist',
                    Property='artist', Elide='right', TooltipId='track_title')
     head = group('MixpiTitleStrip', 'horizontal', f'0me,{DECK_TITLE}f', [
         badge, title, artist] + [chip(text, f'{key},{control}', f'{width}f,22f', name)
@@ -651,7 +675,58 @@ def setting_row(title, sub, controls):
 
 
 def choices(key, items, width=96):
-    return [preset(text, key, value, size=f'{width}f,48f') for text, value in items]
+    widths = width if isinstance(width, tuple) else (width,) * len(items)
+    return [preset(text, key, value, size=f'{w}f,48f') for (text, value), w in zip(items, widths)]
+
+
+def setting_note(text):
+    """A note line under a Settings row (m-settings-media.png): the full row
+    width, dim text on surface with a 2 px accent edge at the left."""
+    return group('MixpiSettingNoteRow', 'horizontal', '0me,44f', [
+        gap('14f,44f'), label(text, '0me,36f', 'MixpiSettingNote'), gap('14f,44f')])
+
+
+def eject_indicator():
+    """Settings › Media, Eject (m-settings-media.png): the ON/OFF toggle, 88 px
+    wide, the word and the knob, from [MixPi],media_eject_available. It is an
+    indicator only: no button, nothing written, so no setting or skin change
+    can open the eject gate (rubric criterion 4)."""
+    def toggle(on):
+        word = label('ON' if on else 'OFF', '0me,46f', 'MixpiToggleWord', align='center')
+        knob = group('MixpiToggleKnobCell', 'horizontal', '42f,46f', [
+            gap('0me,46f'), label('', '32f,32f', 'MixpiToggleKnob'), gap('0me,46f')])
+        parts = [word, knob] if on else [knob, word]
+        return group('MixpiToggleOn' if on else 'MixpiToggleOff', 'horizontal', '88f,48f', parts)
+    return group('MixpiEjectState', 'horizontal', '88f,48f', [
+        show_when(toggle(True), '[MixPi],media_eject_available'),
+        show_when(toggle(False), '[MixPi],media_eject_available', negate=True)])
+
+
+def brightness():
+    """Settings › Interface, Brightness (m-settings-interface.png): the slider
+    on [MixPi],backlight (N-C: a potmeter, 5-100 %), enabled while
+    [MixPi],backlight_available, then the "80%" readout."""
+    level = slider('[MixPi],backlight', size=f'{BRIGHTNESS_SLIDER}f,{SLIDER_HEIGHT}f')
+    connection(level, '[MixPi],backlight_available', bind='enabled')
+    readout = node('Number')
+    for k, v in dict(ObjectName='MixpiSettingValue', Size='56f,48f', Text='%1%', NumberOfDigits=0).items():
+        prop(readout, k, v)
+    connection(readout, '[MixPi],backlight', write=False)
+    return [level, readout]
+
+
+def rail_row(text, value):
+    """A Settings rail row (spec section 1, current menu row): the label is
+    left-aligned as drawn. WPushButton draws its text centred across the whole
+    button (no padding), so a label under a clear button carries the text; the
+    label lights from the page: surface-2, a 4 px accent edge, semibold."""
+    b = preset('', '[MixPi],settings_page', value, size=f'{SETTINGS_RAIL}f,{RAIL_ROW}f')
+    b.find('ObjectName').text = 'MixpiRailButton'
+    text_label = label(text, f'{SETTINGS_RAIL}f,{RAIL_ROW}f', 'MixpiRailLabel')
+    connection(text_label, '[MixPi],settings_page', transform=f'<IsEqual>{value}</IsEqual>',
+               bind='highlight')
+    # The first child of a stacked group is on top: the button takes the taps.
+    return group('MixpiRailRow', 'stacked', f'{SETTINGS_RAIL}f,{RAIL_ROW}f', [b, text_label])
 
 
 def settings():
@@ -665,9 +740,7 @@ def settings():
         close_button(SCREEN), gap('4f,48f')])
     rail = group('MixpiSettingsRail', size=f'{SETTINGS_RAIL}f,0me')
     for text, value in SETTINGS_PAGES:
-        b = preset(text, '[MixPi],settings_page', value, size=f'{SETTINGS_RAIL}f,56f')
-        b.find('ObjectName').text = 'MixpiRailButton'
-        add(rail, b)
+        add(rail, rail_row(text, value))
     add(rail, gap('0me,0me'))
     buffers = choices('[MixPi],buffer_frames', [('256', 256), ('512', 512), ('1024', 1024)])
     for b in buffers:
@@ -687,28 +760,34 @@ def settings():
         setting_row('Split cue', 'Headphones: cue left, master right',
                     [button('OFF', '[Master],headSplit', size='96f,48f', state_labels=('OFF', 'ON'))]),
         gap('0me,0me')])
-    bar = button('Top bar unavailable', '[MixPi],desktop_bar', push=True, name='MixpiDesktopBar',
-                 state_labels=('Show top bar', 'Hide top bar', 'Checking top bar…',
-                               'Top bar unavailable'), size='220f,48f')
+    # Spec s12 (m-settings-interface.png). The button reads "SHOW TOP BAR";
+    # its other states are build B's, in the same upper case.
+    bar = button('TOP BAR UNAVAILABLE', '[MixPi],desktop_bar', push=True, name='MixpiDesktopBar',
+                 state_labels=('SHOW TOP BAR', 'HIDE TOP BAR', 'CHECKING TOP BAR…',
+                               'TOP BAR UNAVAILABLE'), size=f'{DESKTOP_BAR_WIDTH}f,48f')
     connection(bar, '[MixPi],desktop_bar_available', bind='enabled')
     interface = group('MixpiInterfaceSettings', children=[
         setting_row('Desktop bar', 'Desktop · Mixxx · Speaker · Settings', [bar]),
         setting_row('Deck time', 'Tap the time on a deck to switch',
-                    choices('[Controls],ShowDurationRemaining', [('ELAPSED', 0), ('REMAINING', 1)], 130)),
+                    segments(choices('[Controls],ShowDurationRemaining',
+                                     [('ELAPSED', 0), ('REMAINING', 1)], (96, 104)))),
+        setting_row('Brightness', 'Screen backlight', brightness()),
+        setting_row('Night dim', 'Drops the screen to a low level for dark rooms',
+                    segments(choices('[MixPi],night_dim', [('OFF', 0), ('ON', 1)]))),
+        setting_row('CPU readout', 'The CPU % at the top right',
+                    segments(choices('[MixPi],show_cpu', [('SHOW', 1), ('HIDE', 0)]))),
         gap('0me,0me')])
-    eject = group('MixpiEjectState', 'horizontal', '96f,48f', [
-        show_when(label('ON', '96f,48f', 'MixpiEjectOn', align='center'), '[MixPi],media_eject_available'),
-        show_when(label('OFF', '96f,48f', 'MixpiEjectOff', align='center'),
-                  '[MixPi],media_eject_available', negate=True)])
     media = group('MixpiMediaSettings', children=[
         # N2: [MixPi],scan_bar_hidden 0/1 (also saved as ScanBarHidden).
         setting_row('Scan bar', 'Hidden: the % shows on the USB chip',
-                    choices('[MixPi],scan_bar_hidden', [('SHOW', 0), ('HIDE', 1)])),
+                    segments(choices('[MixPi],scan_bar_hidden', [('SHOW', 0), ('HIDE', 1)]))),
         setting_row('RAM cache', 'MB. Also the room for handover copies. Next launch.',
-                    choices('[MixPi],cache_mb', [('OFF', 0), ('512', 512), ('1024', 1024)])),
-        setting_row('Eject', 'Safe eject on this card', [eject]),
-        setting_row('Plugging in a drive', 'A small ping at the bottom with LOAD or DISMISS',
-                    [label('Always', '96f,48f', 'MixpiScreenHint')]),
+                    segments(choices('[MixPi],cache_mb', [('OFF', 0), ('512', 512), ('1024', 1024)]))),
+        setting_row('Eject', 'Safe eject on this card', [eject_indicator()]),
+        # U-8: [MixPi],drive_insert (N-B, wave C1): 0 ASK, 1 AUTO LOAD.
+        setting_row('Plugging in a drive', 'What happens when a drive goes in',
+                    segments(choices('[MixPi],drive_insert', [('ASK', 0), ('AUTO LOAD', 1)], (96, 104)))),
+        setting_note('ASK shows a small strip with LOAD and DISMISS. AUTO LOAD opens the drive at once.'),
         gap('0me,0me')])
     advanced = group('MixpiAdvancedSettings', children=[
         setting_row('Waveform FPS', '', choices('[MixPi],waveform_fps', [('30', 30), ('45', 45), ('60', 60)])),
@@ -758,13 +837,14 @@ def load_to_pad(sampler, size, name, text, to_sampler=True):
     return b
 
 
-def browse_page(library):
+def browse_page(library, overview):
     """Tracks (screen 0), Sources (1), Load sample (3) and Choose pad (4) share one
     Library, sidebar and search box. Only fixed-content layouts change."""
     parts = toolbar_parts(library)
-    search, actions, sources = parts['SearchBox'], parts['LibraryActionsButton'], parts['LibrarySourcesButton']
-    # The native sidebar has its own Back inside the rail (mixxx-sources-screen.patch),
-    # so the skin's LibraryBackButton is left out.
+    search, actions = parts['SearchBox'], parts['LibraryActionsButton']
+    # The native side menu has its own BACK and EDIT (mixxx-sources-menu.patch),
+    # so the skin's LibraryBackButton and LibrarySourcesButton (build B's EDIT
+    # LIST) are left out.
     sidebar_button = parts['SidebarButton']
 
     # ☰ / ✕ (R-11, spec s5): the existing two-state key; open also writes
@@ -775,23 +855,6 @@ def browse_page(library):
     # ✎ (R-11): Actions keeps its key and object name; the native menu anchors under it.
     fixed_size(actions, '48f,48f')
     icon_states(actions, 'mixpi-icon-pen.svg', 'mixpi-icon-pen.svg')
-    # EDIT LIST reads DONE while the native edit list is open.
-    fixed_size(sources, '128f,48f')
-    sources.find('NumberStates').text = '2'
-    sources.find('State/Text').text = 'EDIT LIST'
-    done = node('State')
-    prop(done, 'Number', 1)
-    prop(done, 'Text', 'DONE')
-    sources.insert(list(sources).index(sources.find('State')) + 1, done)
-    # The command is a push control that falls back to 0 on release; it must
-    # not drive the text, or the release overwrites DONE (build B, R-10).
-    command = sources.find('Connection')
-    for at, (tag, value) in enumerate((('ConnectValueFromWidget', 'true'), ('ConnectValueToWidget', 'false')), 1):
-        if command.find(tag) is None:
-            command.insert(at, node(tag, value))
-        else:
-            command.find(tag).text = value
-    connection(sources, '[Library],sidebar_sources_editing', write=False)
     fixed_size(search, '250me,44f')
     # A SearchBox takes no Connection (LegacySkinParser::parseSearchBox), so a
     # group carries its visibility.
@@ -815,32 +878,24 @@ def browse_page(library):
         show_when(closes, '[MixPi],sample_load'),
         show_when(sidebar_button, '[MixPi],sample_load', negate=True)])
 
-    sources_head = group('MixpiSourcesHead', 'horizontal', '0me,48f', [
-        label('SOURCES', '120f,48f', 'MixpiScreenTitle'),
-        show_when(label('Pick a source, then a list.', '0me,48f', 'MixpiScreenHint', elide='right'),
-                  '[MixPi],sample_load', negate=True),
-        show_when(label('Pick the list to load samples from.', '0me,48f', 'MixpiScreenHint',
-                        elide='right'), '[MixPi],sample_load')])
-    show_when(sources_head, SCREEN, SCREEN_SOURCES)
     load_head = when_all(group('MixpiLoadHead', 'horizontal', '310f,48f', [
         label('LOAD SAMPLE', '130f,48f', 'MixpiScreenTitle'), sample_hints()]),
         '310f,48f', *LOAD_MODE)
     actions_cell = when_all(group('MixpiActionsCell', 'horizontal', '56f,48f', [gap('8f,48f'), actions]),
                             '56f,48f', *TRACKS_MODE)
-    # Spec s3/s5/s7: left to right, the title and hint (Sources, Load sample),
-    # the search (it fills the space), ✎ (Tracks), EDIT LIST (Sources), and the
-    # ☰ / ✕ slot at the right end.
+    # Spec s3/s5/s7: left to right, the Load sample title and hint, the search
+    # (it fills the space), ✎ (Tracks), and the ☰ / ✕ slot at the right end.
+    # Sources keeps this header: search, ✎, and ☰ turned into ✕.
     header = group('MixpiBrowseHeader', 'horizontal', f'0me,{TOP_HEIGHT}f', [
-        gap('4f,48f'), sources_head, load_head,
-        show_when(search, SCREEN, SCREEN_SOURCES, negate=True),
-        actions_cell,
-        show_when(sources, SCREEN, SCREEN_SOURCES),
-        gap('8f,48f'), slot, gap('4f,48f')])
+        gap('4f,48f'), load_head, search, actions_cell, gap('8f,48f'), slot, gap('4f,48f')])
 
-    # Sources: the sidebar takes the whole area under the header (y 96-480).
+    # Sources (spec s5): the native side menu, 320 px at the right end, over
+    # the page from under the header to the bottom (x 480-800, y 96-480). The
+    # right-overlay layout puts its second child over the first's right side.
     sidebar = parts['SidebarWrapper']
-    fixed_size(sidebar, '0me,0me')
-    sources_body = show_when(group('MixpiSourcesBody', children=[sidebar]), SCREEN, SCREEN_SOURCES)
+    fixed_size(sidebar, f'{SOURCES_MENU_WIDTH}f,0me')
+    menu = show_when(group('MixpiSourcesMenu', size=f'{SOURCES_MENU_WIDTH}f,0me', children=[sidebar]),
+                     SCREEN, SCREEN_SOURCES)
 
     # Load sample: a row of sources, the list, and one LOAD TO PAD button.
     open_sources = button('SOURCES…', '[Sidebar],sidebar_visible', size=f"{SOURCE_ROW['SOURCES…']}f,48f",
@@ -850,10 +905,8 @@ def browse_page(library):
     source_row = group('MixpiSampleSources', 'horizontal', '0me,56f', [gap('8f,48f')])
     # N4's sample browser: [MixPi],sample_source reads back what is shown (1
     # Samples, 2 This Pi, 3 USB, 4 Recordings, 0 a list picked in Sources).
-    # Its fixed places are ('SAMPLES', 1), ('THIS PI', 2), ('RECORDINGS', 4)
-    # (N4's test_sample_browser pins that text), and USB is 3. Spec s7 (R-8
-    # override): only SAMPLES has a button here; This Pi and Recordings are
-    # reached through SOURCES…. SAMPLES writes 1 and lights from it.
+    # Spec s7 (R-8 override): only SAMPLES has a button here; This Pi and
+    # Recordings are reached through SOURCES…. SAMPLES writes 1 and lights from it.
     width = SOURCE_ROW['SAMPLES']
     samples = preset('SAMPLES', '[MixPi],sample_source', 1, size=f'{width}f,48f')
     cell = group('MixpiSourceCell', 'horizontal', f'{width + 8}f,48f', [samples, gap('8f,48f')])
@@ -862,11 +915,30 @@ def browse_page(library):
         label('Or a list picked in Sources.', '0me,48f', 'MixpiScreenHint', elide='right'))
     source_row = when_all(source_row, '0me,56f', *LOAD_MODE)
 
-    table = show_when(group('MixpiLibraryMain', children=[parts['Library']]),
-                      SCREEN, SCREEN_SOURCES, negate=True)
+    # The table narrows to x 0-480 while the menu is open, so its scroll bar
+    # stays at its right edge (x 456-480), left of the menu.
+    table = group('MixpiLibraryMain', 'horizontal', children=[
+        parts['Library'],
+        show_when(gap(f'{SOURCES_MENU_WIDTH}f,0me', 'MixpiSourcesRoom'), SCREEN, SCREEN_SOURCES)])
     titles = decks(compact=True)
     titles.find('ObjectName').text = 'MixpiTrackTitles'
     titles = when_all(titles, '0me,28f', *TRACKS_MODE)
+    # While the menu is open the screen's bottom rows (overviews and the LOAD
+    # row) are hidden, as under every full-screen view, so the page carries
+    # its own copy under the menu: the menu covers deck 2's half of them
+    # (m-sources-top.png). The overviews hide while the full-screen edit list
+    # is open.
+    overviews = group('MixpiSourcesOverviews', 'horizontal', f'0me,{OVERVIEW_HEIGHT}f')
+    for channel in (1, 2):
+        add(overviews, fixed_size(concrete(overview, channel), f'400me,{OVERVIEW_HEIGHT}f'))
+    show_when(overviews, '[Library],sidebar_sources_editing', negate=True)
+    loads = group('MixpiSourcesTransport', 'horizontal', f'0me,{TRANSPORT_HEIGHT}f', [
+        group('MixpiSourcesDeck', 'horizontal', f'400me,{TRANSPORT_HEIGHT}f', tracks_controls(channel))
+        for channel in (1, 2)])
+    sources_bottom = when_all(group('MixpiSourcesBottom', size=f'0me,{OVERVIEW_HEIGHT + TRANSPORT_HEIGHT}f',
+                                    children=[overviews, loads]),
+                              f'0me,{OVERVIEW_HEIGHT + TRANSPORT_HEIGHT}f', on_screen(SCREEN_SOURCES),
+                              *TRACKS_MODE)
 
     choose = button('LOAD TO PAD…', SCREEN, size='250f,56f', push=True, name='MixpiPrimary',
                     transform=f'<IsEqual>{SCREEN_CHOOSE_PAD}</IsEqual>')
@@ -880,7 +952,9 @@ def browse_page(library):
         label('Tap a sound, then load it to a pad.', '0me,64f', 'MixpiScreenHint', elide='right'),
         targets, gap('8f,64f')]), '0me,64f', *LOAD_MODE)
 
-    wrapper = group('LibraryWrapper', children=[header, sources_body, source_row, table, titles, footer])
+    base = group('MixpiBrowseBase', children=[source_row, table, titles, sources_bottom, footer])
+    body = group('MixpiBrowseBody', 'right-overlay', children=[base, menu])
+    wrapper = group('LibraryWrapper', children=[header, body])
     # In a stacked group Qt lowers each later child (QStackedLayout::insertWidget),
     # so the first child is on top: the Choose pad sheet comes first.
     page = group('MixpiBrowse', 'stacked', children=[choose_pad(), wrapper])
@@ -955,29 +1029,31 @@ def choose_pad():
 
 
 def sampler_pad(sampler):
-    """R-7: a 56 px tap area lit from play, a 48 px Stop/Clear strip; an empty pad opens Load sample."""
+    """Spec s6 (m-sampler.png): a loaded pad shows its number, label, duration
+    and name, and ▶ TRIGGER (Sound, lit while it plays) and ■ STOP (Caution);
+    the pad has the play-coloured edge while it plays. An empty pad reads
+    "+ Empty · tap to load" and opens Load sample."""
     key = f'[Sampler{sampler}]'
     width, height = PAD_SIZE
-    info = group('MixpiPadInfo', size=f'{width}f,{PAD_TAP}f', children=[
+    info = group('MixpiPadInfo', size=f'{width}f,{PAD_INFO}f', children=[
         group('MixpiPadHead', 'horizontal', '0me,24f', [
             pad_tag(sampler, '0me,24f'),
             chip('ON PI', f'{key},mixpi_on_pi', '48f,20f', 'MixpiChipPi'),
             sampler_title(sampler, '56f,24f', 'MixpiPadTime', 'durationTextSeconds')]),
-        sampler_title(sampler, '0me,32f', 'MixpiPadName')])
-    trigger = button('', f'{key},cue_gotoandplay', size=f'{width}f,{PAD_TAP}f', momentary=True,
-                     display=f'{key},play', name='MixpiPadTap')
+        sampler_title(sampler, '0me,24f', 'MixpiPadName')])
+    button_width = (width - 3 * PAD_GAP) // 2
+    trigger = button('▶ TRIGGER', f'{key},cue_gotoandplay', size=f'{button_width}f,{PAD_STRIP}f',
+                     momentary=True, display=f'{key},play', name='MixpiSound')
     connection(trigger, f'{key},track_loaded', bind='enabled')
-    # Roles (spec section 1): pad ■ STOP is Caution, CLEAR is Danger. The pad
-    # layout itself is wave C2's (spec s6).
-    stop = button('■ STOP', f'{key},stop', size=f'{width // 2}f,{PAD_STRIP}f', momentary=True,
+    stop = button('■ STOP', f'{key},stop', size=f'{button_width}f,{PAD_STRIP}f', momentary=True,
                   name='MixpiCaution')
-    connection(stop, f'{key},play', bind='enabled')
-    clear = button('× CLEAR', f'{key},eject', size=f'{width // 2}f,{PAD_STRIP}f', momentary=True,
-                   name='MixpiDanger')
-    connection(clear, f'{key},play', transform='<Not/>', bind='enabled')
     loaded = group('MixpiPadLoaded', size=f'{width}f,{height}f', children=[
-        group('MixpiPadTapArea', 'stacked', f'{width}f,{PAD_TAP}f', [trigger, info]),
-        group('MixpiPadStrip', 'horizontal', f'{width}f,{PAD_STRIP}f', [stop, clear])])
+        info,
+        group('MixpiPadStrip', 'horizontal', f'{width}f,{PAD_STRIP}f', [
+            gap(f'{PAD_GAP}f,48f'), trigger, gap(f'{PAD_GAP}f,48f'), stop, gap(f'{PAD_GAP}f,48f')]),
+        gap(f'0me,{height - PAD_INFO - PAD_STRIP}f')])
+    # The play-coloured edge while the pad plays (is-playing in m-sampler.png).
+    connection(loaded, f'{key},play', bind='highlight')
     show_when(loaded, f'{key},track_loaded')
     open_load = button('', '[Tab],library', size=f'{width}f,{height}f', push=True, name='MixpiPadLoad')
     open_load.find('Connection/ConnectValueToWidget').text = 'false'
@@ -988,25 +1064,96 @@ def sampler_pad(sampler):
     empty = group('MixpiPadEmpty', 'stacked', f'{width}f,{height}f', [
         open_load,
         group('MixpiPadInfo', size=f'{width}f,{height}f', children=[
-            pad_tag(sampler), label('+  Empty · tap to load', '0me,32f', 'MixpiPadEmptyText'),
-            gap('0me,0me')])])
+            pad_tag(sampler), label('+ Empty · tap to load', '0me,0me', 'MixpiPadEmptyText',
+                                    align='center')])])
     show_when(empty, f'{key},track_loaded', negate=True)
     return group(f'MixpiPad{"A" if sampler <= 4 else "B"}', size=f'{width}f,{height}f',
                  children=[loaded, empty])
 
 
+def clear_row(sampler):
+    """One row of the Clear samples popover (m-sampler-clear.png), shown while
+    the pad is loaded: the tick, the pad badge and label, the name and the
+    duration. A ticked row is surface-2 (spec section 1: the tick and the
+    background, no left edge). The whole row is a clear button over the text;
+    it draws the tick box, a 52 px image at its left (FIXED: drawn from the
+    top-left corner, unscaled). Two set-value buttons in one place, as CLEAR on
+    CUES (F-1), never a two-state toggle: the clear box writes 1, the ticked
+    box writes 0, and exactly one is shown."""
+    key = f'[Sampler{sampler}]'
+    tick_key = f'[MixPi],sampler_clear_tick{sampler}'
+    ticks = []
+    for ticked in (True, False):
+        b = button('', tick_key, size=f'0me,{CLEAR_ROW}f', push=True, name='MixpiClearTick',
+                   transform='<Not/>' if ticked else None)
+        b.find('Connection/ConnectValueToWidget').text = 'false'
+        icon_states(b, 'mixpi-clear-row-on.svg' if ticked else 'mixpi-clear-row-off.svg')
+        ticks.append(show_when(b, tick_key, negate=not ticked))
+    text = group('MixpiClearRowText', 'horizontal', f'0me,{CLEAR_ROW}f', [
+        gap(f'{CLEAR_TICK_SPACE}f,{CLEAR_ROW}f'), pad_tag(sampler, f'64f,{CLEAR_ROW}f'),
+        gap(f'8f,{CLEAR_ROW}f'),
+        sampler_title(sampler, f'0me,{CLEAR_ROW}f', 'MixpiClearName'),
+        sampler_title(sampler, f'56f,{CLEAR_ROW}f', 'MixpiClearTime', 'durationTextSeconds'),
+        gap(f'16f,{CLEAR_ROW}f')])
+    connection(text, tick_key, bind='highlight')
+    # The first shown child of a stacked group is on top: a button takes the taps.
+    row = group('MixpiClearRow', 'stacked', f'0me,{CLEAR_ROW}f', ticks + [text])
+    return show_when(row, f'{key},track_loaded')
+
+
+def clear_popover():
+    """CLEAR SAMPLES… (spec s6, m-sampler-clear.png): a 480 px sheet over the
+    dimmed screen. N-C's controls: [MixPi],sampler_clear_open (1 opens it and
+    clears every tick), sampler_clear_tick1-8, sampler_clear_count (ticked
+    loaded pads, read only) and sampler_clear (1 clears the ticked pads and
+    closes)."""
+    close = close_button('[MixPi],sampler_clear_open')
+    head = group('MixpiClearHead', 'horizontal', '0me,56f', [
+        label('CLEAR SAMPLES', '0me,56f', 'MixpiSheetTitle'), close, gap('4f,56f')])
+    rows = group('MixpiClearRows', size='0me,0min', children=[clear_row(n) for n in range(1, SAMPLERS + 1)])
+    # More loaded pads than fit scroll, with the 24 px bar at the right edge.
+    scroll = node('Scrollable')
+    for k, v in dict(ObjectName='MixpiClearList', Size='0me,0p', HorizontalScrollBarPolicy='off').items():
+        prop(scroll, k, v)
+    ET.SubElement(scroll, 'Children').append(rows)
+    note = label('The pads go empty. The files stay where they are.', '0me,40f', 'MixpiClearNote')
+    cancel = button('CANCEL', '[MixPi],sampler_clear_open', size='120f,48f', push=True, transform='<Not/>')
+    cancel.find('Connection/ConnectValueToWidget').text = 'false'
+    # CLEAR (n): Danger, n = [MixPi],sampler_clear_count; not enabled at 0.
+    confirm = button('CLEAR (0)', '[MixPi],sampler_clear', size='120f,48f', push=True,
+                     display='[MixPi],sampler_clear_count', name='MixpiClearConfirm',
+                     state_labels=tuple(f'CLEAR ({n})' for n in range(SAMPLERS + 1)))
+    connection(confirm, '[MixPi],sampler_clear_count', bind='enabled')
+    foot = group('MixpiClearFoot', 'horizontal', '0me,68f', [
+        gap('0me,68f'), cancel, gap('8f,68f'), confirm, gap('12f,68f')])
+    sheet = group('MixpiClearSheet', size=f'{CLEAR_SHEET_WIDTH}f,0p', children=[head, scroll, note, foot])
+    middle = group('MixpiClearCenter', 'horizontal', '0me,0p', [gap('0me,0me'), sheet, gap('0me,0me')])
+    # Ignored size: the hidden popover adds nothing to the window's minimum.
+    scrim = group('MixpiClearScrim', size='0i,0i', children=[
+        gap(f'0me,{CLEAR_MARGIN}me'), middle, gap(f'0me,{CLEAR_MARGIN}me')])
+    # One condition only: in a stacked group a shown wrapper whose child is
+    # hidden still covers everything under it and takes the taps. Only the
+    # Sampler page opens it, and while it is open the scrim covers the tabs.
+    return show_when(scrim, '[MixPi],sampler_clear_open')
+
+
 def sampler_page():
-    load = button('+  LOAD SAMPLE', '[Tab],library', size='190f,48f', push=True, name='MixpiPrimary')
+    # Spec s6 header: + LOAD SAMPLE (Confirm), CLEAR SAMPLES… (Danger), the hint.
+    load = button('+ LOAD SAMPLE', '[Tab],library', size=f'{SAMPLER_LOAD}f,48f', push=True,
+                  name='MixpiPrimary')
     load.find('Connection/ConnectValueToWidget').text = 'false'
     reset_views(load, keep=('[MixPi],sample_load', SCREEN))
     write(load, '[MixPi],sample_load', 1)
     write(load, SCREEN, SCREEN_LOAD_SAMPLE)
+    clear = button('CLEAR SAMPLES…', '[MixPi],sampler_clear_open', size=f'{SAMPLER_CLEAR}f,48f', push=True,
+                   name='MixpiDanger')
+    clear.find('Connection/ConnectValueToWidget').text = 'false'
     # R-13 pulses [MixPi],saved after each save; until then the note stays hidden.
     saved = show_when(label('Bank saved', '110f,48f', 'MixpiSavedNote', align='center'), '[MixPi],saved')
     header = group('MixpiSamplerHeader', 'horizontal', f'0me,{TOP_HEIGHT}f', [
-        load, saved, gap('0me,48f'),
-        label('Starlight SAMPLER mode: deck A pads 1-4 · deck B pads 5-8', '400f,48f',
-              'MixpiScreenHint', align='right', elide='right')])
+        gap('4f,48f'), load, gap('8f,48f'), clear, saved,
+        label('Starlight SAMPLER mode: deck A pads 1-4 · deck B pads 5-8', '0me,48f',
+              'MixpiScreenHint', align='right', elide='right'), gap('4f,48f')])
     rows = [group('MixpiPadRow', 'horizontal', f'0me,{PAD_SIZE[1]}f',
                   [sampler_pad(s) for s in range(first, first + 4)]) for first in (1, 5)]
     pads = group('MixpiPads', size=f'0me,{2 * PAD_SIZE[1]}f', children=rows)
@@ -1139,7 +1286,11 @@ def topbar():
     connection(unavailable, '[MixPi],settings_available', transform='<Not/>', bind='visible')
     cpu_label = label('CPU', f'{CPU_WIDTH}f,22f', 'MixpiCpuLabel')
     cpu_value = group('MixpiCpuValue', 'stacked', f'{CPU_WIDTH}f,24f', [cpu, unavailable])
-    add(top, group('MixpiCpuBox', size=f'{CPU_WIDTH}f,48f', children=[cpu_label, cpu_value]))
+    # Spec s12 CPU readout: shown while [MixPi],show_cpu is 1 (N-C). The box
+    # keeps its 56 px, so the chip, REC and the gear stay where they are.
+    readout = show_when(group('MixpiCpuReadout', size=f'{CPU_WIDTH}f,48f', children=[cpu_label, cpu_value]),
+                        '[MixPi],show_cpu')
+    add(top, group('MixpiCpuBox', size=f'{CPU_WIDTH}f,48f', children=[readout]))
     return top
 
 
@@ -1161,6 +1312,25 @@ def loop_button(channel):
     return show_when(pair, '[Tab],library', negate=True)
 
 
+def tracks_controls(channel):
+    """Tracks' row for one deck (spec s3): LOAD n · the track name · CUE · ▶."""
+    key = f'[Channel{channel}]'
+    # LOAD sends press and release like the sampler pads, and is off while the deck plays (F-3).
+    load = button(f'LOAD {channel}', f'{key},LoadSelectedTrack', size=f'{LOAD_WIDTH}f,48f',
+                  momentary=True, name=f'MixpiLoad{channel}')
+    connection(load, f'{key},play', transform='<Not/>', bind='enabled')
+    title = typed('TrackProperty', channel, f'0me,48f', 'MixpiLoadTitle',
+                  Property='title', Elide='right', TooltipId='track_title')
+    title_cell = group('MixpiLoadCell', 'horizontal', '0me,48f', [
+        show_when(title, f'{key},play', negate=True),
+        show_when(label('Playing · stop to load', '0me,48f', 'MixpiLoadTitle', elide='right'),
+                  f'{key},play')])
+    tracks_cue = button('CUE', f'{key},cue_default', size=f'{TRACKS_CUE}f,48f', momentary=True,
+                        name='MixpiCue')
+    tracks_play = button('▶', f'{key},play', size=f'{TRACKS_PLAY}f,48f', name='MixpiPlay')
+    return [load, title_cell, tracks_cue, tracks_play]
+
+
 def transport_row(channel):
     """The same row on Decks, FX and Sampler. Tracks (spec s3): LOAD n · the
     track name · CUE · ▶, with ▶ right of CUE on both decks."""
@@ -1171,23 +1341,10 @@ def transport_row(channel):
     keylock = off_tracks(button('KEY', f'{key},keylock', size=f"{TRANSPORT['KEY']}f,48f", name=deck_name))
     quantize = off_tracks(button('Q', f'{key},quantize', size=f"{TRANSPORT['Q']}f,48f", name=deck_name))
     sync = off_tracks(button('SYNC', f'{key},sync_enabled', size=f"{TRANSPORT['SYNC']}f,48f", name=deck_name))
-    # LOAD sends press and release like the sampler pads, and is off while the deck plays (F-3).
-    load = button(f'LOAD {channel}', f'{key},LoadSelectedTrack', size=f'{LOAD_WIDTH}f,48f',
-                  momentary=True, name=f'MixpiLoad{channel}')
-    connection(load, f'{key},play', transform='<Not/>', bind='enabled')
-    on_tracks(load)
-    title = typed('TrackProperty', channel, f'0me,48f', 'MixpiLoadTitle',
-                  Property='title', Elide='right', TooltipId='track_title')
-    title_cell = on_tracks(group('MixpiLoadCell', 'horizontal', '0me,48f', [
-        show_when(title, f'{key},play', negate=True),
-        show_when(label('Playing · stop to load', '0me,48f', 'MixpiLoadTitle', elide='right'),
-                  f'{key},play')]))
+    load, title_cell, tracks_cue, tracks_play = (on_tracks(e) for e in tracks_controls(channel))
     cue = off_tracks(button('CUE', f'{key},cue_default', size=f"{TRANSPORT['CUE']}f,48f",
                             momentary=True, name='MixpiCue'))
-    tracks_cue = on_tracks(button('CUE', f'{key},cue_default', size=f'{TRACKS_CUE}f,48f', momentary=True,
-                                  name='MixpiCue'))
     play = off_tracks(button('▶', f'{key},play', name='MixpiPlay'))
-    tracks_play = on_tracks(button('▶', f'{key},play', size=f'{TRACKS_PLAY}f,48f', name='MixpiPlay'))
     return group('MixpiDeckButtons', 'horizontal', f'400me,{TRANSPORT_HEIGHT}f', [
         keylock, quantize, sync, loop_button(channel), cue, load, title_cell, tracks_cue, play,
         tracks_play])
@@ -1229,7 +1386,11 @@ def build(skin, loop_display='focus'):
     root.append(node('Style', src='skin:style.qss'))
     prop(root,'MinimumSize','800,444')
     prop(root,'Layout','vertical')
-    children = ET.SubElement(root,'Children')
+    # The Clear samples popover dims the whole screen (m-sampler-clear.png), so
+    # the root is one stacked group with the popover first (on top).
+    main = group('MixpiMain')
+    ET.SubElement(root, 'Children').append(group('MixpiRoot', 'stacked', children=[clear_popover(), main]))
+    children = main.find('Children')
     children.append(topbar())
     stack=node('WidgetStack',currentpage='[Tab],current')
     prop(stack,'Size','0me,0me')
@@ -1245,7 +1406,7 @@ def build(skin, loop_display='focus'):
     add(perform, show_when(group('MixpiWaveArea', 'stacked', children=[
         loops(1, loop_display), loops(2, loop_display), waves]), SCREEN, SCREEN_NONE), decks())
     pages.append(perform)
-    pages.append(browse_page(library))
+    pages.append(browse_page(library, overview))
     fxpage=group('MixpiFxPage', children=[fx(), decks(size='0me,1e')])
     fxpage.set('trigger','[Tab],fx')
     pages.append(fxpage)
@@ -1297,12 +1458,39 @@ def build(skin, loop_display='focus'):
         (skin/name).write_text(f'<svg xmlns="http://www.w3.org/2000/svg" {dims}>{body}</svg>\n')
     for name, svg in icon_files().items():
         (skin/name).write_text(svg)
-    # The menu tick (pioneered-menus.qss, spec section 1 ticked rows): dark
-    # ink on the accent box, inside the 22 px indicator's 2 px border.
-    (skin/'mixpi-icon-tick.svg').write_text(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">'
-        '<path d="M3.5 9.5 7.5 13 14.5 5" fill="none" stroke="#0d1014" stroke-width="2.5" '
-        'stroke-linecap="round" stroke-linejoin="round"/></svg>\n')
+    for name, svg in drawn_files().items():
+        (skin/name).write_text(svg)
+
+
+# The menu tick (pioneered-menus.qss, spec section 1 ticked rows): dark ink on
+# the accent box, inside the indicator's 2 px border.
+TICK_PATH = ('<path d="M3.5 9.5 7.5 13 14.5 5" fill="none" stroke="#0d1014" stroke-width="2.5" '
+             'stroke-linecap="round" stroke-linejoin="round"/>')
+TICK_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">'
+            + TICK_PATH + '</svg>\n')
+
+
+def drawn_files():
+    """SVGs the skin and its styles name, other than the 24 px glyph icons."""
+    w, h = CLEAR_TICK_SPACE, CLEAR_ROW
+    box = 'x="19" y="15" width="22" height="22" rx="2"'
+
+    def row(on):
+        # m-sampler-clear.png: a 24 px tick box 18 px in, dim border when
+        # clear; the accent box with the ink tick when ticked.
+        body = (f'<rect {box} fill="#a3c45e" stroke="#a3c45e" stroke-width="2"/>'
+                f'<g transform="translate(21 17)">{TICK_PATH}</g>' if on else
+                f'<rect {box} fill="none" stroke="#949dab" stroke-width="2"/>')
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" '
+                f'viewBox="0 0 {w} {h}">{body}</svg>\n')
+    return {
+        'mixpi-icon-tick.svg': TICK_SVG,
+        'mixpi-clear-row-off.svg': row(False),
+        'mixpi-clear-row-on.svg': row(True),
+        # The effect selector's ▾ (m-fx.png): dim, inside the field.
+        'mixpi-icon-caret.svg': ('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" '
+                                 'viewBox="0 0 12 8"><path d="M1 1h10L6 7z" fill="#949dab"/></svg>\n'),
+    }
 
 
 def icon_files():

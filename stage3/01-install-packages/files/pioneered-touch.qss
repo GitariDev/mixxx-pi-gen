@@ -19,7 +19,8 @@
     border-right: 1px solid #2c333d;
 }
 
-/* Sources is a full screen (R-9): 56 px rows across the whole width. */
+/* The source list without the touch menu property; the Sources side menu
+ * (spec s5) is styled by mixpi-sources-menu.qss, whose rules win. */
 #LibraryWrapper WLibrarySidebar {
     background-color: #0a0d12;
     color: #eef2f7;

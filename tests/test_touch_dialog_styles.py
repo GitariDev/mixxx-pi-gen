@@ -51,7 +51,7 @@ class TouchDialogStyleTests(unittest.TestCase):
                          '#MixpiColumnArrangement QPushButton'):
             rule = self.rule(selector)
             self.assertEqual(rule['font-size'], '17px', selector)
-            self.assertEqual(rule['color'], '#ffffff', selector)
+            self.assertEqual(rule['color'], '#e4e7ec', selector)  # --mx-text
         for selector in ('#MixpiColumnArrangement', '#MixpiColumnArrangement QListWidget'):
             self.assertTrue(dark(self.rule(selector)['background-color']), selector)
 
@@ -67,6 +67,25 @@ class TouchDialogStyleTests(unittest.TestCase):
         self.assertGreaterEqual(pixels(item['min-height'])[0] + top + bottom, 48)
         checkbox = self.rule('QMenu QCheckBox')
         self.assertGreaterEqual(pixels(checkbox['min-height'])[0] + 2 * pixels(checkbox['padding'])[0], 48)
+
+    def test_menu_and_dialog_rows_follow_the_agreed_rules(self):
+        # Spec section 1: a tapped row is surface-3; a ticked row is the tick
+        # and surface-2 with no left edge; the tick is ink on the accent.
+        self.assertEqual(self.rule('QMenu::item:pressed')['background-color'], '#262c35')
+        checked = self.rule('QMenu QCheckBox:checked')
+        self.assertEqual(checked['background-color'], '#1d222a')
+        self.assertNotIn('border-left', checked)
+        tick = self.rule('QMenu QCheckBox::indicator:checked')
+        self.assertEqual(tick['background-color'], '#a3c45e')
+        self.assertEqual(tick['image'], 'url(skin:/mixpi-icon-tick.svg)')
+        current = self.rule('#MixpiColumnArrangement QListWidget::item:selected')
+        self.assertEqual(current['background-color'], '#1d222a')
+        self.assertNotIn('border-left', current)
+        button = self.rule('#MixpiColumnArrangement QPushButton')
+        self.assertEqual((button['background-color'], button['border'], button['border-radius']),
+                         ('#1d222a', '1px solid #3a424e', '3px'))
+        for selector in ('QMenu', '#MixpiColumnArrangement', '#MixpiColumnArrangement QListWidget'):
+            self.assertEqual(self.rule(selector)['background-color'], '#161a20', selector)
 
     def test_dialog_rules_leave_the_scroll_bar_to_the_library_style(self):
         for selector in self.rules:

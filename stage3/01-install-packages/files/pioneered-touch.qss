@@ -1,5 +1,6 @@
 /* Browse is the only Pioneered page with a LibraryWrapper. Keep the decks
- * and Overview/Samples at their existing sizes on the 800x444 display. */
+ * and Overview/Samples at their existing sizes on the 800x444 display.
+ * Colours are the agreed UI tokens (agreed-ui/design/tokens.css). */
 #LibraryWrapper QTableView,
 #LibraryWrapper WLibraryTextBrowser,
 #LibraryWrapper WLibrarySidebar {
@@ -11,7 +12,11 @@
     min-height: 34px;
     padding: 0px 7px;
     margin: 0px;
-    border-right: 1px solid #596171;
+    background-color: #1d222a;
+    color: #e4e7ec;
+    border: 0px;
+    border-bottom: 1px solid #2c333d;
+    border-right: 1px solid #2c333d;
 }
 
 /* Sources is a full screen (R-9): 56 px rows across the whole width. */
@@ -32,9 +37,9 @@
     color: #ffffff;
 }
 
-/* 24 px scroll bars on lists (R-9, PROTO .sc). */
+/* 24 px scroll bars at the right edge of every list (spec section 1, R-9). */
 #LibraryWrapper QScrollBar {
-    background-color: #121821;
+    background-color: #161a20;
     border: 0px;
     margin: 0px;
 }
@@ -43,57 +48,75 @@
 }
 #LibraryWrapper QScrollBar:vertical {
     width: 24px;
-    border-left: 1px solid #2b3646;
+    border-left: 1px solid #2c333d;
 }
 #LibraryWrapper QScrollBar::handle {
-    background-color: #5d6b80;
-    border: 5px solid #121821;
+    background-color: #5b6472;
+    border: 5px solid #161a20;
     border-radius: 8px;
 }
 #LibraryWrapper QScrollBar::handle:horizontal {
     min-width: 56px;
-    border: 5px solid #121821;
+    border: 5px solid #161a20;
 }
 #LibraryWrapper QScrollBar::handle:vertical {
     min-height: 56px;
 }
 #LibraryWrapper QScrollBar::handle:pressed {
-    background-color: #b5e15c;
+    background-color: #a3c45e;
 }
 #LibraryWrapper QScrollBar::add-page,
 #LibraryWrapper QScrollBar::sub-page {
-    background-color: #121821;
+    background-color: #161a20;
 }
 
-/* ☰ and ✎ are 48 px icon buttons (R-11); EDIT LIST and BACK keep text. */
+/* ☰ and ✎ are 48 px Navigate icon buttons (R-11); EDIT LIST and BACK keep text. */
 #LibraryActionsButton, #LibrarySourcesButton, #LibraryBackButton, #SidebarButton {
-    background-color: #19212d;
-    border: 1px solid #2b3646;
-    border-radius: 6px;
-    color: #eef2f7;
+    background-color: #1d222a;
+    border: 1px solid #3a424e;
+    border-radius: 3px;
+    color: #e4e7ec;
     font-family: "Ubuntu Condensed", "Ubuntu";
     font-size: 17px;
     font-weight: bold;
     margin: 0px;
 }
-#LibraryActionsButton[value="1"], #SidebarButton[value="1"] {
-    background-color: #2a3a1a;
-    border-color: #b5e15c;
+#LibraryActionsButton[pressed="true"], #LibrarySourcesButton[pressed="true"],
+#LibraryBackButton[pressed="true"], #SidebarButton[pressed="true"] {
+    background-color: #262c35;
+}
+/* ✎ while its menu is open: the lit tint (spec section 1). */
+#LibraryActionsButton[value="1"] {
+    background-color: rgba(163, 196, 94, 66);
+    border: 2px solid #a3c45e;
+}
+/* While Sources is open the ☰ is the standard close control (spec s5, R-11):
+ * surface-2, the red ✕ icon, no outline; pressed, danger-surface with a
+ * danger border. It is not a lit button. */
+#SidebarButton[value="1"] {
+    background-color: #1d222a;
+    border: 1px solid #1d222a;
+}
+#SidebarButton[value="1"][pressed="true"] {
+    background-color: #34191b;
+    border-color: #d0574d;
 }
 
 #LibraryBackButton:disabled {
-    color: #56627a;
-    background-color: #10151c;
-    border-color: #1f2834;
+    color: #7f8896;
+    background-color: #13161b;
+    border: 1px dashed #2c333d;
 }
 
+/* The search field fills the header (spec s3): a field on the page colour. */
 #LibraryWrapper #SearchBox {
-    background-color: #19212d;
-    border: 1px solid #2b3646;
-    border-radius: 8px;
-    color: #eef2f7;
+    background-color: #0d1014;
+    border: 1px solid #2c333d;
+    border-radius: 3px;
+    color: #e4e7ec;
+    font-family: "Ubuntu Condensed", "Ubuntu";
     font-size: 17px;
-    margin: 0px 6px;
+    margin: 0px;
 }
 
 /* The BPM lock is not a touch control. Draw no indicator in the BPM column. */
@@ -104,10 +127,11 @@
     border: 0px;
 }
 
-/* One dark selection bar, as the performance pages use; the current-cell
- * outline takes the same colour, so the selected row has no second frame. */
+/* One dark selection bar (the mockups' selected row: deck 1 at 32% over the
+ * page); the current-cell outline takes the same colour, so the selected row
+ * has no second frame. */
 #LibraryWrapper WTrackTableView {
-    selection-background-color: #27577d;
+    selection-background-color: #263b51;
     selection-color: #ffffff;
-    qproperty-focusBorderColor: #27577d;
+    qproperty-focusBorderColor: #263b51;
 }

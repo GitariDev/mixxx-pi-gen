@@ -184,9 +184,19 @@ UnrelatedValue preserve this exactly
         self.assertIn("width: 24px;", rule("#LibraryWrapper QScrollBar:vertical"))
         self.assertIn("height: 24px;", rule("#LibraryWrapper QScrollBar:horizontal"))
         self.assertIn("min-height: 56px;", rule("#LibraryWrapper QScrollBar::handle:vertical"))
-        # The icon buttons light like the performance tabs when open.
-        self.assertIn("border-color: #b5e15c;",
-                      rule('#LibraryActionsButton[value="1"], #SidebarButton[value="1"]'))
+        # ✎ lights with the accent tint while its menu is open; ☰ open is the
+        # standard close control (spec s5, R-11): surface-2, no outline.
+        self.assertIn("border: 2px solid #a3c45e;", rule('#LibraryActionsButton[value="1"]'))
+        close = rule('#SidebarButton[value="1"]')
+        self.assertIn("background-color: #1d222a;", close)
+        self.assertIn("border: 1px solid #1d222a;", close)
+        pressed = rule('#SidebarButton[value="1"][pressed="true"]')
+        self.assertIn("background-color: #34191b;", pressed)
+        self.assertIn("border-color: #d0574d;", pressed)
+        # The search field: the page colour, a line border, radius 3 (spec section 1).
+        search = rule("#LibraryWrapper #SearchBox")
+        for declaration in ("background-color: #0d1014;", "border: 1px solid #2c333d;", "border-radius: 3px;"):
+            self.assertIn(declaration, search)
 
     def test_track_table_hides_bpm_lock_and_uses_one_dark_selection(self):
         PATCH.apply(self.skin)
@@ -199,9 +209,10 @@ UnrelatedValue preserve this exactly
         for declaration in ("width: 0px;", "height: 0px;", "image: none;"):
             self.assertIn(declaration, indicator)
         table = rule("#LibraryWrapper WTrackTableView")
-        self.assertIn("selection-background-color: #27577d;", table)
+        # The mockups' selected row: deck 1 at 32% over the page colour.
+        self.assertIn("selection-background-color: #263b51;", table)
         self.assertIn("selection-color: #ffffff;", table)
-        self.assertIn("qproperty-focusBorderColor: #27577d;", table)
+        self.assertIn("qproperty-focusBorderColor: #263b51;", table)
         # The managed block is last, so it overrides the upstream light selection.
         self.assertTrue(styles.rstrip().endswith(PATCH.STYLE_END))
 

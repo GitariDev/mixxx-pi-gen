@@ -1,55 +1,65 @@
-
 /* MixxxPi: readable menus, including widgets inside the column selector.
- * QMenu::item alone does not style embedded QCheckBox/QLabel widgets. */
+ * QMenu::item alone does not style embedded QCheckBox/QLabel widgets.
+ * Colours are the agreed UI tokens (agreed-ui/design/tokens.css): surface
+ * #161a20, surface-2 #1d222a, surface-3 #262c35, line #2c333d, line-strong
+ * #3a424e, text #e4e7ec, dim #949dab, off #7f8896, accent #a3c45e. */
 QMenuBar, QMenuBar::item, QMenu, QMenu::item {
-    background-color: #17191f;
-    color: #ffffff;
+    background-color: #161a20;
+    color: #e4e7ec;
     font-size: 17px;
 }
 QMenu QWidget, QMenu QCheckBox, QMenu QLabel {
-    background-color: #17191f;
-    color: #ffffff;
+    background-color: #161a20;
+    color: #e4e7ec;
     font-size: 17px;
 }
 /* Touch rows: content plus padding is at least 48 px for menu items and
  * for the checkbox rows inside choosers. */
 QMenu::item { min-height: 32px; padding: 8px 28px 8px 12px; }
 QMenu QCheckBox { min-height: 36px; padding: 6px; spacing: 8px; }
+/* A tapped row is surface-3 (Navigate pressed). */
 QMenuBar::item:selected, QMenuBar::item:pressed,
 QMenu::item:selected, QMenu::item:pressed,
 QMenu QCheckBox:hover, QMenu QCheckBox:focus {
-    background-color: #285a88;
-    color: #ffffff;
+    background-color: #262c35;
+    color: #e4e7ec;
 }
+/* Ticked rows (spec section 1): the tick and a slight background change,
+ * surface-2, and no left edge. */
+QMenu QCheckBox:checked { background-color: #1d222a; }
 QMenu::item:disabled, QMenu QCheckBox:disabled, QMenu QLabel:disabled {
-    color: #b5bac5;
+    color: #7f8896;
 }
-QMenu::separator { height: 1px; background-color: #596171; margin: 4px; }
+QMenu::separator { height: 1px; background-color: #2c333d; margin: 4px; }
 QMenu QCheckBox::indicator { width: 22px; height: 22px; }
 QMenu QCheckBox::indicator:unchecked {
-    background-color: #17191f;
-    border: 2px solid #e5e6ea;
-    border-radius: 3px;
+    background-color: transparent;
+    border: 2px solid #949dab;
+    border-radius: 2px;
 }
+/* The tick: dark ink on the accent (mixpi-icon-tick.svg, written by the skin
+ * generator; Mixxx resolves url(skin:) to the skin folder). */
 QMenu QCheckBox::indicator:checked {
-    background-color: #ffffff;
-    border: 2px solid #68baff;
-    border-radius: 3px;
+    background-color: #a3c45e;
+    border: 2px solid #a3c45e;
+    border-radius: 2px;
+    image: url(skin:/mixpi-icon-tick.svg);
 }
 /* Arrange columns dialog (#MixpiColumnArrangement): dark, 17 px text,
  * list rows and buttons at least 48 px, 28 px check boxes. The rules name
  * the dialog, its list and its buttons only, so the list's scroll bar keeps
  * the library scroll bar style. */
 #MixpiColumnArrangement {
-    background-color: #17191f;
-    color: #ffffff;
+    background-color: #161a20;
+    color: #e4e7ec;
     font-size: 17px;
 }
 #MixpiColumnArrangement QListWidget {
-    background-color: #17191f;
-    color: #ffffff;
+    background-color: #161a20;
+    color: #e4e7ec;
     font-size: 17px;
-    border: 1px solid #596171;
+    border: 1px solid #2c333d;
+    border-radius: 3px;
     outline: none;
 }
 /* The background makes the item rule drawable for every row. Without it,
@@ -57,39 +67,42 @@ QMenu QCheckBox::indicator:checked {
  * its own small indicator, so the 28 px box covered the first letters
  * (qstylesheetstyle.cpp CE_ItemViewItem, hasDrawable() branch; F-9). */
 #MixpiColumnArrangement QListWidget::item {
-    background-color: #17191f;
+    background-color: #161a20;
     min-height: 48px;
     padding: 0px 8px;
 }
+/* The current row: surface-2, as a ticked row; no left edge. */
 #MixpiColumnArrangement QListWidget::item:selected {
-    background-color: #285a88;
-    color: #ffffff;
+    background-color: #1d222a;
+    color: #e4e7ec;
 }
 #MixpiColumnArrangement QListWidget::indicator { width: 28px; height: 28px; }
 #MixpiColumnArrangement QListWidget::indicator:unchecked {
-    background-color: #17191f;
-    border: 2px solid #e5e6ea;
-    border-radius: 3px;
+    background-color: transparent;
+    border: 2px solid #949dab;
+    border-radius: 2px;
 }
 /* Checked: a white tick on blue. ic_checkmark.svg is Mixxx's own image,
- * built into the program (res/mixxx.qrc), so no file is added (F-9). */
+ * built into the program (res/mixxx.qrc), so no file is added (F-9). The
+ * native Arrange check (tests/native/library_interface_test.cpp) measures
+ * white tick pixels on a blue fill, so this box keeps them. */
 #MixpiColumnArrangement QListWidget::indicator:checked {
     background-color: #1f7fd8;
     border: 2px solid #ffffff;
-    border-radius: 3px;
+    border-radius: 2px;
     image: url(:/images/ic_checkmark.svg);
 }
 #MixpiColumnArrangement QPushButton {
-    color: #ffffff;
+    color: #e4e7ec;
     font-size: 17px;
     min-height: 48px;
     min-width: 96px;
-    background-color: #2b3038;
-    border: 1px solid #596171;
-    border-radius: 4px;
+    background-color: #1d222a;
+    border: 1px solid #3a424e;
+    border-radius: 3px;
     padding: 0px 12px;
 }
-#MixpiColumnArrangement QPushButton:pressed { background-color: #285a88; }
+#MixpiColumnArrangement QPushButton:pressed { background-color: #262c35; }
 /* Sources screen (R-9): the rail of sources (264 px, 64 px tiles), Back
  * and the crumb above the list. The colours are the redesign prototype's. */
 #MixpiSourceRail, #MixpiSourceTiles {

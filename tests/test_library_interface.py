@@ -99,10 +99,10 @@ class LibraryInterfacePatchTests(unittest.TestCase):
         # The style geometry cannot see it; the grab check must.
         style = (RUNNER.PATCH_DIR / 'pioneered-menus.qss').read_text()
         rule = re.search(r'#MixpiColumnArrangement QListWidget::item \{[^}]*\}', style)[0]
-        self.assertIn('background-color: #17191f;', rule)
+        self.assertIn('background-color: #161a20;', rule)  # --mx-surface
         with tempfile.TemporaryDirectory(prefix='mixpi-menus-qss-') as temporary:
             build1 = Path(temporary) / 'pioneered-menus.qss'
-            build1.write_text(style.replace(rule, rule.replace('    background-color: #17191f;\n', '')))
+            build1.write_text(style.replace(rule, rule.replace('    background-color: #161a20;\n', '')))
             result = subprocess.run(['python3', str(ROOT / 'tests/native/library_interface_runner.py'),
                                      '--menus-qss', str(build1)],
                                     capture_output=True, text=True, timeout=150)

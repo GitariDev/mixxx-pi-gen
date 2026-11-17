@@ -163,19 +163,25 @@ QImage indicatorImage(QListWidget* list, QListWidgetItem* item) {
     return list->viewport()->grab(rowRects(list, item).first).toImage();
 }
 
-// Inside the box border: near-white pixels (the tick) and blue fill pixels.
+// Inside the box border: ink pixels (the tick, #0d1014) and accent fill
+// pixels (#a3c45e), spec section 1 (the tick on the accent).
 QPair<int, int> tickPixels(const QImage& image) {
-    int white = 0;
-    int blue = 0;
+    int ink = 0;
+    int accent = 0;
     const QRect inside = image.rect().adjusted(5, 5, -5, -5);
     for (int y = inside.top(); y <= inside.bottom(); ++y) {
         for (int x = inside.left(); x <= inside.right(); ++x) {
             const QColor colour = image.pixelColor(x, y);
-            white += colour.red() > 220 && colour.green() > 220 && colour.blue() > 220 ? 1 : 0;
-            blue += colour.blue() > 150 && colour.red() < 90 ? 1 : 0;
+            accent += colour.green() > 160 && colour.red() > 120 && colour.red() < 200 &&
+                            colour.blue() < 130
+                    ? 1
+                    : 0;
+            // Ink only counts where the accent fill is around it (the
+            // unchecked box's inside is the dark list surface).
+            ink += colour.red() < 40 && colour.green() < 45 && colour.blue() < 45 ? 1 : 0;
         }
     }
-    return {white, blue};
+    return {accent > 0 ? ink : 0, accent};
 }
 
 // F-7 width and F-9 touch dialog/menu, with the real pioneered-menus.qss.
@@ -340,9 +346,9 @@ void touchTableChecks() {
     require(item->checkState() == checked && listOrder(list) == before,
             "the row taps change no order");
 
-    // F-9 (council round 1): a checked box shows a clear tick, Mixxx's
-    // ic_checkmark.svg: white tick pixels on a blue fill, which an unchecked
-    // box does not have.
+    // F-9 (council round 1), spec section 1: a checked box shows a clear
+    // tick, the skin's mixpi-icon-tick.svg: ink tick pixels on the accent
+    // fill, which an unchecked box does not have.
     QListWidgetItem* tickedItem = nullptr;
     QListWidgetItem* emptyItem = nullptr;
     for (int row = 0; row < list->count(); ++row) {
@@ -358,7 +364,7 @@ void touchTableChecks() {
         const auto tick = tickPixels(ticked);
         const auto none = tickPixels(empty);
         std::cout << "OBSERVE checked box " << ticked.width() << 'x' << ticked.height()
-                  << ": tick " << tick.first << " px, fill " << tick.second << " px; unchecked box: white "
+                  << ": tick " << tick.first << " px, fill " << tick.second << " px; unchecked box: tick "
                   << none.first << " px, fill " << none.second << " px" << std::endl;
         const auto evidence = qEnvironmentVariable("MIXPI_ARRANGE_GRAB_DIR");
         if (!evidence.isEmpty()) {
@@ -368,8 +374,8 @@ void touchTableChecks() {
         }
         require(ticked != empty, "checked and unchecked boxes look different in a grab");
         require(tick.first >= 20 && tick.second >= 40,
-                "a checked box shows a white tick on a blue fill");
-        require(none.first == 0, "an unchecked box has no tick");
+                "a checked box shows an ink tick on the accent");
+        require(none.second == 0, "an unchecked box has no tick");
     }
     dialog->close();
 

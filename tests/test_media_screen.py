@@ -140,7 +140,7 @@ class MediaListsPatchTests(unittest.TestCase):
             self.assertIn(area, added)
 
     def test_scroll_bars_are_24px_on_the_page(self):
-        style = (runner.PATCH_DIR / 'pioneered-menus.qss').read_text()
+        style = (runner.PATCH_DIR / 'mixpi-media-page.qss').read_text()
         rule = style.split('#MixpiPage QScrollBar:vertical {', 1)[1].split('}', 1)[0]
         self.assertIn('width: 24px;', rule)
 

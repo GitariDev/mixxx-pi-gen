@@ -172,6 +172,23 @@ def reconstruct(target, include_interface=True, exclude=()):
     return names, baseline
 
 
+def resolve_skin_urls(qss, folder):
+    """A copy of QSS whose url(skin:/NAME) point into FOLDER, where the skin
+    generator's own drawn files (mixpi-performance.py) are written."""
+    text = qss.read_text()
+    if 'url(skin:' not in text:
+        return qss
+    spec = importlib.util.spec_from_file_location('mixpi_performance_skin', PATCH_DIR / 'mixpi-performance.py')
+    skin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(skin)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, svg in skin.drawn_files().items():
+        (folder / name).write_text(svg)
+    resolved = folder / qss.name
+    resolved.write_text(text.replace('url(skin:/', 'url(' + str(folder) + '/'))
+    return resolved
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--baseline', action='store_true')
@@ -192,8 +209,10 @@ def main():
         print('COMMAND', repr(command), flush=True)
         subprocess.run(command, check=True, timeout=90)
         environment = qt_environment()
-        # F-9: the native dialog checks load the real installed menu style.
-        environment['MIXPI_MENUS_QSS'] = str(args.menus_qss)
+        # F-9: the native dialog checks load the real installed menu style,
+        # with url(skin:...) resolved as Mixxx does (LegacySkinParser replaces
+        # "url(skin:" with the skin folder) to the generator's own files.
+        environment['MIXPI_MENUS_QSS'] = str(resolve_skin_urls(args.menus_qss, target / 'skin'))
         # F-9: Mixxx's compiled-in images that the menu style names with
         # url(:/...), and always the tick, which the program always has.
         images = sorted(set(re.findall(r'url\(:/([^)]+)\)', args.menus_qss.read_text())) |

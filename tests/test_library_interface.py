@@ -121,7 +121,7 @@ class LibraryInterfacePatchTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('FAIL a tap on the label text toggles the row\'s column', result.stdout)
         for kept in ('a tap on the check box toggles it once', 'Space on the current row still toggles it',
-                     'a checked box shows a white tick on a blue fill',
+                     'a checked box shows an ink tick on the accent',
                      'painted pixels: no Arrange check box covers its label, checked or not'):
             self.assertIn('PASS ' + kept, result.stdout)
 
@@ -131,7 +131,7 @@ class LibraryInterfacePatchTests(unittest.TestCase):
         # image) has no tick, and the grab check says so.
         style = (RUNNER.PATCH_DIR / 'pioneered-menus.qss').read_text()
         rule = re.search(r'#MixpiColumnArrangement QListWidget::indicator:checked \{[^}]*\}', style)[0]
-        self.assertIn('image: url(:/images/ic_checkmark.svg);', rule)
+        self.assertIn('image: url(skin:/mixpi-icon-tick.svg);', rule)
         build2 = ('#MixpiColumnArrangement QListWidget::indicator:checked {\n    background-color: #ffffff;\n'
                   '    border: 2px solid #68baff;\n    border-radius: 3px;\n}')
         with tempfile.TemporaryDirectory(prefix='mixpi-menus-qss-') as temporary:
@@ -141,7 +141,7 @@ class LibraryInterfacePatchTests(unittest.TestCase):
                                      '--menus-qss', str(old)],
                                     capture_output=True, text=True, timeout=150)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('FAIL a checked box shows a white tick on a blue fill', result.stdout)
+        self.assertIn('FAIL a checked box shows an ink tick on the accent', result.stdout)
         self.assertIn('PASS a tap on the label text toggles the row\'s column', result.stdout)
 
     def test_bpm_lock_patch_is_small_and_gated_on_touch_navigation(self):

@@ -474,7 +474,9 @@ def browse_page(library):
     Library, sidebar and search box. Only fixed-content layouts change."""
     parts = toolbar_parts(library)
     search, actions, sources = parts['SearchBox'], parts['LibraryActionsButton'], parts['LibrarySourcesButton']
-    sidebar_button, back = parts['SidebarButton'], parts['LibraryBackButton']
+    # The native sidebar has its own Back inside the rail (mixxx-sources-screen.patch),
+    # so the skin's LibraryBackButton is left out.
+    sidebar_button = parts['SidebarButton']
 
     # ☰ / ✕ (R-11): the existing two-state key; open also writes screen 1.
     fixed_size(sidebar_button, '48f,48f')
@@ -483,11 +485,19 @@ def browse_page(library):
     # ✎ (R-11): Actions keeps its key and object name; the native menu anchors under it.
     fixed_size(actions, '48f,48f')
     icon_states(actions, 'mixpi-icon-pen.svg', 'mixpi-icon-pen.svg')
+    # EDIT LIST reads DONE while the native edit list is open.
     fixed_size(sources, '128f,48f')
+    sources.find('NumberStates').text = '2'
     sources.find('State/Text').text = 'EDIT LIST'
-    fixed_size(back, '96f,48f')
-    back.find('State/Text').text = '‹ BACK'
+    done = node('State')
+    prop(done, 'Number', 1)
+    prop(done, 'Text', 'DONE')
+    sources.insert(list(sources).index(sources.find('State')) + 1, done)
+    connection(sources, '[Library],sidebar_sources_editing', write=False)
     fixed_size(search, '250me,40f')
+    # A SearchBox takes no Connection (LegacySkinParser::parseSearchBox), so a
+    # group carries its visibility.
+    search = group('MixpiSearch', 'horizontal', '250me,48f', [search])
 
     # Sources opened from Load sample returns there.
     sample_sources_close = button('', '[Sidebar],sidebar_visible', size='48f,48f', push=True,
@@ -521,7 +531,6 @@ def browse_page(library):
         slot, crumb, sources_head, load_head,
         show_when(search, SCREEN, SCREEN_SOURCES, negate=True),
         show_when(actions, SCREEN, SCREEN_NONE),
-        show_when(back, SCREEN, SCREEN_SOURCES),
         show_when(sources, SCREEN, SCREEN_SOURCES)])
 
     # Sources: the sidebar takes the whole area under the header (y 96-480).
@@ -561,7 +570,9 @@ def browse_page(library):
         targets, gap('8f,64f')]), '0me,64f', *SAMPLE_SCREENS)
 
     wrapper = group('LibraryWrapper', children=[header, sources_body, source_row, table, titles, footer])
-    page = group('MixpiBrowse', 'stacked', children=[wrapper, choose_pad()])
+    # In a stacked group Qt lowers each later child (QStackedLayout::insertWidget),
+    # so the first child is on top: the Choose pad sheet comes first.
+    page = group('MixpiBrowse', 'stacked', children=[choose_pad(), wrapper])
     page.set('trigger', '[Tab],library')
     return page
 
@@ -591,7 +602,7 @@ def choose_pad():
             show_when(sampler_title(sampler, '0me,40f', 'MixpiChooseName'), f'{key},track_loaded'),
             show_when(label('Empty', '0me,40f', 'MixpiChooseEmpty'), f'{key},track_loaded', negate=True)])
         tile = load_to_pad(sampler, '165f,96f', 'MixpiChooseTile', '')
-        tiles.append(group('MixpiChooseCell', 'stacked', '165f,96f', [info, tile]))
+        tiles.append(group('MixpiChooseCell', 'stacked', '165f,96f', [tile, info]))
     rows = []
     for row in (tiles[:4], tiles[4:]):
         cells = [gap('18f,96f')]
@@ -639,7 +650,7 @@ def sampler_pad(sampler):
     clear = button('× CLEAR', f'{key},eject', size=f'{width // 2}f,{PAD_STRIP}f', momentary=True)
     connection(clear, f'{key},play', transform='<Not/>', bind='enabled')
     loaded = group('MixpiPadLoaded', size=f'{width}f,{height}f', children=[
-        group('MixpiPadTapArea', 'stacked', f'{width}f,{PAD_TAP}f', [info, trigger]),
+        group('MixpiPadTapArea', 'stacked', f'{width}f,{PAD_TAP}f', [trigger, info]),
         group('MixpiPadStrip', 'horizontal', f'{width}f,{PAD_STRIP}f', [stop, clear])])
     show_when(loaded, f'{key},track_loaded')
     open_load = button('', '[Tab],library', size=f'{width}f,{height}f', push=True, name='MixpiPadLoad')
@@ -649,10 +660,10 @@ def sampler_pad(sampler):
     write(open_load, '[MixPi],sample_pad', sampler)
     write(open_load, SCREEN, SCREEN_LOAD_SAMPLE)
     empty = group('MixpiPadEmpty', 'stacked', f'{width}f,{height}f', [
+        open_load,
         group('MixpiPadInfo', size=f'{width}f,{height}f', children=[
             pad_tag(sampler), label('+  Empty · tap to load', '0me,32f', 'MixpiPadEmptyText'),
-            gap('0me,0me')]),
-        open_load])
+            gap('0me,0me')])])
     show_when(empty, f'{key},track_loaded', negate=True)
     return group(f'MixpiPad{"A" if sampler <= 4 else "B"}', size=f'{width}f,{height}f',
                  children=[loaded, empty])
@@ -673,8 +684,10 @@ def sampler_page():
     rows = [group('MixpiPadRow', 'horizontal', f'0me,{PAD_SIZE[1]}f',
                   [sampler_pad(s) for s in range(first, first + 4)]) for first in (1, 5)]
     pads = group('MixpiPads', size=f'0me,{2 * PAD_SIZE[1]}f', children=rows)
-    # Ignored height: below 480 px (desktop bar shown) the deck row gives way first.
-    info = decks(title_height=24, stats_height=SAMPLER_INFO - 24, size='0me,0i')
+    # Expanding with a 1 px minimum: it takes the 72 px left at 480 px, and gives
+    # way first at 444 px (desktop bar shown). An Ignored policy got no height and
+    # the group's centred layout then pushed the page down by 36 px.
+    info = decks(title_height=24, stats_height=SAMPLER_INFO - 24, size='0me,1e')
     page = group('MixpiSampler', children=[header, pads, info])
     page.set('trigger', '[Tab],sampler')
     return page

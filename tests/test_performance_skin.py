@@ -140,6 +140,52 @@ class Model:
         values.update(self.writes(button, 'release', state))
         return values
 
+    def enabled(self, element, state):
+        for c in element.findall('Connection'):
+            if c.findtext('BindProperty') == 'enabled':
+                if not transform(c, float(state.get(c.findtext('ConfigKey'), 0))) > 0:
+                    return False
+        return True
+
+    def tappable(self, button, state):
+        """Visible, enabled and on top. In a stacked group Qt lowers every later
+        child (QStackedLayout::insertWidget), so the first visible child is on
+        top and takes the taps over its whole area."""
+        if not (self.visible(button, state) and self.enabled(button, state)):
+            return False
+        element = button
+        while element in self.parent:
+            parent = self.parent[element]
+            if parent.tag == 'Children':
+                group = self.parent[parent]
+                if group.findtext('Layout') == 'stacked':
+                    for sibling in parent:
+                        if sibling is element:
+                            break
+                        if self.visible(sibling, state):
+                            return False
+            element = parent
+        return True
+
+    @staticmethod
+    def apply(state, writes):
+        for key, value in writes:
+            state[key] = value
+            # WWidgetStack: showing one page clears the other page triggers.
+            if key.startswith('[Tab],') and key != '[Tab],current' and value:
+                for other in [k for k in state if k.startswith('[Tab],') and k != key]:
+                    if other != '[Tab],current':
+                        state[other] = 0
+
+    def tap(self, button, state):
+        """A touch tap as WPushButton handles it: press, then release only if the
+        button is still shown (a hidden widget loses the mouse grab)."""
+        assert self.tappable(button, state), (button.findtext('ObjectName'), button.findtext('State/Text'))
+        self.apply(state, self.writes(button, 'press', state))
+        if self.visible(button, state):
+            self.apply(state, self.writes(button, 'release', state))
+        return state
+
 
 class PerformanceSkinTests(unittest.TestCase):
     def setUp(self):
@@ -357,21 +403,58 @@ class PerformanceSkinTests(unittest.TestCase):
         sampler = self.page('MixpiSampler')
         heights = [size(c)[1] for c in sampler.find('Children')]
         self.assertEqual(heights[:2], [48, 2 * 104])
-        self.assertEqual(sampler.find('Children')[2].findtext('Size'), '0me,0i')
+        self.assertEqual(sampler.find('Children')[2].findtext('Size'), '0me,1e')
         self.assertEqual(48 + sum(heights[:2]) + SKIN.SAMPLER_INFO + 48 + 56, 480)
         # At 800x444 (desktop bar shown) every page's minimum fits 444 - 48 - 104.
-        self.assertLessEqual(sum(heights[:2]), 444 - 48 - 104)
+        self.assertLessEqual(sum(heights[:2]) + 1, 444 - 48 - 104)
         info = sampler.find('Children')[2]
         for deck in info.findall('Children/WidgetGroup'):
             self.assertEqual(sum(size(c)[1] for c in deck.find('Children')), SKIN.SAMPLER_INFO)
+
+    def laid_out(self, page, state):
+        """(top, heights) of a vertical page's visible children, as QBoxLayout places
+        fixed rows plus expanding rows in the 328 px page under the top bar. A page
+        without an expanding row is centred by WWidgetGroup's default AlignCenter."""
+        rows = [c for c in page.find('Children') if self.model.visible(c, state)]
+        heights, expanding = [], 0
+        for row in rows:
+            w, h, wp, hp = size(row)
+            self.assertNotEqual(hp, 'i', 'an Ignored row gets no height')
+            if hp == 'f':
+                heights.append(h)
+            else:
+                expanding += 1
+                heights.append(None)
+        fixed = sum(h for h in heights if h is not None)
+        if expanding:
+            return 48, [h if h is not None else (328 - fixed) // expanding for h in heights]
+        return 48 + (328 - fixed) // 2, heights
+
+    def test_sampler_page_is_top_aligned_with_the_deck_row_shown(self):
+        page = self.page('MixpiSampler')
+        info = page.find('Children')[2]
+        for loop_deck in (0, 3):
+            state = {'[Tab],sampler': 1, '[MixPi],loop_deck': loop_deck, SCREEN: 0}
+            self.assertTrue(self.model.visible(info, state))
+            top, heights = self.laid_out(page, state)
+            self.assertEqual((top, heights, sum(heights)), (48, [48, 208, 72], 328))
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn("#MixpiSampler { qproperty-layoutAlignment: 'AlignTop'; }", style)
+
+    def test_widgets_without_skin_connections_carry_none(self):
+        # LegacySkinParser builds these with allowConnections false: a binding
+        # on them is silently dropped, so their visibility lives on a group.
+        for tag in ('SearchBox', 'Library', 'LibrarySidebar', 'StarRating'):
+            for e in self.root.iter(tag):
+                self.assertEqual(e.findall('Connection'), [], tag)
 
     def test_two_state_buttons_without_push_mode_target_real_toggles(self):
         self.assertEqual(self.toggle_offenders(self.root), [])
 
     # ---------- the browse page: Tracks, Sources, Load sample, Choose pad ----------
 
-    VIEWS = ['SidebarButton', 'MixpiTracksCrumb', 'MixpiSourcesHead', 'MixpiLoadHead', 'SearchBox',
-             'LibraryActionsButton', 'LibraryBackButton', 'LibrarySourcesButton', 'MixpiSourcesBody',
+    VIEWS = ['SidebarButton', 'MixpiTracksCrumb', 'MixpiSourcesHead', 'MixpiLoadHead', 'MixpiSearch',
+             'LibraryActionsButton', 'LibrarySourcesButton', 'MixpiSourcesBody',
              'MixpiSampleSources', 'MixpiLibraryMain', 'MixpiTrackTitles', 'MixpiSampleFooter',
              'MixpiChooseScrim']
 
@@ -380,20 +463,22 @@ class PerformanceSkinTests(unittest.TestCase):
 
     def test_tracks_toolbar_is_menu_crumb_search_pen(self):
         self.assertEqual(self.shown(Model.state(0, **{'[Tab]__library': 1})),
-                         ['SidebarButton', 'MixpiTracksCrumb', 'SearchBox', 'LibraryActionsButton',
+                         ['SidebarButton', 'MixpiTracksCrumb', 'MixpiSearch', 'LibraryActionsButton',
                           'MixpiLibraryMain', 'MixpiTrackTitles'])
         header = self.model.one('MixpiBrowseHeader')
         self.assertEqual(header.findtext('Size'), '0me,48f')
         self.assertEqual(self.model.one('MixpiTracksCrumb').findtext('Size'), '220f,48f')
         order = [e.findtext('ObjectName') for e in header.iter() if e.findtext('ObjectName') in self.VIEWS]
         self.assertLess(order.index('SidebarButton'), order.index('MixpiTracksCrumb'))
-        self.assertLess(order.index('MixpiTracksCrumb'), order.index('SearchBox'))
-        self.assertLess(order.index('SearchBox'), order.index('LibraryActionsButton'))
+        self.assertLess(order.index('MixpiTracksCrumb'), order.index('MixpiSearch'))
+        self.assertLess(order.index('MixpiSearch'), order.index('LibraryActionsButton'))
 
     def test_sources_is_a_full_screen_with_the_sidebar_under_its_header(self):
         self.assertEqual(self.shown(Model.state(1)),
-                         ['SidebarButton', 'MixpiSourcesHead', 'LibraryBackButton',
-                          'LibrarySourcesButton', 'MixpiSourcesBody'])
+                         ['SidebarButton', 'MixpiSourcesHead', 'LibrarySourcesButton',
+                          'MixpiSourcesBody'])
+        # The native sidebar has its own Back; the header has no Back and no search.
+        self.assertEqual(self.model.by_name('LibraryBackButton'), [])
         body = self.model.one('MixpiSourcesBody')
         sidebar = self.model.one('SidebarWrapper')
         self.assertIn(sidebar, list(body.iter()))
@@ -413,15 +498,18 @@ class PerformanceSkinTests(unittest.TestCase):
                         if button.findtext('ObjectName') == 'LibrarySourcesButton')
         edit = self.model.one('LibrarySourcesButton')
         self.assertEqual(edit.findtext('Size'), '128f,48f')
-        self.assertEqual(edit.findtext('State/Text'), 'EDIT LIST')
-        self.assertEqual([[(item.tag, item.text) for item in c] for c in edit.findall('Connection')
-                          if c.find('BindProperty') is None],
-                         [[(item.tag, item.text) for item in c] for c in original.findall('Connection')])
+        self.assertEqual(edit.findtext('NumberStates'), '2')
+        self.assertEqual([(st.findtext('Number'), st.findtext('Text')) for st in edit.findall('State')],
+                         [('0', 'EDIT LIST'), ('1', 'DONE')])
+        command, display = [c for c in edit.findall('Connection') if c.find('BindProperty') is None]
+        self.assertEqual([(item.tag, item.text) for item in command],
+                         [(item.tag, item.text) for item in original.find('Connection')])
         self.assertEqual(self.model.writes(edit), [('[Library],show_sidebar_sources_menu', 1)])
-        back = self.model.one('LibraryBackButton')
-        self.assertEqual(back.findtext('Size'), '96f,48f')
-        self.assertEqual(back.findtext('Connection/ConfigKey'), '[Library],sidebar_back')
-        self.assertEqual(back.findall('Connection')[1].findtext('ConfigKey'), '[Library],sidebar_can_go_back')
+        self.assertEqual(self.model.writes(edit, 'release'), [])
+        # DONE while the native edit list is open: a read-only display connection.
+        self.assertEqual((display.findtext('ConfigKey'), display.findtext('ConnectValueFromWidget'),
+                          display.findtext('ConnectValueToWidget')),
+                         ('[Library],sidebar_sources_editing', 'false', 'true'))
 
     def test_menu_opens_sources_and_its_x_closes_it(self):
         menu = self.model.one('SidebarButton')
@@ -441,7 +529,7 @@ class PerformanceSkinTests(unittest.TestCase):
     def test_load_sample_is_a_second_layout_around_the_one_library(self):
         for screen in (3, 4):
             self.assertEqual(self.shown(Model.state(screen))[:6],
-                             ['MixpiLoadHead', 'SearchBox', 'MixpiSampleSources', 'MixpiLibraryMain',
+                             ['MixpiLoadHead', 'MixpiSearch', 'MixpiSampleSources', 'MixpiLibraryMain',
                               'MixpiSampleFooter'] + (['MixpiChooseScrim'] if screen == 4 else []))
         self.assertEqual(len(self.root.findall('.//Library')), 1)
         self.assertEqual(len(self.root.findall('.//SearchBox')), 1)
@@ -560,6 +648,85 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(x, 760)
         for got, plan in zip(centres, (144, 315, 485, 656)):
             self.assertLessEqual(abs(got - plan), 4)
+
+    # ---------- replays of the Pi preview sequences (fix round 1) ----------
+
+    def start(self):
+        # Manifest attributes at skin load; nothing here is saved.
+        state = {a.get('config_key'): float(a.text)
+                 for a in self.root.findall('manifest/attributes/attribute')}
+        state['[Library],show_track_menu'] = 0
+        return state
+
+    def tab_button(self, text, state):
+        found = [b for b in self.tabs() if b.findtext('State/Text') == text and self.model.tappable(b, state)]
+        self.assertEqual(len(found), 1, text)
+        return found[0]
+
+    def shown_button(self, state, **match):
+        found = [b for b in self.root.iter('PushButton')
+                 if all((b.findtext(k) if k != 'key' else b.findtext('Connection/ConfigKey')) == v
+                        for k, v in match.items()) and self.model.tappable(b, state)]
+        self.assertEqual(len(found), 1, match)
+        return found[0]
+
+    def assert_load_sample(self, state, choose=False):
+        self.assertEqual(state[SCREEN], 4 if choose else 3)
+        self.assertEqual((state['[Tab],library'], state['[MixPi],sample_load']), (1, 1))
+        self.assertEqual(self.shown(state)[:5], ['MixpiLoadHead', 'MixpiSearch', 'MixpiSampleSources',
+                                                 'MixpiLibraryMain', 'MixpiSampleFooter'])
+        self.assertFalse(self.model.visible(self.model.one('MixpiBottom'), state))
+        # The sheet covers the list exactly when Choose pad is open.
+        tiles = self.tiles()
+        self.assertEqual([self.model.tappable(t, state) for t in tiles], [choose] * 8)
+        self.assertEqual(self.model.tappable(self.load_targets()[0], state), not choose)
+
+    def test_replay_sequence_a_load_sample_then_choose_pad(self):
+        model, state = self.model, self.start()
+        model.tap(self.tab_button('SAMPLER', state), state)
+        model.tap(self.button_by_text('+  LOAD SAMPLE'), state)
+        self.assert_load_sample(state)
+        model.tap(self.shown_button(state, ObjectName='MixpiPrimary', key=SCREEN), state)  # LOAD TO PAD…
+        self.assert_load_sample(state, choose=True)
+        tile = self.tiles()[4]
+        self.assertEqual(model.writes(tile), [('[Sampler5],LoadSelectedTrack', 1)])
+        model.tap(tile, state)
+        self.assertEqual((state[SCREEN], state['[Tab],sampler'], state['[MixPi],sample_load']), (0, 1, 0))
+        self.assertEqual(state['[Sampler5],LoadSelectedTrack'], 0)
+        self.assertTrue(model.visible(self.model.one('MixpiBottom'), state))
+
+    def test_replay_sequence_b_cancel_close_tracks_actions_then_load_sample(self):
+        model, state = self.model, self.start()
+        model.tap(self.tab_button('SAMPLER', state), state)
+        model.tap(self.button_by_text('+  LOAD SAMPLE'), state)
+        model.tap(self.shown_button(state, ObjectName='MixpiPrimary', key=SCREEN), state)
+        model.tap(self.button_by_text('CANCEL'), state)
+        self.assert_load_sample(state)
+        model.tap(self.shown_button(state, ObjectName='MixpiIconButton', key='[Tab],sampler'), state)  # ✕
+        self.assertEqual((state[SCREEN], state['[Tab],sampler'], state['[MixPi],sample_load']), (0, 1, 0))
+        model.tap(self.tab_button('TRACKS', state), state)
+        pen = self.model.one('LibraryActionsButton')
+        model.tap(pen, state)
+        self.assertEqual(state['[Library],show_track_menu'], 1)
+        # On the Pi the open Actions menu (a Qt popup) eats the next tap; the
+        # preview's SAMPLER tap closed the menu, so LOAD SAMPLE then hit the list.
+        state['[Library],show_track_menu'] = 0
+        model.tap(self.tab_button('SAMPLER', state), state)
+        model.tap(self.button_by_text('+  LOAD SAMPLE'), state)
+        self.assert_load_sample(state)
+        model.tap(self.shown_button(state, ObjectName='MixpiPrimary', key=SCREEN), state)
+        self.assert_load_sample(state, choose=True)
+
+    def test_overlay_buttons_are_on_top_of_their_labels(self):
+        for sampler, pad in enumerate(self.pads(), 1):
+            key = f'[Sampler{sampler}]'
+            trigger = next(b for b in pad.iter('PushButton') if b.findtext('ObjectName') == 'MixpiPadTap')
+            open_load = next(b for b in pad.iter('PushButton') if b.findtext('ObjectName') == 'MixpiPadLoad')
+            self.assertTrue(self.model.tappable(trigger, {'[Tab],sampler': 1, f'{key},track_loaded': 1}))
+            self.assertTrue(self.model.tappable(open_load, {'[Tab],sampler': 1}))
+        playing = dict(Model.state(4), **{'[Sampler2],play': 1})
+        self.assertEqual([self.model.tappable(t, playing) for t in self.tiles()],
+                         [True, False] + [True] * 6)
 
     # ---------- R-7 sampler ----------
 
@@ -706,7 +873,7 @@ class PerformanceSkinTests(unittest.TestCase):
         override = style.split('/* MixPi native navigation */', 1)[1]
         self.assertIn('border-radius: 6px;', override)
         for selector in ('#MixpiButton', '#MixpiPlay', '#MixpiRecord', '#MixpiUsbChip',
-                         '#LibraryWrapper #LibrarySourcesButton', '#LibraryWrapper #LibraryBackButton'):
+                         '#LibraryWrapper #LibrarySourcesButton'):
             self.assertIn(selector, override)
         self.assertNotIn('\nPushButton {', style)
         self.assertNotIn('\nQWidget {', style)

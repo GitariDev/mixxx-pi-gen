@@ -75,6 +75,8 @@
 #MixpiChooseTile:disabled { background: rgba(10, 13, 18, 190); }
 
 /* Sampler pads: deck A pads 1-4 blue tags, deck B pads 5-8 amber tags. */
+/* Top-aligned, so spare height never centres the page (WWidgetGroup centres by default). */
+#MixpiSampler { qproperty-layoutAlignment: 'AlignTop'; }
 #MixpiPadA, #MixpiPadB { background: #19212d; border: 1px solid #2b3646; }
 #MixpiPadEmpty { background: #0a0d12; border: 1px dashed #2b3646; }
 #MixpiPadBadgeA, #MixpiPadBadgeB {

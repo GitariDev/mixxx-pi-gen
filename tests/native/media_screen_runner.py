@@ -22,11 +22,10 @@ FIXES = 'mixxx-media-screen-fixes.patch'
 LISTS = 'mixxx-media-lists.patch'
 # Build C, wave C1 (U-10, U-8): the agreed Media page and [MixPi],drive_insert.
 AGREED = 'mixxx-media-agreed.patch'
-# Wave C2: the old Media section of pioneered-menus.qss is gone; the page's
-# own stylesheet loads right after it, as on the image.
-QSS = ':'.join(str(PATCH_DIR / name) for name in
-               ('pioneered-menus.qss', 'mixpi-media-page.qss', 'pioneered-touch.qss',
-                'mixpi-performance.qss'))
+# Build B's page is checked against build B's Media styles, kept as a test
+# fixture since wave C2 removed them from pioneered-menus.qss.
+QSS = ':'.join([str(PATCH_DIR / 'pioneered-menus.qss'), str(ROOT / 'tests/fixtures/media-screen-build-b.qss'),
+                str(PATCH_DIR / 'pioneered-touch.qss'), str(PATCH_DIR / 'mixpi-performance.qss')])
 # The agreed page's own stylesheet loads right after pioneered-menus.qss.
 AGREED_QSS = ':'.join(str(PATCH_DIR / name) for name in
                       ('pioneered-menus.qss', 'mixpi-media-page.qss', 'pioneered-touch.qss',

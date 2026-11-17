@@ -817,7 +817,7 @@ Recorded by the orchestrator (Claude Opus 5.5 xhigh).
 - Where the spec says nothing, build B stays as it is.
 - Nobody adds a design of their own: no builder, reviewer or orchestrator.
 - Known overrides:
-  - **R-9:** Sources is no longer full-screen navigation. It is a **side menu on the right**, under ☰. The edit list stays full screen (spec s5).
+  - **R-9:** Sources is no longer full-screen navigation. It is a **side menu on the right**, under ☰. **Edit sources** (the owner's name for the list where sources are switched on or off, ordered and starred; owner note on s5, 19:10: "Say edit sources when putting it in the plan.") stays full screen (spec s5).
   - **R-11:** while Sources is open, ☰ becomes the standard **red ✕ close, with no outline**, in the same spot. It is not a lit button.
   - **R-17:** effect ON/OFF is a **button**, not a switch. Slider fills run full height. Effects are **saved within a second of a change**.
   - **10.1 Q1 and R-18:** Settings › Media gains **"Plugging in a drive: ASK / AUTO LOAD"**, default ASK. ASK is the Q1 ping, and AUTO LOAD opens the drive with no ping. This replaces Q1's "no on-insert setting".
@@ -842,7 +842,7 @@ Recorded by the orchestrator (Claude Opus 5.5 xhigh).
 | U-1 | The rules for every screen (spec 1): tokens, roles, 3 px radius, pill chips, see-through lit states, close on the right as the red ✕ with no outline at rest, ticked rows with no left edge, scroll bars | R-1, R-16, all QSS | skin |
 | U-2 | Tool panel loop rows (s2) | R-16 | skin (generator) |
 | U-3 | Tracks header order and ▶ beside CUE on both decks (s3) | R-11, R-1 | skin |
-| U-4 | Sources: side menu on the right, ☰ becomes ✕, Back and Edit icons, top-level and inside-a-source headers, scroll bar, full-screen edit list with DONE and ✕ (s5) | R-9, R-10, R-11 | skin and native (the Sources rail patch) |
+| U-4 | Sources: side menu on the right, ☰ becomes ✕, Back and Edit icons, top-level and inside-a-source headers, scroll bar, full-screen **Edit sources** with DONE and ✕ (s5) | R-9, R-10, R-11 | skin and native (the Sources rail patch) |
 | U-5 | Sampler: CLEAR SAMPLES… popover, TRIGGER and STOP split, empty-pad text, deck-row title and artist (s6). Acceptance adds a full shutdown test for the samples | R-7, R-16, R-13 | skin and native |
 | U-6 | Load sample: SAMPLES and SOURCES… only (s7) | R-8 | skin and native |
 | U-7 | FX: ON/OFF button, full-height slider fill, effects saved within a second of a change (s8) | R-17, R-13 | skin and native (save) |

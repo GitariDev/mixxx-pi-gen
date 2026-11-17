@@ -340,7 +340,8 @@ class PerformanceSkinTests(unittest.TestCase):
 
     def test_media_actions_are_native_gated_and_separate_from_sampler(self):
         buttons = self.root.findall('.//PushButton')
-        action = self.button_by_key('[MixPi],media_load')
+        action = self.model.one('MixpiUsbButton')
+        self.assertIn('[MixPi],media_load', [k.text for k in action.iter('ConfigKey')])
         gate = action.findall('Connection')[-1]
         self.assertEqual(gate.findtext('ConfigKey'), '[MixPi],media_available')
         self.assertEqual(gate.findtext('BindProperty'), 'enabled')
@@ -475,13 +476,36 @@ class PerformanceSkinTests(unittest.TestCase):
                          [('0', 'EDIT LIST'), ('1', 'DONE')])
         command, display = [c for c in edit.findall('Connection') if c.find('BindProperty') is None]
         self.assertEqual([(item.tag, item.text) for item in command],
-                         [(item.tag, item.text) for item in original.find('Connection')])
+                         [(item.tag, item.text) for item in original.find('Connection')][:1] +
+                         [('ConnectValueFromWidget', 'true'), ('ConnectValueToWidget', 'false')] +
+                         [(item.tag, item.text) for item in original.find('Connection')][1:])
         self.assertEqual(self.model.writes(edit), [('[Library],show_sidebar_sources_menu', 1)])
         self.assertEqual(self.model.writes(edit, 'release'), [])
         # DONE while the native edit list is open: a read-only display connection.
         self.assertEqual((display.findtext('ConfigKey'), display.findtext('ConnectValueFromWidget'),
                           display.findtext('ConnectValueToWidget')),
                          ('[Library],sidebar_sources_editing', 'false', 'true'))
+
+    def displayed_text(self, button, events):
+        """The state text after control changes: every connection that pushes to
+        the widget (ConnectValueToWidget true or default) sets it when its key changes."""
+        shown = 0
+        states = [st.findtext('Text') for st in button.findall('State')]
+        for key, value in events:
+            for c in button.findall('Connection'):
+                if c.find('BindProperty') is None and c.findtext('ConfigKey') == key \
+                        and c.findtext('ConnectValueToWidget', 'true') == 'true':
+                    shown = int(transform(c, float(value))) % len(states)
+        return states[shown]
+
+    def test_edit_list_reads_done_while_editing(self):
+        # Build B, R-10: the press opens the native edit list (editing 1), then the
+        # push command falls back to 0 on release; DONE must stay.
+        edit = self.model.one('LibrarySourcesButton')
+        command, editing = '[Library],show_sidebar_sources_menu', '[Library],sidebar_sources_editing'
+        self.assertEqual(self.displayed_text(edit, [(command, 1), (editing, 1), (command, 0)]), 'DONE')
+        self.assertEqual(self.displayed_text(edit, [(command, 1), (editing, 1), (command, 0),
+                                                    (command, 1), (editing, 0), (command, 0)]), 'EDIT LIST')
 
     def test_menu_opens_sources_and_its_x_closes_it(self):
         menu = self.model.one('SidebarButton')
@@ -889,7 +913,9 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual((chip.findtext('Layout'), chip.findtext('Size')), ('stacked', '150f,48f'))
         tap = chip.find('Children')[0]
         self.assertEqual((tap.findtext('ObjectName'), tap.findtext('Size')), ('MixpiUsbButton', '150f,48f'))
-        self.assertEqual(self.model.writes(tap), [('[MixPi],media_load', 1)])
+        # Screen 2 first, so the waveform rows hide before the native page shows.
+        self.assertEqual(self.model.writes(tap), [(SCREEN, 2), ('[MixPi],media_load', 1)])
+        self.assertEqual(self.model.writes(tap, 'release'), [])
         gate = tap.findall('Connection')[-1]
         self.assertEqual((gate.findtext('ConfigKey'), gate.findtext('BindProperty')),
                          ('[MixPi],media_available', 'enabled'))
@@ -1097,7 +1123,7 @@ class PerformanceSkinTests(unittest.TestCase):
         pages = self.model.one('MixpiPages')
         for screen in range(6):
             self.assertEqual(self.model.visible(settings, {SCREEN: screen}), screen == 5)
-            self.assertEqual(self.model.visible(pages, {SCREEN: screen}), screen != 5)
+            self.assertEqual(self.model.visible(pages, {SCREEN: screen}), screen not in (2, 5))
         rail = [b for b in settings.iter('PushButton') if b.findtext('ObjectName') == 'MixpiRailButton']
         self.assertEqual([b.findtext('State/Text') for b in rail], ['PLAYBACK', 'INTERFACE', 'MEDIA', 'ADVANCED'])
         for value, b in enumerate(rail):
@@ -1270,6 +1296,17 @@ class PerformanceSkinTests(unittest.TestCase):
             fixed = [p[0] for p in parts]
             return (sum(fixed) if along else max(fixed or [0])), any(p[1] for p in parts)
         return 0, True
+
+    def test_no_waveform_or_overview_shows_under_a_full_screen_view(self):
+        gl = list(self.root.iter('Visual')) + list(self.root.iter('Overview'))
+        self.assertEqual(len(gl), 6)
+        for screen in range(1, 6):
+            for page in ('overview', 'library', 'fx', 'sampler'):
+                for loop_deck in (0, 1, 2):
+                    state = {SCREEN: screen, f'[Tab],{page}': 1, '[MixPi],loop_deck': loop_deck}
+                    self.assertEqual([e for e in gl if self.model.visible(e, state)], [], (screen, page, loop_deck))
+        decks = {SCREEN: 0, '[Tab],overview': 1, '[MixPi],loop_deck': 0}
+        self.assertEqual(sum(self.model.visible(e, decks) for e in gl), 4)
 
     def test_full_screen_views_fill_432_under_the_top_bar(self):
         root_rows = list(self.root.find('Children'))[1:]  # under the top bar

@@ -703,6 +703,14 @@ def browse_page(library):
     prop(done, 'Number', 1)
     prop(done, 'Text', 'DONE')
     sources.insert(list(sources).index(sources.find('State')) + 1, done)
+    # The command is a push control that falls back to 0 on release; it must
+    # not drive the text, or the release overwrites DONE (build B, R-10).
+    command = sources.find('Connection')
+    for at, (tag, value) in enumerate((('ConnectValueFromWidget', 'true'), ('ConnectValueToWidget', 'false')), 1):
+        if command.find(tag) is None:
+            command.insert(at, node(tag, value))
+        else:
+            command.find(tag).text = value
     connection(sources, '[Library],sidebar_sources_editing', write=False)
     fixed_size(search, '250me,40f')
     # A SearchBox takes no Connection (LegacySkinParser::parseSearchBox), so a
@@ -994,7 +1002,12 @@ def usb_chip():
     """R-4 skin part: the 150x48 chip writes [MixPi],media_load (today's dialog,
     N3's Media screen). Its look follows [MixPi],media_state; MixpiUsbName is set
     from native code to the drive name; SCAN NN% shows while a hidden scan runs."""
-    tap = button('', '[MixPi],media_load', size=f'{USB_CHIP}f,48f', push=True, name='MixpiUsbButton')
+    # Screen 2 (Media) first: the skin hides every waveform row before the native
+    # page shows, so no GL surface is ever above it (build B, R-2/R-4).
+    tap = button('', SCREEN, size=f'{USB_CHIP}f,48f', push=True, name='MixpiUsbButton',
+                 transform=f'<IsEqual>{SCREEN_MEDIA}</IsEqual>')
+    tap.find('Connection/ConnectValueToWidget').text = 'false'
+    write(tap, '[MixPi],media_load', 1)
     for state in tap.findall('State'):
         state.append(node('Unpressed', 'mixpi-icon-usb.svg', scalemode='FIXED'))
         state.append(node('Pressed', 'mixpi-icon-usb.svg', scalemode='FIXED'))
@@ -1147,8 +1160,9 @@ def build(skin, loop_display='focus'):
     connection(waves, '[MixPi],loop_deck', transform='<IsEqual>0</IsEqual>', bind='enabled')
     # The tool panels come first in the stacked group, so in the overlay trial
     # they sit on top of the waveforms (Qt lowers each later child).
-    add(perform, group('MixpiWaveArea', 'stacked', children=[
-        loops(1, loop_display), loops(2, loop_display), waves]), decks())
+    # The waveform rows (GL) show only with no full-screen view (plan 4.1 rule 3).
+    add(perform, show_when(group('MixpiWaveArea', 'stacked', children=[
+        loops(1, loop_display), loops(2, loop_display), waves]), SCREEN, SCREEN_NONE), decks())
     pages.append(perform)
     pages.append(browse_page(library))
     fxpage=group('MixpiFxPage', children=[fx(), decks(size='0me,1e')])
@@ -1157,7 +1171,10 @@ def build(skin, loop_display='focus'):
     pages.append(sampler_page())
     # R-18: Settings is a full screen; the pages are hidden under it (no widget
     # over a live waveform, plan 4.1 rule 3).
-    children.append(show_when(group('MixpiPages', children=[stack]), SCREEN, SCREEN_SETTINGS, negate=True))
+    # Settings (5) and the native Media page (2) cover the whole area: the pages
+    # are hidden under them.
+    children.append(when_all(group('MixpiPages', children=[stack]), '0me,0me',
+                             off_screen(SCREEN_MEDIA), off_screen(SCREEN_SETTINGS)))
     children.append(show_when(settings(), SCREEN, SCREEN_SETTINGS))
     summaries=group('MixpiSummaries','horizontal',f'0me,{OVERVIEW_HEIGHT}f')
     transport=group('MixpiTransport','horizontal',f'0me,{TRANSPORT_HEIGHT}f')

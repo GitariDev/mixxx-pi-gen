@@ -316,6 +316,28 @@ def state_chip(text, key, size='36f,22f'):
     return e
 
 
+def rate_cell(channel, width, height):
+    """Tempo % with the fader range above it (e.g. "±8%") from [MixPi],tempo_range,
+    the native whole-percent range that Settings changes."""
+    caption = node('Number')
+    for k, v in dict(ObjectName='MixpiRange', Size='0me,16f', Text='±%1%', NumberOfDigits=0).items():
+        prop(caption, k, v)
+    connection(caption, '[MixPi],tempo_range', write=False)
+    return group('MixpiRateCell', size=f'{width}f,{height}f', children=[
+        caption, typed('NumberRate', channel, f'0me,{height - 16}f', 'MixpiRate', NumberOfDigits=1)])
+
+
+def deck_chips(channel):
+    """Plan 4.2 deck chips, display only, each shown while its control is above 0:
+    ON PI (R-5), USB (N3's mixpi_from_usb: on a drive, not yet handed over), SYNC
+    in the deck colour, MASTER (sync_leader) and PFL."""
+    return [('ON PI', 'mixpi_on_pi', 52, 'MixpiChipPi'),
+            ('USB', 'mixpi_from_usb', 40, 'MixpiChipUsb'),
+            ('SYNC', 'sync_enabled', 48, f'MixpiChipSync{channel}'),
+            ('MASTER', 'sync_leader', 64, 'MixpiChip'),
+            ('PFL', 'pfl', 40, 'MixpiChip')]
+
+
 def deck_info(channel, compact=False, size=None):
     """R-16 deck info. Compact: the 28 px title strip on Tracks. Full: 72 px,
     row 1 badge, title, dim artist and display chips; row 2 time, BPM, tempo, key."""
@@ -329,13 +351,12 @@ def deck_info(channel, compact=False, size=None):
         return group('MixpiDeckInfo', size=size or '400me,28f', children=[head])
     title = typed('TrackProperty', channel, '0me,24f', 'MixpiDeckTitle',
                   Property='title', Elide='right', TooltipId='track_title')
-    artist = typed('TrackProperty', channel, '110f,24f', 'MixpiDeckArtist',
+    # The chips have fixed widths; the title and the dim artist elide to make room.
+    artist = typed('TrackProperty', channel, '0max,24f', 'MixpiDeckArtist',
                    Property='artist', Elide='right', TooltipId='track_title')
     head = group('MixpiTitleStrip', 'horizontal', f'0me,{DECK_TITLE}f', [
-        badge, title, artist,
-        chip('ON PI', f'{key},mixpi_on_pi', '52f,22f', 'MixpiChipPi'),
-        chip('MASTER', f'{key},sync_leader', '64f,22f'),
-        chip('PFL', f'{key},pfl', '40f,22f')])
+        badge, title, artist] + [chip(text, f'{key},{control}', f'{width}f,22f', name)
+                                 for text, control, width, name in deck_chips(channel)])
     widths, h = DECK_STAT_WIDTHS, DECK_STATS
     # F-5: one time string; a tap on it switches elapsed/remaining natively.
     mode = '[Controls],ShowDurationRemaining'
@@ -347,7 +368,7 @@ def deck_info(channel, compact=False, size=None):
     stats = group('MixpiDeckStats', 'horizontal', f'0me,{h}f', [
         time,
         typed('NumberBpm', channel, f"{widths['bpm']}me,{h}f", 'MixpiBpm'),
-        typed('NumberRate', channel, f"{widths['rate']}me,{h}f", 'MixpiRate', NumberOfDigits=1),
+        rate_cell(channel, widths['rate'], h),
     ])
     connection(stats.find('Children/NumberBpm'), f'{key},visual_bpm', write=False)
     key_widget = typed('Key', channel, f"{widths['key']}me,{h}f", 'MixpiKey', PairedNotation='true')

@@ -70,11 +70,15 @@
 #MixpiCueTile1[value="1"], #MixpiCueTile2[value="1"] { border-style: solid; }
 #MixpiCueClearTile { color: #ff5468; border-color: #ff5468; }
 #MixpiLoadTitle { color: #8c9ab0; font-size: 13px; padding-left: 6px; }
-#MixpiChip, #MixpiChipPi {
+#MixpiChip, #MixpiChipPi, #MixpiChipUsb, #MixpiChipSync1, #MixpiChipSync2 {
     font-family: "Ubuntu", "Open Sans"; font-size: 13px; font-weight: bold;
     border: 1px solid #b5e15c; border-radius: 4px; color: #b5e15c; margin: 1px 2px;
 }
 #MixpiChipPi { color: #0b1a10; background: #43d17a; border-color: #43d17a; }
+#MixpiChipUsb { color: #8c9ab0; border-color: #2b3646; }
+#MixpiChipSync1 { color: #4aa8ff; border-color: #4aa8ff; }
+#MixpiChipSync2 { color: #ff8f3f; border-color: #ff8f3f; }
+#MixpiRange { color: #8c9ab0; font-size: 13px; font-weight: bold; }
 #MixpiStateChip {
     color: #8c9ab0; background: transparent; border: 1px solid #2b3646; border-radius: 4px;
     font-family: "Ubuntu", "Open Sans"; font-size: 13px; font-weight: bold;

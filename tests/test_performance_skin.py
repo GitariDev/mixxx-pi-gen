@@ -992,6 +992,8 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(row.find('Children/Visual').findtext('Size'), '0me,0me')
 
     def test_deck_info_chips_are_display_only(self):
+        expected = {'ON PI': 'mixpi_on_pi', 'USB': 'mixpi_from_usb', 'SYNC': 'sync_enabled',
+                    'MASTER': 'sync_leader', 'PFL': 'pfl'}
         for channel in (1, 2):
             key = f'[Channel{channel}]'
             heads = [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiTitleStrip'
@@ -999,12 +1001,31 @@ class PerformanceSkinTests(unittest.TestCase):
                      and g.find('Children/TrackProperty').findtext('Channel') == str(channel)]
             self.assertEqual(len(heads), 3)  # Decks, FX, Sampler
             for head in heads:
-                chips = {l.findtext('Text'): l for l in head.iter('Label') if l.findtext('Text') in ('ON PI', 'MASTER', 'PFL')}
-                self.assertEqual({t: l.findtext('Connection/ConfigKey') for t, l in chips.items()},
-                                 {'ON PI': f'{key},mixpi_on_pi', 'MASTER': f'{key},sync_leader', 'PFL': f'{key},pfl'})
-                for l in chips.values():
-                    self.assertEqual(l.findtext('Connection/BindProperty'), 'visible')
-                self.assertEqual([p.findtext('Property') for p in head.iter('TrackProperty')], ['title', 'artist'])
+                children = list(head.find('Children'))
+                chips = [c for c in children if c.tag == 'Label' and c.findtext('Text') in expected]
+                self.assertEqual([c.findtext('Text') for c in chips], list(expected))
+                for c in chips:
+                    # Display only: a label (no touch target), shown while its control is above 0.
+                    self.assertEqual(c.findtext('Connection/ConfigKey'), f'{key},{expected[c.findtext("Text")]}')
+                    self.assertEqual(c.findtext('Connection/BindProperty'), 'visible')
+                    self.assertIsNone(c.find('Connection/Transform'))
+                    for value, shown in ((0, False), (1, True)):
+                        state = {'[Tab],overview': 1, '[Tab],fx': 1, '[Tab],sampler': 1,
+                                 f'{key},{expected[c.findtext("Text")]}': value}
+                        self.assertEqual(self.model.visible(c, state), shown)
+                sync = next(c for c in chips if c.findtext('Text') == 'SYNC')
+                self.assertEqual(sync.findtext('ObjectName'), f'MixpiChipSync{channel}')
+                self.assertFalse(any(e.tag == 'PushButton' for e in head.iter()))  # no touch target
+                # All five fit beside the badge; the title and the artist give way (elide).
+                fixed = sum(size(c)[0] for c in children if size(c)[2] == 'f')
+                self.assertLessEqual(fixed, 400 - 100)
+                title, artist = [c for c in children if c.tag == 'TrackProperty']
+                self.assertEqual((title.findtext('Property'), size(title)[0:3:2]), ('title', (0, 'me')))
+                self.assertEqual((artist.findtext('Property'), size(artist)[0:3:2]), ('artist', (0, 'max')))
+                self.assertEqual((title.findtext('Elide'), artist.findtext('Elide')), ('right', 'right'))
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn('#MixpiChipSync1 { color: #4aa8ff;', style)
+        self.assertIn('#MixpiChipSync2 { color: #ff8f3f;', style)
 
     def tool(self, channel):
         return [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiLoopPanel'][channel - 1]
@@ -1351,6 +1372,23 @@ class PerformanceSkinTests(unittest.TestCase):
         hint = next(l.findtext('Text') for l in self.model.one('MixpiFxSwitch').iter('Label'))
         self.assertEqual(hint, 'Starlight FX pads: 1-3 effects · 4 send to deck')
 
+    def test_tempo_cell_shows_the_fader_range_from_settings(self):
+        cells = [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiRateCell']
+        self.assertEqual(len(cells), 6)
+        for cell in cells:
+            self.assertEqual(cell.findtext('Size'), '60f,48f')
+            caption, rate = list(cell.find('Children'))
+            self.assertEqual((caption.tag, caption.findtext('Text'), caption.findtext('NumberOfDigits')),
+                             ('Number', '±%1%', '0'))
+            self.assertEqual(caption.findtext('Size'), '0me,16f')
+            command, = caption.findall('Connection')
+            self.assertEqual((command.findtext('ConfigKey'), command.findtext('ConnectValueFromWidget')),
+                             ('[MixPi],tempo_range', 'false'))
+            # WNumber: Text.arg(QString::number(value, 'f', NumberOfDigits)).
+            self.assertEqual(caption.findtext('Text').replace('%1', format(8.0, '.0f')), '±8%')
+            self.assertEqual((rate.tag, rate.findtext('ObjectName'), rate.findtext('Size')),
+                             ('NumberRate', 'MixpiRate', '0me,32f'))
+
     # ---------- carried guards ----------
 
     def test_repeat_keeps_original_and_pinned_waveform_definitions(self):
@@ -1578,7 +1616,7 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(group.findtext('Size'), '0me,48f')
             children = list(group.find('Children'))
             self.assertEqual([c.findtext('ObjectName') for c in children],
-                             ['MixpiTimeCell', 'MixpiBpm', 'MixpiRate', 'MixpiKey'])
+                             ['MixpiTimeCell', 'MixpiBpm', 'MixpiRateCell', 'MixpiKey'])
             self.assertEqual([size(c)[0] for c in children], [120, 100, 60, 120])
             time = next(group.iter('NumberPos'))
             self.assertEqual(time.findtext('NumberOfDigits'), '6')

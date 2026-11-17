@@ -1,0 +1,696 @@
+diff --git a/src/library/browse/browsefeature.cpp b/src/library/browse/browsefeature.cpp
+index 818e0e3..03bcb83 100644
+--- a/src/library/browse/browsefeature.cpp
++++ b/src/library/browse/browsefeature.cpp
+@@ -154,6 +154,11 @@ BrowseFeature::BrowseFeature(
+     // Once the TreeItem objects are inserted to models, the models take care of their
+     // deletion.
+ 
++    // R-8: the Samples folder, a fixed place for the Load sample screen.
++    const QString samples = samplesDirectory();
++    QDir().mkpath(samples);
++    pRootItem->appendChild(tr("Samples"), QString(samples + QStringLiteral("/")));
++
+     loadQuickLinks();
+ 
+     for (const QString& quickLinkPath : std::as_const(m_quickLinkList)) {
+@@ -169,6 +174,12 @@ BrowseFeature::BrowseFeature(
+ BrowseFeature::~BrowseFeature() {
+ }
+ 
++// static
++QString BrowseFeature::samplesDirectory() {
++    return QDir(QStandardPaths::writableLocation(QStandardPaths::MusicLocation))
++            .filePath(QStringLiteral("Samples"));
++}
++
+ QVariant BrowseFeature::title() {
+     return QVariant(tr("Computer"));
+ }
+@@ -253,6 +264,16 @@ void BrowseFeature::slotRemoveQuickLink() {
+ void BrowseFeature::refreshMediaLifecycle() {
+ #if defined(__LINUX__)
+     m_pSidebarModel->deferDirectoryProbes();
++    // A drive folder whose drive went away loses its row (the Load sample
++    // screen and Sources then fall back).
++    auto* root = m_pSidebarModel->getRootItem();
++    for (int row = root->childRows() - 1; row >= 0; --row) {
++        const QString path = root->child(row)->getData().toString();
++        if (m_removableDirectories.contains(path) && !QFileInfo(path).isDir()) {
++            m_removableDirectories.removeAll(path);
++            m_pSidebarModel->removeRows(row, 1);
++        }
++    }
+     for (int row = 0; row < m_pSidebarModel->rowCount(); ++row) {
+         const QModelIndex parent = m_pSidebarModel->index(row, 0);
+         if (m_pSidebarModel->data(parent, TreeItemModel::kDataRole).toString() == QUICK_LINK_NODE) {
+@@ -312,6 +333,7 @@ QString BrowseFeature::openRemovableDirectory(const QString& path) {
+     if (!index.isValid()) {
+         std::vector<std::unique_ptr<TreeItem>> items;
+         items.push_back(std::make_unique<TreeItem>(path, QVariant(path)));
++        m_removableDirectories.append(path);
+         const int row = root->childRows();
+         m_pSidebarModel->insertTreeItemRows(std::move(items), row);
+         index = m_pSidebarModel->index(row, 0);
+diff --git a/src/library/browse/browsefeature.h b/src/library/browse/browsefeature.h
+index ab07d0a..cb102f0 100644
+--- a/src/library/browse/browsefeature.h
++++ b/src/library/browse/browsefeature.h
+@@ -40,6 +40,9 @@ class BrowseFeature : public LibraryFeature {
+     void releaseBrowseThread();
+     void refreshMediaLifecycle();
+     QString openRemovableDirectory(const QString& path);
++    // R-8: the Pi's sample folder (~/Music/Samples). It has its own row in
++    // Computer; the Load sample screen opens it first.
++    static QString samplesDirectory();
+ 
+   public slots:
+     void slotAddQuickLink();
+@@ -84,4 +87,6 @@ class BrowseFeature : public LibraryFeature {
+     TreeItem* m_pQuickLinkItem;
+     QStringList m_quickLinkList;
+     QPointer<WLibrarySidebar> m_pSidebarWidget;
++    // Drive folders opened by openRemovableDirectory(), each a top-level row.
++    QStringList m_removableDirectories;
+ };
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+index a038206..abdfb9f 100644
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -6,7 +6,10 @@
+ 
+ #include <QApplication>
+ #include <QDir>
++#include <QFileInfo>
+ #include <QMessageBox>
++#include <QScrollBar>
++#include <QTimer>
+ #include <QMenu>
+ #include "widget/libraryinterface.h"
+ #include "library/sourceorder.h"
+@@ -215,6 +218,8 @@ Library::Library(
+     m_pSidebarSourcesEditing.reset(new ControlObject(
+             ConfigKey("[Library]", "sidebar_sources_editing")));
+     m_pSidebarSourcesEditing->setReadOnly();
++    m_samplesPath = BrowseFeature::samplesDirectory();
++    setupSampleBrowser();
+     new MixpiMedia(this, [this]() -> QWidget* { return m_pLibraryWidget; },
+             [this](const QJsonObject& volume, QObject* receiver, std::function<void(QString)> completion) {
+                 return openRemovableSourceAsync(volume, receiver, std::move(completion));
+@@ -707,7 +712,8 @@ QString Library::openRemovableSource(const QJsonObject& volume) {
+         error = m_pBrowseFeature->openRemovableDirectory(path);
+     }
+     if (error.isEmpty()) {
+-        ControlObject::set(ConfigKey("[MixPi]", "sample_load"), 0);
++        // The drive now shows in Tracks: sample mode ends where it is.
++        leaveSampleMode(false);
+         ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
+         ControlObject::set(ConfigKey("[Tab]", "library"), 1);
+     }
+@@ -759,7 +765,7 @@ std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volum
+                     return;
+                 }
+                 if (result.isEmpty()) {
+-                    ControlObject::set(ConfigKey("[MixPi]", "sample_load"), 0);
++                    owner->leaveSampleMode(false);
+                     ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
+                     ControlObject::set(ConfigKey("[Tab]", "library"), 1);
+                 }
+@@ -832,6 +838,220 @@ void Library::refreshSidebarSourceEdit() {
+             m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")));
+ }
+ 
++void Library::setupSampleBrowser() {
++    // [MixPi],sample_load: the skin's Load sample screen (R-8). Made here,
++    // before the skin, so every write (the skin's buttons, a drive opened
++    // from the media screen) comes through the request below.
++    m_pShownPlace = std::make_unique<LibraryInterface::BrowsePlace>();
++    m_pSampleBrowser = std::make_unique<LibraryInterface::SampleBrowser>();
++    m_pSampleLoad.reset(new ControlObject(ConfigKey("[MixPi]", "sample_load")));
++    m_pSampleSource.reset(new ControlObject(ConfigKey("[MixPi]", "sample_source")));
++    // The skin shows its source buttons once this says they work.
++    m_pSampleSourceAvailable.reset(new ControlObject(
++            ConfigKey("[MixPi]", "sample_source_available")));
++    m_pSampleSourceAvailable->set(1);
++    m_pSampleSourceAvailable->setReadOnly();
++    auto* browser = m_pSampleBrowser.get();
++    browser->capture = [this] {
++        LibraryInterface::BrowsePlace place = *m_pShownPlace;
++        place.search = browseSearch();
++        place.scroll = browseScroll();
++        return place;
++    };
++    browser->show = [this](const LibraryInterface::BrowsePlace& place) {
++        showBrowsePlace(place);
++    };
++    browser->locate = [this](const LibraryInterface::BrowsePlace& place) {
++        return LibraryInterface::locatePlace(m_pSidebarModel, place, SidebarModel::DataRole);
++    };
++    browser->sourcePlace = [this](int source) {
++        return sampleSourcePlace(source);
++    };
++    browser->sourceChanged = [this](int source) {
++        m_pSampleSource->setAndConfirm(source);
++    };
++    m_pSampleLoad->connectValueChangeRequest(this, [this](double value) {
++        const bool on = value > 0;
++        m_pSampleLoad->setAndConfirm(on ? 1 : 0);
++        m_pSampleBrowser->setActive(on);
++    });
++    m_pSampleSource->connectValueChangeRequest(this, [this](double value) {
++        // A push button also writes 0 on release: that changes nothing.
++        if (value > 0) {
++            m_pSampleBrowser->choose(static_cast<int>(value));
++        }
++    });
++    // A drive pulled out (its rows go) while sample mode shows it: back to
++    // the Samples folder, once the model has settled.
++    auto changed = [this] {
++        QTimer::singleShot(0, this, [this] {
++            if (m_pSampleBrowser) {
++                m_pSampleBrowser->sourcesChanged();
++            }
++        });
++    };
++    connect(m_pSidebarModel, &QAbstractItemModel::rowsRemoved, this, changed);
++    connect(m_pSidebarModel, &QAbstractItemModel::modelReset, this, changed);
++}
++
++void Library::leaveSampleMode(bool restoreTracks) {
++    if (m_pSampleBrowser) {
++        m_pSampleBrowser->leave(restoreTracks);
++    }
++    if (m_pSampleLoad) {
++        m_pSampleLoad->setAndConfirm(0);
++    }
++}
++
++void Library::noteBrowsePlaceShown() {
++    if (!m_pSidebarWidget || !m_pShownPlace) {
++        return;
++    }
++    // The row that was just activated is the current one.
++    *m_pShownPlace = LibraryInterface::browsePlace(
++            m_pSidebarWidget->currentIndex(), SidebarModel::DataRole);
++    if (m_pSampleBrowser) {
++        m_pSampleBrowser->shown(*m_pShownPlace);
++    }
++}
++
++QModelIndex Library::sourceRow(const QString& id) const {
++    for (const auto& source : m_sidebarSources) {
++        if (source.id == id && source.feature) {
++            const int row = m_features.indexOf(source.feature);
++            return row < 0 ? QModelIndex() : m_pSidebarModel->index(row, 0);
++        }
++    }
++    return {};
++}
++
++QList<QModelIndex> Library::driveRows() {
++    QStringList keys;
++    QList<QModelIndex> rows;
++    auto add = [&keys, &rows](const QString& path, const QModelIndex& index) {
++        const QString key = QDir::cleanPath(path);
++        if (!path.isEmpty() && !keys.contains(key)) {
++            keys.append(key);
++            rows.append(index);
++        }
++    };
++    // A rekordbox drive: one row per drive under Rekordbox; its data starts
++    // with the mount path.
++    const QModelIndex rekordbox = sourceRow(QStringLiteral("RekordboxFeature"));
++    for (int row = 0; rekordbox.isValid() && row < m_pSidebarModel->rowCount(rekordbox); ++row) {
++        const QModelIndex index = m_pSidebarModel->index(row, 0, rekordbox);
++        add(index.data(SidebarModel::DataRole).toList().value(0).toString(), index);
++    }
++    // Any other drive: the Computer row it was opened in. The fixed rows
++    // (Quick Links, Removable Devices, /, Samples) are not drives.
++    const QModelIndex computer = sourceRow(QStringLiteral("BrowseFeature"));
++    const QStringList fixed{QStringLiteral(QUICK_LINK_NODE), QStringLiteral(DEVICE_NODE),
++            QDir::cleanPath(QDir::rootPath()), QDir::cleanPath(m_samplesPath)};
++    for (int row = 0; computer.isValid() && row < m_pSidebarModel->rowCount(computer); ++row) {
++        const QModelIndex index = m_pSidebarModel->index(row, 0, computer);
++        const QVariant data = index.data(SidebarModel::DataRole);
++        const QString path = data.userType() == QMetaType::QString ? data.toString() : QString();
++        if (!path.isEmpty() && !fixed.contains(QDir::cleanPath(path)) &&
++                !path.startsWith(QStringLiteral("::")) && QFileInfo(path).isDir()) {
++            add(path, index);
++        }
++    }
++    // Plug-in order: the order in which they were first seen.
++    for (int position = m_driveOrder.size() - 1; position >= 0; --position) {
++        if (!keys.contains(m_driveOrder.at(position))) {
++            m_driveOrder.removeAt(position);
++        }
++    }
++    for (const auto& key : std::as_const(keys)) {
++        if (!m_driveOrder.contains(key)) {
++            m_driveOrder.append(key);
++        }
++    }
++    QList<QModelIndex> ordered;
++    for (const auto& key : std::as_const(m_driveOrder)) {
++        ordered.append(rows.at(keys.indexOf(key)));
++    }
++    return ordered;
++}
++
++LibraryInterface::BrowsePlace Library::sampleSourcePlace(int source) {
++    QModelIndex index;
++    switch (source) {
++    case LibraryInterface::SampleBrowser::kSamples: {
++        // The Samples folder's row under Computer.
++        const QModelIndex computer = sourceRow(QStringLiteral("BrowseFeature"));
++        for (int row = 0; computer.isValid() && row < m_pSidebarModel->rowCount(computer); ++row) {
++            const QModelIndex child = m_pSidebarModel->index(row, 0, computer);
++            const QVariant data = child.data(SidebarModel::DataRole);
++            if (data.userType() == QMetaType::QString &&
++                    QDir::cleanPath(data.toString()) == QDir::cleanPath(m_samplesPath)) {
++                index = child;
++                break;
++            }
++        }
++        break;
++    }
++    case LibraryInterface::SampleBrowser::kCollection:
++        index = sourceRow(QStringLiteral("MixxxLibraryFeature"));
++        break;
++    case LibraryInterface::SampleBrowser::kDrive: {
++        const auto drives = driveRows();
++        if (!drives.isEmpty()) {
++            index = drives.first();
++        }
++        break;
++    }
++    case LibraryInterface::SampleBrowser::kRecordings:
++        index = sourceRow(QStringLiteral("RecordingFeature"));
++        break;
++    default:
++        break;
++    }
++    return index.isValid() ? LibraryInterface::browsePlace(index, SidebarModel::DataRole)
++                           : LibraryInterface::BrowsePlace{};
++}
++
++void Library::showBrowsePlace(const LibraryInterface::BrowsePlace& place) {
++    if (!m_pSidebarWidget) {
++        return;
++    }
++    const QModelIndex index = LibraryInterface::locatePlace(
++            m_pSidebarModel, place, SidebarModel::DataRole);
++    if (index.isValid()) {
++        m_pSidebarWidget->selectIndex(index);
++        m_pSidebarModel->clicked(index);
++        *m_pShownPlace = LibraryInterface::browsePlace(index, SidebarModel::DataRole);
++    } else {
++        // The place is gone (a drive pulled out): the start source.
++        m_pSidebarModel->activateDefaultSelection();
++    }
++    // Each place has its own search text: the box and the list.
++    emit restoreSearch(place.search);
++    emit search(place.search);
++    // The list has its rows after this event.
++    const int scroll = place.scroll;
++    setBrowseScroll(scroll);
++    QTimer::singleShot(0, this, [this, scroll] { setBrowseScroll(scroll); });
++}
++
++QString Library::browseSearch() const {
++    auto* pView = m_pLibraryWidget ? m_pLibraryWidget->getCurrentTrackTableView() : nullptr;
++    auto* pModel = pView ? dynamic_cast<TrackModel*>(pView->model()) : nullptr;
++    return pModel ? pModel->currentSearch() : QString();
++}
++
++int Library::browseScroll() const {
++    auto* pView = m_pLibraryWidget ? m_pLibraryWidget->getCurrentTrackTableView() : nullptr;
++    return pView ? pView->verticalScrollBar()->value() : 0;
++}
++
++void Library::setBrowseScroll(int scroll) {
++    auto* pView = m_pLibraryWidget ? m_pLibraryWidget->getCurrentTrackTableView() : nullptr;
++    if (pView) {
++        pView->verticalScrollBar()->setValue(scroll);
++    }
++}
++
+ void Library::onPlayerManagerTrackAnalyzerProgress(
+         TrackId /*trackId*/, AnalyzerProgress /*analyzerProgress*/) {
+     if (m_pAnalysisFeature) {
+@@ -858,6 +1078,7 @@ void Library::slotShowTrackModel(QAbstractItemModel* model) {
+     emit showTrackModel(model);
+     emit switchToView(m_sTrackViewName);
+     emit restoreSearch(trackModel->currentSearch());
++    noteBrowsePlaceShown();
+ }
+ 
+ void Library::slotSwitchToView(const QString& view) {
+@@ -866,6 +1087,7 @@ void Library::slotSwitchToView(const QString& view) {
+         m_pSidebarWidget->noteSourceShown();
+     }
+     emit switchToView(view);
++    noteBrowsePlaceShown();
+ }
+ 
+ void Library::slotLoadTrack(TrackPointer pTrack) {
+diff --git a/src/library/library.h b/src/library/library.h
+index e2c6e50..1170da0 100644
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <functional>
++#include <memory>
+ 
+ #include <QFont>
+ #include <QList>
+@@ -38,6 +39,11 @@ class WLibrary;
+ class QAbstractItemModel;
+ class QJsonObject;
+ class QMenu;
++class QModelIndex;
++namespace LibraryInterface {
++struct BrowsePlace;
++class SampleBrowser;
++} // namespace LibraryInterface
+ 
+ #ifdef __ENGINEPRIME__
+ namespace mixxx {
+@@ -183,6 +189,28 @@ class Library: public QObject {
+     QString openRemovableSource(const QJsonObject& volume);
+     std::function<void()> openRemovableSourceAsync(const QJsonObject& volume,
+             QObject* receiver, std::function<void(QString)> completion);
++    // R-8: the Load sample screen ([MixPi],sample_load 1) shows the one
++    // library list at its own place; Tracks gets its place back after.
++    void setupSampleBrowser();
++    void leaveSampleMode(bool restoreTracks);
++    void noteBrowsePlaceShown();
++    LibraryInterface::BrowsePlace sampleSourcePlace(int source);
++    void showBrowsePlace(const LibraryInterface::BrowsePlace& place);
++    QString browseSearch() const;
++    int browseScroll() const;
++    void setBrowseScroll(int scroll);
++    // The top-level sidebar row of a source, by identity (invalid: absent).
++    QModelIndex sourceRow(const QString& id) const;
++    // Each open drive once, in plug-in order: its rekordbox row, else the
++    // Computer row it was opened in.
++    QList<QModelIndex> driveRows();
++    std::unique_ptr<LibraryInterface::SampleBrowser> m_pSampleBrowser;
++    std::unique_ptr<LibraryInterface::BrowsePlace> m_pShownPlace;
++    QScopedPointer<ControlObject> m_pSampleLoad;
++    QScopedPointer<ControlObject> m_pSampleSource;
++    QScopedPointer<ControlObject> m_pSampleSourceAvailable;
++    QString m_samplesPath;
++    QStringList m_driveOrder;
+     QList<SidebarSource> m_sidebarSources;
+     QPointer<WLibrarySidebar> m_pSidebarWidget;
+     QPointer<KeyboardEventFilter> m_pSidebarKeyboard;
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+index daf3e0f..18af07e 100644
+--- a/src/widget/libraryinterface.h
++++ b/src/widget/libraryinterface.h
+@@ -19,11 +19,13 @@
+ #include <QMenu>
+ #include <QMap>
+ #include <QPair>
++#include <QPersistentModelIndex>
+ #include <QPointer>
+ #include <QPushButton>
+ #include <QScrollArea>
+ #include <QScrollBar>
+ #include <QTreeView>
++#include <QVariant>
+ #include <QVBoxLayout>
+ #include <QWidgetAction>
+ 
+@@ -337,8 +339,10 @@ inline QPoint actionsMenuPosition(QWidget* view, QPoint fallback) {
+     return fallback;
+ }
+ 
++// loadToPad, when given, adds "Load to a sampler pad…" (R-8): it opens the
++// skin's Choose pad sheet for the selected row.
+ inline QMenu* actionsMenu(QWidget* parent, QMenu* decks, QMenu* original,
+-        std::function<void()> arrange) {
++        std::function<void()> arrange, std::function<void()> loadToPad = {}) {
+     auto* menu = new QMenu(parent);
+     menu->setAttribute(Qt::WA_DeleteOnClose);
+     auto* load = menu->addMenu(QObject::tr("Load"));
+@@ -346,6 +350,13 @@ inline QMenu* actionsMenu(QWidget* parent, QMenu* decks, QMenu* original,
+     if (decks) {
+         load->addActions(decks->actions());
+     }
++    if (loadToPad) {
++        auto* pad = menu->addAction(QObject::tr("Load to a sampler pad\u2026"));
++        pad->setObjectName(QStringLiteral("MixpiLoadToPad"));
++        // One row only: the pads load the selected track, like a deck.
++        pad->setEnabled(load->isEnabled());
++        QObject::connect(pad, &QAction::triggered, menu, std::move(loadToPad));
++    }
+     QObject::connect(menu->addAction(QObject::tr("Arrange columns")),
+             &QAction::triggered, menu, std::move(arrange));
+     menu->addSeparator();
+@@ -688,4 +699,214 @@ class SourceEditList final : public QWidget {
+     QString m_startSource;
+ };
+ 
++// R-8: the Load sample screen shares the one library widget with Tracks. Each
++// keeps its own place: the source (a sidebar row), the search text and the
++// scroll position. Entering sample mode remembers Tracks' place and shows the
++// sample browser's last place (the first time: the Samples folder); leaving
++// remembers the sample place and shows Tracks' place again.
++struct BrowsePlace {
++    // The sidebar row that shows the list. A reset of the sidebar model (a
++    // child feature rebuilding its tree, a drive coming or going) ends a
++    // persistent index, so the path from the top finds the row again.
++    QPersistentModelIndex source;
++    QVariantList path;
++    QString search;
++    int scroll = 0;
++};
++
++// One step of a sidebar path: the row's data (a folder path, a playlist id,
++// a drive) when it has any, else its label (a source's title).
++inline QVariant sourcePathStep(const QModelIndex& index, int dataRole) {
++    const QVariant data = index.data(dataRole);
++    if (data.isValid() && !(data.userType() == QMetaType::QString && data.toString().isEmpty())) {
++        return data;
++    }
++    return index.data(Qt::DisplayRole);
++}
++
++inline QVariantList sourcePath(const QModelIndex& index, int dataRole) {
++    QVariantList path;
++    for (QModelIndex step = index; step.isValid(); step = step.parent()) {
++        path.prepend(sourcePathStep(step, dataRole));
++    }
++    return path;
++}
++
++inline BrowsePlace browsePlace(const QModelIndex& index, int dataRole) {
++    return BrowsePlace{QPersistentModelIndex(index), sourcePath(index, dataRole), {}, 0};
++}
++
++// The row a place names now: its persistent index while it lives, else the
++// row found by its path. Invalid when it is gone (a drive pulled out).
++inline QModelIndex locatePlace(const QAbstractItemModel* model, const BrowsePlace& place,
++        int dataRole) {
++    if (place.source.isValid() && place.source.model() == model) {
++        return place.source;
++    }
++    if (!model || place.path.isEmpty()) {
++        return {};
++    }
++    QModelIndex parent;
++    for (const QVariant& step : place.path) {
++        QModelIndex found;
++        for (int row = 0; row < model->rowCount(parent); ++row) {
++            const QModelIndex candidate = model->index(row, 0, parent);
++            if (sourcePathStep(candidate, dataRole) == step) {
++                found = candidate;
++                break;
++            }
++        }
++        if (!found.isValid()) {
++            return {};
++        }
++        parent = found;
++    }
++    return parent;
++}
++
++class SampleBrowser {
++  public:
++    // [MixPi],sample_source values.
++    enum Source {
++        kNoSource = 0,
++        kSamples = 1,
++        kCollection = 2,
++        kDrive = 3,
++        kRecordings = 4,
++    };
++    // What the list shows now.
++    std::function<BrowsePlace()> capture;
++    // Shows a place. A place whose row is gone shows the start source.
++    std::function<void(const BrowsePlace&)> show;
++    // The row a place names now (invalid: gone).
++    std::function<QModelIndex(const BrowsePlace&)> locate;
++    // The place of a fixed source; its row is invalid when it is not there
++    // (no open drive).
++    std::function<BrowsePlace(int)> sourcePlace;
++    // The source shown changed (0: a list picked in Sources).
++    std::function<void(int)> sourceChanged;
++
++    bool active() const {
++        return m_active;
++    }
++    int source() const {
++        return m_source;
++    }
++
++    void setActive(bool active) {
++        if (active) {
++            enter();
++        } else {
++            leave(true);
++        }
++    }
++
++    void enter() {
++        if (m_active) {
++            return;
++        }
++        m_tracks = capture ? capture() : BrowsePlace{};
++        m_active = true;
++        if (m_hasSample && exists(m_sample)) {
++            place(m_sample, m_sampleSource);
++        } else {
++            choose(kSamples);
++        }
++    }
++
++    // Leaves sample mode. restoreTracks false: what is shown now stays (a
++    // drive opened from the media screen shows in Tracks).
++    void leave(bool restoreTracks) {
++        if (!m_active) {
++            return;
++        }
++        m_sample = capture ? capture() : BrowsePlace{};
++        m_hasSample = true;
++        m_sampleSource = m_source;
++        m_active = false;
++        setSource(kNoSource);
++        if (restoreTracks) {
++            apply(m_tracks);
++        }
++    }
++
++    // A source button. Returns the source shown: an open drive that is not
++    // there falls back to the Samples folder.
++    int choose(int source) {
++        if (!m_active || source < kSamples || source > kRecordings) {
++            return m_source;
++        }
++        BrowsePlace where = sourcePlace ? sourcePlace(source) : BrowsePlace{};
++        if (!exists(where) && source != kSamples) {
++            source = kSamples;
++            where = sourcePlace ? sourcePlace(source) : BrowsePlace{};
++        }
++        place(where, source);
++        return m_source;
++    }
++
++    // A list was opened another way (picked in Sources): which fixed source
++    // it is, if any. It is now the sample browser's place.
++    void shown(const BrowsePlace& where) {
++        if (!m_active || m_applying) {
++            return;
++        }
++        m_shown = where;
++        const QModelIndex index = locate ? locate(where) : QModelIndex();
++        int source = kNoSource;
++        for (int candidate = kSamples; candidate <= kRecordings && sourcePlace; ++candidate) {
++            const QModelIndex fixed = locate ? locate(sourcePlace(candidate)) : QModelIndex();
++            if (index.isValid() && fixed == index) {
++                source = candidate;
++                break;
++            }
++        }
++        setSource(source);
++    }
++
++    // The sidebar rows changed. A sample place that went away (a drive
++    // pulled out) falls back to the Samples folder.
++    void sourcesChanged() {
++        if (m_active && !m_applying && m_source != kSamples && !exists(m_shown)) {
++            choose(kSamples);
++        }
++    }
++
++  private:
++    bool exists(const BrowsePlace& where) const {
++        return locate && locate(where).isValid();
++    }
++
++    void place(const BrowsePlace& where, int source) {
++        m_shown = where;
++        setSource(source);
++        apply(where);
++    }
++
++    void apply(const BrowsePlace& where) {
++        if (!show) {
++            return;
++        }
++        m_applying = true;
++        show(where);
++        m_applying = false;
++    }
++
++    void setSource(int source) {
++        m_source = source;
++        if (sourceChanged) {
++            sourceChanged(source);
++        }
++    }
++
++    bool m_active = false;
++    bool m_applying = false;
++    bool m_hasSample = false;
++    int m_source = kNoSource;
++    int m_sampleSource = kSamples;
++    BrowsePlace m_tracks;
++    BrowsePlace m_sample;
++    BrowsePlace m_shown;
++};
++
+ }
+diff --git a/src/widget/wtracktableview.cpp b/src/widget/wtracktableview.cpp
+index a7f3948..ac8ff39 100644
+--- a/src/widget/wtracktableview.cpp
++++ b/src/widget/wtracktableview.cpp
+@@ -613,6 +613,15 @@ void WTrackTableView::showTrackMenu(const QPoint pos, const QModelIndex& index)
+     if (m_pLibraryActions) {
+         m_pLibraryActions->close();
+     }
++    // R-8: "Load to a sampler pad…" opens the MixPi skin's Choose pad sheet
++    // ([MixPi],screen 4) over this list; its pads load the selected row.
++    std::function<void()> loadToPad;
++    if (ControlObject::getControl(ConfigKey("[MixPi]", "screen"), ControlFlag::NoWarnIfMissing)) {
++        loadToPad = [] {
++            ControlObject::set(ConfigKey("[MixPi]", "sample_pad"), 0);
++            ControlObject::set(ConfigKey("[MixPi]", "screen"), 4);
++        };
++    }
+     m_pLibraryActions = LibraryInterface::actionsMenu(this,
+             indices.isEmpty() ? nullptr : m_pTrackMenu->deckLoadMenu(),
+             m_pTrackMenu.get(), [this] {
+@@ -620,7 +629,7 @@ void WTrackTableView::showTrackMenu(const QPoint pos, const QModelIndex& index)
+                 if (header) {
+                     header->showColumnArrangement();
+                 }
+-            });
++            }, std::move(loadToPad));
+     connect(m_pLibraryActions, &QMenu::aboutToHide, this, [this] {
+         emit trackMenuVisible(false);
+     });

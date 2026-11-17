@@ -41,6 +41,8 @@ MIXXX_PATCHES=(
     mixxx-source-groups.patch
     mixxx-media-screen-fixes.patch
     mixxx-settings-fixes.patch
+    mixxx-scan-strip-fixes.patch
+    mixxx-sources-edit-done.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

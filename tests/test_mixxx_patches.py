@@ -74,6 +74,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-effects-save.patch",
             "mixxx-save-within-second.patch",
             "mixxx-agreed-controls.patch",
+            "mixxx-sources-menu-fixes.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -90,6 +91,7 @@ PREREQUISITES = {
     "mixxx-effects-save.patch": ["mixxx-save-on-change.patch"],
     "mixxx-save-within-second.patch": ["mixxx-save-on-change.patch"],
     "mixxx-agreed-controls.patch": ["mixxx-effects-save.patch"],
+    "mixxx-sources-menu-fixes.patch": ["mixxx-sources-menu.patch", "mixxx-media-agreed.patch"],
     "mixxx-scan-strip-fixes.patch": ["mixxx-scan-progress.patch"],
     "mixxx-sources-edit-done.patch": ["mixxx-source-groups.patch"],
     "mixxx-settings-fixes.patch": ["mixxx-performance-settings.patch", "mixxx-acceptance-fixes.patch"],

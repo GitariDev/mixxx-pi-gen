@@ -49,6 +49,7 @@ MIXXX_PATCHES=(
     mixxx-effects-save.patch
     mixxx-save-within-second.patch
     mixxx-agreed-controls.patch
+    mixxx-sources-menu-fixes.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

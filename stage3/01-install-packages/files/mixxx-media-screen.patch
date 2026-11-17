@@ -1,0 +1,1546 @@
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+index ec45c9f..977939a 100644
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <algorithm>
+ #include <functional>
+ #include <memory>
+ #include <fstream>
+@@ -18,6 +19,7 @@
+ #include <QPointer>
+ #include <QProcess>
+ #include <QPushButton>
++#include <QSet>
+ #include <QTimer>
+ #include <QVBoxLayout>
+ 
+@@ -29,7 +31,11 @@
+ #include "library/mixpicontrolleddialog.h"
+ #include "library/mixpimediadialog.h"
+ #include "library/mixpimediaactivity.h"
++#include "library/mixpimediapage.h"
+ #include "library/media/mediause.h"
++#include "mixer/playerinfo.h"
++#include "track/track.h"
++#include "widget/wlabel.h"
+ 
+ class MixpiMedia final : public QObject {
+   public:
+@@ -41,7 +47,9 @@ class MixpiMedia final : public QObject {
+               m_refreshSources(std::move(refreshSources)),
+               m_available(new ControlObject(ConfigKey("[MixPi]", "media_available"))),
+               m_load(new ControlPushButton(ConfigKey("[MixPi]", "media_load"))),
+-              m_eject(new ControlPushButton(ConfigKey("[MixPi]", "media_eject"))) {
++              m_eject(new ControlPushButton(ConfigKey("[MixPi]", "media_eject"))),
++              m_state(new ControlObject(ConfigKey("[MixPi]", "media_state"))) {
++        m_state->setReadOnly();
+         m_load->connectValueChangeRequest(this, [this](double value) {
+             if (value > 0) {
+                 show(false);
+@@ -64,18 +72,32 @@ class MixpiMedia final : public QObject {
+ #else
+         m_available->set(0);
+ #endif
++        // R-4: the mount table every 2 s (the inventory runs only when it
++        // changes), the players, the USB chip's state and name.
++        auto* mediaTimer = new QTimer(this);
++        connect(mediaTimer, &QTimer::timeout, this, [this] { tick(); });
++        mediaTimer->start(2000);
++        QTimer::singleShot(0, this, [this] { tick(); });
+     }
+ 
+     ~MixpiMedia() override {
+         if (m_dialog) {
+             m_dialog->close();
+         }
++        delete m_page.data();
++        delete m_strip.data();
+     }
+ 
+     static QString helper() {
+         return QStringLiteral("/opt/mixpi-skin-tools/mixpi-media-inventory.py");
+     }
+ 
++    // A track is decoded from its copy in Pi memory right now (R-5 answers this).
++    static bool servedFromCopy(const QString& location) {
++        Q_UNUSED(location);
++        return false;
++    }
++
+     static QJsonArray entries(const QJsonObject& snapshot, bool eject) {
+         if (eject) {
+             return snapshot.value("drives").toArray();
+@@ -133,6 +155,8 @@ class MixpiMedia final : public QObject {
+     }
+ 
+   private:
++    // Engine B (the controlled profile). Kept in the source; the Media page
++    // does not open it (R-4, R-6: engine A only).
+     void showControlled(bool mount, const QString& token = {}) {
+         if (!m_controlled) {
+             m_controlled = MixpiControlledMedia::openProduction();
+@@ -191,53 +215,326 @@ class MixpiMedia final : public QObject {
+         process->start(QStringLiteral("/usr/bin/python3"), {helper()});
+     }
+ 
++    // [MixPi],media_load (the USB chip) and media_eject open the Media page.
++    // The old Load / Eject and controlled dialogs stay in the source, but
++    // nothing opens them (R-4).
+     void show(bool) {
+-        if (m_dialog) {
+-            m_dialog->raise();
+-            m_dialog->activateWindow();
++        if (!ensureWidgets()) {
+             return;
+         }
+-        auto* parent = m_parent();
+-        if (!parent || m_available->get() != 1) {
+-            return;
++        m_page->open();
++        observeNow();
++        refresh();
++    }
++
++    QWidget* window() const {
++        auto* widget = m_parent ? m_parent() : nullptr;
++        return widget ? widget->window() : nullptr;
++    }
++
++    static ControlObject* control(const QString& group, const QString& item) {
++        return ControlObject::getControl(ConfigKey(group, item), ControlFlag::NoWarnIfMissing);
++    }
++
++    bool ensureWidgets() {
++        auto* host = window();
++        if (!host) {
++            return false;
++        }
++        if (m_page && m_page->parentWidget() != host) {
++            delete m_page.data();
++            delete m_strip.data();
++        }
++        if (!m_page) {
++            m_page = new MixpiMediaPage(host, [](double value) {
++                if (auto* screen = control(QStringLiteral("[MixPi]"), QStringLiteral("screen"))) {
++                    screen->set(value);
++                }
++            });
++            m_page->visibilityChanged = [this](bool) { refresh(); };
++            m_page->openRequested = [this](QString identity, QString token) { openVolume(identity, token); };
++            m_page->copyRequested = [](QString) {
++                // The existing copy tool, started the way the desktop bar starts it.
++                if (!QProcess::startDetached(QStringLiteral("/usr/bin/swaymsg"),
++                            {QStringLiteral("workspace \"2:Desktop\"; exec /usr/local/bin/mixpi-media")})) {
++                    QProcess::startDetached(QStringLiteral("/usr/local/bin/mixpi-media"), {});
++                }
++            };
++            m_strip = new MixpiBottomStrip(host);
++            m_strip->loadRequested = [this](QString identity) { loadFromPing(identity); };
++            m_strip->dismissed = [this](QString identity) { m_pinged.insert(identity); };
++            m_screen = nullptr;
++            connectPageHooks();
++            m_page->setEjectAvailable(ejectAvailable());
++        }
++        if (auto* screen = control(QStringLiteral("[MixPi]"), QStringLiteral("screen"))) {
++            if (m_screen != screen) {
++                m_screen = screen;
++                const QPointer<MixpiMediaPage> page(m_page.data());
++                connect(screen, &ControlObject::valueChanged, m_page.data(), [page](double value) {
++                    if (page) {
++                        page->screenChanged(value);
++                    }
++                });
++            }
+         }
+-        if (m_controlled && m_controlled->locked()) {
+-            showControlled(false);
++        return true;
++    }
++
++    // Eject (R-6) hooks the page here.
++    void connectPageHooks() {
++    }
++
++    bool ejectAvailable() const {
++        return false;
++    }
++
++    void observeNow() {
++        if (m_observing || m_available->get() != 1) {
+             return;
+         }
+-        auto* dialog = new MixpiMediaDialog(parent,
+-                [this](MixpiMediaDialog::Receive receive) { observe(std::move(receive)); },
+-                m_openSource,
+-                [this](bool mount, QString token) {
+-                    m_dialog = nullptr;
+-                    showControlled(mount, token);
+-                }, m_opened, [](const QJsonObject& drive) {
+-#ifdef __linux__
+-                    QStringList states;
+-                    for (const auto& value : drive.value("volumes").toArray()) {
+-                        const auto volume = value.toObject();
+-                        const auto selected = inspectSelected(volume);
+-                        const auto path = volume.value("mount").toObject().value("path").toString();
+-                        const auto binding = mixxx::media::observePath(path.toStdString());
+-                        if (selected.revision.empty() || binding.generation.empty() ||
+-                                binding.source != selected.revision) {
+-                            states.append(QStringLiteral("This drive changed or could not be checked."));
+-                            continue;
+-                        }
+-                        states.append(mixxx::media::activityText(
+-                                mixxx::media::registry().observe(binding.generation),
+-                                mixxx::media::copyService().transferStatus(binding)));
++        m_observing = true;
++        observe([this](QJsonObject snapshot) {
++            m_observing = false;
++            if (snapshot.contains("error") || snapshot.value("version").toInt() != 1 ||
++                    !snapshot.value("drives").isArray()) {
++                m_problem = QStringLiteral("The USB drives could not be checked. Plug the drive in again.");
++                qInfo() << "MixPi media inventory:" << snapshot.value("error").toString();
++                refresh();
++                return;
++            }
++            m_problem.clear();
++            m_snapshot = snapshot;
++            QSet<QString> present;
++            for (const auto& value : snapshot.value("drives").toArray()) {
++                const auto drive = value.toObject();
++                const auto identity = drive.value("identity").toString();
++                present.insert(identity);
++                // Q1: a drive that was not here before gets the insert ping,
++                // unless it is open already or the Media page is in front.
++                if (mixpi_media::shouldPing(m_seenFirst, m_present.contains(identity),
++                            m_pinged.contains(identity), !drive.value("volumes").toArray().isEmpty(),
++                            driveOpened(drive), m_page && m_page->isVisible()) &&
++                        ensureWidgets()) {
++                    m_pinged.insert(identity);
++                    const auto model = describe(drive);
++                    m_strip->showPing(identity, model.name,
++                            mixpi_media::contentText(model) + QStringLiteral(" · ") +
++                                    mixpi_media::sizeText(model.size));
++                }
++            }
++            for (const auto& identity : std::as_const(m_present)) {
++                if (!present.contains(identity)) {
++                    m_pinged.remove(identity);
++                    if (m_strip) {
++                        m_strip->driveGone(identity);
+                     }
+-                    states.removeDuplicates();
+-                    return states.isEmpty() ? QStringLiteral("Not mounted.") :
+-                            states.join(QStringLiteral(" | "));
+-#else
+-                    Q_UNUSED(drive);
+-                    return QStringLiteral("Live usage unavailable on this platform");
++                }
++            }
++            m_present = present;
++            m_seenFirst = true;
++            refresh();
++        });
++    }
++
++    void tick() {
++        QFile mountinfo(QStringLiteral("/proc/self/mountinfo"));
++        if (mountinfo.open(QIODevice::ReadOnly)) {
++            const auto mounts = mountinfo.readAll();
++            if (mounts != m_mounts) {
++                m_mounts = mounts;
++                observeNow();
++            }
++        }
++        if (!m_safeIdentity.isEmpty() && !m_safeSysfs.isEmpty() && !QFileInfo::exists(m_safeSysfs)) {
++            // Q2: the drive was pulled out.
++            if (m_strip) {
++                m_strip->driveGone(m_safeIdentity);
++            }
++            m_present.remove(m_safeIdentity);
++            m_safeIdentity.clear();
++            m_safeSysfs.clear();
++            observeNow();
++        }
++        refresh();
++    }
++
++    bool driveOpened(const QJsonObject& drive) const {
++        for (const auto& value : drive.value("volumes").toArray()) {
++            if (m_opened->contains(value.toObject().value("token").toString())) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    static bool under(const QString& location, const QString& path) {
++        if (path.isEmpty()) {
++            return false;
++        }
++        const QString folder = path.endsWith(QLatin1Char('/')) ? path : path + QLatin1Char('/');
++        return location.startsWith(folder);
++    }
++
++    MixpiMediaDrive describe(const QJsonObject& drive) const {
++        MixpiMediaDrive model;
++        model.identity = drive.value("identity").toString();
++        model.size = static_cast<qint64>(drive.value("size").toDouble());
++        QStringList names;
++        QStringList paths;
++        for (const auto& value : drive.value("volumes").toArray()) {
++            const auto volume = value.toObject();
++            MixpiMediaVolume item;
++            item.token = volume.value("token").toString();
++            item.label = volume.value("label").toString();
++            item.path = volume.value("mount").toObject().value("path").toString();
++            item.opened = m_opened->contains(item.token);
++            model.opened = model.opened || item.opened;
++            model.volumes.append(item);
++            names.append(item.label);
++            paths.append(item.path);
++#ifdef __linux__
++            if (!inspectSelected(volume).database.empty()) {
++                model.rekordbox = true;
++            }
++            const auto binding = mixxx::media::observePath(item.path.toStdString());
++            if (!binding.generation.empty()) {
++                const auto observed = mixxx::media::registry().observe(binding.generation);
++                for (const auto count : observed.users) {
++                    model.busy = model.busy || count > 0;
++                }
++            }
+ #endif
+-                });
+-        m_dialog = dialog;
+-        dialog->show();
++        }
++        names.removeDuplicates();
++        model.name = names.isEmpty() ? QStringLiteral("USB drive") : names.join(QStringLiteral(" / "));
++        if (model.identity == m_safeIdentity && names.isEmpty() && !m_safeName.isEmpty()) {
++            model.name = m_safeName;
++        }
++        const auto loaded = PlayerInfo::instance().getLoadedTracks();
++        for (auto it = loaded.constBegin(); it != loaded.constEnd(); ++it) {
++            if (!it.value()) {
++                continue;
++            }
++            const QString location = it.value()->getLocation();
++            bool onDrive = false;
++            for (const auto& path : std::as_const(paths)) {
++                onDrive = onDrive || under(location, path);
++            }
++            if (!onDrive) {
++                continue;
++            }
++            MixpiMediaUser user;
++            user.group = it.key();
++            user.title = it.value()->getTitle();
++            if (user.title.isEmpty()) {
++                user.title = QFileInfo(location).fileName();
++            }
++            const auto* play = control(it.key(), QStringLiteral("play"));
++            user.playing = play && play->get() > 0;
++            user.onCopy = servedFromCopy(location);
++            model.users.append(user);
++        }
++        std::sort(model.users.begin(), model.users.end(),
++                [](const MixpiMediaUser& a, const MixpiMediaUser& b) { return a.group < b.group; });
++        model.state = mixpi_media::idleState(model);
++        if (model.identity == m_ejectingIdentity) {
++            model.state = MixpiMediaState::Ejecting;
++        } else if (model.identity == m_safeIdentity) {
++            model.state = MixpiMediaState::SafeToRemove;
++        }
++        return model;
++    }
++
++    // State for the chip and the page: cheap (no inventory run).
++    void refresh() {
++        QList<MixpiMediaDrive> drives;
++        for (const auto& value : m_snapshot.value("drives").toArray()) {
++            const auto drive = describe(value.toObject());
++            if (drive.volumes.isEmpty() && drive.identity != m_safeIdentity &&
++                    drive.identity != m_ejectingIdentity) {
++                continue; // not mounted: nothing Mixxx can open
++            }
++            drives.append(drive);
++        }
++        m_drives = drives;
++        m_state->setAndConfirm(static_cast<double>(mixpi_media::chipState(drives)));
++        // The skin's USB chip: a Label named MixpiUsbName shows the drive name.
++        mixpiSetNamedLabelText<WLabel>(window(), QStringLiteral("MixpiUsbName"), mixpi_media::chipName(drives));
++        if (m_page) {
++            m_page->setEjectAvailable(ejectAvailable());
++            if (m_page->isVisible()) {
++                m_page->setDrives(drives, m_problem);
++            }
++        }
++        refreshHandover();
++    }
++
++    // Handover (R-5) fills the right column.
++    void refreshHandover() {
++    }
++
++    QJsonObject findVolume(const QString& token) const {
++        for (const auto& drive : m_snapshot.value("drives").toArray()) {
++            for (const auto& value : drive.toObject().value("volumes").toArray()) {
++                if (value.toObject().value("token").toString() == token) {
++                    return value.toObject();
++                }
++            }
++        }
++        return {};
++    }
++
++    // Level 2 access (R-3): open the drive as a source, as Load did.
++    void openVolume(const QString& identity, const QString& token) {
++        const auto volume = findVolume(token);
++        if (volume.isEmpty() || !m_openSource || m_opening) {
++            return;
++        }
++        m_opening = true;
++        if (m_page) {
++            m_page->setOpening(identity, QStringLiteral("Opening the drive…"));
++        }
++        const QPointer<MixpiMedia> guard(this);
++        m_cancelOpen = m_openSource(volume, this, [guard, identity, token](QString error) {
++            if (!guard) {
++                return;
++            }
++            guard->m_opening = false;
++            guard->m_cancelOpen = {};
++            if (guard->m_page) {
++                guard->m_page->setOpening({}, {});
++            }
++            if (!error.isEmpty()) {
++                if (guard->m_page) {
++                    guard->m_page->open();
++                    guard->m_page->setOpening(identity, error);
++                }
++                return;
++            }
++            guard->m_opened->insert(token);
++            if (guard->m_page && guard->m_page->isVisible()) {
++                guard->m_page->closePage();
++            }
++            guard->refresh();
++        });
++    }
++
++    // The ping's LOAD: open the drive and show it.
++    void loadFromPing(const QString& identity) {
++        for (const auto& value : m_snapshot.value("drives").toArray()) {
++            const auto drive = value.toObject();
++            if (drive.value("identity").toString() != identity) {
++                continue;
++            }
++            const auto volumes = drive.value("volumes").toArray();
++            if (volumes.size() == 1) {
++                openVolume(identity, volumes.first().toObject().value("token").toString());
++            } else {
++                show(false); // more than one volume: choose on the Media page
++            }
++            return;
++        }
+     }
+ 
+     std::function<QWidget*()> m_parent;
+@@ -249,4 +546,22 @@ class MixpiMedia final : public QObject {
+     QScopedPointer<ControlPushButton> m_eject;
+     QPointer<QDialog> m_dialog;
+     QPointer<MixpiControlledMedia> m_controlled;
++    QScopedPointer<ControlObject> m_state;
++    QPointer<MixpiMediaPage> m_page;
++    QPointer<MixpiBottomStrip> m_strip;
++    QPointer<ControlObject> m_screen;
++    QJsonObject m_snapshot;
++    QByteArray m_mounts;
++    QString m_problem;
++    QSet<QString> m_present;
++    QSet<QString> m_pinged;
++    bool m_seenFirst = false;
++    bool m_observing = false;
++    bool m_opening = false;
++    MixpiMediaDialog::Cancel m_cancelOpen;
++    QList<MixpiMediaDrive> m_drives;
++    QString m_ejectingIdentity;
++    QString m_safeIdentity;
++    QString m_safeSysfs;
++    QString m_safeName;
+ };
+diff --git a/src/library/mixpimediapage.h b/src/library/mixpimediapage.h
+new file mode 100644
+index 0000000..2f55ccf
+--- /dev/null
++++ b/src/library/mixpimediapage.h
+@@ -0,0 +1,925 @@
++#pragma once
++
++#include <QDateTime>
++#include <QElapsedTimer>
++#include <QFrame>
++#include <QGridLayout>
++#include <QHBoxLayout>
++#include <QLabel>
++#include <QList>
++#include <QPointer>
++#include <QPushButton>
++#include <QScrollArea>
++#include <QStyle>
++#include <QTimer>
++#include <QVBoxLayout>
++#include <functional>
++
++#include "widget/mixpipage.h"
++
++// MixPi Media screen (R-4): one card per USB drive with EJECT, OPEN/BROWSE and
++// COPY TO PI; "Playing from Pi memory" and "Cleaned out" on the right; the
++// eject sheet and its steps; the insert ping and the Safe to remove strip at
++// the bottom of the main window. Qt only: MixpiMedia (mixpimedia.h) feeds it
++// the inventory, the players and the controls, so fixtures can feed fakes.
++
++// [MixPi],media_state values, read by the skin's USB chip.
++enum class MixpiMediaState { None = 0, Ready = 1, InUse = 2, Ejecting = 3, SafeToRemove = 4 };
++
++// A deck or pad that holds a track from a drive.
++struct MixpiMediaUser {
++    QString group;  // [Channel1], [Sampler3], ...
++    QString title;
++    bool playing = false;
++    bool onCopy = false; // decoded from its copy in Pi memory right now
++};
++
++// What eject does to a user, in the sheet's words.
++enum class MixpiUserFate { KeepsPlaying, StaysLoaded, Unloaded, StopFirst };
++
++struct MixpiMediaVolume {
++    QString token;  // inventory key, never shown
++    QString label;
++    QString path;   // mount path
++    bool opened = false;
++};
++
++struct MixpiMediaDrive {
++    QString identity; // inventory key, never shown
++    QString name;
++    qint64 size = 0;
++    bool rekordbox = false;
++    bool opened = false;      // opened as a source in this session
++    bool busy = false;        // Mixxx code still counts a use on the drive
++    MixpiMediaState state = MixpiMediaState::Ready;
++    QList<MixpiMediaVolume> volumes;
++    QList<MixpiMediaUser> users;
++};
++
++// One row of "Playing from Pi memory".
++struct MixpiHandoverItem {
++    QString group;
++    QString title;
++};
++
++namespace mixpi_media {
++
++inline QString playerName(const QString& group) {
++    const QString inner = QString(group).remove(QLatin1Char('[')).remove(QLatin1Char(']'));
++    for (const auto& [prefix, word] : {std::pair<QString, QString>{QStringLiteral("Channel"), QStringLiteral("Deck")},
++                 std::pair<QString, QString>{QStringLiteral("Sampler"), QStringLiteral("Pad")}}) {
++        if (inner.startsWith(prefix)) {
++            return word + QLatin1Char(' ') + inner.mid(prefix.size());
++        }
++    }
++    if (inner.startsWith(QStringLiteral("PreviewDeck"))) {
++        return QStringLiteral("Preview");
++    }
++    return inner;
++}
++
++inline bool isPad(const QString& group) {
++    return group.startsWith(QStringLiteral("[Sampler"));
++}
++
++inline MixpiUserFate fate(const MixpiMediaUser& user) {
++    if (user.onCopy) {
++        return user.playing ? MixpiUserFate::KeepsPlaying : MixpiUserFate::StaysLoaded;
++    }
++    return user.playing ? MixpiUserFate::StopFirst : MixpiUserFate::Unloaded;
++}
++
++inline QString fateText(MixpiUserFate value) {
++    switch (value) {
++    case MixpiUserFate::KeepsPlaying:
++        return QStringLiteral("keeps playing from its Pi copy");
++    case MixpiUserFate::StaysLoaded:
++        return QStringLiteral("stays loaded from its Pi copy");
++    case MixpiUserFate::Unloaded:
++        return QStringLiteral("will be unloaded");
++    case MixpiUserFate::StopFirst:
++        return QStringLiteral("plays straight from the drive: stop it first");
++    }
++    return {};
++}
++
++inline bool blocksEject(const MixpiMediaDrive& drive) {
++    for (const auto& user : drive.users) {
++        if (fate(user) == MixpiUserFate::StopFirst) {
++            return true;
++        }
++    }
++    return false;
++}
++
++inline int keptCount(const MixpiMediaDrive& drive) {
++    int count = 0;
++    for (const auto& user : drive.users) {
++        count += user.onCopy ? 1 : 0;
++    }
++    return count;
++}
++
++// The drive's own state from what uses it (ejecting and safe are set by eject).
++inline MixpiMediaState idleState(const MixpiMediaDrive& drive) {
++    return (drive.opened || drive.busy || !drive.users.isEmpty()) ? MixpiMediaState::InUse
++                                                                   : MixpiMediaState::Ready;
++}
++
++// The USB chip shows one drive: ejecting first, then safe, in use, ready.
++inline int chipRank(MixpiMediaState state) {
++    switch (state) {
++    case MixpiMediaState::Ejecting:
++        return 4;
++    case MixpiMediaState::SafeToRemove:
++        return 3;
++    case MixpiMediaState::InUse:
++        return 2;
++    case MixpiMediaState::Ready:
++        return 1;
++    case MixpiMediaState::None:
++        break;
++    }
++    return 0;
++}
++
++inline int chipDrive(const QList<MixpiMediaDrive>& drives) {
++    int chosen = -1;
++    for (int index = 0; index < drives.size(); ++index) {
++        if (chosen < 0 || chipRank(drives[index].state) > chipRank(drives[chosen].state)) {
++            chosen = index;
++        }
++    }
++    return chosen;
++}
++
++inline MixpiMediaState chipState(const QList<MixpiMediaDrive>& drives) {
++    const int index = chipDrive(drives);
++    return index < 0 ? MixpiMediaState::None : drives[index].state;
++}
++
++inline QString chipName(const QList<MixpiMediaDrive>& drives) {
++    const int index = chipDrive(drives);
++    return index < 0 ? QStringLiteral("USB") : drives[index].name;
++}
++
++inline QString sizeText(qint64 bytes) {
++    if (bytes <= 0) {
++        return {};
++    }
++    // Decimal units, as printed on the drive.
++    return bytes >= 1000LL * 1000 * 1000
++            ? QString::number(bytes / 1e9, 'f', 1) + QStringLiteral(" GB")
++            : QString::number(bytes / 1e6, 'f', 0) + QStringLiteral(" MB");
++}
++
++inline QString contentText(const MixpiMediaDrive& drive) {
++    return drive.rekordbox ? QStringLiteral("rekordbox export found") : QStringLiteral("folders");
++}
++
++inline QString detailLine(const MixpiMediaDrive& drive) {
++    QStringList parts;
++    const auto size = sizeText(drive.size);
++    if (!size.isEmpty()) {
++        parts.append(size);
++    }
++    parts.append(drive.volumes.isEmpty() ? QStringLiteral("not mounted") : contentText(drive));
++    return parts.join(QStringLiteral(" · "));
++}
++
++// Q1: the insert ping is for a drive that was not here at the last check
++// (not at start-up), is mounted, is not open, was not pinged since it came,
++// and only while the Media page is not in front.
++inline bool shouldPing(bool firstCheckDone, bool wasPresent, bool alreadyPinged, bool mounted, bool opened,
++        bool pageVisible) {
++    return firstCheckDone && !wasPresent && !alreadyPinged && mounted && !opened && !pageVisible;
++}
++
++inline QString stateWord(MixpiMediaState state) {
++    switch (state) {
++    case MixpiMediaState::Ready:
++        return QStringLiteral("READY");
++    case MixpiMediaState::InUse:
++        return QStringLiteral("IN USE");
++    case MixpiMediaState::Ejecting:
++        return QStringLiteral("EJECTING");
++    case MixpiMediaState::SafeToRemove:
++        return QStringLiteral("SAFE TO REMOVE");
++    case MixpiMediaState::None:
++        break;
++    }
++    return QStringLiteral("NO USB");
++}
++
++inline QString shortTitle(const QString& title) {
++    return title.size() > 34 ? title.left(32) + QStringLiteral("…") : title;
++}
++
++inline QString useLine(const MixpiMediaUser& user) {
++    const QString quoted = QStringLiteral("“") + shortTitle(user.title) + QStringLiteral("”");
++    if (isPad(user.group)) {
++        return playerName(user.group) + QStringLiteral(" holds ") + quoted;
++    }
++    return playerName(user.group) + (user.playing ? QStringLiteral(" is playing ") : QStringLiteral(" holds ")) +
++            quoted + (!user.onCopy && user.playing ? QStringLiteral(" straight from the drive") : QString());
++}
++
++inline void repolish(QWidget* widget) {
++    widget->style()->unpolish(widget);
++    widget->style()->polish(widget);
++    widget->update();
++}
++
++inline QLabel* label(const QString& text, const QString& name, QWidget* parent, bool wrap = false) {
++    auto* result = new QLabel(text, parent);
++    result->setObjectName(name);
++    result->setTextFormat(Qt::PlainText);
++    result->setWordWrap(wrap);
++    return result;
++}
++
++inline QPushButton* button(const QString& text, const QString& name, QWidget* parent, int width, int height,
++        bool primary = false) {
++    auto* result = new QPushButton(text, parent);
++    result->setObjectName(name);
++    result->setFocusPolicy(Qt::NoFocus);
++    result->setProperty("primary", primary);
++    if (width > 0) {
++        result->setFixedWidth(width);
++    }
++    result->setMinimumHeight(height);
++    result->setFixedHeight(height);
++    return result;
++}
++
++} // namespace mixpi_media
++
++// A 56 px strip over the bottom (transport) row of the main window: the
++// insert ping (Q1) and the Safe to remove strip (Q2). No sheet, no scrim.
++// Time comes from an injectable clock so fixtures need not wait.
++class MixpiBottomStrip : public QFrame {
++  public:
++    static constexpr int kHeight = 56;
++    static constexpr qint64 kPingMs = 15000;
++    static constexpr qint64 kSafeMs = 30000;
++    using Clock = std::function<qint64()>;
++    enum class Kind { None, Ping, Safe };
++
++    MixpiBottomStrip(QWidget* window, Clock clock = {})
++            : QFrame(window), m_clock(clock ? std::move(clock) : Clock([] {
++                  return QDateTime::currentMSecsSinceEpoch();
++              })) {
++        setObjectName(QStringLiteral("MixpiBottomStrip"));
++        setAttribute(Qt::WA_StyledBackground);
++        setAutoFillBackground(true);
++        setFocusPolicy(Qt::NoFocus);
++        auto* row = new QHBoxLayout(this);
++        row->setContentsMargins(14, 4, 4, 4);
++        row->setSpacing(10);
++        auto* text = new QVBoxLayout;
++        text->setSpacing(2);
++        m_title = mixpi_media::label({}, QStringLiteral("MixpiStripTitle"), this);
++        m_detail = mixpi_media::label({}, QStringLiteral("MixpiStripDetail"), this);
++        text->addWidget(m_title);
++        text->addWidget(m_detail);
++        row->addLayout(text, 1);
++        m_dismiss = mixpi_media::button(QStringLiteral("DISMISS"), QStringLiteral("MixpiStripDismiss"), this, 120, 48);
++        m_load = mixpi_media::button(QStringLiteral("LOAD"), QStringLiteral("MixpiStripLoad"), this, 132, 48, true);
++        m_ok = mixpi_media::button(QStringLiteral("OK"), QStringLiteral("MixpiStripOk"), this, 96, 48);
++        row->addWidget(m_dismiss);
++        row->addWidget(m_load);
++        row->addWidget(m_ok);
++        connect(m_dismiss, &QPushButton::clicked, this, [this] { dismiss(); });
++        connect(m_load, &QPushButton::clicked, this, [this] {
++            const auto identity = m_identity;
++            clear();
++            if (loadRequested) {
++                loadRequested(identity);
++            }
++        });
++        connect(m_ok, &QPushButton::clicked, this, [this] { clear(); });
++        m_flash.setInterval(150);
++        connect(&m_flash, &QTimer::timeout, this, [this] {
++            setProperty("flash", (--m_flashes % 2) == 1);
++            mixpi_media::repolish(this);
++            if (m_flashes <= 0) {
++                m_flash.stop();
++            }
++        });
++        m_tick.setInterval(250);
++        connect(&m_tick, &QTimer::timeout, this, [this] { tick(); });
++        hide();
++        if (window) {
++            window->installEventFilter(this);
++        }
++    }
++
++    std::function<void(QString)> loadRequested;
++    std::function<void(QString)> dismissed;
++
++    Kind kind() const {
++        return m_kind;
++    }
++    QString identity() const {
++        return m_identity;
++    }
++
++    // A new drive appeared and is not open.
++    void showPing(const QString& identity, const QString& name, const QString& detail) {
++        if (m_kind == Kind::Safe) {
++            return; // the Safe strip has the bottom until it goes
++        }
++        present(Kind::Ping, identity, name.toUpper() + QStringLiteral(" PLUGGED IN"), detail, kPingMs);
++    }
++
++    // The unmount is confirmed.
++    void showSafe(const QString& identity, const QString& name) {
++        present(Kind::Safe, identity, name.toUpper() + QStringLiteral(" · SAFE TO REMOVE"),
++                QStringLiteral("Pull the drive out now."), kSafeMs);
++        m_flashes = 6;
++        m_flash.start();
++    }
++
++    // The drive with this identity is gone (pulled out).
++    void driveGone(const QString& identity) {
++        if (m_kind != Kind::None && identity == m_identity) {
++            clear();
++        }
++    }
++
++    void dismiss() {
++        if (m_kind != Kind::Ping) {
++            clear();
++            return;
++        }
++        const auto identity = m_identity;
++        clear();
++        if (dismissed) {
++            dismissed(identity);
++        }
++    }
++
++    // Auto-dismiss: a ping after 15 s counts as DISMISS; the Safe strip goes after 30 s.
++    void tick() {
++        if (m_kind != Kind::None && m_clock() >= m_deadline) {
++            dismiss();
++        }
++    }
++
++    void place() {
++        if (auto* host = parentWidget()) {
++            setGeometry(0, qMax(0, host->height() - kHeight), host->width(), kHeight);
++        }
++    }
++
++  protected:
++    bool eventFilter(QObject* object, QEvent* event) override {
++        if (object == parentWidget() && event->type() == QEvent::Resize) {
++            place();
++        }
++        return QFrame::eventFilter(object, event);
++    }
++
++  private:
++    void present(Kind kind, const QString& identity, const QString& title, const QString& detail, qint64 lifetime) {
++        m_kind = kind;
++        m_identity = identity;
++        m_deadline = m_clock() + lifetime;
++        m_title->setText(title);
++        m_detail->setText(detail);
++        m_dismiss->setVisible(kind == Kind::Ping);
++        m_load->setVisible(kind == Kind::Ping);
++        m_ok->setVisible(kind == Kind::Safe);
++        setProperty("kind", kind == Kind::Safe ? QStringLiteral("safe") : QStringLiteral("ping"));
++        setProperty("flash", false);
++        mixpi_media::repolish(this);
++        place();
++        show();
++        raise();
++        m_tick.start();
++    }
++
++    void clear() {
++        m_kind = Kind::None;
++        m_identity.clear();
++        m_tick.stop();
++        m_flash.stop();
++        hide();
++    }
++
++    Clock m_clock;
++    Kind m_kind = Kind::None;
++    QString m_identity;
++    qint64 m_deadline = 0;
++    int m_flashes = 0;
++    QTimer m_tick;
++    QTimer m_flash;
++    QLabel* m_title;
++    QLabel* m_detail;
++    QPushButton* m_dismiss;
++    QPushButton* m_load;
++    QPushButton* m_ok;
++};
++
++// The Media page (screen 2).
++class MixpiMediaPage : public MixpiPage {
++  public:
++    static constexpr int kNumber = 2;
++    static constexpr int kLeftWidth = 520;
++    static constexpr int kActionHeight = 56;
++    enum class Step { Drain = 0, Keep = 1, Close = 2, Unmount = 3, Done = 4 };
++
++    MixpiMediaPage(QWidget* window, WriteScreen writeScreen)
++            : MixpiPage(window, kNumber, QStringLiteral("USB & MEDIA"),
++                      QStringLiteral("Drives are ready when plugged in. Eject before you pull one out."),
++                      std::move(writeScreen)) {
++        auto* columns = new QHBoxLayout(content());
++        columns->setContentsMargins(0, 0, 0, 0);
++        columns->setSpacing(0);
++        m_left = new QScrollArea(content());
++        m_left->setObjectName(QStringLiteral("MixpiMediaDrives"));
++        m_left->setFixedWidth(kLeftWidth);
++        m_left->setWidgetResizable(true);
++        m_left->setFrameShape(QFrame::NoFrame);
++        m_left->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++        m_left->setFocusPolicy(Qt::NoFocus);
++        columns->addWidget(m_left);
++        m_right = new QFrame(content());
++        m_right->setObjectName(QStringLiteral("MixpiMediaHandover"));
++        m_right->setAttribute(Qt::WA_StyledBackground);
++        columns->addWidget(m_right, 1);
++        auto* right = new QVBoxLayout(m_right);
++        right->setContentsMargins(12, 14, 12, 12);
++        right->setSpacing(6);
++        right->addWidget(mixpi_media::label(QStringLiteral("PLAYING FROM PI MEMORY"),
++                QStringLiteral("MixpiMediaHeading"), m_right));
++        m_handoverRows = new QVBoxLayout;
++        m_handoverRows->setSpacing(4);
++        right->addLayout(m_handoverRows);
++        right->addWidget(mixpi_media::label(
++                QStringLiteral("Each copy is deleted when its deck or pad loads something else or is cleared, "
++                               "and at every start."),
++                QStringLiteral("MixpiMediaNote"), m_right, true));
++        m_cleanedHeading = mixpi_media::label(QStringLiteral("CLEANED OUT"), QStringLiteral("MixpiMediaHeading"), m_right);
++        right->addWidget(m_cleanedHeading);
++        m_cleanedRows = new QVBoxLayout;
++        m_cleanedRows->setSpacing(2);
++        right->addLayout(m_cleanedRows);
++        right->addStretch(1);
++        buildSheet();
++        rebuild();
++        rebuildHandover();
++    }
++
++    // Owner callbacks.
++    std::function<void(QString identity, QString volumeToken)> openRequested; // OPEN / BROWSE
++    std::function<void(QString identity)> copyRequested;                      // COPY TO PI
++    std::function<void(QString identity)> ejectRequested;                     // sheet EJECT
++    std::function<void()> ejectCancelRequested;                              // steps CANCEL
++
++    void setDrives(const QList<MixpiMediaDrive>& drives, const QString& problem = {}) {
++        m_drives = drives;
++        m_problem = problem;
++        rebuild();
++        if (m_sheet->isVisible() && !m_running && !m_finished) {
++            const auto* drive = find(m_sheetIdentity);
++            if (drive) {
++                showSheetQuestion(*drive);
++            } else {
++                hideSheet();
++            }
++        }
++    }
++
++    void setEjectAvailable(bool available) {
++        if (m_ejectAvailable != available) {
++            m_ejectAvailable = available;
++            rebuild();
++        }
++    }
++
++    void setOpening(const QString& identity, const QString& message) {
++        m_openingIdentity = identity;
++        m_openingMessage = message;
++        rebuild();
++    }
++
++    void setHandover(const QList<MixpiHandoverItem>& onPi, const QStringList& cleaned) {
++        m_onPi = onPi;
++        m_cleaned = cleaned;
++        rebuildHandover();
++    }
++
++    // The eject sheet for one drive (EJECT on its card).
++    void showEjectSheet(const QString& identity) {
++        const auto* drive = find(identity);
++        if (!drive) {
++            return;
++        }
++        m_sheetIdentity = identity;
++        m_running = false;
++        m_finished = false;
++        showSheetQuestion(*drive);
++        m_scrim->setGeometry(content()->rect());
++        m_scrim->show();
++        m_scrim->raise();
++        placeSheet();
++        m_sheet->show();
++        m_sheet->raise();
++    }
++
++    // Engine progress: the step now running (Done = safe to remove).
++    void setEjectStep(Step step) {
++        if (m_sheetIdentity.isEmpty()) {
++            return;
++        }
++        m_running = step != Step::Done;
++        m_finished = step == Step::Done;
++        showSteps(step, {});
++    }
++
++    void setEjectFailed(const QString& message) {
++        m_running = false;
++        m_finished = true;
++        showSteps(m_step, message);
++    }
++
++    bool sheetVisible() const {
++        return m_sheet->isVisible();
++    }
++    QWidget* sheet() const {
++        return m_sheet;
++    }
++
++    void hideSheet() {
++        m_sheet->hide();
++        m_scrim->hide();
++        m_running = false;
++        m_finished = false;
++        m_sheetIdentity.clear();
++    }
++
++  private:
++    const MixpiMediaDrive* find(const QString& identity) const {
++        for (const auto& drive : m_drives) {
++            if (drive.identity == identity) {
++                return &drive;
++            }
++        }
++        return nullptr;
++    }
++
++    void rebuild() {
++        auto* holder = new QWidget;
++        holder->setObjectName(QStringLiteral("MixpiMediaDriveList"));
++        auto* layout = new QVBoxLayout(holder);
++        layout->setContentsMargins(12, 12, 12, 12);
++        layout->setSpacing(10);
++        if (!m_problem.isEmpty()) {
++            layout->addWidget(mixpi_media::label(m_problem, QStringLiteral("MixpiMediaProblem"), holder, true));
++        }
++        if (m_drives.isEmpty()) {
++            auto* card = new QFrame(holder);
++            card->setObjectName(QStringLiteral("MixpiMediaCard"));
++            card->setAttribute(Qt::WA_StyledBackground);
++            auto* column = new QVBoxLayout(card);
++            column->setContentsMargins(22, 22, 22, 22);
++            column->addWidget(mixpi_media::label(QStringLiteral("No USB drive"), QStringLiteral("MixpiMediaName"), card));
++            column->addWidget(mixpi_media::label(
++                    QStringLiteral("Plug in a drive. A small strip at the bottom asks whether to load it. "
++                                   "Nothing is read until you load or open it."),
++                    QStringLiteral("MixpiMediaDetail"), card, true));
++            layout->addWidget(card);
++        }
++        for (const auto& drive : m_drives) {
++            layout->addWidget(card(drive, holder));
++        }
++        if (!m_drives.isEmpty()) {
++            layout->addWidget(mixpi_media::label(
++                    QStringLiteral("The drive mounted by itself. Mixxx reads it only after LOAD on the plug-in strip, "
++                                   "OPEN here, or a pick in Sources. EJECT keeps every track or sample in use "
++                                   "playing from its copy in Pi memory, then unmounts the drive."),
++                    QStringLiteral("MixpiMediaNote"), holder, true));
++        }
++        layout->addStretch(1);
++        m_left->setWidget(holder); // deletes the old list
++    }
++
++    QFrame* card(const MixpiMediaDrive& drive, QWidget* parent) {
++        using namespace mixpi_media;
++        auto* card = new QFrame(parent);
++        card->setObjectName(QStringLiteral("MixpiMediaCard"));
++        card->setAttribute(Qt::WA_StyledBackground);
++        card->setProperty("identity", drive.identity);
++        auto* column = new QVBoxLayout(card);
++        column->setContentsMargins(14, 14, 14, 14);
++        column->setSpacing(8);
++        auto* top = new QHBoxLayout;
++        auto* names = new QVBoxLayout;
++        names->setSpacing(2);
++        names->addWidget(label(drive.name, QStringLiteral("MixpiMediaName"), card));
++        names->addWidget(label(detailLine(drive), QStringLiteral("MixpiMediaDetail"), card));
++        top->addLayout(names, 1);
++        auto* pill = label(stateWord(drive.state), QStringLiteral("MixpiMediaPill"), card);
++        pill->setProperty("state", static_cast<int>(drive.state));
++        pill->setAlignment(Qt::AlignCenter);
++        top->addWidget(pill, 0, Qt::AlignTop);
++        column->addLayout(top);
++        const bool ending = drive.state == MixpiMediaState::Ejecting ||
++                drive.state == MixpiMediaState::SafeToRemove;
++        const bool blocked = blocksEject(drive);
++        auto* actions = new QHBoxLayout;
++        actions->setSpacing(6);
++        auto* eject = button(QStringLiteral("EJECT"), QStringLiteral("MixpiMediaEject"), card, 176, kActionHeight, true);
++        eject->setEnabled(m_ejectAvailable && !ending && !blocked && !drive.volumes.isEmpty());
++        connect(eject, &QPushButton::clicked, this, [this, identity = drive.identity] {
++            if (ejectRequested) {
++                showEjectSheet(identity);
++            }
++        });
++        actions->addWidget(eject);
++        if (drive.volumes.size() <= 1) {
++            const auto volume = drive.volumes.value(0);
++            auto* open = button(volume.opened ? QStringLiteral("BROWSE") : QStringLiteral("OPEN"),
++                    QStringLiteral("MixpiMediaOpen"), card, 0, kActionHeight);
++            open->setEnabled(!ending && !drive.volumes.isEmpty() && m_openingIdentity.isEmpty());
++            connect(open, &QPushButton::clicked, this, [this, identity = drive.identity, token = volume.token] {
++                if (openRequested) {
++                    openRequested(identity, token);
++                }
++            });
++            actions->addWidget(open, 1);
++        }
++        auto* copy = button(QStringLiteral("COPY TO PI"), QStringLiteral("MixpiMediaCopy"), card, 0, kActionHeight);
++        copy->setEnabled(!ending && !drive.volumes.isEmpty());
++        connect(copy, &QPushButton::clicked, this, [this, identity = drive.identity] {
++            if (copyRequested) {
++                copyRequested(identity);
++            }
++        });
++        actions->addWidget(copy, 1);
++        column->addLayout(actions);
++        if (drive.volumes.size() > 1) {
++            // One OPEN / BROWSE row per volume.
++            for (const auto& volume : drive.volumes) {
++                auto* open = button((volume.opened ? QStringLiteral("BROWSE ") : QStringLiteral("OPEN ")) + volume.label,
++                        QStringLiteral("MixpiMediaOpen"), card, 0, kActionHeight);
++                open->setEnabled(!ending && m_openingIdentity.isEmpty());
++                connect(open, &QPushButton::clicked, this, [this, identity = drive.identity, token = volume.token] {
++                    if (openRequested) {
++                        openRequested(identity, token);
++                    }
++                });
++                column->addWidget(open);
++            }
++        }
++        if (drive.state == MixpiMediaState::SafeToRemove) {
++            column->addWidget(label(QStringLiteral("You can pull the drive out now."), QStringLiteral("MixpiMediaSafe"), card));
++        } else if (!drive.users.isEmpty()) {
++            for (const auto& user : drive.users) {
++                auto* line = label(useLine(user), QStringLiteral("MixpiMediaUse"), card);
++                line->setProperty("block", fate(user) == MixpiUserFate::StopFirst);
++                column->addWidget(line);
++            }
++        } else {
++            column->addWidget(label(drive.volumes.isEmpty()
++                            ? QStringLiteral("Not mounted. Unplug the drive and plug it in again to use it.")
++                            : drive.opened ? QStringLiteral("Open in Sources. Nothing on the decks or pads comes from it.")
++                                           : QStringLiteral("Not open yet. Mixxx has not read it."),
++                    QStringLiteral("MixpiMediaUse"), card, true));
++        }
++        if (m_openingIdentity == drive.identity && !m_openingMessage.isEmpty()) {
++            column->addWidget(label(m_openingMessage, QStringLiteral("MixpiMediaUse"), card, true));
++        }
++        if (!m_ejectAvailable) {
++            column->addWidget(label(QStringLiteral("Eject is off on this card."), QStringLiteral("MixpiMediaGate"), card, true));
++        } else if (blocked) {
++            auto* line = label(QStringLiteral("Eject waits until that deck stops: it plays straight from the drive."),
++                    QStringLiteral("MixpiMediaUse"), card, true);
++            line->setProperty("block", true);
++            column->addWidget(line);
++        }
++        return card;
++    }
++
++    void rebuildHandover() {
++        for (auto* layout : {m_handoverRows, m_cleanedRows}) {
++            while (auto* item = layout->takeAt(0)) {
++                delete item->widget();
++                delete item;
++            }
++        }
++        if (m_onPi.isEmpty()) {
++            m_handoverRows->addWidget(mixpi_media::label(
++                    QStringLiteral("Nothing yet. A track loaded from a drive is copied to Pi memory as it loads, "
++                                   "so after EJECT it keeps playing here."),
++                    QStringLiteral("MixpiMediaNote"), m_right, true));
++        }
++        for (const auto& item : m_onPi) {
++            auto* row = new QFrame(m_right);
++            row->setObjectName(QStringLiteral("MixpiMediaOnPiRow"));
++            row->setAttribute(Qt::WA_StyledBackground);
++            row->setFixedHeight(52);
++            auto* line = new QHBoxLayout(row);
++            line->setContentsMargins(8, 0, 8, 0);
++            line->addWidget(mixpi_media::label(mixpi_media::playerName(item.group).toUpper(),
++                    QStringLiteral("MixpiMediaPlayer"), row));
++            auto* title = mixpi_media::label(mixpi_media::shortTitle(item.title), QStringLiteral("MixpiMediaOnPiTitle"), row);
++            line->addWidget(title, 1);
++            line->addWidget(mixpi_media::label(QStringLiteral("ON PI"), QStringLiteral("MixpiOnPiChip"), row));
++            m_handoverRows->addWidget(row);
++        }
++        m_cleanedHeading->setVisible(!m_cleaned.isEmpty());
++        for (const auto& name : m_cleaned.mid(0, 3)) {
++            m_cleanedRows->addWidget(mixpi_media::label(QStringLiteral("✓ ") + mixpi_media::shortTitle(name),
++                    QStringLiteral("MixpiMediaCleaned"), m_right));
++        }
++    }
++
++    void buildSheet() {
++        m_scrim = new QFrame(content());
++        m_scrim->setObjectName(QStringLiteral("MixpiMediaScrim"));
++        m_scrim->setAttribute(Qt::WA_StyledBackground);
++        m_scrim->hide();
++        m_sheet = new QFrame(content());
++        m_sheet->setObjectName(QStringLiteral("MixpiEjectSheet"));
++        m_sheet->setAttribute(Qt::WA_StyledBackground);
++        m_sheet->hide();
++        auto* column = new QVBoxLayout(m_sheet);
++        column->setContentsMargins(20, 18, 20, 18);
++        column->setSpacing(8);
++        m_sheetTitle = mixpi_media::label({}, QStringLiteral("MixpiEjectTitle"), m_sheet, true);
++        m_sheetHint = mixpi_media::label({}, QStringLiteral("MixpiEjectHint"), m_sheet, true);
++        column->addWidget(m_sheetTitle);
++        column->addWidget(m_sheetHint);
++        m_sheetRows = new QVBoxLayout;
++        m_sheetRows->setSpacing(4);
++        column->addLayout(m_sheetRows);
++        column->addStretch(1);
++        auto* actions = new QHBoxLayout;
++        actions->setSpacing(8);
++        actions->addStretch(1);
++        m_sheetCancel = mixpi_media::button(QStringLiteral("CANCEL"), QStringLiteral("MixpiEjectCancel"), m_sheet, 140, kActionHeight);
++        m_sheetEject = mixpi_media::button(QStringLiteral("EJECT"), QStringLiteral("MixpiEjectConfirm"), m_sheet, 200, kActionHeight, true);
++        m_sheetDone = mixpi_media::button(QStringLiteral("DONE"), QStringLiteral("MixpiEjectDone"), m_sheet, 160, kActionHeight, true);
++        actions->addWidget(m_sheetCancel);
++        actions->addWidget(m_sheetEject);
++        actions->addWidget(m_sheetDone);
++        column->addLayout(actions);
++        connect(m_sheetCancel, &QPushButton::clicked, this, [this] {
++            if (m_running) {
++                if (ejectCancelRequested) {
++                    ejectCancelRequested();
++                }
++                return;
++            }
++            hideSheet();
++        });
++        connect(m_sheetEject, &QPushButton::clicked, this, [this] {
++            const auto* drive = find(m_sheetIdentity);
++            if (!drive || mixpi_media::blocksEject(*drive) || !m_ejectAvailable || !ejectRequested) {
++                return;
++            }
++            m_kept = mixpi_media::keptCount(*drive);
++            m_running = true;
++            showSteps(Step::Drain, {});
++            ejectRequested(m_sheetIdentity);
++        });
++        connect(m_sheetDone, &QPushButton::clicked, this, [this] { hideSheet(); });
++    }
++
++    void placeSheet() {
++        // 580 px wide at x 110, as the prototype: CANCEL near (392, 308) and
++        // EJECT near (570, 308) on the 800x480 screen.
++        const int width = qMin(580, qMax(0, content()->width() - 20));
++        m_sheet->setGeometry((content()->width() - width) / 2, 16, width, 280);
++    }
++
++    void clearSheetRows() {
++        while (auto* item = m_sheetRows->takeAt(0)) {
++            if (auto* layout = item->layout()) {
++                while (auto* child = layout->takeAt(0)) {
++                    delete child->widget();
++                    delete child;
++                }
++            }
++            delete item->widget();
++            delete item;
++        }
++    }
++
++    void showSheetQuestion(const MixpiMediaDrive& drive) {
++        using namespace mixpi_media;
++        clearSheetRows();
++        m_sheetTitle->setText(QStringLiteral("Eject ") + drive.name + QStringLiteral("?"));
++        m_sheetHint->setText(drive.users.isEmpty()
++                        ? QStringLiteral("Nothing on the decks or pads comes from this drive.")
++                        : QStringLiteral("What uses the drive, and what happens to it:"));
++        for (const auto& user : drive.users) {
++            auto* row = new QHBoxLayout;
++            row->addWidget(label(playerName(user.group) + QStringLiteral(" · ") + shortTitle(user.title),
++                                   QStringLiteral("MixpiEjectUser"), m_sheet),
++                    1);
++            const auto what = fate(user);
++            auto* outcome = label(fateText(what), QStringLiteral("MixpiEjectFate"), m_sheet);
++            outcome->setProperty("fate", static_cast<int>(what));
++            row->addWidget(outcome);
++            m_sheetRows->addLayout(row);
++        }
++        m_sheetCancel->show();
++        m_sheetCancel->setEnabled(true);
++        m_sheetEject->show();
++        m_sheetEject->setEnabled(m_ejectAvailable && !blocksEject(drive));
++        m_sheetDone->hide();
++    }
++
++    void showSteps(Step step, const QString& failure) {
++        m_step = step;
++        clearSheetRows();
++        const auto* drive = find(m_sheetIdentity);
++        const QString name = drive ? drive->name : QStringLiteral("the drive");
++        if (!failure.isEmpty()) {
++            m_sheetTitle->setText(QStringLiteral("Not ejected"));
++            m_sheetHint->setText(failure);
++        } else {
++            m_sheetTitle->setText(step == Step::Done
++                            ? QString(QStringLiteral("Safe to remove ") + name)
++                            : QString(QStringLiteral("Ejecting ") + name + QStringLiteral("…")));
++            m_sheetHint->setText({});
++        }
++        const QStringList steps{QStringLiteral("Stop new reads from ") + name,
++                QStringLiteral("Keep ") + QString::number(m_kept) +
++                        (m_kept == 1 ? QStringLiteral(" item") : QStringLiteral(" items")) +
++                        QStringLiteral(" playing from their Pi copies"),
++                QStringLiteral("Close Mixxx’s files on the drive"), QStringLiteral("Unmount and check")};
++        for (int index = 0; index < steps.size(); ++index) {
++            auto* row = new QHBoxLayout;
++            const bool done = index < static_cast<int>(step);
++            const bool now = index == static_cast<int>(step) && failure.isEmpty();
++            auto* dot = mixpi_media::label(done ? QStringLiteral("✓") : now ? QStringLiteral("•") : QString(),
++                    QStringLiteral("MixpiEjectDot"), m_sheet);
++            dot->setProperty("step", done ? QStringLiteral("done") : now ? QStringLiteral("now") : QStringLiteral("todo"));
++            dot->setAlignment(Qt::AlignCenter);
++            dot->setFixedSize(26, 26);
++            row->addWidget(dot);
++            auto* text = mixpi_media::label(steps[index], QStringLiteral("MixpiEjectStep"), m_sheet);
++            text->setProperty("step", dot->property("step"));
++            row->addWidget(text, 1);
++            m_sheetRows->addLayout(row);
++        }
++        const bool ended = step == Step::Done || !failure.isEmpty();
++        m_sheetEject->hide();
++        // Cancel works until the unmount starts.
++        m_sheetCancel->setVisible(!ended);
++        m_sheetCancel->setEnabled(!ended && static_cast<int>(step) < static_cast<int>(Step::Unmount));
++        m_sheetDone->setVisible(true);
++        m_sheetDone->setEnabled(ended);
++        m_sheetDone->setText(failure.isEmpty() ? QStringLiteral("DONE") : QStringLiteral("CLOSE"));
++    }
++
++    QList<MixpiMediaDrive> m_drives;
++    QString m_problem;
++    bool m_ejectAvailable = false;
++    QString m_openingIdentity;
++    QString m_openingMessage;
++    QList<MixpiHandoverItem> m_onPi;
++    QStringList m_cleaned;
++    QScrollArea* m_left;
++    QFrame* m_right;
++    QVBoxLayout* m_handoverRows;
++    QLabel* m_cleanedHeading;
++    QVBoxLayout* m_cleanedRows;
++    QFrame* m_scrim;
++    QFrame* m_sheet;
++    QLabel* m_sheetTitle;
++    QLabel* m_sheetHint;
++    QVBoxLayout* m_sheetRows;
++    QPushButton* m_sheetCancel;
++    QPushButton* m_sheetEject;
++    QPushButton* m_sheetDone;
++    QString m_sheetIdentity;
++    bool m_running = false;
++    bool m_finished = false;
++    int m_kept = 0;
++    Step m_step = Step::Drain;
++};
++
++// Sets the text of every skin Label with this object name (the USB chip's
++// MixpiUsbName). Label is WLabel in Mixxx: its own setText keeps the text
++// through resizes and font changes, where QLabel::setText would be undone.
++// A skin reload makes new labels, so the owner calls this again on each change
++// and on its 2 s tick. Returns how many labels were set.
++template<class Label>
++int mixpiSetNamedLabelText(QWidget* root, const QString& objectName, const QString& text) {
++    if (!root) {
++        return 0;
++    }
++    int count = 0;
++    for (auto* found : root->findChildren<Label*>(objectName)) {
++        if (found->text() != text) {
++            found->setText(text);
++        }
++        ++count;
++    }
++    return count;
++}
+diff --git a/src/widget/mixpipage.h b/src/widget/mixpipage.h
+new file mode 100644
+index 0000000..fc775f0
+--- /dev/null
++++ b/src/widget/mixpipage.h
+@@ -0,0 +1,136 @@
++#pragma once
++
++#include <QEvent>
++#include <QFrame>
++#include <QHBoxLayout>
++#include <QLabel>
++#include <QPointer>
++#include <QPushButton>
++#include <QVBoxLayout>
++#include <functional>
++
++// MixPi native page host (R-2): a full-width child of the main window under
++// the 48 px top bar, down to the bottom edge. Not a dialog: it needs no window
++// manager and is not capped at 780x420. It writes [MixPi],screen (through the
++// callback) on open and 0 on close. The skin hides the waveforms whenever
++// screen is not 0, so the page never sits over a live waveform.
++class MixpiPage : public QFrame {
++  public:
++    static constexpr int kTopBarHeight = 48;
++    static constexpr int kHeaderHeight = 48;
++    static constexpr int kTouch = 48;
++    using WriteScreen = std::function<void(double)>;
++
++    MixpiPage(QWidget* window, int number, const QString& title, const QString& hint,
++            WriteScreen writeScreen)
++            : QFrame(window), m_number(number), m_writeScreen(std::move(writeScreen)) {
++        setObjectName(QStringLiteral("MixpiPage"));
++        setAttribute(Qt::WA_StyledBackground);
++        setAutoFillBackground(true);
++        setFocusPolicy(Qt::NoFocus);
++        auto* layout = new QVBoxLayout(this);
++        layout->setContentsMargins(0, 0, 0, 0);
++        layout->setSpacing(0);
++        auto* header = new QFrame(this);
++        header->setObjectName(QStringLiteral("MixpiPageHeader"));
++        header->setAttribute(Qt::WA_StyledBackground);
++        header->setFixedHeight(kHeaderHeight);
++        auto* row = new QHBoxLayout(header);
++        row->setContentsMargins(0, 0, 8, 0);
++        row->setSpacing(12);
++        m_close = new QPushButton(QStringLiteral("✕"), header);
++        m_close->setObjectName(QStringLiteral("MixpiPageClose"));
++        m_close->setAccessibleName(tr("Close"));
++        m_close->setFixedSize(kTouch, kTouch);
++        m_close->setFocusPolicy(Qt::NoFocus);
++        m_title = new QLabel(title, header);
++        m_title->setObjectName(QStringLiteral("MixpiPageTitle"));
++        m_title->setTextFormat(Qt::PlainText);
++        m_hint = new QLabel(hint, header);
++        m_hint->setObjectName(QStringLiteral("MixpiPageHint"));
++        m_hint->setTextFormat(Qt::PlainText);
++        row->addWidget(m_close);
++        row->addWidget(m_title);
++        row->addWidget(m_hint, 1);
++        layout->addWidget(header);
++        m_content = new QWidget(this);
++        m_content->setObjectName(QStringLiteral("MixpiPageContent"));
++        m_content->setAttribute(Qt::WA_StyledBackground);
++        layout->addWidget(m_content, 1);
++        connect(m_close, &QPushButton::clicked, this, [this] { closePage(); });
++        hide();
++        if (window) {
++            window->installEventFilter(this);
++        }
++    }
++
++    int number() const {
++        return m_number;
++    }
++    QWidget* content() const {
++        return m_content;
++    }
++    QPushButton* closeButton() const {
++        return m_close;
++    }
++
++    // Called after every open and close (the owner refreshes its state).
++    std::function<void(bool)> visibilityChanged;
++
++    void open() {
++        place();
++        show();
++        raise();
++        if (m_writeScreen) {
++            m_writeScreen(m_number);
++        }
++        if (visibilityChanged) {
++            visibilityChanged(true);
++        }
++    }
++
++    // The ✕: hide, and write screen 0 so the tab that was open shows again.
++    void closePage() {
++        const bool wasVisible = isVisible();
++        hide();
++        if (m_writeScreen) {
++            m_writeScreen(0);
++        }
++        if (wasVisible && visibilityChanged) {
++            visibilityChanged(false);
++        }
++    }
++
++    // The skin wrote [MixPi],screen (a tab, another view): leave without
++    // writing it again.
++    void screenChanged(double value) {
++        if (isVisible() && static_cast<int>(value) != m_number) {
++            hide();
++            if (visibilityChanged) {
++                visibilityChanged(false);
++            }
++        }
++    }
++
++    void place() {
++        if (auto* host = parentWidget()) {
++            setGeometry(0, kTopBarHeight, host->width(), qMax(0, host->height() - kTopBarHeight));
++        }
++    }
++
++  protected:
++    bool eventFilter(QObject* object, QEvent* event) override {
++        if (object == parentWidget() && event->type() == QEvent::Resize) {
++            place();
++        }
++        return QFrame::eventFilter(object, event);
++    }
++
++  private:
++    const int m_number;
++    WriteScreen m_writeScreen;
++    QPushButton* m_close;
++    QLabel* m_title;
++    QLabel* m_hint;
++    QWidget* m_content;
++};

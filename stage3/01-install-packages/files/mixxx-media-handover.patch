@@ -1,5 +1,5 @@
 diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
-index 977939a..dd05652 100644
+index 977939a..d9556d9 100644
 --- a/src/library/mixpimedia.h
 +++ b/src/library/mixpimedia.h
 @@ -5,7 +5,9 @@
@@ -329,7 +329,27 @@ index 977939a..dd05652 100644
      bool driveOpened(const QJsonObject& drive) const {
          for (const auto& value : drive.value("volumes").toArray()) {
              if (m_opened->contains(value.toObject().value("token").toString())) {
-@@ -472,6 +729,9 @@ class MixpiMedia final : public QObject {
+@@ -394,9 +651,17 @@ class MixpiMedia final : public QObject {
+             names.append(item.label);
+             paths.append(item.path);
+ #ifdef __linux__
+-            if (!inspectSelected(volume).database.empty()) {
+-                model.rekordbox = true;
++            // No probe of a drive being ejected or already unmounted: even a
++            // short-lived descriptor on it could make the unmount fail.
++            if (model.identity == m_ejectingIdentity || model.identity == m_safeIdentity) {
++                model.rekordbox = model.rekordbox || m_rekordbox.value(item.token);
++                continue;
+             }
++            // The export check once per volume, not on every tick.
++            if (!m_rekordbox.contains(item.token)) {
++                m_rekordbox.insert(item.token, !inspectSelected(volume).database.empty());
++            }
++            model.rekordbox = model.rekordbox || m_rekordbox.value(item.token);
+             const auto binding = mixxx::media::observePath(item.path.toStdString());
+             if (!binding.generation.empty()) {
+                 const auto observed = mixxx::media::registry().observe(binding.generation);
+@@ -472,6 +737,9 @@ class MixpiMedia final : public QObject {
  
      // Handover (R-5) fills the right column.
      void refreshHandover() {
@@ -339,7 +359,7 @@ index 977939a..dd05652 100644
      }
  
      QJsonObject findVolume(const QString& token) const {
-@@ -564,4 +824,15 @@ class MixpiMedia final : public QObject {
+@@ -564,4 +832,16 @@ class MixpiMedia final : public QObject {
      QString m_safeIdentity;
      QString m_safeSysfs;
      QString m_safeName;
@@ -351,6 +371,7 @@ index 977939a..dd05652 100644
 +    QList<MixpiMediaUser> m_ejectUsers;
 +    QScopedPointer<ControlObject> m_ejectAvailable;
 +    QHash<QString, ControlObject*> m_onPi;
++    mutable QHash<QString, bool> m_rekordbox; // volume key -> rekordbox export found
 +    std::unique_ptr<MixpiHandover> m_handover;
 +    MixpiEjectEngine* m_engine = nullptr;
 +    std::vector<std::unique_ptr<mixxx::media::MediaUseRegistry::Drain>> m_drains;

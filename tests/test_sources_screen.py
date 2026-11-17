@@ -96,6 +96,22 @@ class SourcesScreenPatchTests(unittest.TestCase):
         edit = interface[interface.index('class SourceEditList'):]
         self.assertNotIn('InternalMove', edit)
 
+    def test_edit_done_patch_confirms_the_read_only_editing_control(self):
+        # Pi preview p5: EDIT LIST never read DONE. The control is read-only
+        # for the skin, and set() on a read-only control is dropped, so the
+        # sidebar confirms it (mixxx-sources-edit-done.patch).
+        done = RUNNER.PATCH_DIR / 'mixxx-sources-edit-done.patch'
+        text = done.read_text()
+        self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) b/\S+$', text, re.MULTILINE)),
+                         ['src/library/library.cpp', 'src/widget/wlibrarysidebar.cpp',
+                          'src/widget/wlibrarysidebar.h'])
+        added = '\n'.join(line for line in text.splitlines() if line.startswith('+'))
+        self.assertIn('m_sourcesEditingControl->setAndConfirm(shown ? 1 : 0);', added)
+        self.assertNotIn('m_sourcesEditingControl->set(', added)
+        names = subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
+                                         '--mixxx-print-patches'], text=True).split()
+        self.assertLess(names.index('mixxx-source-groups.patch'), names.index('mixxx-sources-edit-done.patch'))
+
     def test_menu_style_has_the_sources_screen_rules(self):
         style = (RUNNER.PATCH_DIR / 'pioneered-menus.qss').read_text()
         for selector in ('#MixpiSourceRail', '#MixpiSourceTile', '#MixpiSourceBar', '#MixpiSourceBack',

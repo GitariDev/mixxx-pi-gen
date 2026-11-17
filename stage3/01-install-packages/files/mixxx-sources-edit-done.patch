@@ -1,0 +1,72 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -361,6 +361,8 @@
+ 
+     // Setup the sources view
+     pSidebarWidget->setModel(m_pSidebarModel);
++    // A new sidebar (skin load) shows no edit list yet: EDIT LIST, not DONE.
++    m_pSidebarSourcesEditing->setAndConfirm(0);
+     // Grouped Sources (R-9 step 3).
+     mapSourceGroups();
+     pSidebarWidget->groupedTiles = [this] {
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -51,6 +51,9 @@
+         return m_sourcesEditing;
+     }
+     void setSourcesEditing(bool editing);
++    // [Library],sidebar_sources_editing is 1 exactly while the edit list is
++    // shown (the skin's EDIT LIST button reads DONE).
++    void syncSourcesEditing();
+     QString sourceCrumb() const;
+     QList<QPushButton*> sourceTiles() const {
+         return m_sourceTiles;
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -126,7 +126,10 @@
+     connect(pModel, &QAbstractItemModel::rowsInserted, this, [this] { scheduleSourceRail(); });
+     connect(pModel, &QAbstractItemModel::rowsRemoved, this, [this] { scheduleSourceRail(); });
+     connect(pModel, &QAbstractItemModel::rowsMoved, this, [this] { scheduleSourceRail(); });
+-    connect(pModel, &QAbstractItemModel::modelReset, this, [this] { scheduleSourceRail(); });
++    connect(pModel, &QAbstractItemModel::modelReset, this, [this] {
++        scheduleSourceRail();
++        syncSourcesEditing();
++    });
+     connect(pModel, &QAbstractItemModel::layoutChanged, this, [this] { scheduleSourceRail(); });
+     connect(pModel, &QAbstractItemModel::dataChanged, this, [this] { scheduleSourceRail(); });
+     fitTouchColumn();
+@@ -609,8 +612,20 @@
+         m_sourcesEditing = false;
+     }
+     layoutSourceScreen();
++    syncSourcesEditing();
+ }
+ 
++void WLibrarySidebar::syncSourcesEditing() {
++    // Shown: editing, with a panel that is not hidden. The control is
++    // read-only for the skin, so it is confirmed directly (a set() on a
++    // read-only control is dropped by its change-request handler).
++    const bool shown = m_sourcesEditing && m_sourcesEditPanel && !m_sourcesEditPanel->isHidden();
++    m_sourcesEditing = shown;
++    if (m_sourcesEditingControl && m_sourcesEditingControl->get() != (shown ? 1 : 0)) {
++        m_sourcesEditingControl->setAndConfirm(shown ? 1 : 0);
++    }
++}
++
+ void WLibrarySidebar::setSourcesEditing(bool editing) {
+     editing = editing && m_sourcesEditPanel;
+     m_sourcesEditing = editing;
+@@ -620,9 +635,7 @@
+     if (m_sourceBar) {
+         m_sourceBar->setVisible(m_sourceScreen && !editing);
+     }
+-    if (m_sourcesEditingControl) {
+-        m_sourcesEditingControl->set(editing ? 1 : 0);
+-    }
++    syncSourcesEditing();
+     layoutSourceScreen();
+     if (!editing) {
+         // The rail shows the new order and visibility.

@@ -235,6 +235,9 @@ int main(int argc, char** argv) {
             [&library] { library.applySidebarSourceVisibility(); });
     ControlObject screen(ConfigKey("[MixPi]", "screen"));
     ControlObject sidebarVisible(ConfigKey("[Sidebar]", "sidebar_visible"));
+    // As Library: read-only for the skin, which reads it for EDIT LIST / DONE.
+    ControlObject editing(ConfigKey("[Library]", "sidebar_sources_editing"));
+    editing.setReadOnly();
     sidebar.enableTouchNavigation();
     sidebar.resize(800, 384);
     sidebar.show();
@@ -364,6 +367,8 @@ int main(int argc, char** argv) {
     library.showSidebarSourcesMenu();
     settle();
     auto* list = static_cast<LibraryInterface::SourceEditList*>(library.m_pSidebarSourceEdit.data());
+    require(list && list->isVisible() && sidebar.isSourcesEditing() && editing.get() == 1,
+            "the grouped edit list is open and [Library],sidebar_sources_editing is 1 (DONE)");
     auto rowNames = [&list] {
         QStringList names;
         for (auto* row : list->rows()) {
@@ -432,6 +437,23 @@ int main(int argc, char** argv) {
                     tileNames(sidebar) == QStringList({"History", "This Pi", "Recordings", "Folders",
                                                 "Samples", "More"}),
             "DONE: the rail shows the new order with History");
+    require(editing.get() == 0 && !list->isVisible(), "DONE sets [Library],sidebar_sources_editing to 0");
+    library.showSidebarSourcesMenu();
+    settle();
+    require(editing.get() == 1 && list->isVisible(), "EDIT LIST again: the control is 1 again");
+    // A model reset (USB hot-plug) while the list is open: the control
+    // follows what is shown.
+    recordings.children.setRootItem(TreeItem::newRoot(&recordings));
+    settle();
+    require(editing.get() == (sidebar.isSourcesEditing() && list->isVisible() ? 1 : 0),
+            "after a model reset the control matches the shown edit list");
+    sidebar.hide();
+    settle();
+    require(editing.get() == 0 && !sidebar.isSourcesEditing(),
+            "closing Sources (the sidebar hides) sets the control to 0");
+    sidebar.show();
+    settle();
+    require(editing.get() == 0 && !list->isVisible(), "Sources opens again on the list, not the edit list");
     tileNamed(sidebar, "This Pi")->click();
     settle();
     require(shownRows(sidebar) == QStringList({"Tracks", "Auto DJ", "Playlists", "Crates"}),

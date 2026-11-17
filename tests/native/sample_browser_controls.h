@@ -44,6 +44,11 @@ class ControlObject {
     }
     void set(double value) {
         ++writes;
+        if (m_readOnly) {
+            // As ControlObject::setReadOnly(): its change-request handler
+            // drops every set(); only setAndConfirm() changes the value.
+            return;
+        }
         if (m_request) {
             m_request(value);
         } else {

@@ -86,6 +86,7 @@ class ControlObject {
         return control;
     }
     void set(double value) { m_value = value; ++writes; }
+    void setAndConfirm(double value) { m_value = value; }
     double get() const { return m_value; }
     int writes = 0;
     template<typename Receiver, typename Slot>

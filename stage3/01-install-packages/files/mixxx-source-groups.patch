@@ -1,0 +1,873 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+index abdfb9f..45463da 100644
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -360,6 +360,11 @@ void Library::bindSidebarWidget(WLibrarySidebar* pSidebarWidget) {
+ 
+     // Setup the sources view
+     pSidebarWidget->setModel(m_pSidebarModel);
++    // Grouped Sources (R-9 step 3).
++    mapSourceGroups();
++    pSidebarWidget->groupedTiles = [this] {
++        return sourceGroupTiles();
++    };
+     // The Sources screen rail (R-9): a fixed second line per kind of source.
+     pSidebarWidget->sourceSubline = [this](const QModelIndex& index) {
+         auto* feature = index.parent().isValid() ? nullptr : m_features.value(index.row());
+@@ -631,7 +636,7 @@ void Library::applySidebarSourceVisibility() {
+             continue;
+         }
+         const bool visible = m_pConfig->getValue(source.preference, true);
+-        m_pSidebarWidget->setRowHidden(row, QModelIndex(), !visible);
++        m_pSidebarWidget->setSourceRowHidden(row, !visible);
+         if (visible && !firstVisible.isValid()) {
+             firstVisible = m_pSidebarModel->index(row, 0);
+         }
+@@ -649,15 +654,18 @@ void Library::applySidebarSourceVisibility() {
+     }
+     const auto defaultIndex = m_pSidebarModel->getDefaultSelection();
+     if (firstVisible.isValid() && defaultIndex.isValid() &&
+-            m_pSidebarWidget->isRowHidden(defaultIndex.row(), QModelIndex())) {
++            m_pSidebarWidget->isSourceRowHidden(defaultIndex.row())) {
+         m_pSidebarModel->setDefaultSelection(firstVisible.row());
+     }
+-    const bool hiddenContext = LibraryInterface::hasHiddenContext(m_pSidebarWidget);
++    // The owner's hidden sources; a tile showing only some sources (This
++    // Pi) is not a hidden context.
++    const bool hiddenContext = LibraryInterface::hasHiddenContext(m_pSidebarWidget,
++            [this](int row) { return m_pSidebarWidget->isSourceRowHidden(row); });
+     QModelIndex folder = m_pSidebarWidget->rootIndex();
+     while (folder.parent().isValid()) {
+         folder = folder.parent();
+     }
+-    if (folder.isValid() && m_pSidebarWidget->isRowHidden(folder.row(), QModelIndex())) {
++    if (folder.isValid() && m_pSidebarWidget->isSourceRowHidden(folder.row())) {
+         m_pSidebarWidget->returnToSourceRoot();
+     }
+     // Never leave keyboard/controller navigation pointing at a hidden source.
+@@ -789,6 +797,15 @@ void Library::showSidebarSourcesMenu() {
+         m_pSidebarSourceEdit = list;
+         // The same settings and functions as the old Sources menu.
+         list->visibilityChanged = [this](const QString& identity, bool enabled) {
++            if (LibraryInterface::SourceGroups::hasOwnSetting(identity)) {
++                // A group's own switch (drives, This Pi, Samples, More).
++                m_pConfig->setValue(ConfigKey(kConfigGroup,
++                                            LibraryInterface::SourceGroups::settingName(identity)),
++                        enabled);
++                m_pSidebarWidget->sourcesChanged();
++                refreshSidebarSourceEdit();
++                return;
++            }
+             // Copy the factory before addFeature, which may grow the list.
+             const auto found = std::find_if(m_sidebarSources.begin(), m_sidebarSources.end(),
+                     [&identity](const SidebarSource& item) { return item.id == identity; });
+@@ -814,7 +831,11 @@ void Library::showSidebarSourcesMenu() {
+             refreshSidebarSourceEdit();
+         };
+         list->startChosen = [this](const QString& identity) {
+-            m_pConfig->setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), identity);
++            // This Pi starts at Tracks.
++            m_pConfig->setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"),
++                    identity == LibraryInterface::SourceGroups::kThisPi
++                            ? QStringLiteral("MixxxLibraryFeature")
++                            : identity);
+             applySidebarSourceVisibility();
+             refreshSidebarSourceEdit();
+         };
+@@ -830,6 +851,57 @@ void Library::refreshSidebarSourceEdit() {
+         return;
+     }
+     QList<LibraryInterface::SourceEditEntry> entries;
++    if (groupedSources()) {
++        // Grouped Sources: one row per tile, in the tiles' order; This Pi
++        // and More list their sources below them (a switch each).
++        namespace Groups = LibraryInterface::SourceGroups;
++        auto member = [this, &entries](const QString& id) {
++            for (const auto& source : std::as_const(m_sidebarSources)) {
++                if (source.id == id) {
++                    entries.append({source.id, QStringLiteral("\u00B7 ") + source.title,
++                            m_pConfig->getValue(source.preference, true), source.feature != nullptr,
++                            true});
++                }
++            }
++        };
++        for (const auto& tile : sourceGroupOrder()) {
++            if (tile == Groups::kDrives) {
++                entries.append({tile, tr("USB drives (each drive)"), sourceGroupVisible(tile), false});
++            } else if (tile == Groups::kThisPi) {
++                entries.append({tile, tr("This Pi"), sourceGroupVisible(tile), true});
++                for (const auto& id : Groups::thisPi()) {
++                    member(id);
++                }
++            } else if (tile == Groups::kSamples) {
++                entries.append({tile, tr("Samples"), sourceGroupVisible(tile), false});
++            } else if (tile == Groups::kMore) {
++                entries.append({tile, tr("More"), sourceGroupVisible(tile), false});
++                for (const auto& source : std::as_const(m_sidebarSources)) {
++                    if (Groups::inMore(source.id)) {
++                        member(source.id);
++                    }
++                }
++            } else {
++                for (const auto& source : std::as_const(m_sidebarSources)) {
++                    if (source.id == tile) {
++                        entries.append({source.id,
++                                tile == Groups::kFolders       ? tr("Folders")
++                                        : tile == Groups::kHistory ? tr("History")
++                                                                   : tr("Recordings"),
++                                m_pConfig->getValue(source.preference, true),
++                                source.feature != nullptr});
++                    }
++                }
++            }
++        }
++        list->moved = [this](const QString& tile, int direction) {
++            moveSourceGroup(tile, direction);
++        };
++        list->setSources(entries,
++                m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")));
++        return;
++    }
++    list->moved = nullptr;
+     for (const auto& source : std::as_const(m_sidebarSources)) {
+         entries.append({source.id, source.title, m_pConfig->getValue(source.preference, true),
+                 source.feature != nullptr});
+@@ -1052,6 +1124,150 @@ void Library::setBrowseScroll(int scroll) {
+     }
+ }
+ 
++bool Library::groupedSources() const {
++    return m_pSidebarWidget && m_pSidebarWidget->hasSourceScreen();
++}
++
++QStringList Library::sourceGroupOrder() const {
++    return SourceOrder::present(SourceOrder::decode(m_pConfig->getValueString(
++                                        ConfigKey(kConfigGroup, "SourceGroupOrder"))),
++            LibraryInterface::SourceGroups::defaultOrder());
++}
++
++bool Library::sourceGroupVisible(const QString& tile) const {
++    if (LibraryInterface::SourceGroups::hasOwnSetting(tile)) {
++        return m_pConfig->getValue(ConfigKey(kConfigGroup,
++                                           LibraryInterface::SourceGroups::settingName(tile)),
++                true);
++    }
++    // A tile that is one source: that source's own setting.
++    for (const auto& source : m_sidebarSources) {
++        if (source.id == tile) {
++            return m_pConfig->getValue(source.preference, true);
++        }
++    }
++    return false;
++}
++
++void Library::mapSourceGroups() {
++    namespace Groups = LibraryInterface::SourceGroups;
++    const ConfigKey mapped(kConfigGroup, "SourceGroupsMapped");
++    if (m_pConfig->getValue(mapped, false)) {
++        return;
++    }
++    // The owner's per-source choices, once: a tile whose sources are all
++    // hidden starts hidden.
++    auto shown = [this](const QStringList& ids) {
++        for (const auto& source : std::as_const(m_sidebarSources)) {
++            if (ids.contains(source.id) && m_pConfig->getValue(source.preference, true)) {
++                return true;
++            }
++        }
++        return false;
++    };
++    m_pConfig->setValue(ConfigKey(kConfigGroup, Groups::settingName(Groups::kDrives)),
++            shown({QStringLiteral("RekordboxFeature"), Groups::kFolders}));
++    m_pConfig->setValue(ConfigKey(kConfigGroup, Groups::settingName(Groups::kThisPi)),
++            shown(Groups::thisPi()));
++    m_pConfig->setValue(ConfigKey(kConfigGroup, Groups::settingName(Groups::kSamples)),
++            shown({Groups::kFolders}));
++    // More shows only while one of its sources is on.
++    m_pConfig->setValue(ConfigKey(kConfigGroup, Groups::settingName(Groups::kMore)), true);
++    m_pConfig->setValue(mapped, true);
++}
++
++void Library::moveSourceGroup(const QString& tile, int direction) {
++    QStringList order = sourceGroupOrder();
++    const int from = order.indexOf(tile);
++    const int to = from + direction;
++    if (from < 0 || to < 0 || to >= order.size()) {
++        return;
++    }
++    order.move(from, to);
++    m_pConfig->setValue(ConfigKey(kConfigGroup, "SourceGroupOrder"), SourceOrder::encode(order));
++    m_pSidebarWidget->sourcesChanged();
++    refreshSidebarSourceEdit();
++}
++
++QList<LibraryInterface::SourceTile> Library::sourceGroupTiles() {
++    namespace Groups = LibraryInterface::SourceGroups;
++    QList<LibraryInterface::SourceTile> tiles;
++    auto icon = [](const QModelIndex& index) {
++        return index.data(Qt::DecorationRole).value<QIcon>();
++    };
++    // Every tile hidden (by hand-edited settings): show them all.
++    for (int pass = 0; pass < 2 && tiles.isEmpty(); ++pass) {
++        const bool all = pass == 1;
++        for (const auto& tile : sourceGroupOrder()) {
++            if (!all && !sourceGroupVisible(tile)) {
++                continue;
++            }
++            if (tile == Groups::kDrives) {
++                // One tile per open drive, in plug-in order.
++                const QModelIndex rekordbox = sourceRow(QStringLiteral("RekordboxFeature"));
++                for (const auto& drive : driveRows()) {
++                    const bool export_ = rekordbox.isValid() && drive.parent() == rekordbox;
++                    const QVariant data = drive.data(SidebarModel::DataRole);
++                    const QString path = QDir::cleanPath(
++                            export_ ? data.toList().value(0).toString() : data.toString());
++                    tiles.append({QStringLiteral("drive:") + path,
++                            export_ ? drive.data().toString() : QFileInfo(path).fileName(),
++                            export_ ? tr("USB drive · rekordbox") : tr("USB drive"),
++                            icon(drive.parent()), drive, {}});
++                }
++            } else if (tile == Groups::kThisPi || tile == Groups::kMore) {
++                // A set of top-level sources, each still shown or hidden by
++                // its own switch.
++                QList<QPersistentModelIndex> rows;
++                QStringList names;
++                QStringList ids;
++                if (tile == Groups::kThisPi) {
++                    ids = Groups::thisPi();
++                } else {
++                    for (const auto& source : std::as_const(m_sidebarSources)) {
++                        if (Groups::inMore(source.id)) {
++                            ids.append(source.id);
++                        }
++                    }
++                }
++                for (const auto& id : std::as_const(ids)) {
++                    const QModelIndex row = sourceRow(id);
++                    if (row.isValid() && !m_pSidebarWidget->isSourceRowHidden(row.row())) {
++                        rows.append(row);
++                        names.append(row.data().toString());
++                    }
++                }
++                if (rows.isEmpty()) {
++                    continue;
++                }
++                tiles.append({tile, tile == Groups::kThisPi ? tr("This Pi") : tr("More"),
++                        names.join(QStringLiteral(" · ")), icon(rows.first()), {}, rows});
++            } else if (tile == Groups::kSamples) {
++                const QModelIndex samples = LibraryInterface::locatePlace(m_pSidebarModel,
++                        sampleSourcePlace(LibraryInterface::SampleBrowser::kSamples),
++                        SidebarModel::DataRole);
++                if (samples.isValid()) {
++                    tiles.append({tile, tr("Samples"), tr("Sounds for the pads"),
++                            icon(samples.parent()), samples, {}});
++                }
++            } else {
++                const QModelIndex row = sourceRow(tile);
++                if (!row.isValid()) {
++                    continue;
++                }
++                const QString name = tile == Groups::kFolders ? tr("Folders")
++                        : tile == Groups::kHistory           ? tr("History")
++                                                             : tr("Recordings");
++                const QString subline = tile == Groups::kFolders ? tr("Browse files and drives")
++                        : tile == Groups::kHistory              ? tr("Played tracks by date")
++                                                                : tr("Your recorded sets");
++                tiles.append({tile, name, subline, icon(row), row, {}});
++            }
++        }
++    }
++    return tiles;
++}
++
+ void Library::onPlayerManagerTrackAnalyzerProgress(
+         TrackId /*trackId*/, AnalyzerProgress /*analyzerProgress*/) {
+     if (m_pAnalysisFeature) {
+@@ -1133,7 +1349,7 @@ void Library::onSkinLoadFinished() {
+         QList<bool> visibility;
+         for (auto* feature : std::as_const(m_features)) {
+             identities.append(QString::fromLatin1(feature->metaObject()->className()));
+-            visibility.append(!m_pSidebarWidget->isRowHidden(identities.size() - 1, QModelIndex()));
++            visibility.append(!m_pSidebarWidget->isSourceRowHidden(identities.size() - 1));
+         }
+         const int preferredRow = LibraryInterface::preferredSourceRow(
+                 m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")),
+diff --git a/src/library/library.h b/src/library/library.h
+index 1170da0..3ad6915 100644
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -43,6 +43,7 @@ class QModelIndex;
+ namespace LibraryInterface {
+ struct BrowsePlace;
+ class SampleBrowser;
++struct SourceTile;
+ } // namespace LibraryInterface
+ 
+ #ifdef __ENGINEPRIME__
+@@ -204,6 +205,15 @@ class Library: public QObject {
+     // Each open drive once, in plug-in order: its rekordbox row, else the
+     // Computer row it was opened in.
+     QList<QModelIndex> driveRows();
++    // Grouped Sources (R-9 step 3): the rail's tiles (drives, This Pi,
++    // Recordings, History, Folders, Samples, More) in the owner's order.
++    bool groupedSources() const;
++    QList<LibraryInterface::SourceTile> sourceGroupTiles();
++    QStringList sourceGroupOrder() const;
++    bool sourceGroupVisible(const QString& tile) const;
++    // Once: a tile whose sources are all hidden starts hidden.
++    void mapSourceGroups();
++    void moveSourceGroup(const QString& tile, int direction);
+     std::unique_ptr<LibraryInterface::SampleBrowser> m_pSampleBrowser;
+     std::unique_ptr<LibraryInterface::BrowsePlace> m_pShownPlace;
+     QScopedPointer<ControlObject> m_pSampleLoad;
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+index 18af07e..f85cbe5 100644
+--- a/src/widget/libraryinterface.h
++++ b/src/widget/libraryinterface.h
+@@ -132,15 +132,17 @@ inline void protectLastVisible(const QList<QCheckBox*>& choices) {
+     }
+ }
+ 
+-inline bool hasHiddenContext(QTreeView* view) {
+-    auto hidden = [view](QModelIndex index) {
++// rowHidden: whether a top-level source is hidden by the owner's choice
++// (default: the view's own hidden rows).
++inline bool hasHiddenContext(QTreeView* view, std::function<bool(int)> rowHidden = {}) {
++    auto hidden = [view, rowHidden](QModelIndex index) {
+         if (!index.isValid()) {
+             return false;
+         }
+         while (index.parent().isValid()) {
+             index = index.parent();
+         }
+-        return view->isRowHidden(index.row(), QModelIndex());
++        return rowHidden ? rowHidden(index.row()) : view->isRowHidden(index.row(), QModelIndex());
+     };
+     if (hidden(view->rootIndex()) || hidden(view->currentIndex())) {
+         return true;
+@@ -500,8 +502,54 @@ struct SourceEditEntry {
+     bool visible;
+     // False for an optional source that is not created yet (it is hidden).
+     bool available;
++    // Grouped Sources (R-9 step 3): a member row (a source inside This Pi or
++    // More) has a switch only; Up and Down move the tile rows.
++    bool member = false;
+ };
+ 
++namespace SourceGroups {
++// The tiles in their default order. Drive tiles take the place of kDrives.
++inline const QString kDrives = QStringLiteral("group:drives");
++inline const QString kThisPi = QStringLiteral("group:pi");
++inline const QString kRecordings = QStringLiteral("RecordingFeature");
++inline const QString kHistory = QStringLiteral("SetlogFeature");
++inline const QString kFolders = QStringLiteral("BrowseFeature");
++inline const QString kSamples = QStringLiteral("group:samples");
++inline const QString kMore = QStringLiteral("group:more");
++
++inline QStringList defaultOrder() {
++    return {kDrives, kThisPi, kRecordings, kHistory, kFolders, kSamples, kMore};
++}
++// The sources This Pi shows, in this order.
++inline QStringList thisPi() {
++    return {QStringLiteral("MixxxLibraryFeature"), QStringLiteral("PlaylistFeature"),
++            QStringLiteral("CrateFeature"), QStringLiteral("AutoDJFeature")};
++}
++// Sources that a tile of their own or a drive tile stands for. Every other
++// source (iTunes, Serato, Traktor, Analyse, ...) is under More.
++inline bool inMore(const QString& source) {
++    return !thisPi().contains(source) && source != kRecordings && source != kHistory &&
++            source != kFolders && source != QStringLiteral("RekordboxFeature");
++}
++// A group with its own on/off setting (the others use their source's).
++inline bool hasOwnSetting(const QString& tile) {
++    return tile == kDrives || tile == kThisPi || tile == kSamples || tile == kMore;
++}
++// Its [Library] setting name.
++inline QString settingName(const QString& tile) {
++    if (tile == kDrives) {
++        return QStringLiteral("SourceGroupDrives");
++    }
++    if (tile == kThisPi) {
++        return QStringLiteral("SourceGroupThisPi");
++    }
++    if (tile == kSamples) {
++        return QStringLiteral("SourceGroupSamples");
++    }
++    return QStringLiteral("SourceGroupMore");
++}
++} // namespace SourceGroups
++
+ // Sources edit (R-10): one list. Each 56 px row has the name, Up, Down and
+ // an on/off switch; the start source carries a star. Start here (under the
+ // list) makes the selected row the start source. The last visible source
+@@ -511,6 +559,9 @@ class SourceEditList final : public QWidget {
+     std::function<void(const QStringList&)> orderChanged;
+     std::function<void(const QString&, bool)> visibilityChanged;
+     std::function<void(const QString&)> startChosen;
++    // When set, Up and Down call this instead of orderChanged (grouped
++    // Sources: a group moves with its member rows).
++    std::function<void(const QString&, int)> moved;
+ 
+     explicit SourceEditList(QWidget* parent)
+             : QWidget(parent) {
+@@ -595,13 +646,23 @@ class SourceEditList final : public QWidget {
+             auto* up = new QPushButton(QObject::tr("Up"), row);
+             up->setObjectName(QStringLiteral("MixpiSourceEditUp"));
+             up->setFixedSize(48, 48);
+-            up->setEnabled(position > 0);
++            up->setEnabled(movableBefore(position));
+             line->addWidget(up);
+             auto* down = new QPushButton(QObject::tr("Down"), row);
+             down->setObjectName(QStringLiteral("MixpiSourceEditDown"));
+             down->setFixedSize(48, 48);
+-            down->setEnabled(position + 1 < sources.size());
++            down->setEnabled(movableAfter(position));
+             line->addWidget(down);
++            if (source.member) {
++                // A source inside a group: its switch only, in line.
++                name->setProperty("member", true);
++                for (auto* button : {up, down}) {
++                    auto policy = button->sizePolicy();
++                    policy.setRetainSizeWhenHidden(true);
++                    button->setSizePolicy(policy);
++                    button->hide();
++                }
++            }
+             auto* toggle = new SourceSwitch(row);
+             toggle->setObjectName(QStringLiteral("MixpiSourceEditSwitch"));
+             toggle->setAccessibleName(QObject::tr("Show %1").arg(source.title));
+@@ -652,6 +713,30 @@ class SourceEditList final : public QWidget {
+     }
+ 
+   private:
++    bool movableBefore(int position) const {
++        if (m_sources.at(position).member) {
++            return false;
++        }
++        for (int other = position - 1; other >= 0; --other) {
++            if (!m_sources.at(other).member) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    bool movableAfter(int position) const {
++        if (m_sources.at(position).member) {
++            return false;
++        }
++        for (int other = position + 1; other < m_sources.size(); ++other) {
++            if (!m_sources.at(other).member) {
++                return true;
++            }
++        }
++        return false;
++    }
++
+     void select(const QString& id) {
+         m_selected = id;
+         for (auto* row : std::as_const(m_rowWidgets)) {
+@@ -662,6 +747,11 @@ class SourceEditList final : public QWidget {
+     }
+ 
+     void move(const QString& id, int direction) {
++        if (moved) {
++            m_selected = id;
++            moved(id, direction);
++            return;
++        }
+         QStringList order;
+         for (const auto& source : std::as_const(m_sources)) {
+             order.append(source.id);
+diff --git a/src/widget/touchsourcenavigation.h b/src/widget/touchsourcenavigation.h
+index 1aa08cf..9ed8a25 100644
+--- a/src/widget/touchsourcenavigation.h
++++ b/src/widget/touchsourcenavigation.h
+@@ -3,9 +3,28 @@
+ #include <functional>
+ 
+ #include <QAbstractItemModel>
++#include <QIcon>
++#include <QList>
+ #include <QPersistentModelIndex>
++#include <QString>
+ #include <QTreeView>
+ 
++namespace LibraryInterface {
++// Grouped Sources (R-9 step 3): the rail's tiles are views onto the sources.
++struct SourceTile {
++    // "drive:<mount path>", or a group id (LibraryInterface::SourceGroups).
++    QString id;
++    QString name;
++    QString subline;
++    QIcon icon;
++    // A node tile shows this row's children on the right (a drive under
++    // Rekordbox or Computer, Recordings, History, Computer, Samples).
++    QPersistentModelIndex node;
++    // A set tile (This Pi, More) shows these top-level rows instead.
++    QList<QPersistentModelIndex> rows;
++};
++} // namespace LibraryInterface
++
+ // Flat, one-level-at-a-time navigation over the existing library tree. The
+ // model still owns imports, track selection and removable-device discovery.
+ // No cached raw TreeItem pointers survive a model reset or device removal.
+@@ -38,7 +57,19 @@ class TouchSourceNavigation final : public QObject {
+     std::function<void(bool)> changed;
+ 
+     bool canGoBack() const {
+-        return m_root.isValid();
++        return m_root.isValid() && m_root != m_floor;
++    }
++
++    // Grouped Sources: Back stops at a tile's row (a drive, Recordings).
++    // Invalid: Back goes up to the top level.
++    void setFloor(const QModelIndex& index) {
++        m_floor = index;
++        if (changed) {
++            changed(canGoBack());
++        }
++    }
++    QModelIndex floor() const {
++        return m_floor;
+     }
+ 
+     void enter(const QModelIndex& index) {
+@@ -61,6 +92,9 @@ class TouchSourceNavigation final : public QObject {
+             home();
+             return;
+         }
++        if (m_root == m_floor) {
++            return;
++        }
+         const QPersistentModelIndex previous = m_root;
+         setRoot(previous.parent());
+         // Highlight the folder we just left without reactivating its track
+@@ -107,4 +141,5 @@ class TouchSourceNavigation final : public QObject {
+     QTreeView* const m_view;
+     QPersistentModelIndex m_root;
+     QPersistentModelIndex m_pending;
++    QPersistentModelIndex m_floor;
+ };
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index 00530b1..6b8c7ac 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -13,6 +13,7 @@
+ #include <QStyledItemDelegate>
+ #include <QTimer>
+ #include <QUrl>
++#include <QSet>
+ #include <QVBoxLayout>
+ #include <QtDebug>
+ #include <algorithm>
+@@ -171,6 +172,13 @@ void WLibrarySidebar::updateSourceScreen() {
+             m_sourceRail->setVisible(wanted);
+             m_sourceBar->setVisible(wanted && !m_sourcesEditing);
+         }
++        if (groupedTiles) {
++            // The tile filter and Back's stop belong to the Sources screen.
++            if (!wanted && m_touchNavigation) {
++                m_touchNavigation->setFloor({});
++            }
++            applyTileFilter();
++        }
+         if (wanted) {
+             // The rail and the bar start at the edge: no frame around them.
+             m_frameShape = frameShape();
+@@ -264,6 +272,66 @@ void WLibrarySidebar::rebuildSourceRail() {
+     }
+     m_sourceTiles.clear();
+     m_sourceTileIndexes.clear();
++    m_groupedTiles.clear();
++    if (groupedTiles) {
++        // Grouped Sources: the Library's tiles (drives first, This Pi, ...).
++        m_groupedTiles = groupedTiles();
++        for (const auto& tile : std::as_const(m_groupedTiles)) {
++            auto* pTile = new QPushButton(pTiles);
++            pTile->setObjectName("MixpiSourceTile");
++            pTile->setProperty("drive", tile.id.startsWith(QStringLiteral("drive:")));
++            pTile->setCheckable(true);
++            pTile->setFocusPolicy(Qt::NoFocus);
++            pTile->setFixedHeight(LibraryInterface::kSourceTileHeight);
++            pTile->setAccessibleName(tile.name);
++            auto* pLine = new QHBoxLayout(pTile);
++            pLine->setContentsMargins(12, 6, 8, 6);
++            pLine->setSpacing(10);
++            auto* pIcon = tileLabel("MixpiSourceTileIcon", pTile);
++            pIcon->setFixedSize(26, 26);
++            pIcon->setPixmap(tile.icon.pixmap(26, 26));
++            pLine->addWidget(pIcon);
++            auto* pText = new QVBoxLayout;
++            pText->setSpacing(2);
++            auto* pName = tileLabel("MixpiSourceTileName", pTile);
++            pName->setText(tile.name);
++            pText->addWidget(pName);
++            auto* pSub = tileLabel("MixpiSourceTileSub", pTile);
++            pSub->setText(tile.subline);
++            pText->addWidget(pSub);
++            pLine->addLayout(pText, 1);
++            const QString id = tile.id;
++            connect(pTile, &QPushButton::clicked, this, [this, id] { openGroupedTile(id, true); });
++            m_sourceRailDrag->watch(pTile);
++            pTileLayout->insertWidget(pTileLayout->count() - 1, pTile);
++            m_sourceTiles.append(pTile);
++            m_sourceTileIndexes.append(tile.node);
++        }
++        // The selected tile went away (a drive pulled out), or a model reset
++        // left its rows: show a tile again without opening anything in
++        // Tracks. This Pi first, else the first tile.
++        if (!selectedTile() || !withinSelectedTile()) {
++            // First time: the tile of what Tracks shows.
++            QString id = selectedTile() ? m_selectedTile
++                                        : (m_selectedTile.isEmpty() ? tileOf(currentIndex())
++                                                                    : QString());
++            if (id.isEmpty()) {
++                for (const auto& tile : std::as_const(m_groupedTiles)) {
++                    if (tile.id == LibraryInterface::SourceGroups::kThisPi) {
++                        id = tile.id;
++                    }
++                }
++            }
++            if (id.isEmpty() && !m_groupedTiles.isEmpty()) {
++                id = m_groupedTiles.first().id;
++            }
++            openGroupedTile(id, false);
++        } else {
++            applyTileFilter();
++        }
++        updateSourceChrome();
++        return;
++    }
+     // One tile per visible top-level source, in the model's (saved) order.
+     for (int row = 0; row < model()->rowCount(); ++row) {
+         if (isRowHidden(row, QModelIndex())) {
+@@ -303,6 +371,18 @@ void WLibrarySidebar::rebuildSourceRail() {
+ 
+ QString WLibrarySidebar::sourceCrumb() const {
+     QStringList parts;
++    if (const auto* pTile = groupedTiles ? selectedTile() : nullptr) {
++        // The tile's name, then the folders below its row.
++        for (QModelIndex index = rootIndex(); index.isValid() && index != pTile->node;
++                index = index.parent()) {
++            parts.prepend(index.data().toString());
++        }
++        if (pTile->node.isValid() && !withinSelectedTile()) {
++            parts.clear();
++        }
++        parts.prepend(pTile->name);
++        return parts.join(QStringLiteral(" \u203A "));
++    }
+     for (QModelIndex index = rootIndex(); index.isValid(); index = index.parent()) {
+         parts.prepend(index.data().toString());
+     }
+@@ -327,10 +407,152 @@ void WLibrarySidebar::updateSourceChrome() {
+         top = top.parent();
+     }
+     for (int tile = 0; tile < m_sourceTiles.size(); ++tile) {
++        if (groupedTiles) {
++            m_sourceTiles.at(tile)->setChecked(tile < m_groupedTiles.size() &&
++                    m_groupedTiles.at(tile).id == m_selectedTile);
++            continue;
++        }
+         m_sourceTiles.at(tile)->setChecked(top.isValid() && m_sourceTileIndexes.at(tile) == top);
+     }
+ }
+ 
++const LibraryInterface::SourceTile* WLibrarySidebar::selectedTile() const {
++    for (const auto& tile : m_groupedTiles) {
++        if (!m_selectedTile.isEmpty() && tile.id == m_selectedTile) {
++            return &tile;
++        }
++    }
++    return nullptr;
++}
++
++QString WLibrarySidebar::tileOf(const QModelIndex& index) const {
++    // The tile that holds a row: a node tile's row or a row below it (the
++    // deepest such node), else a set tile with the row's top-level source.
++    QString found;
++    int depth = -1;
++    for (const auto& tile : m_groupedTiles) {
++        int level = 0;
++        for (QModelIndex step = tile.node; step.isValid(); step = step.parent()) {
++            ++level;
++        }
++        for (QModelIndex step = index; step.isValid() && tile.node.isValid(); step = step.parent()) {
++            if (step == tile.node && level > depth) {
++                found = tile.id;
++                depth = level;
++            }
++        }
++    }
++    if (!found.isEmpty() || !index.isValid()) {
++        return found;
++    }
++    QModelIndex top = index;
++    while (top.parent().isValid()) {
++        top = top.parent();
++    }
++    for (const auto& tile : m_groupedTiles) {
++        if (tile.rows.contains(QPersistentModelIndex(top))) {
++            return tile.id;
++        }
++    }
++    return {};
++}
++
++bool WLibrarySidebar::withinSelectedTile() const {
++    const auto* pTile = selectedTile();
++    if (!pTile) {
++        return false;
++    }
++    const QModelIndex root = rootIndex();
++    if (pTile->node.isValid()) {
++        // At the tile's row or below it; or, for a row without children
++        // (Recordings), the level that shows it.
++        for (QModelIndex step = root; step.isValid(); step = step.parent()) {
++            if (step == pTile->node) {
++                return true;
++            }
++        }
++        return root == pTile->node.parent() && model()->rowCount(pTile->node) == 0;
++    }
++    QModelIndex top = root;
++    while (top.parent().isValid()) {
++        top = top.parent();
++    }
++    return !top.isValid() || pTile->rows.contains(QPersistentModelIndex(top));
++}
++
++void WLibrarySidebar::setSourceRowHidden(int row, bool hidden) {
++    if (hidden) {
++        m_hiddenSourceRows.insert(row);
++    } else {
++        m_hiddenSourceRows.remove(row);
++    }
++    if (groupedTiles && m_sourceScreen) {
++        applyTileFilter();
++    } else {
++        setRowHidden(row, QModelIndex(), hidden);
++    }
++}
++
++bool WLibrarySidebar::isSourceRowHidden(int row) const {
++    return m_hiddenSourceRows.contains(row);
++}
++
++void WLibrarySidebar::applyTileFilter() {
++    if (!model()) {
++        return;
++    }
++    // A set tile shows its rows only; a node tile without children shows its
++    // own row only. The owner's hidden sources stay hidden.
++    const auto* pTile = groupedTiles && m_sourceScreen ? selectedTile() : nullptr;
++    for (int row = 0; row < model()->rowCount(); ++row) {
++        const QPersistentModelIndex index(model()->index(row, 0));
++        bool shown = !m_hiddenSourceRows.contains(row);
++        if (pTile && !pTile->rows.isEmpty()) {
++            shown = shown && pTile->rows.contains(index);
++        } else if (pTile && pTile->node.isValid() && !pTile->node.parent().isValid()) {
++            shown = index == pTile->node;
++        }
++        if (isRowHidden(row, QModelIndex()) == shown) {
++            setRowHidden(row, QModelIndex(), !shown);
++        }
++    }
++}
++
++void WLibrarySidebar::openGroupedTile(const QString& id, bool activate) {
++    if (!m_touchNavigation || m_sourcesEditing) {
++        return;
++    }
++    m_selectedTile = id;
++    const auto* pTile = selectedTile();
++    applyTileFilter();
++    if (!pTile) {
++        m_touchNavigation->setFloor({});
++        m_touchNavigation->home();
++        updateSourceChrome();
++        return;
++    }
++    const QPersistentModelIndex node = pTile->node;
++    m_touchNavigation->setFloor(node);
++    m_touchNavigation->home();
++    if (!node.isValid()) {
++        // A set tile (This Pi): its sources at the top level.
++        updateSourceChrome();
++        return;
++    }
++    // A node tile: its row's children on the right.
++    m_touchNavigation->reveal(node);
++    if (activate) {
++        selectionModel()->setCurrentIndex(node,
++                QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
++        // The same as a tap on the row: it opens in Tracks, and a list
++        // without children closes Sources.
++        activateTouchIndex(node);
++    } else {
++        m_touchNavigation->enter(node);
++    }
++    updateSourceChrome();
++}
++
+ void WLibrarySidebar::openSourceTile(const QPersistentModelIndex& index) {
+     if (!m_touchNavigation || m_sourcesEditing || !index.isValid() ||
+             index.model() != model() || index.parent().isValid() ||
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index 5cb4429..6d17ca5 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -5,11 +5,13 @@
+ #include <QModelIndex>
+ #include <QPersistentModelIndex>
+ #include <QPoint>
++#include <QSet>
+ #include <QPointer>
+ #include <QTreeView>
+ #include <functional>
+ 
+ #include "library/library_decl.h"
++#include "widget/touchsourcenavigation.h"
+ #include "widget/wbasewidget.h"
+ 
+ class ControlObject;
+@@ -54,6 +56,16 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+         return m_sourceTiles;
+     }
+ 
++    // Grouped Sources (R-9 step 3): the Library gives the rail's tiles. A
++    // set tile (This Pi) hides the other top-level rows on top of the
++    // owner's own choice, so the Library hides sources through these.
++    std::function<QList<LibraryInterface::SourceTile>()> groupedTiles;
++    void setSourceRowHidden(int row, bool hidden);
++    bool isSourceRowHidden(int row) const;
++    QString selectedSourceTile() const {
++        return m_selectedTile;
++    }
++
+     void contextMenuEvent(QContextMenuEvent * event) override;
+     void dragMoveEvent(QDragMoveEvent * event) override;
+     void dragEnterEvent(QDragEnterEvent * event) override;
+@@ -103,6 +115,11 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     void rebuildSourceRail();
+     void updateSourceChrome();
+     void openSourceTile(const QPersistentModelIndex& index);
++    void openGroupedTile(const QString& id, bool activate);
++    void applyTileFilter();
++    bool withinSelectedTile() const;
++    const LibraryInterface::SourceTile* selectedTile() const;
++    QString tileOf(const QModelIndex& index) const;
+     void closeSources();
+ 
+     TouchSourceNavigation* m_touchNavigation = nullptr;
+@@ -133,4 +150,9 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     QPointer<QWidget> m_sourcesEditPanel;
+     QList<QPushButton*> m_sourceTiles;
+     QList<QPersistentModelIndex> m_sourceTileIndexes;
++    // Grouped Sources: the tiles shown, the selected one, and the top-level
++    // rows the owner hid.
++    QList<LibraryInterface::SourceTile> m_groupedTiles;
++    QString m_selectedTile;
++    QSet<int> m_hiddenSourceRows;
+ };

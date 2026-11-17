@@ -1,5 +1,5 @@
-"""R-8 native part and R-9 step 3: build and run the sample_browser fixture,
-or (--source-groups) the source_groups fixture.
+"""R-8 native part: build and run the sample_browser fixture. The source_groups
+fixture has its own runner (source_groups_runner.py), which reuses GROUP_METHODS.
 
 The actual Library methods are taken from the patched library.cpp; the actual
 SidebarModel, TreeItemModel and libraryinterface.h are compiled as they are.
@@ -148,16 +148,11 @@ def main():
     parser = argparse.ArgumentParser()
     # Evidence only: the same checks without mixxx-sample-browser.patch must fail to build.
     parser.add_argument('--without-sample-browser', action='store_true')
-    # R-9 step 3: the source_groups fixture instead.
-    parser.add_argument('--source-groups', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-sample-browser-') as temporary:
         target = Path(temporary)
         reconstruct(target, exclude=('mixxx-sample-browser.patch',) if args.without_sample_browser else ())
-        if args.source_groups:
-            program = build(target, ROOT / 'tests/native/source_groups_test.cpp', GROUP_METHODS, sidebar=True)
-        else:
-            program = build(target, ROOT / 'tests/native/sample_browser_test.cpp')
+        program = build(target, ROOT / 'tests/native/sample_browser_test.cpp')
         subprocess.run([str(program)], env=qt_environment(), check=True, timeout=60)
 
 

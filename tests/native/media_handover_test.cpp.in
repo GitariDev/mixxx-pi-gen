@@ -1,0 +1,462 @@
+// media_handover fixture (R-5, R-6). Production code: the patched
+// RemovableTrackCache (real copies in /dev/shm/mixpi-track-cache), the
+// media-use registry, acquirePath, SoundSourceProxy's cache constructor and
+// openAudioSource, AudioSourceTrackProxy, and from mixpimediapage.h the eject
+// gate, MixpiEjectEngine, MixpiHandover and the Media page's steps.
+// Doubles: the mount identity (observePath) and a decoder that reads bytes.
+#include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QJsonObject>
+#include <QTemporaryDir>
+#include <QUrl>
+#include <iostream>
+#include <unistd.h>
+
+#include "library/media/mediauseregistry.h"
+#include "sources/removabletrackcache.h"
+
+namespace {
+int failures = 0;
+int checks = 0;
+void check(bool condition, const std::string& message) {
+    ++checks;
+    if (!condition) {
+        ++failures;
+        std::cerr << "FAIL " << message << '\n';
+    } else {
+        std::cout << "PASS " << message << '\n';
+    }
+}
+QString driveRoot;
+} // namespace
+
+// Mount identity double: every path under the fixture "drive" is one drive.
+namespace mixxx::media {
+inline Binding observePath(const std::string& path) {
+    const auto root = driveRoot.toStdString();
+    if (root.empty() || path.rfind(root, 0) != 0 || !QFile::exists(QString::fromStdString(path))) {
+        return {};
+    }
+    return {"fixture-drive", "fixture-mount", {}};
+}
+PRODUCTION_ACQUIRE_PATH
+} // namespace mixxx::media
+
+// Track and decoder doubles.
+struct FileInfo {
+    QString location;
+    QUrl toQUrl() const {
+        return QUrl::fromLocalFile(location);
+    }
+};
+struct Track {
+    QString location;
+    QString getLocation() const {
+        return location;
+    }
+    FileInfo getFileInfo() const {
+        return {location};
+    }
+    void updateStreamInfoFromSource(int) {
+    }
+};
+using TrackPointer = std::shared_ptr<Track>;
+
+namespace mixxx {
+// A "decoder" that keeps its file open and returns its bytes.
+struct AudioSource {
+    struct OpenParams {};
+    explicit AudioSource(QString path = {})
+            : file(path) {
+    }
+    virtual ~AudioSource() = default;
+    QFile file;
+    bool open() {
+        return file.open(QIODevice::ReadOnly);
+    }
+    QByteArray readAll() {
+        file.seek(0);
+        return file.readAll();
+    }
+    int getStreamInfo() const {
+        return 0;
+    }
+    virtual QByteArray samples() {
+        return readAll();
+    }
+};
+using AudioSourcePointer = std::shared_ptr<AudioSource>;
+struct AudioSourceProxy : AudioSource {
+    explicit AudioSourceProxy(AudioSourcePointer next)
+            : source(std::move(next)) {
+    }
+    QByteArray samples() override {
+        return source->samples();
+    }
+    AudioSourcePointer source;
+};
+} // namespace mixxx
+
+#include "sources/audiosourcetrackproxy.h"
+
+struct Logger {
+    QDebug warning() const {
+        return qWarning();
+    }
+} kLogger;
+#define VERIFY_OR_DEBUG_ASSERT(condition) if (!(condition))
+bool failCopyDecoder = false;
+QString openedPath;
+
+struct SoundSourceProxy {
+    enum class RamCacheMode { Original, Existing, Create };
+    SoundSourceProxy(TrackPointer pTrack, RamCacheMode cacheMode, mixxx::media::Lease mediaUse);
+    mixxx::AudioSourcePointer openAudioSource(const mixxx::AudioSource::OpenParams& params);
+    int allProviderRegistrationsForUrl(const QUrl&) {
+        return 1;
+    }
+    void findProviderAndInitSoundSource() {
+        m_pSoundSource = std::make_shared<mixxx::AudioSource>(m_url.toLocalFile());
+    }
+    bool openSoundSource(const mixxx::AudioSource::OpenParams&) {
+        if (!m_mediaUse || !m_pSoundSource || (m_ramCache && failCopyDecoder)) {
+            return false;
+        }
+        openedPath = m_url.toLocalFile();
+        return m_pSoundSource->open();
+    }
+
+    const mixxx::media::Lease m_mediaUse;
+    const TrackPointer m_pTrack;
+    const mixxx::RemovableTrackCache::Lease m_ramCache;
+    const QUrl m_url;
+    const int m_providerRegistrations;
+    mixxx::AudioSourcePointer m_pSoundSource;
+};
+PRODUCTION_CACHE_CONSTRUCTOR
+PRODUCTION_AUDIO_OPEN
+
+#include "library/mixpimediapage.h"
+
+namespace {
+using mixxx::media::Producer;
+using mixxx::media::registry;
+
+int users() {
+    int total = 0;
+    for (auto count : registry().observe("fixture-drive").users) {
+        total += static_cast<int>(count);
+    }
+    return total;
+}
+
+bool drainIdleNow() {
+    auto drain = registry().beginDrain("fixture-drive");
+    const bool idle = drain && drain.snapshot().locallyIdle();
+    drain.cancel();
+    return idle;
+}
+
+int cacheFiles() {
+    return QDir(QStringLiteral("/dev/shm/mixpi-track-cache"))
+            .entryList({QStringLiteral("track-*")}, QDir::Files)
+            .size();
+}
+
+mixxx::AudioSourcePointer load(const QString& location) {
+    // As CachingReaderWorker::loadTrack: the load lease, then the proxy.
+    auto track = std::make_shared<Track>(Track{location});
+    auto use = mixxx::media::acquirePath(location.toStdString(), Producer::Load);
+    return SoundSourceProxy(track, SoundSourceProxy::RamCacheMode::Create, std::move(use)).openAudioSource({});
+}
+
+void handoverChecks(const QString& base) {
+    // Start-up with a stale copy: it is deleted (existing behaviour, asserted again).
+    const QString cache = QStringLiteral("/dev/shm/mixpi-track-cache");
+    QDir().mkpath(cache);
+    QFile::setPermissions(cache, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    QFile stale(cache + QStringLiteral("/track-stale.mp3"));
+    stale.open(QIODevice::WriteOnly);
+    stale.write("old");
+    stale.close();
+    mixxx::RemovableTrackCache::initialize();
+    check(cacheFiles() == 0, "start-up: a stale track-* copy is deleted");
+
+    driveRoot = base + QStringLiteral("/drive");
+    QDir().mkpath(driveRoot + QStringLiteral("/Contents"));
+    const QString original = driveRoot + QStringLiteral("/Contents/track.mp3");
+    QByteArray bytes;
+    for (int index = 0; index < 300000; ++index) {
+        bytes.append(static_cast<char>(index * 7));
+    }
+    QFile file(original);
+    file.open(QIODevice::WriteOnly);
+    file.write(bytes);
+    file.close();
+
+    auto audio = load(original);
+    check(audio != nullptr && openedPath.startsWith(cache), "copy: the deck opens its copy in Pi memory");
+    check(users() == 0 && drainIdleNow(), "copy: after the open the registry shows 0 users and a drain is idle");
+    check(audio && audio->samples() == bytes, "copy: reads return the same samples");
+    check(mixxx::RemovableTrackCache::servedFromCopy(original), "copy: served from a copy now");
+    check(cacheFiles() == 1, "copy: one track-* file in the cache");
+
+    // The drive goes: rename the folder that holds the original.
+    QDir().rename(driveRoot, base + QStringLiteral("/gone"));
+    check(!QFile::exists(original), "copy: the original is gone");
+    check(audio && audio->samples() == bytes, "copy: the copy keeps decoding without the original");
+    check(mixxx::RemovableTrackCache::servedFromCopy(original), "copy: still served from a copy without the drive");
+    audio.reset();
+    check(cacheFiles() == 0, "copy: dropping the audio source deletes the copy");
+    check(!mixxx::RemovableTrackCache::servedFromCopy(original), "copy: no longer served from a copy");
+    QDir().rename(base + QStringLiteral("/gone"), driveRoot);
+
+    // Fallback: the decoder cannot open the copy and uses the original.
+    failCopyDecoder = true;
+    auto fallback = load(original);
+    failCopyDecoder = false;
+    check(fallback != nullptr && openedPath == original, "fallback: the deck decodes the original");
+    check(users() == 1 && !drainIdleNow(), "fallback: the registry shows 1 user and a drain is busy");
+    check(!mixxx::RemovableTrackCache::servedFromCopy(original), "fallback: not served from a copy");
+    fallback.reset();
+    check(users() == 0 && drainIdleNow(), "fallback: dropping it ends the use");
+
+    // A source held while a drain runs: the copy is not a drive user.
+    auto held = load(original);
+    auto drain = registry().beginDrain("fixture-drive");
+    check(drain.snapshot().locallyIdle(), "drain: a loaded deck on its copy does not block the drain");
+    check(drain.retire(), "drain: the drive can be retired with the copy still playing");
+    check(held && held->samples() == bytes, "drain: the copy still plays after the drive is retired");
+    check(!load(original), "drain: a retired drive refuses new loads");
+    held.reset();
+    check(cacheFiles() == 0, "drain: the copy goes with its last user");
+}
+
+void gateChecks(const QString& base) {
+    const QString gate = base + QStringLiteral("/media-eject");
+    const uint me = ::getuid();
+    check(!mixpiEjectGateOpen(gate, me), "gate: absent file keeps eject off");
+    QFile file(gate);
+    file.open(QIODevice::WriteOnly);
+    file.write("v1\n");
+    file.close();
+    QFile::setPermissions(gate, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup |
+                    QFileDevice::ReadOther);
+    check(mixpiEjectGateOpen(gate, me), "gate: owner-only writable file holding v1 opens it");
+    if (me != 0) {
+        check(!mixpiEjectGateOpen(gate, 0), "gate: a file not owned by root keeps eject off");
+    }
+    QFile::setPermissions(gate, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup |
+                    QFileDevice::WriteGroup | QFileDevice::ReadOther);
+    check(!mixpiEjectGateOpen(gate, me), "gate: group-writable keeps eject off");
+    QFile::setPermissions(gate, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadOther |
+                    QFileDevice::WriteOther);
+    check(!mixpiEjectGateOpen(gate, me), "gate: world-writable keeps eject off");
+    QFile::setPermissions(gate, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    file.write("v2\n");
+    file.close();
+    check(!mixpiEjectGateOpen(gate, me), "gate: other content keeps eject off");
+    file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    file.write("v1\n");
+    file.close();
+    QFile::link(gate, base + QStringLiteral("/link"));
+    check(!mixpiEjectGateOpen(base + QStringLiteral("/link"), me), "gate: a link keeps eject off");
+}
+
+struct FakeSystem {
+    qint64 now = 0;
+    bool drainBegun = false;
+    bool idle = true;
+    bool unmountOk = true;
+    bool unmountRemoves = true;
+    bool stopFirst = false;
+    int unmounts = 0;
+    int cancels = 0;
+    int retires = 0;
+    int unloads = 0;
+    QStringList mounted{QStringLiteral("8:1")};
+    QList<MixpiMediaPage::Step> steps;
+    QList<std::pair<bool, QString>> results;
+
+    MixpiEjectEngine::Hooks hooks() {
+        MixpiEjectEngine::Hooks result;
+        result.mustStopFirst = [this] { return stopFirst; };
+        result.beginDrain = [this] { return drainBegun = true; };
+        result.drainIdle = [this] { return idle; };
+        result.cancelDrain = [this] { ++cancels; };
+        result.retire = [this] {
+            ++retires;
+            return true;
+        };
+        result.releaseViews = [] {};
+        result.unloadStopped = [this] { ++unloads; };
+        result.unmount = [this](const QString&, MixpiEjectEngine::Done done) {
+            ++unmounts;
+            QTimer::singleShot(0, [this, done] {
+                if (unmountOk && unmountRemoves) {
+                    mounted.clear();
+                }
+                done(unmountOk);
+            });
+        };
+        result.stillMounted = [this](const QString& device) { return mounted.contains(device); };
+        result.now = [this] { return now; };
+        return result;
+    }
+    void attach(MixpiEjectEngine& engine) {
+        engine.progress = [this](MixpiMediaPage::Step step) { steps.append(step); };
+        engine.finished = [this](bool ok, QString message) { results.append({ok, message}); };
+    }
+};
+
+void spin(int milliseconds = 50) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < milliseconds) {
+        QApplication::processEvents(QEventLoop::AllEvents, 10);
+    }
+}
+
+void engineChecks() {
+    const QList<MixpiEjectEngine::Volume> volumes{{QStringLiteral("8:1"), QStringLiteral("/dev/sda1")}};
+    {
+        FakeSystem system;
+        MixpiEjectEngine engine(system.hooks());
+        system.attach(engine);
+        QWidget window;
+        window.resize(800, 480);
+        MixpiMediaPage page(&window, {});
+        MixpiMediaDrive drive;
+        drive.identity = QStringLiteral("d");
+        drive.name = QStringLiteral("SPARE");
+        drive.volumes.append({QStringLiteral("t"), QStringLiteral("SPARE"), QStringLiteral("/media/pi/SPARE"), false});
+        page.setEjectAvailable(true);
+        page.setDrives({drive});
+        page.open();
+        page.ejectRequested = [&](QString) { engine.start(volumes); };
+        engine.progress = [&](MixpiMediaPage::Step step) {
+            system.steps.append(step);
+            page.setEjectStep(step);
+        };
+        page.showEjectSheet(QStringLiteral("d"));
+        page.sheet()->findChild<QPushButton*>(QStringLiteral("MixpiEjectConfirm"))->click();
+        spin();
+        check(system.results.size() == 1 && system.results[0].first, "engine: the success path finishes");
+        check(system.steps == QList<MixpiMediaPage::Step>{MixpiMediaPage::Step::Drain, MixpiMediaPage::Step::Keep,
+                                      MixpiMediaPage::Step::Close, MixpiMediaPage::Step::Unmount,
+                                      MixpiMediaPage::Step::Done},
+                "engine: drain, keep, close, unmount, then safe to remove");
+        check(system.mounted.isEmpty() && system.retires == 1 && system.unloads == 1 && system.cancels == 0,
+                "engine: safe only after the mount table is empty; the drive is retired");
+        bool safeShown = false;
+        for (auto* label : page.sheet()->findChildren<QLabel*>()) {
+            safeShown = safeShown || label->text() == QStringLiteral("Safe to remove SPARE");
+        }
+        check(safeShown, "engine: the sheet ends on Safe to remove");
+    }
+    {
+        FakeSystem system;
+        system.unmountRemoves = false; // udisks says yes, the mount table says no
+        MixpiEjectEngine engine(system.hooks());
+        system.attach(engine);
+        engine.start(volumes);
+        spin();
+        check(system.results.size() == 1 && !system.results[0].first && system.retires == 0 && system.cancels == 1,
+                "engine: a mount still in the table is not safe; the drain is cancelled");
+    }
+    {
+        FakeSystem system;
+        system.unmountOk = false;
+        MixpiEjectEngine engine(system.hooks());
+        system.attach(engine);
+        engine.start(volumes);
+        spin();
+        check(system.results.size() == 1 && !system.results[0].first &&
+                        system.results[0].second == "Not ejected. The drive is still in use." &&
+                        system.cancels == 1 && system.retires == 0 && system.mounted.size() == 1,
+                "engine: a failing unmount cancels the drain and says Not ejected. The drive is still in use.");
+    }
+    {
+        FakeSystem system;
+        system.idle = false;
+        MixpiEjectEngine engine(system.hooks());
+        system.attach(engine);
+        engine.start(volumes);
+        spin();
+        check(engine.cancel() && system.results.size() == 1 && !system.results[0].first &&
+                        system.results[0].second.isEmpty() && system.cancels == 1 && system.unmounts == 0,
+                "engine: Cancel before the unmount cancels the drain and unmounts nothing");
+    }
+    {
+        FakeSystem system;
+        system.idle = false;
+        MixpiEjectEngine engine(system.hooks());
+        system.attach(engine);
+        engine.start(volumes);
+        system.now += 9900;
+        spin(250);
+        check(system.results.isEmpty(), "engine: still waiting at 9.9 s");
+        system.now += 200;
+        spin(250);
+        check(system.results.size() == 1 && system.results[0].second == "Not ejected. The drive is still in use." &&
+                        system.unmounts == 0 && system.cancels == 1,
+                "engine: a drain busy for 10 s says still in use and never unmounts");
+    }
+    {
+        FakeSystem system;
+        system.stopFirst = true;
+        MixpiEjectEngine engine(system.hooks());
+        system.attach(engine);
+        engine.start(volumes);
+        check(!system.drainBegun && system.unmounts == 0 && system.results.size() == 1 && !system.results[0].first,
+                "engine: a deck playing straight from the drive refuses the eject before any drain");
+    }
+    {
+        FakeSystem system;
+        MixpiEjectEngine engine(system.hooks());
+        system.attach(engine);
+        system.hooks();
+        engine.start(volumes); // idle at once: the unmount is running
+        check(!engine.cancel(), "engine: no Cancel once the unmount runs");
+        spin();
+        check(system.results.size() == 1 && system.results[0].first, "engine: then finishes");
+    }
+}
+
+void onPiChecks() {
+    QHash<QString, double> controls;
+    MixpiHandover handover([&](const QString& group, double value) { controls[group] = value; });
+    handover.ejected({{QStringLiteral("[Channel1]"), QStringLiteral("Frontin'"), true, true},
+            {QStringLiteral("[Sampler3]"), QStringLiteral("Air horn.wav"), false, true},
+            {QStringLiteral("[Channel2]"), QStringLiteral("Stopped"), false, false}});
+    check(controls.value(QStringLiteral("[Channel1]")) == 1 && controls.value(QStringLiteral("[Sampler3]")) == 1 &&
+                    !controls.contains(QStringLiteral("[Channel2]")),
+            "on pi: decks and pads on a copy get mixpi_on_pi 1 after the eject");
+    check(handover.items().size() == 2, "on pi: Playing from Pi memory lists them");
+    handover.trackChanged(QStringLiteral("[Channel2]"));
+    check(handover.items().size() == 2 && handover.cleaned().isEmpty(), "on pi: another player's load changes nothing");
+    handover.trackChanged(QStringLiteral("[Channel1]"));
+    check(controls.value(QStringLiteral("[Channel1]")) == 0 && handover.items().size() == 1 &&
+                    handover.cleaned() == QStringList{QStringLiteral("Frontin'")},
+            "on pi: the next load clears the flag and the copy is listed as cleaned out");
+    handover.trackChanged(QStringLiteral("[Sampler3]"));
+    check(controls.value(QStringLiteral("[Sampler3]")) == 0 && handover.items().isEmpty(),
+            "on pi: clearing the pad clears its flag");
+}
+} // namespace
+
+int main(int argc, char** argv) {
+    QApplication application(argc, argv);
+    // The runner points TMPDIR and MIXPI_RAM_CACHE_PREFIXES at one folder.
+    QTemporaryDir base;
+    check(base.isValid() && base.path().startsWith(qEnvironmentVariable("MIXPI_RAM_CACHE_PREFIXES")),
+            "the fixture drive is under the cache prefix");
+    handoverChecks(base.path());
+    gateChecks(base.path());
+    engineChecks();
+    onPiChecks();
+    std::cout << checks << " checks, " << failures << " failures\n";
+    return failures ? 1 : 0;
+}

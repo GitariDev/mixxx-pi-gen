@@ -93,7 +93,10 @@ struct SoundSourceProxy {
               m_mediaUse(mixxx::media::acquirePath(m_pTrack->getLocation().toStdString(),
                       Producer::Decoder, std::move(inherited))),
               m_pSoundSource(std::make_shared<mixxx::AudioSource>()) {}
-    bool openSoundSource(const mixxx::AudioSource::OpenParams&) { return m_mediaUse && !m_ramCache; }
+    // copyDecodes: the decoder opens the RAM copy (R-5); otherwise the copy
+    // fails and the production code falls back to the original.
+    static inline bool copyDecodes = false;
+    bool openSoundSource(const mixxx::AudioSource::OpenParams&) { return m_mediaUse && (!m_ramCache || copyDecodes); }
     mixxx::AudioSourcePointer openAudioSource(const mixxx::AudioSource::OpenParams&);
 };
 PRODUCTION_AUDIO_OPEN
@@ -277,6 +280,35 @@ int main() {
     fallback.reset();
     assert(fallbackDrain.snapshot().locallyIdle());
     fallbackDrain.cancel();
+    {
+        // R-5 (mixxx-media-handover.patch): "loaded means in use" now holds
+        // only for a source decoded from the drive. A source decoded from its
+        // RAM copy holds the copy, not the drive lease: once the opening proxy
+        // is gone, a drain is idle while the deck keeps its audio source.
+        mixxx::AudioSourcePointer copied;
+        SoundSourceProxy::copyDecodes = true;
+        {
+            auto originalUse = mixxx::media::registry().acquire({"drive-A", "mount", {}}, Producer::Load);
+            SoundSourceProxy cached(track, SoundSourceProxy::RamCacheMode::Create, originalUse);
+            auto copyDrain = mixxx::media::registry().beginDrain("drive-A");
+            originalUse.reset();
+            copied = cached.openAudioSource({});
+            assert(copied && !copyDrain.snapshot().locallyIdle()); // the opening proxy still holds it
+        }
+        SoundSourceProxy::copyDecodes = false;
+        // The same production text, as a string: with the handover patch the
+        // copy must not hold the drive; without it (an older stack) it does.
+        static const char* const kAudioOpen = R"MIXPI(PRODUCTION_AUDIO_OPEN)MIXPI";
+        const bool handover = std::string(kAudioOpen).find("m_ramCache ? mixxx::media::Lease() : m_mediaUse") !=
+                std::string::npos;
+        auto copyDrain = mixxx::media::registry().beginDrain("drive-A");
+        assert(copied && copyDrain.snapshot().locallyIdle() == handover);
+        copyDrain.cancel();
+        copied.reset();
+        if (handover) {
+            std::cout << "PASS handover: a source decoded from its RAM copy holds no drive lease\n";
+        }
+    }
     {
         auto originalUse = mixxx::media::acquirePath("drive-A", Producer::Load);
         SoundSourceProxy cached(track, SoundSourceProxy::RamCacheMode::Create, originalUse);

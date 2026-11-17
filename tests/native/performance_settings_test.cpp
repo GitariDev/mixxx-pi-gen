@@ -101,7 +101,7 @@ void requests(Fixture& f) {
         require(writer.get() == next && changes == 1, "accepted request must publish once to requester");
     }
     require(WaveformWidgetFactory::instance()->writes == 1 && f.rangeWrites[0] == 1 &&
-            f.rangeWrites[1] == 1 && f.engineWrites == 1 && f.config->writes == 3,
+            f.rangeWrites[1] == 1 && f.engineWrites == 1 && f.config->writes == 4,
             "accepted requests must apply once");
     require(f.config->getValue(ConfigKey("[MixPi]", "ReadAheadChunks"), 0) == 24 &&
             f.config->getValue(ConfigKey("[MixPi]", "RamCacheMB"), 0) == 512,

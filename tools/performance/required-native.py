@@ -41,6 +41,7 @@ REQUIRED_TESTS = (
     'test_media_handover',
     'test_sample_browser',
     'test_source_groups',
+    'test_settings_fixes',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

@@ -40,6 +40,7 @@ MIXXX_PATCHES=(
     mixxx-sample-browser.patch
     mixxx-source-groups.patch
     mixxx-media-screen-fixes.patch
+    mixxx-settings-fixes.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

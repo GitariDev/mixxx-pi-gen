@@ -268,8 +268,13 @@
 /* The rows take the list's width, and its height while they fit. */
 #MixpiClearList { qproperty-widgetResizable: true; }
 #MixpiClearRows { qproperty-layoutAlignment: 'AlignTop'; }
+#MixpiClearListArea, #MixpiClearListSpace, #MixpiClearListSpace > #MixpiGap { background: #161a20; border: 0px; }
+/* The whole row is the tick row: a transparent button over it takes the taps
+ * (pressed: the same light tint as a pad's tap area); the tick box under it
+ * only draws. */
+#MixpiClearRowTap { background: transparent; border: 0px; border-radius: 0px; margin: 0px; }
+#MixpiClearRowTap[pressed="true"] { background: rgba(163, 196, 94, 40); }
 #MixpiClearTick { background: transparent; border: 0px; border-radius: 0px; margin: 0px; }
-#MixpiClearTick[pressed="true"] { background: rgba(163, 196, 94, 40); }
 #MixpiClearRowText { background: #161a20; border-bottom: 1px solid #2c333d; }
 #MixpiClearRowText[highlight="1"] { background: #1d222a; }
 #MixpiClearName { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: 600; }
@@ -297,7 +302,13 @@
     min-height: 56px; background: #5b6472; border: 5px solid #161a20; border-radius: 8px;
 }
 #MixpiClearList QScrollBar::handle:vertical:pressed { background: #a3c45e; }
-#MixpiClearList QScrollBar::add-line, #MixpiClearList QScrollBar::sub-line { height: 0px; width: 0px; }
+/* The plain bar of spec section 1: no arrow buttons. */
+#MixpiClearList QScrollBar::add-line:vertical, #MixpiClearList QScrollBar::sub-line:vertical {
+    height: 0px; width: 0px; border: 0px; background: none; subcontrol-origin: margin;
+}
+#MixpiClearList QScrollBar::up-arrow:vertical, #MixpiClearList QScrollBar::down-arrow:vertical {
+    height: 0px; width: 0px; border: 0px; background: none; image: none;
+}
 #MixpiClearList QScrollBar::add-page, #MixpiClearList QScrollBar::sub-page { background: #161a20; }
 
 #MixpiLabel, #MixpiWaveKey { color: #e4e7ec; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 17px; }

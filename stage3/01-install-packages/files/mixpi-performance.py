@@ -48,6 +48,12 @@ SAMPLER_LOAD, SAMPLER_CLEAR = 168, 150
 # screen's edges at most; 52 px rows; the tick drawn 18 px in.
 CLEAR_SHEET_WIDTH, CLEAR_MARGIN = 480, 24
 CLEAR_ROW, CLEAR_TICK_SPACE = 52, 52
+# The sheet's fixed parts: the 1 px border twice, the 56 px head, the 40 px
+# note and the 68 px foot. The list takes the rest of the 480 px screen less
+# the margins (primitives.css .mx-popover-sheet max-height: 100%), 266 px:
+# five rows fit; more scroll.
+CLEAR_FIXED = 2 + 56 + 40 + 68
+CLEAR_LIST_MAX = 480 - 2 * CLEAR_MARGIN - CLEAR_FIXED
 # Icons the generator writes into the skin (R-11): 24 px glyphs from the
 # prototype, centred in 48 px buttons, drawn unscaled (FIXED) by WPushButton.
 ICON_STROKE = 'fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"'
@@ -1086,20 +1092,29 @@ def clear_row(sampler):
     """One row of the Clear samples popover (m-sampler-clear.png), shown while
     the pad is loaded: the tick, the pad badge and label, the name and the
     duration. A ticked row is surface-2 (spec section 1: the tick and the
-    background, no left edge). The whole row is a clear button over the text;
-    it draws the tick box, a 52 px image at its left (FIXED: drawn from the
-    top-left corner, unscaled). Two set-value buttons in one place, as CLEAR on
-    CUES (F-1), never a two-state toggle: the clear box writes 1, the ticked
-    box writes 0, and exactly one is shown."""
+    background, no left edge).
+
+    The row is the tick row (spec section 1): a transparent button the width
+    of the row is on top and takes every tap on it. It has no image, because
+    an image drawn FIXED makes a button the image's size (WPushButton calls
+    setFixedSize), which left only the 52 px tick box tappable on the card.
+    Two set-value buttons in one place, as CLEAR on CUES (F-1), never a
+    two-state toggle: the clear row writes 1, the ticked row writes 0, and
+    exactly one is shown. Under them, display-only (no connection but its
+    visibility), the tick box: a 52 px image at the row's left (FIXED: drawn
+    from the top-left corner, unscaled)."""
     key = f'[Sampler{sampler}]'
     tick_key = f'[MixPi],sampler_clear_tick{sampler}'
-    ticks = []
+    taps, ticks = [], []
     for ticked in (True, False):
-        b = button('', tick_key, size=f'0me,{CLEAR_ROW}f', push=True, name='MixpiClearTick',
-                   transform='<Not/>' if ticked else None)
-        b.find('Connection/ConnectValueToWidget').text = 'false'
-        icon_states(b, 'mixpi-clear-row-on.svg' if ticked else 'mixpi-clear-row-off.svg')
-        ticks.append(show_when(b, tick_key, negate=not ticked))
+        tap = button('', tick_key, size=f'0me,{CLEAR_ROW}f', push=True, name='MixpiClearRowTap',
+                     transform='<Not/>' if ticked else None)
+        tap.find('Connection/ConnectValueToWidget').text = 'false'
+        taps.append(show_when(tap, tick_key, negate=not ticked))
+        box = button('', tick_key, size=f'{CLEAR_TICK_SPACE}f,{CLEAR_ROW}f', name='MixpiClearTick')
+        box.remove(box.find('Connection'))
+        icon_states(box, 'mixpi-clear-row-on.svg' if ticked else 'mixpi-clear-row-off.svg')
+        ticks.append(show_when(box, tick_key, negate=not ticked))
     text = group('MixpiClearRowText', 'horizontal', f'0me,{CLEAR_ROW}f', [
         gap(f'{CLEAR_TICK_SPACE}f,{CLEAR_ROW}f'), pad_tag(sampler, f'64f,{CLEAR_ROW}f'),
         gap(f'8f,{CLEAR_ROW}f'),
@@ -1107,8 +1122,9 @@ def clear_row(sampler):
         sampler_title(sampler, f'56f,{CLEAR_ROW}f', 'MixpiClearTime', 'durationTextSeconds'),
         gap(f'16f,{CLEAR_ROW}f')])
     connection(text, tick_key, bind='highlight')
-    # The first shown child of a stacked group is on top: a button takes the taps.
-    row = group('MixpiClearRow', 'stacked', f'0me,{CLEAR_ROW}f', ticks + [text])
+    # The first shown child of a stacked group is on top: the row button takes
+    # the taps; the tick box is drawn over the text.
+    row = group('MixpiClearRow', 'stacked', f'0me,{CLEAR_ROW}f', taps + ticks + [text])
     return show_when(row, f'{key},track_loaded')
 
 
@@ -1123,10 +1139,19 @@ def clear_popover():
         label('CLEAR SAMPLES', '0me,56f', 'MixpiSheetTitle'), close, gap('4f,56f')])
     rows = group('MixpiClearRows', size='0me,0min', children=[clear_row(n) for n in range(1, SAMPLERS + 1)])
     # More loaded pads than fit scroll, with the 24 px bar at the right edge.
+    # A QScrollArea keeps the first size hint of its rows (taken at start,
+    # before the samples load), so its height hint is ignored here. Under it,
+    # in the same place, a space of 52 px per loaded pad gives the list its
+    # height, up to CLEAR_LIST_MAX: every loaded row shows, and the bar shows
+    # only when they do not fit.
     scroll = node('Scrollable')
-    for k, v in dict(ObjectName='MixpiClearList', Size='0me,0p', HorizontalScrollBarPolicy='off').items():
+    for k, v in dict(ObjectName='MixpiClearList', Size='0me,0i', HorizontalScrollBarPolicy='off').items():
         prop(scroll, k, v)
     ET.SubElement(scroll, 'Children').append(rows)
+    space = group('MixpiClearListSpace', size='0me,0min', children=[
+        show_when(gap(f'0me,{CLEAR_ROW}f'), f'[Sampler{n}],track_loaded') for n in range(1, SAMPLERS + 1)])
+    listing = group('MixpiClearListArea', 'stacked', '0me,0p', [scroll, space])
+    prop(listing, 'MaximumSize', f'{CLEAR_SHEET_WIDTH},{CLEAR_LIST_MAX}')
     note = label('The pads go empty. The files stay where they are.', '0me,40f', 'MixpiClearNote')
     cancel = button('CANCEL', '[MixPi],sampler_clear_open', size='120f,48f', push=True, transform='<Not/>')
     cancel.find('Connection/ConnectValueToWidget').text = 'false'
@@ -1137,7 +1162,7 @@ def clear_popover():
     connection(confirm, '[MixPi],sampler_clear_count', bind='enabled')
     foot = group('MixpiClearFoot', 'horizontal', '0me,68f', [
         gap('0me,68f'), cancel, gap('8f,68f'), confirm, gap('12f,68f')])
-    sheet = group('MixpiClearSheet', size=f'{CLEAR_SHEET_WIDTH}f,0p', children=[head, scroll, note, foot])
+    sheet = group('MixpiClearSheet', size=f'{CLEAR_SHEET_WIDTH}f,0p', children=[head, listing, note, foot])
     middle = group('MixpiClearCenter', 'horizontal', '0me,0p', [gap('0me,0me'), sheet, gap('0me,0me')])
     # Ignored size: the hidden popover adds nothing to the window's minimum.
     scrim = group('MixpiClearScrim', size='0i,0i', children=[

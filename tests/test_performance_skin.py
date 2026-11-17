@@ -2185,6 +2185,9 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(self.model.final(close), {'[MixPi],sampler_clear_open': 0})
         # One row per loaded pad (A1-A4 deck 1 badges, B1-B4 deck 2), in a
         # scroll list with the 24 px bar.
+        listing = scroll
+        self.assertEqual(listing.findtext('ObjectName'), 'MixpiClearListArea')
+        scroll = listing.find('Children')[0]
         self.assertEqual((scroll.tag, scroll.findtext('ObjectName')), ('Scrollable', 'MixpiClearList'))
         rows = list(scroll.find('Children/WidgetGroup/Children'))
         self.assertEqual(len(rows), 8)
@@ -2199,17 +2202,24 @@ class PerformanceSkinTests(unittest.TestCase):
             props = [t.findtext('Property') for t in row.iter('TrackProperty')]
             self.assertEqual(props, ['titleInfo', 'durationTextSeconds'])
             key = f'[MixPi],sampler_clear_tick{n}'
-            ticked, clear = [b for b in row.iter('PushButton')]
+            ticked, clear, ticked_box, clear_box = [b for b in row.iter('PushButton')]
             for b in (ticked, clear):
                 self.assertEqual(b.findtext('LeftClickIsPushButton'), 'true')
-                self.assertEqual(b.findtext('ObjectName'), 'MixpiClearTick')
+                self.assertEqual(b.findtext('ObjectName'), 'MixpiClearRowTap')
             self.assertEqual(self.model.final(ticked), {key: 0})
             self.assertEqual(self.model.final(clear), {key: 1})
-            self.assertEqual([s.findtext('Unpressed') for s in ticked.findall('State')], ['mixpi-clear-row-on.svg'])
-            self.assertEqual([s.findtext('Unpressed') for s in clear.findall('State')], ['mixpi-clear-row-off.svg'])
+            # The tick boxes only draw (no control connection).
+            for box, icon in ((ticked_box, 'mixpi-clear-row-on.svg'), (clear_box, 'mixpi-clear-row-off.svg')):
+                self.assertEqual(box.findtext('ObjectName'), 'MixpiClearTick')
+                self.assertEqual([s.findtext('Unpressed') for s in box.findall('State')], [icon])
+                self.assertEqual(self.model.writes(box), [])
+                self.assertEqual([c.findtext('BindProperty') for c in box.findall('Connection')], ['visible'])
             if n <= 3:
                 on = n in (1, 3)
                 self.assertEqual((self.model.tappable(ticked, state), self.model.tappable(clear, state)), (on, not on))
+                self.assertFalse(self.model.tappable(ticked_box, state) or self.model.tappable(clear_box, state))
+                self.assertEqual((self.model.visible(ticked_box, state), self.model.visible(clear_box, state)),
+                                 (on, not on))
             text = next(g for g in row.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiClearRowText')
             lit = text.find('Connection')
             self.assertEqual((lit.findtext('ConfigKey'), lit.findtext('BindProperty')), (key, 'highlight'))
@@ -2235,6 +2245,7 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertIn('#MixpiClearConfirm:disabled', style)
         self.assertIn('#MixpiClearList { qproperty-widgetResizable: true; }', style)
         self.assertIn('#MixpiClearList QScrollBar:vertical {\n    width: 24px;', style)
+        self.assertIn('#MixpiClearRowTap { background: transparent; border: 0px;', style)
         # The tick: the accent box with the ink tick, or the dim empty box.
         on = ET.parse(self.skin/'mixpi-clear-row-on.svg').getroot()
         off = ET.parse(self.skin/'mixpi-clear-row-off.svg').getroot()
@@ -2243,24 +2254,106 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(on.find(f'{svg}g/{svg}path').get('stroke'), '#0d1014')
         self.assertEqual(off.find(svg + 'rect').get('stroke'), '#949dab')
 
+    def clear_list_height(self, loaded):
+        """The list's height as Qt lays it out: the Scrollable's own height hint
+        is ignored (a QScrollArea keeps its first hint, taken before the samples
+        load, which showed one row on the card, k12); the space under it holds
+        52 px per loaded pad, up to the area's maximum height."""
+        area = self.model.one('MixpiClearListArea')
+        scroll, space = area.find('Children')
+        self.assertEqual((area.findtext('Layout'), size(area)[3]), ('stacked', 'p'))
+        self.assertEqual((scroll.tag, size(scroll)[3]), ('Scrollable', 'i'))
+        self.assertEqual((space.findtext('ObjectName'), size(space)[3]), ('MixpiClearListSpace', 'min'))
+        state = self.popover_state(loaded=loaded, ticked=())
+        hint = sum(size(g)[1] for g in space.find('Children') if self.model.visible(g, state))
+        return min(hint, int(area.findtext('MaximumSize').split(',')[1]))
+
+    def test_clear_popover_list_shows_every_loaded_row_while_they_fit(self):
+        # m-sampler-clear.png draws every loaded row with no scrolling (sheet
+        # y 82-398 for three rows). primitives.css: the sheet grows up to the
+        # screen less the 24 px margins (max-height: 100%), then the list scrolls.
+        space = self.model.one('MixpiClearListSpace')
+        self.assertEqual([(g.findtext('Size'), g.findtext('Connection/ConfigKey')) for g in space.find('Children')],
+                         [('0me,52f', f'[Sampler{n}],track_loaded') for n in range(1, 9)])
+        self.assertEqual(self.model.one('MixpiClearListArea').findtext('MaximumSize'), '480,266')
+        heights = {n: self.clear_list_height(tuple(range(1, n + 1))) for n in (1, 2, 3, 4, 5, 6, 8)}
+        self.assertEqual(heights, {1: 52, 2: 104, 3: 156, 4: 208, 5: 260, 6: 266, 8: 266})
+        # The pads need not be the first ones: B2 and A3 loaded show two rows.
+        self.assertEqual(self.clear_list_height((3, 6)), 104)
+        for n, list_height in heights.items():
+            sheet = 2 + 56 + list_height + 40 + 68
+            top = (480 - sheet) // 2
+            self.assertGreaterEqual(top, 24, n)
+            self.assertLessEqual(top + sheet, 480 - 24, n)
+        # A bar only when rows do not fit: as needed (Qt's default), never on.
+        scroll = self.model.one('MixpiClearList')
+        self.assertIsNone(scroll.find('VerticalScrollBarPolicy'))
+        self.assertEqual(scroll.findtext('HorizontalScrollBarPolicy'), 'off')
+
+    def test_clear_popover_scroll_bar_is_the_plain_24_px_bar(self):
+        # Spec section 1 scroll bars: the plain 24 px bar, no arrow buttons (k12
+        # showed arrows).
+        style = (self.skin/'style.qss').read_text()
+        rule = style.split('#MixpiClearList QScrollBar:vertical {', 1)[1].split('}', 1)[0]
+        self.assertIn('width: 24px;', rule)
+        lines = style.split('#MixpiClearList QScrollBar::add-line:vertical, '
+                            '#MixpiClearList QScrollBar::sub-line:vertical {', 1)[1].split('}', 1)[0]
+        for part in ('height: 0px;', 'width: 0px;', 'border: 0px;', 'background: none;'):
+            self.assertIn(part, lines)
+        arrows = style.split('#MixpiClearList QScrollBar::up-arrow:vertical, '
+                             '#MixpiClearList QScrollBar::down-arrow:vertical {', 1)[1].split('}', 1)[0]
+        self.assertIn('image: none;', arrows)
+
+    def test_clear_popover_whole_row_ticks(self):
+        # Spec section 1 "Ticked rows" and m-sampler-clear.png: the row is the
+        # tick row; k13 vs k14 showed only the tick box took the tap. A button
+        # with a FIXED image is the image's size (WPushButton::setFixedSize), so
+        # the row's tap buttons carry no image and span the row.
+        rows = [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiClearRow']
+        self.assertEqual(len(rows), 8)
+        state = self.popover_state(loaded=(1, 2), ticked=(2,))
+        for n, row in enumerate(rows, 1):
+            self.assertEqual(row.findtext('Layout'), 'stacked')
+            first = [c for c in row.find('Children')]
+            taps = [b for b in first if b.findtext('ObjectName') == 'MixpiClearRowTap']
+            self.assertEqual(first[:2], taps)  # on top
+            for tap in taps:
+                self.assertEqual(tap.findtext('Size'), '0me,52f')
+                self.assertEqual([s.find('Unpressed') for s in tap.findall('State')], [None, None])
+            if n <= 2:
+                shown = [t for t in taps if self.model.tappable(t, state)]
+                self.assertEqual(len(shown), 1)
+                self.assertEqual(self.model.final(shown[0]), {f'[MixPi],sampler_clear_tick{n}': int(n != 2)})
+                # Nothing else in the row takes a tap (the name, the duration, the box).
+                text = row.find('Children')[-1]
+                self.assertEqual(text.findtext('ObjectName'), 'MixpiClearRowText')
+                self.assertFalse([b for b in row.iter('PushButton') if b not in taps and self.model.tappable(b, state)])
+
     def test_clear_popover_hit_map(self):
-        # m-sampler-clear.png with three loaded pads: a 480 px sheet centred,
-        # x 160-640; head 56, rows 52, note 40, foot 68 (48 px buttons).
-        rows, height = 3, 56 + 3 * 52 + 40 + 68 + 2
+        # Two loaded pads (the card's case, k12): a 480 px sheet centred, x
+        # 160-640; 1 px border, head 56 (margins 16 4 2 4), two 52 px rows,
+        # note 40, foot 68 (48 px buttons, 12 px from the right).
+        height = 2 + 56 + self.clear_list_height((1, 2)) + 40 + 68
         top = (480 - height) // 2
+        self.assertEqual((height, top, top + height), (270, 105, 375))
         sheet = self.model.one('MixpiClearSheet')
-        head, scroll, note, foot = sheet.find('Children')
+        head, listing, note, foot = sheet.find('Children')
         self.assertEqual([size(head)[1], size(note)[1], size(foot)[1]], [56, 40, 68])
         foot_sizes = [size(c)[0] for c in foot.find('Children')]
         self.assertEqual(foot_sizes[1:], [120, 8, 120, 12])
-        right = 160 + 480 - 1
-        clear_x = right - 12 - 120
+        style = (self.skin/'style.qss').read_text()
+        self.assertIn('#MixpiClearHead { border-bottom: 1px solid #2c333d; '
+                      'qproperty-layoutContentsMargins: rect(16 4 2 4); }', style)
+        inner_left, inner_right = 161, 639  # inside the 1 px border
+        close = (inner_right - 2 - 4 - 48, inner_right - 2 - 4, top + 1 + 4, top + 1 + 4 + 48)
+        self.assertEqual(close, (585, 633, 110, 158))
+        rows = [(inner_left, inner_right, top + 1 + 56 + 52 * i, top + 1 + 56 + 52 * (i + 1)) for i in range(2)]
+        self.assertEqual(rows, [(161, 639, 162, 214), (161, 639, 214, 266)])
+        foot_top = top + 1 + 56 + 104 + 40
+        clear_x = inner_right - 12 - 120
         cancel_x = clear_x - 8 - 120
-        self.assertEqual((cancel_x, clear_x), (379, 507))  # as drawn: 379-499, 507-627
-        close_x = right - 4 - 48
-        self.assertEqual(close_x, 587)
-        self.assertEqual(top, 79)
-        self.assertGreaterEqual(top, 24)
+        buttons = foot_top + 10
+        self.assertEqual((cancel_x, clear_x, buttons, buttons + 48), (379, 507, 316, 364))
 
     # ---------- wave C2: Settings rows (spec s11, s12) ----------
 

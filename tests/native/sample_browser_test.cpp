@@ -62,6 +62,7 @@ class Library : public QObject {
     QScopedPointer<ControlObject> m_pSampleLoad;
     QScopedPointer<ControlObject> m_pSampleSource;
     QScopedPointer<ControlObject> m_pSampleSourceAvailable;
+    QScopedPointer<ControlObject> m_pSampleDriveAvailable;
     QString m_samplesPath;
     QStringList m_driveOrder;
 
@@ -238,8 +239,12 @@ int main(int argc, char** argv) {
 
     // A rekordbox drive, then a drive opened in Computer.
     QVariantList drive{mantacore, QString(), QStringLiteral("rev-1")};
+    require(control("sample_drive_available")->get() == 0 &&
+                    control("sample_drive_available")->m_readOnly,
+            "sample_drive_available is 0 without an open drive, and read-only");
     insert(rekordbox.children, item("MANTACORE", drive));
     settle();
+    require(control("sample_drive_available")->get() == 1, "an open drive sets sample_drive_available to 1");
     sampleSource->set(3);
     settle();
     require(library.shownList == "Rekordbox/MANTACORE" && sampleSource->get() == 3,
@@ -255,6 +260,7 @@ int main(int argc, char** argv) {
     settle();
     require(library.shownList == "Computer/Samples" && sampleSource->get() == 1,
             "a drive that vanished falls back to Samples");
+    require(control("sample_drive_available")->get() == 1, "the drive opened in Computer is still open");
     sampleSource->set(3);
     settle();
     require(library.shownList == QString("Computer/" + stick) && sampleSource->get() == 3,
@@ -264,6 +270,7 @@ int main(int argc, char** argv) {
     computer.children.removeRows(computer.children.rowCount() - 1, 1);
     settle();
     require(library.shownList == "Computer/Samples", "its row going away falls back to Samples");
+    require(control("sample_drive_available")->get() == 0, "no open drive: sample_drive_available is 0");
 
     // A list picked in Sources while in sample mode.
     const QModelIndex q = model.index(1, 0, model.index(1, 0));

@@ -1,5 +1,5 @@
 diff --git a/src/library/browse/browsefeature.cpp b/src/library/browse/browsefeature.cpp
-index 818e0e3..03bcb83 100644
+index 818e0e3..bc95527 100644
 --- a/src/library/browse/browsefeature.cpp
 +++ b/src/library/browse/browsefeature.cpp
 @@ -154,6 +154,11 @@ BrowseFeature::BrowseFeature(
@@ -27,10 +27,11 @@ index 818e0e3..03bcb83 100644
  QVariant BrowseFeature::title() {
      return QVariant(tr("Computer"));
  }
-@@ -253,6 +264,16 @@ void BrowseFeature::slotRemoveQuickLink() {
- void BrowseFeature::refreshMediaLifecycle() {
- #if defined(__LINUX__)
-     m_pSidebarModel->deferDirectoryProbes();
+@@ -250,6 +261,19 @@ void BrowseFeature::slotRemoveQuickLink() {
+     saveQuickLinks();
+ }
+ 
++void BrowseFeature::pruneRemovableDirectories() {
 +    // A drive folder whose drive went away loses its row (the Load sample
 +    // screen and Sources then fall back).
 +    auto* root = m_pSidebarModel->getRootItem();
@@ -41,10 +42,12 @@ index 818e0e3..03bcb83 100644
 +            m_pSidebarModel->removeRows(row, 1);
 +        }
 +    }
-     for (int row = 0; row < m_pSidebarModel->rowCount(); ++row) {
-         const QModelIndex parent = m_pSidebarModel->index(row, 0);
-         if (m_pSidebarModel->data(parent, TreeItemModel::kDataRole).toString() == QUICK_LINK_NODE) {
-@@ -312,6 +333,7 @@ QString BrowseFeature::openRemovableDirectory(const QString& path) {
++}
++
+ void BrowseFeature::refreshMediaLifecycle() {
+ #if defined(__LINUX__)
+     m_pSidebarModel->deferDirectoryProbes();
+@@ -312,6 +336,7 @@ QString BrowseFeature::openRemovableDirectory(const QString& path) {
      if (!index.isValid()) {
          std::vector<std::unique_ptr<TreeItem>> items;
          items.push_back(std::make_unique<TreeItem>(path, QVariant(path)));
@@ -53,20 +56,22 @@ index 818e0e3..03bcb83 100644
          m_pSidebarModel->insertTreeItemRows(std::move(items), row);
          index = m_pSidebarModel->index(row, 0);
 diff --git a/src/library/browse/browsefeature.h b/src/library/browse/browsefeature.h
-index ab07d0a..cb102f0 100644
+index ab07d0a..8f260fb 100644
 --- a/src/library/browse/browsefeature.h
 +++ b/src/library/browse/browsefeature.h
-@@ -40,6 +40,9 @@ class BrowseFeature : public LibraryFeature {
+@@ -40,6 +40,11 @@ class BrowseFeature : public LibraryFeature {
      void releaseBrowseThread();
      void refreshMediaLifecycle();
      QString openRemovableDirectory(const QString& path);
 +    // R-8: the Pi's sample folder (~/Music/Samples). It has its own row in
 +    // Computer; the Load sample screen opens it first.
 +    static QString samplesDirectory();
++    // Removes the rows of opened drive folders that are gone.
++    void pruneRemovableDirectories();
  
    public slots:
      void slotAddQuickLink();
-@@ -84,4 +87,6 @@ class BrowseFeature : public LibraryFeature {
+@@ -84,4 +89,6 @@ class BrowseFeature : public LibraryFeature {
      TreeItem* m_pQuickLinkItem;
      QStringList m_quickLinkList;
      QPointer<WLibrarySidebar> m_pSidebarWidget;
@@ -74,7 +79,7 @@ index ab07d0a..cb102f0 100644
 +    QStringList m_removableDirectories;
  };
 diff --git a/src/library/library.cpp b/src/library/library.cpp
-index a038206..6ac120a 100644
+index a038206..38d7ae9 100644
 --- a/src/library/library.cpp
 +++ b/src/library/library.cpp
 @@ -6,7 +6,10 @@
@@ -88,7 +93,7 @@ index a038206..6ac120a 100644
  #include <QMenu>
  #include "widget/libraryinterface.h"
  #include "library/sourceorder.h"
-@@ -215,6 +218,8 @@ Library::Library(
+@@ -215,12 +218,15 @@ Library::Library(
      m_pSidebarSourcesEditing.reset(new ControlObject(
              ConfigKey("[Library]", "sidebar_sources_editing")));
      m_pSidebarSourcesEditing->setReadOnly();
@@ -97,7 +102,14 @@ index a038206..6ac120a 100644
      new MixpiMedia(this, [this]() -> QWidget* { return m_pLibraryWidget; },
              [this](const QJsonObject& volume, QObject* receiver, std::function<void(QString)> completion) {
                  return openRemovableSourceAsync(volume, receiver, std::move(completion));
-@@ -707,8 +712,9 @@ QString Library::openRemovableSource(const QJsonObject& volume) {
+             },
+             [this] {
+                 m_pBrowseFeature->refreshMediaLifecycle();
++                m_pBrowseFeature->pruneRemovableDirectories();
+                 for (const auto& source : m_sidebarSources) {
+                     if (source.id == QStringLiteral("RekordboxFeature") && source.feature) {
+                         static_cast<RekordboxFeature*>(source.feature)->refreshRemovableSources();
+@@ -707,8 +713,9 @@ QString Library::openRemovableSource(const QJsonObject& volume) {
          error = m_pBrowseFeature->openRemovableDirectory(path);
      }
      if (error.isEmpty()) {
@@ -108,7 +120,7 @@ index a038206..6ac120a 100644
          ControlObject::set(ConfigKey("[Tab]", "library"), 1);
      }
      return error;
-@@ -759,8 +765,9 @@ std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volum
+@@ -759,8 +766,9 @@ std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volum
                      return;
                  }
                  if (result.isEmpty()) {
@@ -119,7 +131,7 @@ index a038206..6ac120a 100644
                      ControlObject::set(ConfigKey("[Tab]", "library"), 1);
                  }
                  completion(result);
-@@ -832,6 +839,220 @@ void Library::refreshSidebarSourceEdit() {
+@@ -832,6 +840,228 @@ void Library::refreshSidebarSourceEdit() {
              m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")));
  }
  
@@ -136,6 +148,10 @@ index a038206..6ac120a 100644
 +            ConfigKey("[MixPi]", "sample_source_available")));
 +    m_pSampleSourceAvailable->set(1);
 +    m_pSampleSourceAvailable->setReadOnly();
++    // 1 while a drive is open: the skin shows its USB source button.
++    m_pSampleDriveAvailable.reset(new ControlObject(
++            ConfigKey("[MixPi]", "sample_drive_available")));
++    m_pSampleDriveAvailable->setReadOnly();
 +    auto* browser = m_pSampleBrowser.get();
 +    browser->capture = [this] {
 +        LibraryInterface::BrowsePlace place = *m_pShownPlace;
@@ -173,8 +189,12 @@ index a038206..6ac120a 100644
 +            if (m_pSampleBrowser) {
 +                m_pSampleBrowser->sourcesChanged();
 +            }
++            if (m_pSampleDriveAvailable) {
++                m_pSampleDriveAvailable->setAndConfirm(driveRows().isEmpty() ? 0 : 1);
++            }
 +        });
 +    };
++    connect(m_pSidebarModel, &QAbstractItemModel::rowsInserted, this, changed);
 +    connect(m_pSidebarModel, &QAbstractItemModel::rowsRemoved, this, changed);
 +    connect(m_pSidebarModel, &QAbstractItemModel::modelReset, this, changed);
 +}
@@ -340,7 +360,7 @@ index a038206..6ac120a 100644
  void Library::onPlayerManagerTrackAnalyzerProgress(
          TrackId /*trackId*/, AnalyzerProgress /*analyzerProgress*/) {
      if (m_pAnalysisFeature) {
-@@ -858,6 +1079,7 @@ void Library::slotShowTrackModel(QAbstractItemModel* model) {
+@@ -858,6 +1088,7 @@ void Library::slotShowTrackModel(QAbstractItemModel* model) {
      emit showTrackModel(model);
      emit switchToView(m_sTrackViewName);
      emit restoreSearch(trackModel->currentSearch());
@@ -348,7 +368,7 @@ index a038206..6ac120a 100644
  }
  
  void Library::slotSwitchToView(const QString& view) {
-@@ -866,6 +1088,7 @@ void Library::slotSwitchToView(const QString& view) {
+@@ -866,6 +1097,7 @@ void Library::slotSwitchToView(const QString& view) {
          m_pSidebarWidget->noteSourceShown();
      }
      emit switchToView(view);
@@ -357,7 +377,7 @@ index a038206..6ac120a 100644
  
  void Library::slotLoadTrack(TrackPointer pTrack) {
 diff --git a/src/library/library.h b/src/library/library.h
-index e2c6e50..1170da0 100644
+index e2c6e50..7309bbc 100644
 --- a/src/library/library.h
 +++ b/src/library/library.h
 @@ -1,6 +1,7 @@
@@ -380,7 +400,7 @@ index e2c6e50..1170da0 100644
  
  #ifdef __ENGINEPRIME__
  namespace mixxx {
-@@ -183,6 +189,28 @@ class Library: public QObject {
+@@ -183,6 +189,29 @@ class Library: public QObject {
      QString openRemovableSource(const QJsonObject& volume);
      std::function<void()> openRemovableSourceAsync(const QJsonObject& volume,
              QObject* receiver, std::function<void(QString)> completion);
@@ -404,6 +424,7 @@ index e2c6e50..1170da0 100644
 +    QScopedPointer<ControlObject> m_pSampleLoad;
 +    QScopedPointer<ControlObject> m_pSampleSource;
 +    QScopedPointer<ControlObject> m_pSampleSourceAvailable;
++    QScopedPointer<ControlObject> m_pSampleDriveAvailable;
 +    QString m_samplesPath;
 +    QStringList m_driveOrder;
      QList<SidebarSource> m_sidebarSources;

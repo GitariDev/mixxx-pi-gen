@@ -1,8 +1,8 @@
 diff --git a/src/library/library.cpp b/src/library/library.cpp
-index 6ac120a..19ce79c 100644
+index 38d7ae9..0bc6426 100644
 --- a/src/library/library.cpp
 +++ b/src/library/library.cpp
-@@ -360,6 +360,11 @@ void Library::bindSidebarWidget(WLibrarySidebar* pSidebarWidget) {
+@@ -361,6 +361,11 @@ void Library::bindSidebarWidget(WLibrarySidebar* pSidebarWidget) {
  
      // Setup the sources view
      pSidebarWidget->setModel(m_pSidebarModel);
@@ -14,7 +14,7 @@ index 6ac120a..19ce79c 100644
      // The Sources screen rail (R-9): a fixed second line per kind of source.
      pSidebarWidget->sourceSubline = [this](const QModelIndex& index) {
          auto* feature = index.parent().isValid() ? nullptr : m_features.value(index.row());
-@@ -631,7 +636,7 @@ void Library::applySidebarSourceVisibility() {
+@@ -632,7 +637,7 @@ void Library::applySidebarSourceVisibility() {
              continue;
          }
          const bool visible = m_pConfig->getValue(source.preference, true);
@@ -23,7 +23,7 @@ index 6ac120a..19ce79c 100644
          if (visible && !firstVisible.isValid()) {
              firstVisible = m_pSidebarModel->index(row, 0);
          }
-@@ -649,15 +654,18 @@ void Library::applySidebarSourceVisibility() {
+@@ -650,15 +655,18 @@ void Library::applySidebarSourceVisibility() {
      }
      const auto defaultIndex = m_pSidebarModel->getDefaultSelection();
      if (firstVisible.isValid() && defaultIndex.isValid() &&
@@ -45,7 +45,7 @@ index 6ac120a..19ce79c 100644
          m_pSidebarWidget->returnToSourceRoot();
      }
      // Never leave keyboard/controller navigation pointing at a hidden source.
-@@ -790,6 +798,15 @@ void Library::showSidebarSourcesMenu() {
+@@ -791,6 +799,15 @@ void Library::showSidebarSourcesMenu() {
          m_pSidebarSourceEdit = list;
          // The same settings and functions as the old Sources menu.
          list->visibilityChanged = [this](const QString& identity, bool enabled) {
@@ -61,7 +61,7 @@ index 6ac120a..19ce79c 100644
              // Copy the factory before addFeature, which may grow the list.
              const auto found = std::find_if(m_sidebarSources.begin(), m_sidebarSources.end(),
                      [&identity](const SidebarSource& item) { return item.id == identity; });
-@@ -815,7 +832,11 @@ void Library::showSidebarSourcesMenu() {
+@@ -816,7 +833,11 @@ void Library::showSidebarSourcesMenu() {
              refreshSidebarSourceEdit();
          };
          list->startChosen = [this](const QString& identity) {
@@ -74,7 +74,7 @@ index 6ac120a..19ce79c 100644
              applySidebarSourceVisibility();
              refreshSidebarSourceEdit();
          };
-@@ -831,6 +852,57 @@ void Library::refreshSidebarSourceEdit() {
+@@ -832,6 +853,57 @@ void Library::refreshSidebarSourceEdit() {
          return;
      }
      QList<LibraryInterface::SourceEditEntry> entries;
@@ -132,7 +132,7 @@ index 6ac120a..19ce79c 100644
      for (const auto& source : std::as_const(m_sidebarSources)) {
          entries.append({source.id, source.title, m_pConfig->getValue(source.preference, true),
                  source.feature != nullptr});
-@@ -1053,6 +1125,150 @@ void Library::setBrowseScroll(int scroll) {
+@@ -1062,6 +1134,150 @@ void Library::setBrowseScroll(int scroll) {
      }
  }
  
@@ -283,7 +283,7 @@ index 6ac120a..19ce79c 100644
  void Library::onPlayerManagerTrackAnalyzerProgress(
          TrackId /*trackId*/, AnalyzerProgress /*analyzerProgress*/) {
      if (m_pAnalysisFeature) {
-@@ -1134,7 +1350,7 @@ void Library::onSkinLoadFinished() {
+@@ -1143,7 +1359,7 @@ void Library::onSkinLoadFinished() {
          QList<bool> visibility;
          for (auto* feature : std::as_const(m_features)) {
              identities.append(QString::fromLatin1(feature->metaObject()->className()));
@@ -293,7 +293,7 @@ index 6ac120a..19ce79c 100644
          const int preferredRow = LibraryInterface::preferredSourceRow(
                  m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")),
 diff --git a/src/library/library.h b/src/library/library.h
-index 1170da0..3ad6915 100644
+index 7309bbc..f13495a 100644
 --- a/src/library/library.h
 +++ b/src/library/library.h
 @@ -43,6 +43,7 @@ class QModelIndex;

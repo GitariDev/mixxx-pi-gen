@@ -4,7 +4,8 @@
 the sample browser's own last place (first: the Samples folder); 0 restores
 Tracks. [MixPi],sample_source picks 1 Samples, 2 the track collection, 3 the
 first open drive (none: Samples), 4 Recordings; [MixPi],sample_source_available
-says the buttons work. The Actions menu gains "Load to a sampler pad…", which
+says the buttons work; [MixPi],sample_drive_available is 1 while a drive is
+open (the skin's USB button). The Actions menu gains "Load to a sampler pad…", which
 writes [MixPi],screen 4 (Choose pad).
 
 The native checks are in tests/native/sample_browser_test.cpp.
@@ -50,7 +51,8 @@ class SampleBrowserPatchTests(unittest.TestCase):
         text = PATCH.read_text()
         added = '\n'.join(line[1:] for line in text.splitlines() if line.startswith('+'))
         for key in ('ConfigKey("[MixPi]", "sample_load")', 'ConfigKey("[MixPi]", "sample_source")',
-                    'ConfigKey("[MixPi]", "sample_source_available")'):
+                    'ConfigKey("[MixPi]", "sample_source_available")',
+                    'ConfigKey("[MixPi]", "sample_drive_available")'):
             self.assertIn(key, added)
         # The skin's buttons write these values.
         for value in ('kSamples = 1', 'kCollection = 2', 'kDrive = 3', 'kRecordings = 4'):

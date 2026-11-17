@@ -47,3 +47,32 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Wave-2 skin preview (R-16, R-17, R-18, chip) | Deck page, tool panel LOOP/JUMP/CUES, FX 1/FX 2 with route switchers, Settings full screen, chip "NO USB". Defects fixed in `228215c`: full-height views, tabs from Settings, cut text |
 
 **MANTACORE:** after each reboot its hub port (1-1 port 2) flaps (234 USB disconnects in 4 h, never attached as a disk: no `/dev/sd*` mount in the journal, no exFAT lines). The port is disabled after each boot (`echo 1 > /sys/bus/usb/devices/1-1:1.0/1-1-port2/disable`). Eject, handover and the R-5 load measurement need a working drive.
+
+## Build B acceptance on the test card (`deploy/ui-redesign-20261117/acceptance-B/ACCEPTANCE.md`)
+
+Build B (`67341f2`) was installed in place at 10:30-10:33 by following `deploy/test-image-20261117b/UPDATE.md`:
+- Every step passed: 61 files OK, 37 patches, `dpkg -V` clean, and the skin tree equals the expected tree.
+- The eject gate was opened (owner Q2). `/etc/mixpi` had to be created. Settings › Media shows Eject ON.
+
+The checks ran 10:33-11:18, with 2 reboots and 64.7-70.1 °C, `throttled=0x0` throughout. Result: **51 PASS, 5 FAIL, 6 BLOCKED (drive)**.
+
+- **PASS:**
+  - R-1, R-7, R-8: the empty-pad 7 path now loads.
+  - R-9 (grouped tiles, and back to Load sample).
+  - R-10: kept after a restart, then restored exactly.
+  - R-11.
+  - R-12: bar, Hide → chip %, kept after a restart, SHOW, Cancel in 0.07 s.
+  - R-13: settings, pad and deck time all kept after kill -9; ten changes while playing gave 0 underruns.
+  - R-14: `systemctl reboot` and the power-menu Restart both log "shutdown complete with code 0" in under 2 s.
+  - R-16: F-4 at 86-87 px per beat; CPU readout 4 %, 0 underruns.
+  - R-17, R-18.
+  - R-19 (F-5, F-6, F-9, F-10 with no drive).
+  - Holdout: REC 33.8 s gives WAV + CUE; F-1, F-2, F-3, F-7, F-8, F-11; pads, loop and FX.
+- **FAIL:**
+  1. R-2: opened from DECKS, the Media page has the waveform area (x 92-800, y 48-408) drawn black over it.
+  2. R-4: the Media page is unstyled (Qt default light grey, system font), although `style.qss` has its rules.
+  3. R-13: Tempo range is never saved, not even on a clean quit (`RateRangePercent` stays 8).
+  4. R-10: the edit-list button never reads DONE.
+  5. F-14: the first Show top bar after a start once raised "Top bar was not confirmed" (1 of 3 tries).
+- **BLOCKED (drive):** MANTACORE flapped again when its port was enabled (16 disconnects in 17 s; the port is disabled again). Blocked: R-4 insert ping, LOAD/DISMISS and chip states; R-5 handover and the Q3 RAM-copy gate; R-6 eject and the Safe strip; the R-9 drive tile; the R-15 pop-up check; the R-20 storm.
+- **Owner state restored:** RB Fast, pads 1-2 only, Sources and scan bar as found, time remaining, stereo routing, top bar hidden, Mixxx on DECKS. The eject gate stays.

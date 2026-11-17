@@ -22,10 +22,12 @@ class QuietScanPatchTests(unittest.TestCase):
             ['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
              '--mixxx-print-patches'], text=True).split()
         self.assertEqual(names.index('mixxx-quiet-scan.patch'), 19)
-        # Later patches leave the scanner dialog to this patch.
+        # Later patches leave the scanner dialog to this patch, except
+        # mixxx-scan-progress.patch (R-12), which builds on it.
         patch_dir = PATCH.parent
         for later in names[20:]:
-            self.assertNotIn('libraryscannerdlg', (patch_dir / later).read_text(), later)
+            if later != 'mixxx-scan-progress.patch':
+                self.assertNotIn('libraryscannerdlg', (patch_dir / later).read_text(), later)
         # The scan itself (LibraryScanner, tasks, DAO) is left untouched.
         self.assertEqual(re.findall(r'^diff --git a/(\S+) b/\S+$', PATCH.read_text(), re.MULTILINE),
                          ['src/library/scanner/libraryscannerdlg.cpp',
@@ -36,7 +38,8 @@ class QuietScanPatchTests(unittest.TestCase):
             target = Path(temporary)
             names, baseline = RUNNER.reconstruct(target)
             self.assertIn('mixxx-quiet-scan.patch', names)
-            self.assertIn('kStripHeight = 44',
+            # R-12 (mixxx-scan-progress.patch) makes the strip 48 px.
+            self.assertIn('kStripHeight = 48',
                           (target / 'src/library/scanner/libraryscannerdlg.h').read_text())
             for name in reversed(names):
                 for options in (['--check'], []):
@@ -47,12 +50,12 @@ class QuietScanPatchTests(unittest.TestCase):
             self.assertEqual(baseline, restored)
 
     @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
-    def test_native_compact_nonmodal_strip_and_cancel(self):
+    def test_native_strip_above_transport_with_hide_cancel_and_percent(self):
         result = subprocess.run([sys.executable, '-B',
                                  str(ROOT / 'tests/native/library_scanner_strip_runner.py')],
                                 cwd=ROOT, capture_output=True, text=True, timeout=240)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('LIBRARY_SCANNER_STRIP_OK height=44', result.stdout)
+        self.assertIn('LIBRARY_SCANNER_STRIP_OK height=48', result.stdout)
 
 
 if __name__ == '__main__':

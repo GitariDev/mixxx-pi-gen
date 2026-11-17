@@ -16,7 +16,7 @@ class TrackDAO : public QObject {
 class LibraryScanner : public QObject {
     Q_OBJECT
   public:
-    LibraryScanner();
+    explicit LibraryScanner(const UserSettingsPointer& pConfig);
     int cancelled = 0;
     TrackDAO m_trackDao;
     QScopedPointer<LibraryScannerDlg> m_pProgressDlg;
@@ -25,6 +25,7 @@ class LibraryScanner : public QObject {
     void scanFinished();
     void progressHashing(const QString&);
     void progressLoading(const QString& path);
+    void progressPercent(int percent);
   public slots:
     void slotCancel() { ++cancelled; }
 };

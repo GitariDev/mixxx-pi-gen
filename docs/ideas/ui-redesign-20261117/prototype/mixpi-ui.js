@@ -117,18 +117,19 @@ const fmtLen = s => s < 60 ? (s < 10 ? '0:0' : '0:') + Math.round(s) : Math.floo
 
 /* ---------- shared engine ---------- */
 const E = {};
-function mkDeck(id, pos, play) { return { id, pos, play, key: false, q: true, sync: false, master: false, rate: 0, loop: null, onPi: false, cue: 0, tmode: 'el' }; }
+function mkDeck(id, pos, play) { return { id, pos, play, key: false, q: true, sync: false, master: false, rate: 0, loop: null, onPi: false, cue: 0, tmode: 'el', pfl: false }; }
 function resetEngine() {
   Object.assign(E, {
     decks: { 1: mkDeck('u1', 58.2, true), 2: mkDeck('p5', 21.4, false) },
     pads: ['s1', 's2', 's3', null, 's4', null, 's5', null].map(id => ({ id, play: false, t: 0, onPi: false })),
-    usb: { present: true, state: 'ready' },
+    usb: { present: true, state: 'ready', opened: true, ping: 0, safeT: 0 },
     scan: { on: false, pct: 0, fi: 0, ft: 0, total: 3050 },
     rec: { on: false, t: 0 },
     fx: { route: 1, mix: 0.55, slots: [{ n: 0, on: true, meta: 0.4 }, { n: 1, on: false, meta: 0.6 }, { n: 2, on: false, meta: 0.5 }] },
+    fx2: { route: 2, mix: 0.4, slots: [{ n: 3, on: false, meta: 0.5 }, { n: 4, on: false, meta: 0.3 }, { n: 5, on: false, meta: 0.6 }] },
     cleaned: [],
     eject: { step: -1, t: 0 },
-    set: { keylock: 'RB Fast', buffer: '1024', tempo: '8%', fps: '45', ahead: '8', cache: '512', insert: 'ready', scanShow: 'bar', store: 'ram', deskbar: 'hidden', time: 'elapsed', q1: true, q2: true, split: false },
+    set: { keylock: 'RB Fast', buffer: '1024', tempo: '8%', fps: '45', ahead: '8', cache: '1024', scanShow: 'bar', deskbar: 'hidden', time: 'elapsed', q1: true, q2: true, split: false },
   });
   E.decks[1].master = true;
 }
@@ -154,16 +155,19 @@ function loadPad(i, id) {
 const short = s => s.length > 28 ? s.slice(0, 27) + '…' : s;
 function usage() {
   const u = [];
-  for (const n of [1, 2]) { const d = E.decks[n]; if (deckUses(n)) u.push({ kind: 'deck', n, title: TR[d.id].title, play: d.play }); }
+  for (const n of [1, 2]) {
+    const d = E.decks[n]; if (!deckUses(n)) continue;
+    const direct = E.set.cache === 'OFF';
+    u.push({ kind: 'deck', n, title: TR[d.id].title, play: d.play, block: direct && d.play, unload: direct && !d.play });
+  }
   E.pads.forEach((p, i) => { if (p.id && TR[p.id].src === 'usb' && !p.onPi) u.push({ kind: 'pad', n: i + 1, title: TR[p.id].title }); });
-  if (E.scan.on) u.push({ kind: 'scan' });
   return u;
 }
 function startScan() { Object.assign(E.scan, { on: true, pct: E.scan.pct >= 100 ? 0 : E.scan.pct, fi: 0, ft: 0 }); dirty = true; }
 function finishEject() {
-  for (const n of [1, 2]) if (deckUses(n)) E.decks[n].onPi = true;
+  for (const n of [1, 2]) { const d = E.decks[n]; if (deckUses(n)) { if (E.set.cache === 'OFF') Object.assign(d, { id: null, play: false }); else d.onPi = true; } }
   E.pads.forEach(p => { if (p.id && TR[p.id].src === 'usb') p.onPi = true; });
-  E.usb.state = 'safe'; E.scan.on = false;
+  E.usb.state = 'safe'; E.usb.opened = false; E.usb.safeT = 30; E.usb.ping = 0;
 }
 
 /* ---------- waveforms ---------- */
@@ -248,7 +252,7 @@ const CU = {};
 const RD = {};
 function resetUI() {
   Object.assign(CU, { tab: 'decks', settings: false, adv: false, loop: 0, dlg: null, actions: false, loadSub: false, show: false, srcMenu: false, feature: 'TRACKS', sel: 'p2', sampleLoad: false, leSel: false });
-  Object.assign(RD, { tab: 'decks', ovl: null, sheet: null, tool: 0, toolTab: 'loop', clear: false, sel: 'p2', list: 'pi:tracks', srcSel: 'usb', srcPath: [], edit: false, sample: { src: 'samples', sel: 's3', pad: null, prev: null }, padMenu: null, set: 'playback', toast: null, toastT: 0, hl: [], hlCU: [], srcOrder: ['usb', 'pi', 'rec', 'hist', 'folders', 'samples'], srcHidden: {} });
+  Object.assign(RD, { tab: 'decks', ovl: null, sheet: null, tool: 0, toolTab: 'loop', clear: false, sel: 'p2', list: 'pi:tracks', srcSel: 'usb', srcPath: [], edit: false, srcReturn: null, sample: { src: 'samples', sel: 's3', pad: null }, set: 'playback', toast: null, toastT: 0, hl: [], fxUnit: 1, srcOrder: ['usb', 'pi', 'rec', 'hist', 'folders', 'samples'], srcHidden: {}, srcStart: 'pi' });
 }
 resetUI();
 let dirty = true;
@@ -438,29 +442,29 @@ function renderCU() {
 /* ===================== REDESIGN ===================== */
 const B = (label, a, v, style = '', cls = '', extra = '') => `<div class="b ${cls}" style="${style}" data-a="${a}" data-v="${v ?? ''}" ${extra}>${label}</div>`;
 function usbChip() {
-  let cls = 'ok', nm = 'MANTACORE', st = 'Ready', ring = '';
-  const inUse = [1, 2].filter(n => deckUses(n) && E.decks[n].play);
-  if (!E.usb.present) { cls = 'none'; nm = 'NO USB'; st = 'Plug in a drive'; }
-  else if (E.usb.state === 'ejecting') { cls = 'busy'; st = 'Ejecting…'; }
-  else if (E.usb.state === 'safe') { cls = 'safe'; st = 'Safe to remove'; }
-  else if (E.scan.on) { cls = 'busy'; st = '<span data-live="usbpct">Scanning</span>'; ring = `<svg width="34" height="34" viewBox="0 0 34 34" style="position:absolute;left:-6px;top:-6px"><circle cx="17" cy="17" r="15" fill="none" stroke="#2a3a52" stroke-width="3"/><circle data-live="ring" cx="17" cy="17" r="15" fill="none" stroke="#ffb020" stroke-width="3" stroke-dasharray="94.25" stroke-dashoffset="94.25" transform="rotate(-90 17 17)" stroke-linecap="round"/></svg>`; }
-  else if (inUse.length) { cls = 'use'; st = 'In use · Deck ' + inUse.join(' + '); }
-  return `<div class="usb ${cls}${RD.ovl === 'media' ? ' on' : ''}" data-a="usb" data-hl="usbchip" style="${RD.ovl === 'media' ? 'border-color:var(--acc)' : ''}">
-    <span style="position:relative;display:inline-flex;width:22px;height:22px">${ring}${ic('usb', 22)}</span><span style="min-width:0"><div class="nm">${nm}</div><div class="st">${st}</div></span></div>`;
+  let cls = 'ok', nm = 'MANTACORE', st = 'READY';
+  const inUse = E.usb.opened || [1, 2].some(n => deckUses(n));
+  if (E.scan.on && E.set.scanShow === 'icon') { cls = 'busy'; nm = E.usb.present ? 'MANTACORE' : 'LIBRARY'; st = '<span data-live="usbpct">SCAN 0%</span>'; }
+  else if (!E.usb.present) { cls = 'none'; nm = 'NO USB'; st = 'PLUG IN A DRIVE'; }
+  else if (E.usb.state === 'ejecting') { cls = 'busy'; st = 'EJECTING'; }
+  else if (E.usb.state === 'safe') { cls = 'safe'; st = 'SAFE TO REMOVE'; }
+  else if (inUse) { cls = 'use'; st = 'IN USE'; }
+  return `<div class="usb ${cls}" data-a="usb" data-hl="usbchip" style="margin:0 6px;${RD.ovl === 'media' ? 'border-color:var(--acc)' : ''}">
+    <span style="display:inline-flex">${ic('usb', 22)}</span><span style="min-width:0"><div class="nm">${nm}</div><div class="st">${st}</div></span></div>`;
 }
 function rdTop() {
   const tabLit = k => RD.tab === k && (!RD.ovl || (RD.ovl === 'sources' && k === 'tracks') || (RD.ovl === 'sample' && k === 'sampler'));
   const tabs = [['DECKS', 'decks', 84], ['TRACKS', 'tracks', 90], ['FX', 'fx', 70], ['SAMPLER', 'sampler', 100]]
     .map(([t, k, w]) => `<div class="tab${tabLit(k) ? ' on' : ''}" style="width:${w}px" data-a="tab" data-v="${k}" data-hl="tab-${k}">${t}</div>`).join('');
   return `<div class="top">${tabs}<div style="flex:1"></div>${usbChip()}
-    ${B(E.rec.on ? `■ <span data-live="rect">0:00</span>` : '<span style="color:var(--bad)">●</span> REC', 'rec', '', 'height:40px', 'recb' + (E.rec.on ? ' on' : ''))}
-    ${B(ic('gear', 22), 'gear', '', 'width:48px;height:40px;margin:4px 3px', 'icon' + (RD.ovl === 'settings' ? ' on' : ''), 'data-hl="gear"')}
+    ${B(E.rec.on ? `■ <span data-live="rect">0:00</span>` : '<span style="color:var(--bad)">●</span> REC', 'rec', '', 'height:48px;margin:0 3px', 'recb' + (E.rec.on ? ' on' : ''))}
+    ${B(ic('gear', 22), 'gear', '', 'width:48px;height:48px;margin:0 3px', 'icon' + (RD.ovl === 'settings' ? ' on' : ''), 'data-hl="gear"')}
     <div class="cpu">CPU<b>3%</b></div></div>`;
 }
 function keyChip(t) { return t && t.key ? `<span class="keychip" style="background:${camelot(t.key)}">${t.key}<small>${esc(t.keyName)}</small></span>` : ''; }
 function rdDeck(n) {
   const d = E.decks[n], t = d.id ? TR[d.id] : null;
-  const chips = (d.onPi ? '<span class="pill pi" data-hl="onpi">ON PI</span>' : '') + (t && t.src === 'usb' && !d.onPi ? `<span class="pill" title="From the USB drive">USB</span>` : '') + (d.sync ? `<span class="pill lit${n}">SYNC</span>` : '') + (d.master ? '<span class="pill lit">MASTER</span>' : '');
+  const chips = (d.onPi ? '<span class="pill pi" data-hl="onpi">ON PI</span>' : '') + (t && t.src === 'usb' && !d.onPi ? '<span class="pill">USB</span>' : '') + (d.sync ? `<span class="pill lit${n}">SYNC</span>` : '') + (d.master ? '<span class="pill lit">MASTER</span>' : '') + (d.pfl ? '<span class="pill lit">PFL</span>' : '');
   return `<div class="deck" data-hl="deck${n}"><div class="l1"><span class="badge s bg${n}">${n}</span><span class="ti">${t ? esc(t.title) : '<span style="color:var(--dim)">Empty deck</span>'}</span><span class="ar">${t ? esc(t.artist) : ''}</span>${chips}</div>
     <div class="l2"><div class="tm" data-a="tm" data-v="${n}"><small>${d.tmode === 'el' ? 'ELAPSED' : 'REMAINING'} · TAP</small><span data-live="tm${n}"></span></div>
       <div class="bpm"><span>${t ? t.bpm.toFixed(1) : '—'}</span><small>BPM</small></div>
@@ -495,7 +499,7 @@ function rdTransport(mode) {
     h += '<div class="half">';
     if (mode === 'tracks') {
       const t = d.id ? TR[d.id] : null;
-      h += B(`<span style="display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0"><span>${ic('load', 16)} LOAD ▸ ${n}</span><span style="font:500 11.5px/1 var(--f-ui);text-transform:none;letter-spacing:0;color:var(--dim);max-width:190px;overflow:hidden;text-overflow:ellipsis">${d.play ? 'Playing — stop to load' : t ? 'Now: ' + esc(short(t.title)) : 'Empty'}</span></span>`, 'load', n, st + 'width:230px;justify-content:flex-start;padding-left:10px', d.play ? 'dis' : (n === 1 ? 'on1' : 'on2'), `data-hl="load${n}"`);
+      h += `<div style="width:230px;display:flex;align-items:center;gap:8px;min-width:0">${B(ic('load', 16) + 'LOAD ' + n, 'load', n, st + 'width:104px;flex:none', d.play ? 'dis' : (n === 1 ? 'on1' : 'on2'), `data-hl="load${n}"`)}<span style="font-size:12.5px;line-height:1.2;color:var(--dim);overflow:hidden;max-height:31px">${d.play ? 'Playing · stop to load' : t ? esc(t.title) : 'Empty'}</span></div>`;
       h += B('CUE', 'cue', n, st + 'flex:1', 'cue');
     } else {
       h += B(ic('lock', 15) + 'KEY', 'key', n, st + 'width:48px;font-size:13px;flex-direction:column;gap:2px', d.key ? 'on' + n : '');
@@ -562,21 +566,20 @@ function rdTracks() {
   let L = listOf(RD.list);
   if (L.crumb[0] === 'MANTACORE' && !usbAvailable()) { RD.list = 'pi:tracks'; L = listOf(RD.list); }
   const crumb = L.crumb.map((c, i) => i === L.crumb.length - 1 ? `<b>${esc(c)}</b>` : esc(c)).join(' › ');
-  let h = `<div class="abs row" style="left:0;top:48px;width:800px;height:48px;align-items:center;gap:6px;padding:0 4px 0 0;background:var(--p1);border-bottom:1px solid var(--ln)">
-    ${B(ic('menu', 24), 'menu', '', 'width:48px;height:46px;border-radius:0 6px 6px 0', 'icon ghost', 'data-hl="hamburger" aria-label="Sources"')}
+  let h = `<div class="abs row" style="left:0;top:48px;width:800px;height:48px;align-items:center;gap:6px;padding:0;background:var(--p1);border-bottom:1px solid var(--ln)">
+    ${B(ic('menu', 24), 'menu', '', 'width:48px;height:48px;border-radius:0 6px 6px 0', 'icon ghost', 'data-hl="hamburger" aria-label="Sources"')}
     <div class="crumb" style="width:220px" data-hl="crumb">${L.crumb[0] === 'MANTACORE' ? `<span style="color:var(--go)">${ic('usb', 14)}</span> ` : ''}${crumb}</div>
     <div style="position:relative;flex:1"><span style="position:absolute;left:10px;top:10px;color:var(--dim)">${ic('search', 20)}</span><input class="srch" id="rd-search" placeholder="Search ${fmtN(L.ids.length)} tracks" aria-label="Search tracks"></div>
-    ${B(ic('pen', 22), 'pen', '', 'width:48px;height:44px', 'icon' + (RD.sheet === 'actions' ? ' on' : ''), 'data-hl="pen" aria-label="Actions"')}</div>`;
+    ${B(ic('pen', 22), 'pen', '', 'width:48px;height:48px;border-radius:6px 0 0 6px', 'icon' + (RD.sheet === 'actions' ? ' on' : ''), 'data-hl="pen" aria-label="Actions"')}</div>`;
   const rows = L.ids.map(id => {
-    const t = TR[id], on = [1, 2].filter(n => E.decks[n].id === id), ok = trackUsable(id);
+    const t = TR[id], ok = trackUsable(id);
     return `<div class="lrow${RD.sel === id ? ' sel' : ''}" data-a="row" data-v="${id}" style="${ok ? '' : 'opacity:.35'}">
-      <div style="width:34px;padding:0 0 0 8px;display:flex;gap:2px">${on.map(n => `<span class="badge s bg${n}" style="width:16px;height:16px;font-size:11px">${n}</span>`).join('')}</div>
-      <div style="flex:1;min-width:0;font-weight:700">${esc(t.title)}</div><div style="width:150px;color:var(--dim)">${esc(t.artist)}</div>
-      <div class="num" style="width:62px">${t.bpm ? t.bpm.toFixed(1) : ''}</div><div style="width:74px">${keyChip(t)}</div><div class="num" style="width:60px;color:var(--dim)">${fmtLen(t.dur)}</div></div>`;
+      <div style="flex:1;min-width:0;font-weight:700;padding-left:12px">${esc(t.title)}</div><div style="width:136px;color:var(--dim)">${esc(t.artist)}</div>
+      <div class="num" style="width:66px">${t.bpm ? t.bpm.toFixed(1) : ''}</div><div style="width:90px">${t.key ? `${t.key} ${esc(t.keyName)}` : ''}</div><div class="num" style="width:64px;color:var(--dim)">${fmtLen(t.dur)}</div></div>`;
   }).join('');
-  h += `<div class="abs sc" data-keep="rdlist" style="left:0;top:96px;width:800px;height:288px" data-hl="tracklist">
-    <div class="lrow hd"><div style="width:34px"></div><div style="flex:1">TITLE</div><div style="width:150px">ARTIST</div><div style="width:62px;text-align:right">BPM</div><div style="width:74px">KEY</div><div style="width:60px;text-align:right">TIME</div></div>${rows}</div>`;
-  h += rdOverview(384, 40) + rdTransport('tracks');
+  h += `<div class="abs sc" data-keep="rdlist" style="left:0;top:96px;width:800px;height:260px" data-hl="tracklist">
+    <div class="lrow hd"><div style="flex:1;padding-left:12px">TITLE</div><div style="width:136px">ARTIST</div><div style="width:66px;text-align:right">BPM</div><div style="width:90px">KEY</div><div style="width:64px;text-align:right">TIME</div></div>${rows}</div>`;
+  h += rdTitles(356) + rdOverview(384, 40) + rdTransport('tracks');
   if (RD.sheet === 'actions') {
     h += `<div class="scrim" data-a="shclose" style="background:rgba(3,5,8,.35)"></div><div class="menu" style="right:4px;top:96px;width:300px" data-hl="actionsmenu">
       <div class="mi" data-a="act" data-v="1"><span class="badge s bg1">1</span>Load to Deck 1</div><div class="mi" data-a="act" data-v="2"><span class="badge s bg2">2</span>Load to Deck 2</div>
@@ -619,45 +622,45 @@ function rdSources() {
   let order = RD.srcOrder.filter(k => (k !== 'usb' || usbAvailable()) && !RD.srcHidden[k]);
   if (!order.length) { RD.srcHidden = {}; order = RD.srcOrder.filter(k => k !== 'usb' || usbAvailable()); }
   if (!order.includes(RD.srcSel)) RD.srcSel = order[0];
-  const tiles = order.map(k => { const s = SRC[k]; return `<div class="tile${RD.srcSel === k && !RD.edit ? ' sel' : ''}" data-a="stile" data-v="${k}"><span style="color:${k === 'usb' ? 'var(--go)' : 'var(--dim)'}">${ic(s.icon, 26)}</span><div style="min-width:0"><div class="tn">${s.name}</div><div class="ts">${s.sub}</div></div><span style="margin-left:auto;color:var(--dim)">${ic('chev', 18)}</span></div>`; }).join('');
+  const tiles = order.map(k => { const s = SRC[k]; return `<div class="tile${RD.srcSel === k && !RD.edit ? ' sel' : ''}" data-a="stile" data-v="${k}"><span style="color:${k === 'usb' ? 'var(--go)' : 'var(--dim)'}">${ic(s.icon, 26)}</span><div style="min-width:0"><div class="tn">${s.name}${RD.srcStart === k ? ' <span style="color:var(--acc)">★</span>' : ''}</div><div class="ts">${s.sub}</div></div><span style="margin-left:auto;color:var(--dim)">${ic('chev', 18)}</span></div>`; }).join('');
   const crumb = [SRC[RD.srcSel].name, ...RD.srcPath].map((c, i, a) => i === a.length - 1 ? `<b>${esc(c)}</b>` : esc(c)).join(' › ');
   let right;
   if (RD.edit) {
-    right = `<div style="padding:10px 14px" class="lbl">Show in Sources, and their order</div><div class="sc" style="height:338px">` + RD.srcOrder.map((k, i) => `<div class="nrow" style="cursor:default"><span style="color:var(--dim)">${ic('grip', 20)}</span><span class="grow">${SRC[k].name}${k === 'usb' ? ' <span style="color:var(--dim);font-size:13px">(when plugged in)</span>' : ''}</span>
-      ${B(ic('up', 18), 'sup', i, 'width:48px;height:44px', i ? 'icon' : 'icon dis')}${B(ic('down', 18), 'sdown', i, 'width:48px;height:44px', i < RD.srcOrder.length - 1 ? 'icon' : 'icon dis')}<div class="tog${RD.srcHidden[k] ? '' : ' on'}" data-a="svis" data-v="${k}"></div></div>`).join('') + '</div>';
+    right = `<div style="padding:12px 14px" class="lbl">Show, order, and ★ where Tracks starts</div><div class="sc" style="height:328px">` + RD.srcOrder.map((k, i) => `<div class="nrow" style="cursor:default;gap:6px;padding:0 8px"><span class="grow">${SRC[k].name}${k === 'usb' ? ' <span style="color:var(--dim);font-size:13px">(each drive)</span>' : ''}</span>
+      ${B(ic('up', 18), 'sup', i, 'width:48px;height:48px', i ? 'icon' : 'icon dis')}${B(ic('down', 18), 'sdown', i, 'width:48px;height:48px', i < RD.srcOrder.length - 1 ? 'icon' : 'icon dis')}${B('★', 'sstart', k, 'width:48px;height:48px;font-size:20px', RD.srcStart === k ? 'on' : (k === 'usb' ? 'dis' : ''))}<div data-a="svis" data-v="${k}" style="width:72px;height:48px;display:flex;align-items:center;justify-content:center;cursor:pointer"><div class="tog${RD.srcHidden[k] ? '' : ' on'}"></div></div></div>`).join('') + '</div>';
   } else {
-    right = `<div class="row" style="height:48px;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--ln)">${RD.srcPath.length ? B(ic('back', 18) + 'BACK', 'sback', '', 'width:96px;height:42px') : ''}<div class="crumb">${crumb}</div></div>
+    right = `<div class="row" style="height:48px;align-items:center;gap:8px;padding:0 10px 0 4px;border-bottom:1px solid var(--ln)">${RD.srcPath.length ? B(ic('back', 18) + 'BACK', 'sback', '', 'width:96px;height:48px') : ''}<div class="crumb">${crumb}</div></div>
       <div class="sc" style="height:336px">${srcRows()}</div>`;
   }
-  return `<div class="ovl" data-hl="sources"><div class="hdr" style="height:48px;padding:0 6px 0 0;gap:10px">
-      ${B(ic('x', 24), 'sx', '', 'width:48px;height:46px;border-radius:0 6px 6px 0', 'icon on', 'data-hl="hamburger" aria-label="Close sources"')}<h2>Sources</h2>
-      <span class="crumb">Pick a source, then a list. Opening a list shows it in Tracks.</span><div style="flex:1"></div>
-      ${B(RD.edit ? ic('check', 18) + 'DONE' : ic('pen', 18) + 'EDIT LIST', 'sedit', '', 'width:128px;height:42px', RD.edit ? 'on' : '', 'data-hl="sedit"')}</div>
-    <div class="abs" style="left:0;top:48px;width:264px;height:384px;border-right:1px solid var(--ln);background:var(--p1)" data-hl="sourcesrail">${tiles}</div>
+  return `<div class="ovl" data-hl="sources"><div class="hdr" style="height:48px;padding:0 0 0 0;gap:10px">
+      ${B(ic('x', 24), 'sx', '', 'width:48px;height:48px;border-radius:0 6px 6px 0', 'icon on', 'data-hl="hamburger" aria-label="Close sources"')}<h2>Sources</h2>
+      <span class="crumb">${RD.srcReturn === 'sample' ? 'Pick a list to load samples from.' : 'Pick a source, then a list. OPEN shows it in Tracks.'}</span><div style="flex:1"></div>
+      ${B(RD.edit ? ic('check', 18) + 'DONE' : 'EDIT LIST', 'sedit', '', 'width:128px;height:48px;border-radius:6px 0 0 6px', RD.edit ? 'on' : '', 'data-hl="sedit"')}</div>
+    <div class="abs sc" style="left:0;top:48px;width:264px;height:384px;border-right:1px solid var(--ln);background:var(--p1)" data-hl="sourcesrail">${tiles}</div>
     <div class="abs" style="left:264px;top:48px;width:536px;height:384px" data-hl="sourcespane">${right}</div></div>`;
 }
 function rdMedia() {
   let left;
-  if (!E.usb.present) left = `<div class="card2" style="margin:14px;padding:22px;text-align:center;color:var(--dim)"><div style="color:var(--dim)">${ic('usb', 40)}</div><div style="font:700 20px/1.3 var(--f-cond);color:var(--tx);margin-top:6px">No USB drive</div>Plug in a drive. It shows here and in Sources when it is ready.<br>Nothing is scanned until you open it.</div>`;
+  if (!E.usb.present) left = `<div class="card2" style="margin:14px;padding:22px;text-align:center;color:var(--dim)"><div>${ic('usb', 40)}</div><div style="font:700 20px/1.3 var(--f-cond);color:var(--tx);margin-top:6px">No USB drive</div>Plug in a drive. A small ping at the bottom asks whether to load it.</div>`;
   else {
-    const u = usage(), safe = E.usb.state === 'safe', ej = E.usb.state === 'ejecting';
-    const pill = safe ? '<span class="pill pi" style="height:26px;font-size:13px">SAFE TO REMOVE</span>' : ej ? '<span class="pill" style="height:26px;color:var(--warn);border-color:var(--warn)">EJECTING…</span>' : E.scan.on ? '<span class="pill" style="height:26px;color:var(--warn);border-color:var(--warn)">SCANNING</span>' : '<span class="pill" style="height:26px;color:var(--go);border-color:var(--go)">READY</span>';
-    const uses = safe ? '<div style="color:#b9f5d2;font-size:16px">You can pull the drive out now.</div>' : u.length ? u.map(x => `<div style="font-size:14.5px;color:var(--dim)">${x.kind === 'deck' ? `<span class="badge s bg${x.n}" style="display:inline-flex;width:18px;height:18px;font-size:12px">${x.n}</span> Deck ${x.n} ${x.play ? 'is playing' : 'holds'} “${esc(short(x.title))}”` : x.kind === 'pad' ? `Pad ${x.n} holds “${esc(short(x.title))}”` : `Library scan <span data-live="scanpct2"></span>`}</div>`).join('') : '<div style="font-size:14.5px;color:var(--dim)">Nothing on the decks or pads comes from this drive.</div>';
+    const u = usage(), safe = E.usb.state === 'safe', ej = E.usb.state === 'ejecting', block = u.some(x => x.block);
+    const pill = safe ? '<span class="pill pi" style="height:26px;font-size:13px">SAFE TO REMOVE</span>' : ej ? '<span class="pill" style="height:26px;color:var(--warn);border-color:var(--warn)">EJECTING</span>' : (E.usb.opened || u.length) ? '<span class="pill" style="height:26px;color:#9fd0ff;border-color:#4aa8ff">IN USE</span>' : '<span class="pill" style="height:26px;color:var(--go);border-color:var(--go)">READY</span>';
+    const uses = safe ? '<div style="color:#b9f5d2;font-size:16px">You can pull the drive out now.</div>' : u.length ? u.map(x => `<div style="font-size:14.5px;color:${x.block ? 'var(--warn)' : 'var(--dim)'}">${x.kind === 'deck' ? `<span class="badge s bg${x.n}" style="display:inline-flex;width:18px;height:18px;font-size:12px">${x.n}</span> Deck ${x.n} ${x.play ? 'is playing' : 'holds'} “${esc(short(x.title))}”${x.block ? ' straight from the drive' : ''}` : `Pad ${x.n} holds “${esc(short(x.title))}”`}</div>`).join('') : `<div style="font-size:14.5px;color:var(--dim)">${E.usb.opened ? 'Open in Sources. Nothing on the decks or pads comes from it.' : 'Not open yet. Mixxx has not read it.'}</div>`;
     left = `<div class="card2" style="margin:12px;padding:14px;display:flex;flex-direction:column;gap:10px" data-hl="mediacard">
-      <div class="row" style="gap:12px;align-items:center"><span style="color:${safe ? 'var(--go)' : 'var(--tx)'}">${ic('usb', 40)}</span><div style="flex:1;min-width:0"><div style="font:700 24px/1 var(--f-cond);letter-spacing:.03em">MANTACORE</div><div style="color:var(--dim);font-size:13.5px;margin-top:4px">58.6 GB · FAT32 · rekordbox export found · read-write</div></div>${pill}</div>
-      <div style="display:flex;flex-direction:column;gap:5px;min-height:46px">${uses}</div>
-      <div class="row" style="gap:6px">${B(ic('eject', 22) + 'EJECT', 'eject', '', 'width:176px;height:56px;font-size:19px', safe || ej ? 'dis' : 'pri', 'data-hl="ejectbtn"')}
-        ${B(ic('list', 18) + 'BROWSE', 'mbrowse', '', 'flex:1;height:56px', safe || ej ? 'dis' : '')}${B(ic('copy', 18) + 'COPY TO PI', 'mcopy', '', 'flex:1.3;height:56px', safe || ej ? 'dis' : '', 'data-hl="copytopi"')}${B(ic('scan', 18) + 'SCAN', 'mscan', '', 'flex:1;height:56px', safe || ej || E.scan.on ? 'dis' : '')}</div></div>
-      <div style="padding:0 14px;color:var(--dim);font-size:13px;line-height:1.45">The drive mounted by itself when it was plugged in. Mixxx reads it only when you open it in Sources or start a scan. Eject keeps anything in use on the Pi first.</div>`;
+      <div class="row" style="gap:12px;align-items:center"><span style="color:${safe ? 'var(--go)' : 'var(--tx)'}">${ic('usb', 40)}</span><div style="flex:1;min-width:0"><div style="font:700 24px/1 var(--f-cond);letter-spacing:.03em">MANTACORE</div><div style="color:var(--dim);font-size:13.5px;margin-top:4px">58.6 GB · rekordbox export found · read-write</div></div>${pill}</div>
+      <div class="row" style="gap:6px">${B(ic('eject', 22) + 'EJECT', 'eject', '', 'width:176px;height:56px;font-size:19px', safe || ej || block ? 'dis' : 'pri', 'data-hl="ejectbtn"')}
+        ${B(ic('list', 18) + (E.usb.opened ? 'BROWSE' : 'OPEN'), 'mbrowse', '', 'flex:1;height:56px', safe || ej ? 'dis' : '', 'data-hl="browsebtn"')}${B(ic('copy', 18) + 'COPY TO PI', 'mcopy', '', 'flex:1.2;height:56px', safe || ej ? 'dis' : '', 'data-hl="copytopi"')}</div>
+      <div style="display:flex;flex-direction:column;gap:5px;min-height:46px">${uses}</div>${block ? '<div style="font-size:13px;color:var(--warn)">Eject waits until that deck stops: its track was too big for Pi memory.</div>' : ''}</div>
+      <div style="padding:0 14px;color:var(--dim);font-size:13px;line-height:1.45">The drive mounted by itself. Mixxx reads it only after LOAD on the plug-in ping, OPEN here, or a pick in Sources. EJECT keeps every track or sample in use playing from its copy in Pi memory, then unmounts the drive.</div>`;
   }
   const ho = [];
   for (const n of [1, 2]) { const d = E.decks[n]; if (d.onPi) ho.push(`<div class="nrow" style="height:52px;cursor:default;padding:0 10px"><span class="badge s bg${n}">${n}</span><span class="grow" style="font-size:14.5px">${esc(TR[d.id].title)}</span><span class="pill pi">ON PI</span></div>`); }
   E.pads.forEach((p, i) => { if (p.onPi) ho.push(`<div class="nrow" style="height:52px;cursor:default;padding:0 10px"><span class="pill">PAD ${i + 1}</span><span class="grow" style="font-size:14.5px">${esc(TR[p.id].title)}</span><span class="pill pi">ON PI</span></div>`); });
-  const right = `<div class="lbl" style="padding:14px 12px 8px">Kept on the Pi for handover</div>
-    ${ho.length ? ho.join('') : '<div style="padding:0 12px;color:var(--dim);font-size:13.5px">Nothing yet. When you eject, tracks still on a deck or pad are copied here so they keep playing.</div>'}
-    <div style="padding:10px 12px 0;color:var(--dim);font-size:12.5px;line-height:1.4">Each copy is deleted when its deck or pad loads something else, and at the next start.</div>
+  const right = `<div class="lbl" style="padding:14px 12px 8px">Playing from Pi memory</div>
+    ${ho.length ? ho.join('') : '<div style="padding:0 12px;color:var(--dim);font-size:13.5px">Nothing yet. A track loaded from a drive is copied to Pi memory as it loads, so after EJECT it keeps playing here.</div>'}
+    <div style="padding:10px 12px 0;color:var(--dim);font-size:12.5px;line-height:1.4">Each copy is deleted when its deck or pad loads something else or is cleared, and at every start.</div>
     ${E.cleaned.length ? `<div class="lbl" style="padding:12px 12px 6px">Cleaned out</div>${E.cleaned.slice(0, 3).map(c => `<div style="padding:2px 12px;font-size:13px;color:var(--dim)">✓ ${esc(short(c))}</div>`).join('')}` : ''}`;
-  return `<div class="ovl" data-hl="media"><div class="hdr" style="height:48px;padding:0 6px 0 0;gap:10px">${B(ic('x', 24), 'mx', '', 'width:48px;height:46px;border-radius:0 6px 6px 0', 'icon')}<h2>USB &amp; media</h2><span class="crumb">Drives are ready when plugged in. Eject before you pull one out.</span></div>
+  return `<div class="ovl" data-hl="media"><div class="hdr" style="height:48px;padding:0 6px 0 0;gap:10px">${B(ic('x', 24), 'mx', '', 'width:48px;height:48px;border-radius:0 6px 6px 0', 'icon')}<h2>USB &amp; media</h2><span class="crumb">Drives are ready when plugged in. Eject before you pull one out.</span></div>
     <div class="abs" style="left:0;top:48px;width:520px;height:384px">${left}</div>
     <div class="abs sc" style="left:520px;top:48px;width:280px;height:384px;border-left:1px solid var(--ln);background:var(--p1)" data-hl="handover">${right}</div></div>`;
 }
@@ -665,14 +668,15 @@ function rdEjectSheet() {
   const ej = E.usb.state === 'ejecting' || E.usb.state === 'safe';
   let body;
   if (!ej) {
-    const u = usage();
+    const u = usage(), block = u.some(x => x.block);
+    const what = x => x.kind === 'pad' ? ['stays loaded from its Pi copy', 'var(--go)'] : x.block ? ['plays straight from the drive: stop it first', 'var(--warn)'] : x.unload ? ['will be unloaded', 'var(--dim)'] : [x.play ? 'keeps playing from its Pi copy' : 'stays loaded from its Pi copy', 'var(--go)'];
     body = `<div style="font:700 24px/1.1 var(--f-cond);letter-spacing:.02em">Eject MANTACORE?</div>
-      <div style="color:var(--dim);margin:6px 0 10px">${u.length ? 'Anything in use is kept on the Pi first, so nothing stops:' : 'Nothing on the decks or pads comes from this drive.'}</div>
-      <div style="display:flex;flex-direction:column;gap:6px;min-height:120px">${u.map(x => `<div class="row" style="align-items:center;gap:10px;height:34px;font-size:15.5px">${x.kind === 'deck' ? `<span class="badge s bg${x.n}">${x.n}</span><span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Deck ${x.n} · ${esc(x.title)}</span><span style="color:var(--go)">${x.play ? 'keeps playing from the Pi' : 'kept on the Pi'}</span>` : x.kind === 'pad' ? `<span class="pill">PAD ${x.n}</span><span style="flex:1">${esc(x.title)}</span><span style="color:var(--go)">kept on the Pi</span>` : `<span style="color:var(--warn)">${ic('scan', 20)}</span><span style="flex:1">Library scan</span><span style="color:var(--warn)">stops</span>`}</div>`).join('')}</div>
-      <div class="row" style="gap:8px;justify-content:flex-end;margin-top:10px">${B('CANCEL', 'shclose', '', 'width:140px;height:56px')}${B(ic('eject', 22) + 'EJECT', 'ejgo', '', 'width:200px;height:56px;font-size:19px', 'pri')}</div>`;
+      <div style="color:var(--dim);margin:6px 0 10px">${u.length ? 'What uses the drive, and what happens to it:' : 'Nothing on the decks or pads comes from this drive.'}</div>
+      <div style="display:flex;flex-direction:column;gap:6px;min-height:110px">${u.map(x => { const [w, c] = what(x); return `<div class="row" style="align-items:center;gap:10px;height:34px;font-size:15.5px">${x.kind === 'deck' ? `<span class="badge s bg${x.n}">${x.n}</span><span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Deck ${x.n} · ${esc(x.title)}</span>` : `<span class="pill">PAD ${x.n}</span><span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.title)}</span>`}<span style="color:${c};white-space:nowrap">${w}</span></div>`; }).join('')}</div>
+      <div class="row" style="gap:8px;justify-content:flex-end;margin-top:10px">${B('CANCEL', 'shclose', '', 'width:140px;height:56px')}${B(ic('eject', 22) + 'EJECT', 'ejgo', '', 'width:200px;height:56px;font-size:19px', block ? 'dis' : 'pri')}</div>`;
   } else {
     const n = usageCountCache;
-    const steps = ['Stop the library scan and Mixxx reads', `Copy ${n} item${n === 1 ? '' : 's'} in use to the Pi`, 'Close every file on the drive', 'Flush, unmount and power down the port'];
+    const steps = ['Stop new reads from MANTACORE', `Keep ${n} item${n === 1 ? '' : 's'} playing from their Pi copies`, 'Close Mixxx’s files on the drive', 'Unmount and check'];
     const st = E.usb.state === 'safe' ? 4 : E.eject.step;
     body = `<div style="font:700 24px/1.1 var(--f-cond)">${E.usb.state === 'safe' ? '<span style="color:var(--go)">Safe to remove MANTACORE</span>' : 'Ejecting MANTACORE…'}</div><div style="margin:12px 0">${steps.map((s, i) => `<div class="step${i < st ? ' done' : i === st ? ' now' : ''}"><span class="dot">${i < st ? '✓' : ''}</span>${s}</div>`).join('')}</div>
       <div class="row" style="justify-content:flex-end">${B('DONE', 'shclose', '', 'width:160px;height:56px', E.usb.state === 'safe' ? 'pri' : 'dis')}</div>`;
@@ -681,77 +685,73 @@ function rdEjectSheet() {
 }
 let usageCountCache = 0;
 function rdSampler() {
-  let h = `<div class="abs row" style="left:0;top:48px;width:800px;height:48px;align-items:center;gap:10px;padding:0 6px;background:var(--p1);border-bottom:1px solid var(--ln)">
-    ${B(ic('plus', 20) + 'LOAD SAMPLE', 'loadsample', '', 'width:190px;height:42px', 'on', 'data-hl="loadsample"')}<span style="color:var(--dim);font-size:13.5px;display:flex;align-items:center;gap:5px"><span style="color:var(--go)">${ic('check', 16)}</span>Bank saved · 8 pads</span>
+  let h = `<div class="abs row" style="left:0;top:48px;width:800px;height:48px;align-items:center;gap:10px;padding:0 6px 0 0;background:var(--p1);border-bottom:1px solid var(--ln)">
+    ${B(ic('plus', 20) + 'LOAD SAMPLE', 'loadsample', '', 'width:196px;height:48px;border-radius:0 6px 6px 0', 'on', 'data-hl="loadsample"')}<span style="color:var(--dim);font-size:13.5px;display:flex;align-items:center;gap:5px"><span style="color:var(--go)">${ic('check', 16)}</span>Bank saved</span>
     <div style="flex:1"></div><span style="color:var(--dim);font-size:12.5px;text-align:right;line-height:1.25">Starlight SAMPLER mode:<br>deck A pads 1–4 · deck B pads 5–8</span></div>
-    <div class="abs" style="left:4px;top:100px;width:792px;height:234px;display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:4px" data-hl="pads">`;
+    <div class="abs" style="left:0;top:96px;width:800px;height:208px;display:grid;grid-template-columns:repeat(4,200px);grid-template-rows:104px 104px" data-hl="pads">`;
   E.pads.forEach((p, i) => {
     const lab = `<span class="badge s" style="background:${i < 4 ? 'var(--d1)' : 'var(--d2)'}">${i + 1}</span>${i < 4 ? 'A' : 'B'}${(i % 4) + 1}`;
-    if (!p.id) h += `<div class="pad empty" data-hl="pad${i + 1}"><div class="tap" data-a="pempty" data-v="${i}"><div class="pn">${lab}</div><div class="sn" style="color:var(--dim);display:flex;align-items:center;gap:6px">${ic('plus', 18)}Empty · tap to load</div></div></div>`;
+    const box = 'border:0;border-radius:0;box-shadow:inset 0 0 0 1px var(--ln);';
+    if (!p.id) h += `<div class="pad empty" style="${box}" data-hl="pad${i + 1}"><div class="tap" data-a="pempty" data-v="${i}"><div class="pn">${lab}</div><div class="sn" style="color:var(--dim);display:flex;align-items:center;gap:6px;-webkit-line-clamp:1">${ic('plus', 18)}Empty · tap to load</div></div></div>`;
     else {
       const t = TR[p.id];
-      h += `<div class="pad${p.play ? ' playing' : ''}" data-hl="pad${i + 1}"><div class="prog" data-live="pp${i}"></div><div class="tap" data-a="ptrig" data-v="${i}"><div class="pn">${lab}${p.onPi ? '<span class="pill pi" style="height:16px;font-size:10px">ON PI</span>' : ''}<span style="margin-left:auto;font:500 12px/1 var(--f-mono)">${fmtLen(t.dur)}</span></div><div class="sn">${esc(t.title)}</div></div>
-        <div class="strip">${B(ic('stop', 14) + 'STOP', 'pstop', i, 'flex:1;height:48px', p.play ? '' : 'dis')}${B(ic('more', 18), 'pmore', i, 'width:48px;height:48px', 'icon')}</div></div>`;
+      h += `<div class="pad${p.play ? ' playing' : ''}" style="${box}${p.play ? 'box-shadow:inset 0 0 0 2px var(--acc);background:#22301a;' : ''}" data-hl="pad${i + 1}"><div class="tap" data-a="ptrig" data-v="${i}" style="flex:none;height:56px"><div class="pn">${lab}${p.onPi ? '<span class="pill pi" style="height:16px;font-size:10px">ON PI</span>' : ''}<span style="margin-left:auto;font:500 12px/1 var(--f-mono)">${fmtLen(t.dur)}</span></div><div class="sn" style="-webkit-line-clamp:1;white-space:nowrap;text-overflow:ellipsis;display:block">${esc(t.title)}</div></div>
+        <div class="strip" style="height:48px;padding:0 4px">${B(ic('stop', 14) + 'STOP', 'pstop', i, 'flex:1;height:48px', p.play ? '' : 'dis')}${B(ic('x', 16) + 'CLEAR', 'pclear', i, 'flex:1;height:48px', p.play ? 'dis' : '')}</div></div>`;
     }
   });
-  h += '</div>' + rdInfoCompact(336) + rdOverview(376, 48) + rdTransport();
-  if (RD.sheet === 'padmenu') {
-    const i = RD.padMenu, x = 4 + (i % 4) * 199, y = 100 + Math.floor(i / 4) * 118 + 40;
-    h += `<div class="scrim" data-a="shclose" style="background:rgba(3,5,8,.35)"></div><div class="menu" style="left:${Math.min(x, 520)}px;top:${Math.min(y, 300)}px;width:270px">
-      <div class="mi" data-a="padload" data-v="${i}">${ic('load', 20)}Load a sample to pad ${i + 1}…</div><div class="mi" data-a="padclear" data-v="${i}">${ic('x', 20)}Empty pad ${i + 1}</div><div class="mi" data-a="shclose" style="color:var(--dim)">Cancel</div></div>`;
-  }
-  return h;
+  return h + '</div>' + rdInfo(304) + rdOverview(376, 48) + rdTransport();
 }
 function rdSampleBrowser() {
-  const s = RD.sample, chips = [['samples', 'SAMPLES'], ['pi', 'THIS PI'], ['usb', 'MANTACORE'], ['rec', 'RECORDINGS']].filter(([k]) => k !== 'usb' || usbAvailable());
-  if (!chips.some(([k]) => k === s.src)) s.src = 'samples';
-  const ids = s.src === 'samples' ? SM : s.src === 'pi' ? PI.filter(id => id !== 'p12') : s.src === 'usb' ? USB.concat(['s3', 's9']) : REC;
-  const rows = ids.map(id => { const t = TR[id], ok = trackUsable(id); return `<div class="lrow${s.sel === id ? ' sel' : ''}" style="height:52px;${ok ? '' : 'opacity:.35'}" data-a="srow" data-v="${id}">
-      <div style="width:56px;padding:0 4px">${B(s.prev === id ? ic('stop', 16) : ic('play', 18), 'sprev', id, 'width:48px;height:44px', 'icon' + (s.prev === id ? ' on' : ''))}</div>
-      <div style="flex:1;min-width:0"><div style="font-weight:700;overflow:hidden;text-overflow:ellipsis">${esc(t.title)}</div><div style="font-size:12.5px;color:var(--dim);margin-top:3px">${t.src === 'usb' ? 'MANTACORE' : s.src === 'samples' ? 'Samples folder' : 'This Pi'}${t.bpm ? ' · ' + t.bpm.toFixed(0) + ' BPM' : ''}</div></div>
-      <div class="num" style="width:70px;color:var(--dim)">${fmtLen(t.dur)}</div></div>`; }).join('');
-  const sel = s.sel ? TR[s.sel] : null;
-  return `<div class="ovl" data-hl="samplebrowser"><div class="hdr" style="height:48px;padding:0 6px 0 0;gap:8px">${B(ic('x', 24), 'sbx', '', 'width:48px;height:46px;border-radius:0 6px 6px 0', 'icon')}<h2>Load sample</h2><span class="crumb">${s.pad != null ? `For pad ${s.pad + 1}` : 'Pick a sound, then a pad'}</span><div style="flex:1"></div>
-      <div style="position:relative;width:250px"><span style="position:absolute;left:10px;top:10px;color:var(--dim)">${ic('search', 20)}</span><input class="srch" id="rd-ssearch" placeholder="Search sounds" aria-label="Search sounds"></div></div>
-    <div class="row" style="height:56px;align-items:center;gap:6px;padding:0 8px;border-bottom:1px solid var(--ln)">${chips.map(([k, l]) => B(l, 'ssrc', k, 'height:44px;padding:0 16px', s.src === k ? 'on' : '')).join('')}</div>
-    <div class="sc" data-keep="rdsamples" style="height:264px">${rows}</div>
-    <div class="row" style="height:64px;align-items:center;gap:10px;padding:0 8px;border-top:1px solid var(--ln);background:var(--p1)"><div style="flex:1;min-width:0"><div class="lbl">Selected</div><div style="font-weight:700;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sel ? esc(sel.title) : '—'}</div></div>
-      ${B(ic('load', 20) + (s.pad != null ? `LOAD TO PAD ${s.pad + 1}` : 'LOAD TO PAD…'), 'sload', '', 'width:250px;height:56px;font-size:18px', sel && trackUsable(s.sel) ? 'pri' : 'dis', 'data-hl="loadtopad"')}</div></div>`;
+  const s = RD.sample;
+  if (s.src && s.src.startsWith('usb') && !usbAvailable()) s.src = 'samples';
+  const ids = s.src === 'samples' ? SM : s.src === 'tracks' ? PI.filter(id => id !== 'p12') : listOf(s.src).ids;
+  const lab = s.src === 'samples' ? 'Samples folder' : s.src === 'tracks' ? 'This Pi › Tracks' : listOf(s.src).crumb.join(' › ');
+  const rows = ids.map(id => { const t = TR[id], ok = trackUsable(id); return `<div class="lrow${s.sel === id ? ' sel' : ''}" style="${ok ? '' : 'opacity:.35'}" data-a="srow" data-v="${id}"><div style="flex:1;min-width:0;font-weight:700;padding-left:12px">${esc(t.title)}</div><div class="num" style="width:70px">${t.bpm ? t.bpm.toFixed(1) : ''}</div><div class="num" style="width:80px;color:var(--dim)">${fmtLen(t.dur)}</div></div>`; }).join('');
+  const chip = (k, l) => B(l, 'ssrc', k, 'width:150px;height:48px', (k === s.src || (k === 'sources' && !['samples', 'tracks'].includes(s.src))) ? 'on' : '');
+  return `<div class="ovl" data-hl="samplebrowser"><div class="hdr" style="height:48px;padding:0 6px 0 0;gap:8px">${B(ic('x', 24), 'sbx', '', 'width:48px;height:48px;border-radius:0 6px 6px 0', 'icon')}<h2>Load sample</h2><span class="crumb">${s.pad != null ? `For pad ${s.pad + 1}` : 'Pick a sound, then a pad'}</span><div style="flex:1"></div>
+      <div style="position:relative;width:250px"><span style="position:absolute;left:10px;top:10px;color:var(--dim)">${ic('search', 20)}</span><input class="srch" id="rd-ssearch" placeholder="Search" aria-label="Search sounds"></div></div>
+    <div class="row" style="height:56px;align-items:center;gap:6px;padding:0 8px;border-bottom:1px solid var(--ln)">${chip('samples', 'SAMPLES')}${chip('tracks', 'TRACKS')}${chip('sources', 'SOURCES…')}<span class="crumb" style="margin-left:8px">${esc(lab)}</span></div>
+    <div class="sc" data-keep="rdsamples" style="height:272px"><div class="lrow hd"><div style="flex:1;padding-left:12px">TITLE</div><div style="width:70px;text-align:right">BPM</div><div style="width:80px;text-align:right">TIME</div></div>${rows}</div>
+    <div class="row" style="height:56px;align-items:center;gap:10px;padding:0 4px 0 12px;border-top:1px solid var(--ln);background:var(--p1)"><div style="flex:1;color:var(--dim);font-size:13.5px">Tap a sound, then load it to a pad.</div>
+      ${B(ic('load', 20) + (s.pad != null ? `LOAD TO PAD ${s.pad + 1}` : 'LOAD TO PAD…'), 'sload', '', 'width:262px;height:48px;font-size:18px', s.sel && trackUsable(s.sel) ? 'pri' : 'dis', 'data-hl="loadtopad"')}</div></div>`;
 }
 function rdChoosePad() {
-  const id = RD.sample.sel, t = TR[id];
   const pads = E.pads.map((p, i) => `<div class="b${p.play ? ' dis' : ''}" data-a="${p.play ? 'noop' : 'cpad'}" data-v="${i}" style="height:96px;flex-direction:column;align-items:flex-start;justify-content:center;padding:0 12px;gap:6px">
       <span style="display:flex;align-items:center;gap:6px"><span class="badge s" style="background:${i < 4 ? 'var(--d1)' : 'var(--d2)'}">${i + 1}</span><span style="color:var(--dim);font-size:13px">${i < 4 ? 'A' : 'B'}${(i % 4) + 1}</span></span>
-      <span style="font:500 13px/1.2 var(--f-ui);text-transform:none;letter-spacing:0;color:${p.id ? 'var(--tx)' : 'var(--dim)'};white-space:normal;text-align:left">${p.play ? 'Playing — stop it first' : p.id ? 'Replace ' + esc(short(TR[p.id].title)) : 'Empty'}</span></div>`).join('');
+      <span style="font:500 13px/1.2 var(--f-ui);text-transform:none;letter-spacing:0;color:${p.id ? 'var(--tx)' : 'var(--dim)'};white-space:normal;text-align:left">${p.play ? 'Playing · stop it first' : p.id ? esc(short(TR[p.id].title)) : 'Empty'}</span></div>`).join('');
   return `<div class="scrim" data-a="shclose"></div><div class="sheet" style="left:40px;top:52px;width:720px;padding:16px 18px" data-hl="choosepad">
-    <div class="row" style="align-items:center;gap:10px;margin-bottom:12px"><div style="font:700 22px/1.1 var(--f-cond);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Load “${esc(t ? t.title : '')}” to which pad?</div>${B('CANCEL', 'shclose', '', 'width:120px;height:48px')}</div>
+    <div class="row" style="align-items:center;gap:10px;margin-bottom:12px"><div style="font:700 22px/1.1 var(--f-cond);flex:1">Load to which pad?</div>${B('CANCEL', 'shclose', '', 'width:120px;height:48px')}</div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">${pads}</div>
-    <div style="color:var(--dim);font-size:13px;margin-top:10px">Pads 1–4 play from the Starlight's deck A pads in SAMPLER mode, 5–8 from deck B. The bank saves as soon as a pad changes.</div></div>`;
+    <div style="color:var(--dim);font-size:13px;margin-top:10px">Pads 1–4 play from the Starlight's deck A pads in SAMPLER mode, 5–8 from deck B. A playing pad is off. The bank saves as soon as a pad changes.</div></div>`;
 }
 function rdSettings() {
   const s = E.set, sec = RD.set;
   const seg = (k, opts) => `<div class="seg2">${opts.map(([v, l]) => B(l || v, 'opt', k + ':' + v, 'height:48px;padding:0 14px;min-width:72px', s[k] === v ? 'on' : '')).join('')}</div>`;
-  const row = (lab, sub, ctl, hl) => `<div style="display:flex;align-items:center;gap:12px;padding:8px 14px;border-bottom:1px solid #18202b;min-height:66px" ${hl ? `data-hl="${hl}"` : ''}><div style="width:170px;flex:none"><div style="font-weight:700">${lab}</div>${sub ? `<div style="color:var(--dim);font-size:12.5px;margin-top:3px;line-height:1.3">${sub}</div>` : ''}</div><div style="min-width:0">${ctl}</div></div>`;
+  const row = (lab, sub, ctl, hl) => `<div style="display:flex;align-items:center;gap:12px;padding:8px 14px;border-bottom:1px solid #18202b;min-height:66px" ${hl ? `data-hl="${hl}"` : ''}><div style="width:190px;flex:none"><div style="font-weight:700">${lab}</div>${sub ? `<div style="color:var(--dim);font-size:12.5px;margin-top:3px;line-height:1.3">${sub}</div>` : ''}</div><div style="min-width:0">${ctl}</div></div>`;
   let body = '';
-  if (sec === 'playback') body = row('Key lock engine', '', seg('keylock', [['ST'], ['RB Fast', 'RB FAST'], ['RB Fine', 'RB FINE']])) + row('Audio buffer', 'Frames', seg('buffer', [['256'], ['512'], ['1024']])) + row('Tempo range', 'Fader range ±', seg('tempo', [['6%'], ['8%'], ['10%'], ['16%'], ['24%']])) + row('Quantize', '', `<div class="seg2">${B('DECK 1', 'opt', 'q1:t', 'height:48px;width:110px', s.q1 ? 'on1' : '')}${B('DECK 2', 'opt', 'q2:t', 'height:48px;width:110px', s.q2 ? 'on2' : '')}</div>`) + row('Split cue', 'Headphones: cue left, master right', `<div class="tog${s.split ? ' on' : ''}" data-a="opt" data-v="split:t"></div>`);
+  if (sec === 'playback') body = row('Key lock engine', '', seg('keylock', [['ST'], ['RB Fast', 'RB FAST'], ['RB Fine', 'RB FINE']])) + row('Audio buffer', 'Frames', seg('buffer', [['256'], ['512'], ['1024']])) + row('Tempo range', 'Fader range ±', seg('tempo', [['6%'], ['8%'], ['10%'], ['16%'], ['24%']])) + row('Quantize', '', `<div class="seg2">${B('DECK 1', 'opt', 'q1:t', 'height:48px;width:110px', s.q1 ? 'on1' : '')}${B('DECK 2', 'opt', 'q2:t', 'height:48px;width:110px', s.q2 ? 'on2' : '')}</div>`) + row('Split cue', 'Headphones: cue left, master right', B(s.split ? 'ON' : 'OFF', 'opt', 'split:t', 'height:48px;width:96px', s.split ? 'on' : ''));
   else if (sec === 'interface') body = row('Desktop bar', 'Desktop · Mixxx · Speaker · Settings', seg('deskbar', [['hidden', 'HIDDEN'], ['shown', 'SHOWN']])) + row('Deck time', 'Tap the time on a deck to switch', seg('time', [['elapsed', 'ELAPSED'], ['remaining', 'REMAINING']]));
-  else if (sec === 'media') body = row('When a USB is plugged in', 'Ready: open it from Sources. Ask: a prompt first. Scan: add it to the library now.', seg('insert', [['ready', 'READY'], ['ask', 'ASK'], ['scan', 'SCAN']]), 'set-insert') + row('Scan progress', 'Icon only: the % shows on the USB chip', seg('scanShow', [['bar', 'BAR'], ['icon', 'ICON ONLY']]), 'set-scan') + row('Handover copies', 'Where tracks in use go when you eject', seg('store', [['ram', 'RAM'], ['sd', 'SD CARD']]), 'set-store') + row('Copy to Pi', 'Copy a drive’s music to this Pi', B(ic('copy', 18) + 'OPEN COPY…', 'mcopy', '', 'height:48px;padding:0 16px'));
-  else body = row('Waveform FPS', '', seg('fps', [['30'], ['45'], ['60']])) + row('Read ahead', 'Next launch', seg('ahead', [['2'], ['8'], ['24']])) + row('RAM cache', 'MB, next launch', seg('cache', [['OFF'], ['512'], ['1024']])) + row('Mixxx preferences', 'Audio routing, controllers', B('OPEN…', 'noop', '', 'height:48px;padding:0 16px'));
+  else if (sec === 'media') body = row('Scan bar', 'Hidden: the % shows on the USB chip', seg('scanShow', [['bar', 'SHOW'], ['icon', 'HIDE']]), 'set-scan') + row('RAM cache', 'MB. Also the room for handover copies. Next launch.', seg('cache', [['OFF'], ['512'], ['1024']]), 'set-cache') + row('Eject', 'Approved 17 Nov: system eject', '<span class="pill" style="height:30px;font-size:13px;color:var(--go);border-color:var(--go)">ON</span>', 'set-eject') + row('Plugging in a drive', 'A small ping at the bottom: LOAD or DISMISS', '<span style="color:var(--dim)">Always</span>');
+  else body = row('Waveform FPS', '', seg('fps', [['30'], ['45'], ['60']])) + row('Read ahead', 'Next launch', seg('ahead', [['2'], ['8'], ['24']])) + row('Mixxx preferences', 'Audio routing, controllers', B('OPEN…', 'noop', '', 'height:48px;padding:0 16px'));
   const rail = [['playback', 'PLAYBACK'], ['interface', 'INTERFACE'], ['media', 'MEDIA'], ['advanced', 'ADVANCED']].map(([k, l]) => `<div class="tile${sec === k ? ' sel' : ''}" style="height:56px" data-a="sset" data-v="${k}"><span class="tn">${l}</span></div>`).join('');
-  return `<div class="ovl" data-hl="settings"><div class="hdr" style="height:48px;padding:0 10px 0 0;gap:10px">${B(ic('x', 24), 'gear', '', 'width:48px;height:46px;border-radius:0 6px 6px 0', 'icon')}<h2>Settings</h2><span class="crumb">Every change saves as you make it.</span><div style="flex:1"></div><span style="color:var(--go);display:flex;align-items:center;gap:5px;font-size:13.5px" data-hl="saved">${ic('check', 16)}Saved</span></div>
-    <div class="abs" style="left:0;top:48px;width:200px;height:384px;border-right:1px solid var(--ln);background:var(--p1)">${rail}</div>
-    <div class="abs sc" style="left:200px;top:48px;width:600px;height:384px">${body}</div></div>`;
+  return `<div class="ovl" data-hl="settings"><div class="hdr" style="height:48px;padding:0 10px 0 0;gap:10px">${B(ic('x', 24), 'gear', '', 'width:48px;height:48px;border-radius:0 6px 6px 0', 'icon')}<h2>Settings</h2><span class="crumb">Every change saves within a second.</span><div style="flex:1"></div><span style="color:var(--go);display:flex;align-items:center;gap:5px;font-size:13.5px" data-hl="saved">${ic('check', 16)}Saved</span></div>
+    <div class="abs" style="left:0;top:48px;width:180px;height:384px;border-right:1px solid var(--ln);background:var(--p1)">${rail}</div>
+    <div class="abs sc" style="left:180px;top:48px;width:620px;height:384px">${body}</div></div>`;
 }
 function rdFx() {
-  const fx = E.fx, sl = (v, k) => `<div class="slid" data-a="slid" data-k="${k}"><div class="fill" style="width:${v * 100}%"></div><div class="knob" style="left:${v * 100}%"></div></div>`;
-  let h = `<div class="abs row" style="left:0;top:48px;width:800px;height:56px;align-items:center;gap:6px;padding:0 8px;background:var(--p1);border-bottom:1px solid var(--ln)">
-    <span class="lbl" style="width:58px">FX 1 TO</span>${[['DECK 1', 1], ['DECK 2', 2], ['MASTER', 3]].map(([l, v]) => B(l, 'fxr', v, 'width:104px;height:46px', fx.route === v ? (v === 3 ? 'on' : 'on' + v) : '')).join('')}
-    <span class="lbl" style="margin-left:10px">MIX</span><div style="flex:1">${sl(fx.mix, 'mix')}</div></div>
-    <div class="abs row" style="left:0;top:104px;width:800px;height:200px;gap:6px;padding:6px">`;
-  h += fx.slots.map((s, i) => `<div class="card2" style="flex:1;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:0">
-      <div class="row" style="align-items:center;justify-content:space-between"><span class="lbl">EFFECT ${i + 1}</span><span style="color:var(--dim);font-size:11.5px">Starlight FX pad ${i + 1}</span></div>
-      ${B(`${FX_NAMES[s.n]}<span style="margin-left:auto">${ic('down', 16)}</span>`, 'fxsel', i, 'height:44px;justify-content:flex-start;padding:0 12px;text-transform:none;font-size:17px')}
-      ${sl(s.meta, 'meta' + i)}${B(s.on ? 'ON' : 'OFF', 'fxon', i, 'height:44px', s.on ? 'on' : '')}</div>`).join('');
+  const U = RD.fxUnit === 1 ? E.fx : E.fx2, deck = RD.fxUnit === 1 ? 'A' : 'B';
+  const sl = (v, k) => `<div class="slid" data-a="slid" data-k="${k}"><div class="fill" style="width:${v * 100}%"></div><div class="knob" style="left:${v * 100}%"></div></div>`;
+  let h = `<div class="abs row" style="left:0;top:48px;width:800px;height:56px;align-items:center;gap:6px;padding:0 8px;background:var(--p1);border-bottom:1px solid var(--ln)" data-hl="fxswitch">
+    ${B('FX 1 · DECK A PADS', 'fxunit', 1, 'width:206px;height:48px', RD.fxUnit === 1 ? 'on' : '')}${B('FX 2 · DECK B PADS', 'fxunit', 2, 'width:206px;height:48px', RD.fxUnit === 2 ? 'on' : '')}
+    <span style="color:var(--dim);font-size:12.5px;line-height:1.25;margin-left:6px">Starlight FX mode: pads 1–3 switch these effects; pad 4 sends the unit to its deck.</span></div>
+    <div class="abs row" style="left:0;top:104px;width:800px;height:56px;align-items:center;gap:6px;padding:0 8px">
+    <span class="lbl" style="width:52px">ROUTE</span>${[['DECK 1', 1], ['DECK 2', 2], ['MASTER', 3]].map(([l, v]) => B(l + ((v === 1 && deck === 'A') || (v === 2 && deck === 'B') ? '<span style="font-size:11px;color:var(--dim)">PAD 4</span>' : ''), 'fxr', v, 'width:120px;height:48px;flex-direction:column;gap:1px', U.route === v ? (v === 3 ? 'on' : 'on' + v) : '')).join('')}
+    <span class="lbl" style="margin-left:10px">MIX</span><div style="flex:1">${sl(U.mix, 'mix')}</div></div>
+    <div class="abs row" style="left:0;top:160px;width:800px;height:144px;gap:6px;padding:0 6px 6px">`;
+  h += U.slots.map((s, i) => `<div class="card2" style="flex:1;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:0">
+      <div class="row" style="align-items:center;justify-content:space-between"><span class="lbl">EFFECT ${i + 1}</span><span style="color:var(--dim);font-size:11.5px">deck ${deck} FX pad ${i + 1}</span></div>
+      <div class="row" style="gap:6px">${B(`${FX_NAMES[s.n]}<span style="margin-left:auto">${ic('down', 16)}</span>`, 'fxsel', i, 'flex:1;height:48px;justify-content:flex-start;padding:0 12px;text-transform:none;font-size:17px')}${B(s.on ? 'ON' : 'OFF', 'fxon', i, 'width:64px;height:48px', s.on ? 'on' : '')}</div>
+      ${sl(s.meta, 'meta' + i)}</div>`).join('');
   return h + '</div>' + rdInfo(304) + rdOverview(376, 48) + rdTransport();
 }
 function renderRD() {
@@ -766,10 +766,26 @@ function renderRD() {
   else if (RD.tab === 'fx') h += rdFx();
   if (RD.sheet === 'eject') h += rdEjectSheet();
   if (RD.sheet === 'pad') h += rdChoosePad();
-  if (RD.sheet === 'insert') h += `<div class="scrim"></div><div class="sheet" style="left:160px;top:110px;width:480px;padding:18px 20px" data-hl="insertsheet"><div class="row" style="gap:12px;align-items:center"><span style="color:var(--go)">${ic('usb', 36)}</span><div><div style="font:700 22px/1.1 var(--f-cond)">MANTACORE plugged in</div><div style="color:var(--dim);margin-top:4px">58.6 GB · rekordbox export found</div></div></div>
-    <div class="row" style="gap:8px;justify-content:flex-end;margin-top:18px">${B('NOT NOW', 'inslater', '', 'width:140px;height:56px')}${B('USE THIS DRIVE', 'insuse', '', 'width:200px;height:56px', 'pri')}</div></div>`;
+  h += rdBottomStrips();
   if (RD.toast) h += `<div class="toast">${esc(RD.toast)}</div>`;
   return h;
+}
+
+function rdBottomStrips() {
+  let h = '';
+  if (E.usb.present && E.usb.state === 'safe' && E.usb.safeT > 0) h += `<div class="abs safestrip" style="left:0;top:424px;width:800px;height:56px;z-index:46;display:flex;align-items:center;gap:12px;padding:0 4px 0 14px" data-hl="safestrip"><span>${ic('usb', 26)}</span><div style="flex:1"><div style="font:700 20px/1 var(--f-cond);letter-spacing:.04em">MANTACORE · SAFE TO REMOVE</div><div style="font-size:13px;margin-top:3px;opacity:.85">Pull the drive out now.</div></div>${B('OK', 'safeok', '', 'width:96px;height:48px;background:rgba(0,0,0,.25);border-color:rgba(255,255,255,.5);color:#fff')}</div>`;
+  else if (E.usb.present && E.usb.state === 'ready' && E.usb.ping > 0) h += `<div class="abs" style="left:0;top:424px;width:800px;height:56px;z-index:46;display:flex;align-items:center;gap:10px;padding:0 4px 0 14px;background:var(--p2);border-top:2px solid var(--go);box-shadow:0 -6px 20px rgba(0,0,0,.5)" data-hl="insertping"><span style="color:var(--go)">${ic('usb', 24)}</span><div style="flex:1;min-width:0"><div style="font:700 18px/1 var(--f-cond);letter-spacing:.04em">MANTACORE PLUGGED IN</div><div style="font-size:13px;color:var(--dim);margin-top:3px">rekordbox export found · 58.6 GB</div></div>${B('DISMISS', 'pingno', '', 'width:120px;height:48px')}${B(ic('load', 18) + 'LOAD', 'pingload', '', 'width:132px;height:48px', 'pri')}</div>`;
+  return h;
+}
+
+function rdTitles(top) {
+  const one = n => { const d = E.decks[n], t = d.id ? TR[d.id] : null; return `<div style="width:400px;display:flex;align-items:center;gap:6px;padding:0 8px;min-width:0;${n === 2 ? 'border-left:1px solid var(--ln)' : ''}"><span class="badge s bg${n}" style="width:20px;height:20px;font-size:13px">${n}</span><span style="font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t ? esc(t.title) : '<span style="color:var(--dim)">Empty</span>'}</span>${d.onPi ? '<span class="pill pi">ON PI</span>' : ''}</div>`; };
+  return `<div class="abs info row" style="left:0;top:${top}px;width:800px;height:28px" data-hl="titles">${one(1)}${one(2)}</div>`;
+}
+
+function tickMedia(dt) {
+  if (E.usb.ping > 0) { E.usb.ping -= dt; if (E.usb.ping <= 0) { E.usb.ping = 0; dirty = true; } }
+  if (E.usb.safeT > 0) { E.usb.safeT -= dt; if (E.usb.safeT <= 0) { E.usb.safeT = 0; dirty = true; } }
 }
 
 /* ---------- actions ---------- */
@@ -836,7 +852,7 @@ function actCU(a, v, el, ev) {
 function actRD(a, v, el, ev) {
   const n = +v;
   switch (a) {
-    case 'tab': Object.assign(RD, { tab: v, ovl: null, sheet: null, tool: 0 }); break;
+    case 'tab': Object.assign(RD, { tab: v, ovl: null, sheet: null, tool: 0, srcReturn: null }); break;
     case 'usb': RD.ovl = RD.ovl === 'media' ? null : 'media'; RD.sheet = null; break;
     case 'gear': RD.ovl = RD.ovl === 'settings' ? null : 'settings'; RD.sheet = null; break;
     case 'rec': E.rec.on = !E.rec.on; E.rec.t = 0; break;
@@ -848,17 +864,22 @@ function actRD(a, v, el, ev) {
     case 'hc': { const d = E.decks[RD.tool]; if (!d.id) break; const cues = TR[d.id].cues, c = cues.find(x => x.n === n);
       if (RD.clear && c) cues.splice(cues.indexOf(c), 1); else if (c) d.pos = c.pos; else cues.push({ n, pos: d.pos, color: HC[n - 1] }); break; }
     case 'hclear': RD.clear = !RD.clear; break;
-    case 'menu': RD.ovl = 'sources'; RD.sheet = null; RD.edit = false; break;
-    case 'sx': RD.ovl = null; break;
-    case 'stile': RD.srcSel = v; RD.srcPath = []; RD.edit = false; break;
-    case 'snav': RD.srcPath.push(v); break;
+    case 'menu': RD.ovl = 'sources'; RD.sheet = null; RD.edit = false; RD.srcReturn = null; break;
+    case 'sx': if (RD.srcReturn === 'sample') { RD.ovl = 'sample'; RD.srcReturn = null; } else RD.ovl = null; break;
+    case 'stile': RD.srcSel = v; RD.srcPath = []; RD.edit = false; if (v === 'usb') E.usb.opened = true; break;
+    case 'snav': RD.srcPath.push(v); if (v === 'MANTACORE') E.usb.opened = true; break;
     case 'sback': RD.srcPath.pop(); break;
-    case 'sopen': RD.list = v; RD.ovl = null; RD.tab = 'tracks'; { const L = listOf(v); RD.sel = L.ids[0]; } break;
+    case 'sopen':
+      if (v.startsWith('usb')) E.usb.opened = true;
+      if (RD.srcReturn === 'sample') { RD.sample.src = v; RD.ovl = 'sample'; RD.srcReturn = null; RD.sample.sel = listOf(v).ids[0]; }
+      else { RD.list = v; RD.ovl = null; RD.tab = 'tracks'; RD.sel = listOf(v).ids[0]; }
+      break;
     case 'sedit': RD.edit = !RD.edit; break;
-    case 'svis': RD.srcHidden[v] = !RD.srcHidden[v]; break;
+    case 'svis': { const vis = RD.srcOrder.filter(k => !RD.srcHidden[k]); if (!RD.srcHidden[v] && vis.length <= 1) { toast('Keep at least one source'); break; } RD.srcHidden[v] = !RD.srcHidden[v]; toast('Saved'); break; }
+    case 'sstart': RD.srcStart = v; toast('Tracks starts here · saved'); break;
     case 'sup': case 'sdown': { const o = RD.srcOrder, j = a === 'sup' ? n - 1 : n + 1; if (j >= 0 && j < o.length) [o[n], o[j]] = [o[j], o[n]]; break; }
     case 'pen': RD.sheet = RD.sheet === 'actions' ? null : 'actions'; break;
-    case 'shclose': RD.sheet = null; RD.padMenu = null; break;
+    case 'shclose': RD.sheet = null; break;
     case 'row': RD.sel = v; break;
     case 'load': if (!loadDeck(n, RD.sel)) toast(E.decks[n].play ? `Deck ${n} is playing. Stop it to load.` : 'That track is on a drive that is not ready.'); break;
     case 'act':
@@ -868,34 +889,32 @@ function actRD(a, v, el, ev) {
       else toast(v === 'arrange' ? 'Arrange columns: today’s dialog, restyled' : 'Opens the full Mixxx track menu');
       break;
     case 'mx': RD.ovl = null; break;
-    case 'eject': usageCountCache = usage().filter(x => x.kind !== 'scan').length; RD.sheet = 'eject'; break;
-    case 'ejgo': usageCountCache = usage().filter(x => x.kind !== 'scan').length; E.usb.state = 'ejecting'; E.eject.step = 0; E.eject.t = 0; break;
-    case 'mbrowse': RD.ovl = 'sources'; RD.srcSel = 'usb'; RD.srcPath = []; RD.edit = false; break;
-    case 'mcopy': toast('Copy to Pi opens today’s USB ⇄ Pi copy, restyled'); break;
-    case 'mscan': startScan(); break;
+    case 'eject': usageCountCache = usage().filter(x => !x.unload).length; RD.sheet = 'eject'; break;
+    case 'ejgo': usageCountCache = usage().filter(x => !x.unload).length; E.usb.state = 'ejecting'; E.eject.step = 0; E.eject.t = 0; break;
+    case 'mbrowse': E.usb.opened = true; RD.ovl = 'sources'; RD.srcSel = 'usb'; RD.srcPath = []; RD.edit = false; break;
+    case 'mcopy': toast('COPY TO PI opens today’s USB ⇄ Pi copy tool'); break;
+    case 'pingload': E.usb.ping = 0; E.usb.opened = true; RD.tab = 'tracks'; RD.ovl = 'sources'; RD.srcSel = 'usb'; RD.srcPath = []; RD.sheet = null; break;
+    case 'pingno': E.usb.ping = 0; toast('MANTACORE stays closed. Open it from the USB chip or Sources.'); break;
+    case 'safeok': E.usb.safeT = 0; break;
     case 'shide': E.set.scanShow = 'icon'; toast('Scan bar hidden and saved. The % shows on the USB chip.'); break;
     case 'scancel': E.scan.on = false; toast('Scan cancelled'); break;
     case 'loadsample': RD.ovl = 'sample'; RD.sample.pad = null; break;
     case 'pempty': RD.ovl = 'sample'; RD.sample.pad = n; break;
     case 'ptrig': { const p = E.pads[n]; if (p.id) { p.play = true; p.t = 0; } break; }
     case 'pstop': E.pads[n].play = false; E.pads[n].t = 0; break;
-    case 'pmore': RD.sheet = 'padmenu'; RD.padMenu = n; break;
-    case 'padload': RD.sheet = null; RD.ovl = 'sample'; RD.sample.pad = n; break;
-    case 'padclear': RD.sheet = null; { const p = E.pads[n]; if (!p.play) { if (p.onPi) E.cleaned.unshift(`Pad ${n + 1}: ${TR[p.id].title}`); Object.assign(p, { id: null, onPi: false }); toast(`Pad ${n + 1} emptied · bank saved`); } } break;
-    case 'sbx': RD.ovl = null; RD.sample.prev = null; break;
-    case 'ssrc': RD.sample.src = v; break;
+    case 'pclear': { const p = E.pads[n]; if (!p.play && p.id) { if (p.onPi) E.cleaned.unshift(`Pad ${n + 1}: ${TR[p.id].title}`); Object.assign(p, { id: null, onPi: false }); toast(`Pad ${n + 1} cleared · bank saved`); } break; }
+    case 'sbx': RD.ovl = null; break;
+    case 'ssrc': if (v === 'sources') { RD.srcReturn = 'sample'; RD.ovl = 'sources'; RD.edit = false; } else { RD.sample.src = v; } break;
     case 'srow': RD.sample.sel = v; break;
-    case 'sprev': RD.sample.prev = RD.sample.prev === v ? null : v; RD.sample.sel = v; break;
-    case 'sload': if (RD.sample.pad != null) { if (loadPad(RD.sample.pad, RD.sample.sel)) { toast(`Loaded to pad ${RD.sample.pad + 1} · bank saved`); RD.ovl = null; RD.tab = 'sampler'; RD.sample.prev = null; } else toast('Stop that pad first'); } else RD.sheet = 'pad'; break;
-    case 'cpad': if (loadPad(n, RD.sample.sel)) { toast(`Loaded to pad ${n + 1} · bank saved`); RD.sheet = null; RD.ovl = null; RD.tab = 'sampler'; RD.sample.prev = null; } break;
+    case 'sload': if (RD.sample.pad != null) { if (loadPad(RD.sample.pad, RD.sample.sel)) { toast(`Loaded to pad ${RD.sample.pad + 1} · bank saved`); RD.ovl = null; RD.tab = 'sampler'; } else toast('Stop that pad first'); } else RD.sheet = 'pad'; break;
+    case 'cpad': if (loadPad(n, RD.sample.sel)) { toast(`Loaded to pad ${n + 1} · bank saved`); RD.sheet = null; RD.ovl = null; RD.tab = 'sampler'; } break;
     case 'sset': RD.set = v; break;
     case 'opt': { const [k, val] = v.split(':'); if (val === 't') E.set[k] = !E.set[k]; else E.set[k] = val; if (k === 'q1' || k === 'q2') E.decks[k === 'q1' ? 1 : 2].q = E.set[k]; if (k === 'time') for (const m of [1, 2]) E.decks[m].tmode = val === 'elapsed' ? 'el' : 'rem'; toast('Saved'); break; }
-    case 'insuse': RD.sheet = null; toast('MANTACORE is ready in Sources'); break;
-    case 'inslater': RD.sheet = null; toast('MANTACORE stays closed until you open it'); break;
-    case 'fxr': E.fx.route = n; break;
-    case 'fxon': E.fx.slots[n].on = !E.fx.slots[n].on; break;
-    case 'fxsel': { const s = E.fx.slots[n]; s.n = (s.n + 1) % FX_NAMES.length; break; }
-    case 'slid': setSlider(el.dataset.k, sliderVal(el, ev)); break;
+    case 'fxunit': RD.fxUnit = n; break;
+    case 'fxr': (RD.fxUnit === 1 ? E.fx : E.fx2).route = n; break;
+    case 'fxon': { const s = (RD.fxUnit === 1 ? E.fx : E.fx2).slots[n]; s.on = !s.on; break; }
+    case 'fxsel': { const s = (RD.fxUnit === 1 ? E.fx : E.fx2).slots[n]; s.n = (s.n + 1) % FX_NAMES.length; break; }
+    case 'slid': { const U = RD.fxUnit === 1 ? E.fx : E.fx2, k = el.dataset.k, val = sliderVal(el, ev); if (k === 'mix') U.mix = val; else U.slots[+k.slice(4)].meta = val; break; }
     case 'noop': break;
     default: if (!deckCommon(a, n)) return;
   }
@@ -905,42 +924,42 @@ function actRD(a, v, el, ev) {
 /* ---------- sim + jump-to ---------- */
 function plugToggle() {
   if (E.usb.present) {
-    const unsafe = E.usb.state === 'ready' && usage().some(x => x.kind !== 'scan');
-    E.usb.present = false; E.scan.on = false;
+    const clean = E.usb.state === 'safe', unsafe = !clean && usage().length > 0;
+    E.usb.present = false; E.usb.ping = 0; E.usb.safeT = 0; E.usb.opened = false;
     for (const n of [1, 2]) { const d = E.decks[n]; if (d.id && TR[d.id].src === 'usb' && !d.onPi && E.set.cache === 'OFF') d.play = false; }
     if (RD.list.startsWith('usb')) RD.list = 'pi:tracks';
     if (CU.feature === 'MANTACORE') CU.feature = 'TRACKS';
-    toast(unsafe ? 'MANTACORE was pulled out without Eject' : 'MANTACORE removed');
+    toast(clean ? 'MANTACORE removed' : unsafe ? 'MANTACORE was pulled out without Eject' : 'MANTACORE removed');
   } else {
-    E.usb.present = true; E.usb.state = 'ready';
-    if (E.set.insert === 'ask') RD.sheet = 'insert';
-    else if (E.set.insert === 'scan') { startScan(); toast('MANTACORE plugged in · scanning'); }
-    else toast('MANTACORE is ready');
+    Object.assign(E.usb, { present: true, state: 'ready', opened: false, ping: 15, safeT: 0 });
   }
   dirty = true;
 }
 function cuReset() { Object.assign(CU, { settings: false, adv: false, loop: 0, dlg: null, actions: false, loadSub: false, show: false, srcMenu: false, sampleLoad: false }); }
 function rdReset() { Object.assign(RD, { ovl: null, sheet: null, tool: 0, padMenu: null, edit: false }); }
-function ensureUsb() { if (!E.usb.present || E.usb.state !== 'ready') { E.usb.present = true; E.usb.state = 'ready'; } for (const n of [1, 2]) E.decks[n].onPi = false; if (E.decks[1].id !== 'u1' && !E.decks[1].play) loadDeck(1, 'u1'); E.decks[1].play = true; }
+function ensureUsb() { Object.assign(E.usb, { present: true, state: 'ready', opened: true, ping: 0, safeT: 0 }); for (const n of [1, 2]) E.decks[n].onPi = false; E.pads.forEach(p => { p.onPi = false; }); if (E.decks[1].id !== 'u1' && !E.decks[1].play) loadDeck(1, 'u1'); E.decks[1].play = true; }
 const GO = {
   decks: ['Decks', () => { CU.tab = 'decks'; RD.tab = 'decks'; }],
   tracks: ['Tracks', () => { CU.tab = 'tracks'; RD.tab = 'tracks'; }],
-  sources: ['Sources', () => { CU.tab = 'tracks'; CU.show = true; CU.srcMenu = true; RD.tab = 'tracks'; RD.ovl = 'sources'; }],
+  sources: ['Sources', () => { CU.tab = 'tracks'; CU.show = true; CU.srcMenu = true; RD.tab = 'tracks'; RD.ovl = 'sources'; RD.srcSel = 'usb'; RD.srcPath = ['Playlists']; E.usb.opened = true; }],
   actions: ['Actions (pen)', () => { CU.tab = 'tracks'; CU.actions = true; RD.tab = 'tracks'; RD.sheet = 'actions'; }],
   sampler: ['Sampler', () => { CU.tab = 'sampler'; RD.tab = 'sampler'; }],
-  sampleload: ['Load sample', () => { CU.tab = 'tracks'; CU.sampleLoad = true; RD.tab = 'sampler'; RD.ovl = 'sample'; RD.sample.pad = null; }],
+  sampleload: ['Load sample', () => { CU.tab = 'tracks'; CU.sampleLoad = true; RD.tab = 'sampler'; RD.ovl = 'sample'; RD.sample.pad = null; RD.sample.src = 'samples'; }],
   choosepad: ['Choose pad', () => { CU.tab = 'tracks'; CU.sampleLoad = true; RD.tab = 'sampler'; RD.ovl = 'sample'; RD.sample.pad = null; RD.sample.sel = 's6'; RD.sample.src = 'samples'; RD.sheet = 'pad'; }],
   loop: ['Loop panel', () => { CU.tab = 'decks'; CU.loop = 1; RD.tab = 'decks'; RD.tool = 1; RD.toolTab = 'loop'; }],
-  fx: ['FX', () => { CU.tab = 'fx'; RD.tab = 'fx'; }],
+  fx: ['FX 1', () => { CU.tab = 'fx'; RD.tab = 'fx'; RD.fxUnit = 1; }],
+  fx2: ['FX 2 (deck B pads)', () => { CU.tab = 'fx'; RD.tab = 'fx'; RD.fxUnit = 2; }],
   settings: ['Settings', () => { CU.tab = 'decks'; CU.settings = true; RD.ovl = 'settings'; RD.set = 'media'; }],
+  insert: ['USB plugged in (ping)', () => { CU.tab = 'decks'; RD.tab = 'decks'; Object.assign(E.usb, { present: true, state: 'ready', opened: false, ping: 15, safeT: 0 }); }],
   media: ['Load / Eject → Media', () => { ensureUsb(); CU.dlg = 'le'; CU.leSel = true; RD.ovl = 'media'; }],
-  eject: ['Eject', () => { ensureUsb(); CU.dlg = 'ej'; RD.ovl = 'media'; usageCountCache = usage().filter(x => x.kind !== 'scan').length; RD.sheet = 'eject'; }],
+  eject: ['Eject', () => { ensureUsb(); CU.dlg = 'ej'; RD.ovl = 'media'; usageCountCache = usage().filter(x => !x.unload).length; RD.sheet = 'eject'; }],
   handover: ['After eject (handover)', () => { ensureUsb(); finishEject(); CU.tab = 'decks'; RD.tab = 'decks'; }],
-  scan: ['Scan bar', () => { ensureUsb(); E.set.scanShow = 'bar'; startScan(); CU.tab = 'decks'; RD.tab = 'decks'; }],
-  scanhidden: ['Scan hidden (USB %)', () => { ensureUsb(); E.set.scanShow = 'icon'; startScan(); CU.tab = 'decks'; RD.tab = 'decks'; }],
+  scan: ['Scan bar', () => { E.set.scanShow = 'bar'; startScan(); CU.tab = 'decks'; RD.tab = 'decks'; }],
+  scanhidden: ['Scan hidden (USB %)', () => { E.set.scanShow = 'icon'; startScan(); CU.tab = 'decks'; RD.tab = 'decks'; }],
 };
 let navKey = 'decks';
 function derive() {
+  if (E.usb.ping > 0 && E.usb.present) return 'insert';
   if (RD.sheet === 'eject') return 'eject';
   if (RD.ovl === 'media') return E.usb.state === 'safe' ? 'handover' : 'media';
   if (RD.ovl === 'sources') return 'sources';
@@ -950,7 +969,8 @@ function derive() {
   if (RD.sheet === 'actions') return 'actions';
   if (RD.tab === 'decks' && RD.tool) return 'loop';
   if (E.scan.on && RD.tab !== 'tracks') return E.set.scanShow === 'bar' ? 'scan' : 'scanhidden';
-  if (RD.tab === 'decks') return [1, 2].some(n => E.decks[n].onPi) ? 'handover' : 'decks';
+  if (RD.tab === 'decks') return ([1, 2].some(n => E.decks[n].onPi) || E.usb.safeT > 0) ? 'handover' : 'decks';
+  if (RD.tab === 'fx') return RD.fxUnit === 2 ? 'fx2' : 'fx';
   return RD.tab;
 }
 function go(key, hl) {
@@ -960,13 +980,14 @@ function go(key, hl) {
 }
 function renderNav() {
   $('#nav').innerHTML = '<span class="lab">Jump to</span>' + Object.entries(GO).map(([k, [l]]) => `<button class="chip" data-go="${k}" aria-pressed="${navKey === k}">${l}</button>`).join('');
-  $('#sim').innerHTML = `<span class="lab">Simulate</span><button class="chip sim" data-sim="usb">${E.usb.present ? 'Pull out USB' : 'Plug in USB'}</button><button class="chip sim" data-sim="scan">${E.scan.on ? 'Stop scan' : 'Start library scan'}</button><button class="chip sim" data-sim="p1">Deck 1 ${E.decks[1].play ? 'pause' : 'play'}</button><button class="chip sim" data-sim="p2">Deck 2 ${E.decks[2].play ? 'pause' : 'play'}</button><button class="chip sim" data-sim="reset">Reset demo</button>`;
+  $('#sim').innerHTML = `<span class="lab">Simulate</span><button class="chip sim" data-sim="usb">${E.usb.present ? 'Pull out USB' : 'Plug in USB'}</button><button class="chip sim" data-sim="scan">${E.scan.on ? 'Stop scan' : 'Start library scan'}</button><button class="chip sim" data-sim="p1">Deck 1 ${E.decks[1].play ? 'pause' : 'play'}</button><button class="chip sim" data-sim="p2">Deck 2 ${E.decks[2].play ? 'pause' : 'play'}</button><button class="chip sim" data-sim="pfl">Starlight PFL 1</button><button class="chip sim" data-sim="reset">Reset demo</button>`;
 }
 $('#nav').addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go); });
 $('#sim').addEventListener('click', e => {
   const b = e.target.closest('[data-sim]'); if (!b) return; const s = b.dataset.sim;
-  if (s === 'usb') plugToggle(); else if (s === 'scan') { if (E.scan.on) E.scan.on = false; else startScan(); }
+  if (s === 'usb') { plugToggle(); navKey = derive(); } else if (s === 'scan') { if (E.scan.on) E.scan.on = false; else startScan(); }
   else if (s === 'p1' || s === 'p2') deckCommon('play', s === 'p1' ? 1 : 2);
+  else if (s === 'pfl') E.decks[1].pfl = !E.decks[1].pfl;
   else { resetEngine(); resetUI(); wfCache.clear(); ovCache.clear(); navKey = 'decks'; }
   dirty = true; renderNav(); paint();
 });
@@ -974,23 +995,36 @@ $('#sim').addEventListener('click', e => {
 /* ---------- notes and calls ---------- */
 const P = f => `photos/${f}.jpg`;
 const NOTES = {
-  decks: { t: 'Decks', cur: ['Two scrolling waveforms with a 100 px info column.', 'Deck strip: title, time, white BPM box, rate, key.', 'Bottom: overviews, then KEY · Q · SYNC · LOOP · CUE · ▶ per deck.'], red: ['Same order and layout. Deck colours (1 blue, 2 orange) tie each deck’s waveform, strip, overview and buttons together.', 'The deck strip adds MASTER, SYNC, USB and ON PI chips; tap the time to switch elapsed/remaining.', 'CUE and ▶ are the widest buttons. Every target is 48 px or more.', 'Top bar: the USB chip replaces LOAD / EJECT and a gear replaces SETTINGS.'], star: 'Play, Cue, Sync, Shift+Sync (leader) and the pads light the same states here. Hot cues 1–4 show on both waveforms in their colours.' },
-  tracks: { t: 'Tracks', photo: 'IMG_0314', q: 'The samples need to have a full length menu you can cover the song tracks, also let\'s have a single load button that then goes into a choose pad', cur: ['Search, Actions and Show/Hide text buttons.', 'When loading samples, a LOAD TO · PAD 1–4 · DONE strip sits over the song list.'], red: ['☰ opens Sources full screen and turns into ✕ in the same spot.', '✎ opens Actions.', 'A crumb shows which list you are in; search shows the count.', 'LOAD buttons show what each deck holds and stay off while it plays.', 'Sample loading moved to its own screen (Load sample).'], star: 'No browse knob or load button on the Starlight, so browsing stays on the touch screen.' },
-  sources: { t: 'Sources', photo: 'IMG_0311', q: 'I think we need to completley revisit the design of this as well, Make it better and easier to navigate, when in these bigger menus we can cover the whole screen because its deeper context not just quick and easy. Also the action menu button on tracks should just be a pen icon and the the show should be a hamburger menu that turns into an x when it\'s open', cur: ['Show opens a 290 px panel over the list, with Sources and Back buttons and the feature list.', 'Sources opens one mixed panel of checkboxes, order and default source.', 'Picking Rekordbox or Computer fills the list area with help text.'], red: ['Full screen under the top bar.', 'Left: a big tile per source. Drives come first, then This Pi, Recordings, History, Folders, Samples.', 'Right: that source’s playlists or folders as 56 px rows with counts, a crumb and Back.', 'OPEN shows the list in Tracks and closes Sources.', 'EDIT LIST is its own step for show/hide and order.'] },
-  actions: { t: 'Actions (pen)', photo: 'IMG_0311', q: 'Also the action menu button on tracks should just be a pen icon and the the show should be a hamburger menu that turns into an x when it\'s open', cur: ['Actions menu: Load ›, Arrange columns, Original full menu ›.'], red: ['✎ icon, 48×48. Rows are 52 px: Load to Deck 1, Load to Deck 2, Load to a sampler pad…, Arrange columns…, Full Mixxx menu ›.'] },
-  sampler: { t: 'Sampler', photo: 'IMG_0313', q: 'same sample is nearly impossible to select, let\'s redesign that to be more useable (not eveything needs to be seen when putting in samples, Im down to go back to a similar to the OG sampler that had eight just slightly larger then the load opens a browse menu where you select from library and load to a deck, a separate component from the browse list but similar)', cur: ['Four pads: name, PAD n, STOP.', 'LOAD SAMPLE sends you to Tracks with a LOAD TO strip.'], red: ['Eight pads in two rows. 1–4 are the Starlight’s deck A pads in SAMPLER mode, 5–8 deck B. The Starlight mapping already plays Sampler 1–8.', 'Tap a pad to play; STOP stops it; ⋯ loads or empties that pad. An empty pad opens Load sample for itself.', 'The bank saves on every change.'], star: 'Pad LEDs and these pads show the same playing state.' },
-  sampleload: { t: 'Load sample', photo: 'IMG_0314', q: 'The samples need to have a full length menu you can cover the song tracks, also let\'s have a single load button that then goes into a choose pad', cur: ['Tracks page with a LOAD TO · PAD 1–4 · DONE strip; the song list and both deck rows stay on screen.'], red: ['Its own full-screen browser, separate from Tracks: Samples, This Pi, MANTACORE, Recordings.', '52 px rows with a 48 px preview button.', 'One LOAD TO PAD… button, then Choose pad.'] },
-  choosepad: { t: 'Choose pad', photo: 'IMG_0313', q: 'Im down to go back to a similar to the OG sampler that had eight just slightly larger then the load opens a browse menu where you select from library and load', cur: ['PAD 1–4 buttons in the LOAD TO strip; a playing pad is off.'], red: ['All 8 pads, each showing what it holds. Playing pads are off. Tapping one loads it and returns to Sampler.'] },
-  loop: { t: 'Loop panel', cur: ['LOOP opens 12 sizes and ½ ×2 Exit Reloop over the waveforms; that deck’s waveform moves to the bottom row with − and +.'], red: ['Same panel with tabs: LOOP, JUMP (beat jump 1–32 back and forward) and CUES (hot cues 1–8, CLEAR).', 'These are the XDJ-AZ pad modes the Starlight does not have.'], star: 'Starlight LOOP pads (1, 2, 4, 8 beats) and HOT CUE pads 1–4 light the same sizes and cues here.' },
-  fx: { t: 'FX', cur: ['Route DECK 1 / DECK 2 / MASTER, MIX slider, three effect cards.'], red: ['Same controls. Slider handles are 28×44, effect cards name their Starlight FX pad.'], star: 'Starlight FX pads 1–3 switch effects 1–3; pad 4 routes the unit to that deck.' },
-  settings: { t: 'Settings', q: 'We control the codebase, why can\'t we just save on settings change?', cur: ['Settings replaces the waveforms inside Decks; Advanced… swaps the panel.', 'Mixxx saves settings only when it quits.'], red: ['Full screen: Playback, Interface, Media, Advanced.', 'Each change saves within about a second (mixxx.cfg, atomic write). “Saved” confirms it.', 'Media holds the new USB choices: on insert, scan progress, handover store, Copy to Pi.'] },
-  media: { t: 'USB & media', photo: 'IMG_0315', q: 'revisit and redesign the load and eject put some refrences (… load is usually automatic actually - eject is what is done safely)', cur: ['LOAD / EJECT opens a dialog: drive list, Refresh, Load, Eject… (off), Close.', 'Load opens the drive in the library; eject is not available.'], red: ['The USB chip always shows the drive’s state: Ready, In use, Scanning NN%, Ejecting, Safe to remove.', 'Media is full screen: one card per drive, EJECT is the main action; Browse, Copy to Pi and Scan are secondary.', 'No Load step. A plugged-in drive is ready and shows in Sources; Mixxx reads it when you open it.'] },
-  eject: { t: 'Eject', photo: 'IMG_0316', q: 'Eject and the media controls need a revisit. I wanted it to work like a pioneer dj where you choose when the program can access the files and choose when to eject and keep the last playong/loaded song in storage for handover (get\'s cleaned out after transition out)', cur: ['Eject… opens a second dialog: “Eject is not available on this system” and a “Prepare selected disk” button.'], red: ['Eject lists what uses the drive and what happens to each.', 'Tracks and pad samples in use are copied to the Pi, then files close, the drive unmounts and the port powers down.', 'Decks keep playing and show ON PI. Each copy is deleted when its deck loads something else.'] },
-  handover: { t: 'Handover', photo: 'IMG_0316', q: '…keep the last playong/loaded song in storage for handover (get\'s cleaned out after transition out)', cur: ['No handover: eject is off, and the RAM cache is cleared when the track unloads.'], red: ['Deck 1 keeps playing from the Pi copy: see the ON PI chip on its strip.', 'Load another track on Deck 1 to see the copy cleaned out (Media › Cleaned out).'] },
-  scan: { t: 'Scan bar', photo: 'IMG_0310', q: 'The scan bar can be improved it was messy and it covered the quick actions, let\'s just show the final file / in the filename instead of the entire path, in the list then have a hide and cancel. With the hide it is okay that it covers but if it is hidden save that setting and put a USB icon with the % of it loading that is done.', cur: ['A bar over the transport row: the full path, a small progress bar and Cancel.'], red: ['A 48 px strip over the overview row, so CUE and ▶ stay reachable.', 'File name only, count, progress, HIDE and CANCEL.', 'HIDE saves the choice. The USB chip then shows a ring and the %.'] },
-  scanhidden: { t: 'Scan hidden', photo: 'IMG_0310', q: 'if it is hidden save that setting and put a USB icon with the % of it loading that is done.', cur: ['No hide: the bar stays until the scan ends or you cancel.'], red: ['The USB chip shows a progress ring and “Scanning NN%”. Settings › Media › Scan progress brings the bar back.'] },
+  decks: { t: 'Decks', cur: ['Two scrolling waveforms with a 100 px info column.', 'Deck strip: title, time, white BPM box, rate, key.', 'Bottom: overviews, then KEY · Q · SYNC · LOOP · CUE · ▶ per deck.'], red: ['Same order and layout. Deck colours (1 blue, 2 orange) tie each deck’s waveform, strip, overview and buttons together.', 'Deck strip chips: USB, ON PI, SYNC, MASTER (sync leader) and PFL. Tap the time to switch elapsed and remaining.', 'Every target is 48 px or more.', 'Top bar: the USB chip replaces LOAD / EJECT; a gear replaces SETTINGS.'], star: 'Play, Cue, Sync, Shift+Sync (MASTER) and PFL light the same states here. Hot cues 1–4 show on the waveforms in their colours.' },
+  tracks: { t: 'Tracks', photo: 'IMG_0314', q: 'The samples need to have a full length menu you can cover the song tracks, also let\'s have a single load button that then goes into a choose pad', cur: ['Search, Actions and Show/Hide text buttons.', 'When loading samples, a LOAD TO · PAD 1–4 · DONE strip sits over the song list.'], red: ['☰ opens Sources full screen and turns into ✕ in the same spot. ✎ opens Actions.', 'A crumb shows which list you are in.', 'The track table stays Mixxx’s own (today’s columns).', 'LOAD has the deck’s current title beside it, and stays off while that deck plays.', 'Sample loading has its own screen (Load sample).'], star: 'No browse knob or load button on the Starlight, so browsing stays on the touch screen.' },
+  sources: { t: 'Sources', photo: 'IMG_0311', q: 'I think we need to completley revisit the design of this as well, Make it better and easier to navigate, when in these bigger menus we can cover the whole screen because its deeper context not just quick and easy. Also the action menu button on tracks should just be a pen icon and the the show should be a hamburger menu that turns into an x when it\'s open', cur: ['Show opens a 290 px panel with Sources and Back buttons and the feature list.', 'Sources opens one mixed panel of checkboxes, order and default source.'], red: ['Full screen under the top bar.', 'Left: grouped tiles (your answer 4). Each drive first, then This Pi, Recordings, History, Folders, Samples. Build A ships one tile per Mixxx source first; the grouping lands in build B.', 'Right: that source’s lists as 56 px rows with counts, a crumb and Back. OPEN shows a list in Tracks.', 'EDIT LIST is its own step: show or hide, Up and Down, ★ where Tracks starts.'] },
+  actions: { t: 'Actions (pen)', photo: 'IMG_0311', q: 'Also the action menu button on tracks should just be a pen icon and the the show should be a hamburger menu that turns into an x when it\'s open', cur: ['Actions menu: Load ›, Arrange columns, Original full menu ›.'], red: ['✎ icon, 48×48. Rows 52 px: Load to Deck 1, Load to Deck 2, Load to a sampler pad…, Arrange columns…, Full Mixxx menu ›.'] },
+  sampler: { t: 'Sampler', photo: 'IMG_0313', q: 'same sample is nearly impossible to select, let\'s redesign that to be more useable (not eveything needs to be seen when putting in samples, Im down to go back to a similar to the OG sampler that had eight just slightly larger then the load opens a browse menu where you select from library and load to a deck, a separate component from the browse list but similar)', cur: ['Four pads: name, PAD n, STOP.', 'LOAD SAMPLE sends you to Tracks with a LOAD TO strip.'], red: ['Eight 200×104 pads. 1–4 are the Starlight’s deck A pads in SAMPLER mode, 5–8 deck B. The Starlight mapping already plays Sampler 1–8.', 'Tap a pad to play; it lights while it plays. STOP stops it; CLEAR empties it (only while stopped).', 'An empty pad opens Load sample for itself.', 'The bank saves within a second of every change.'], star: 'Pad LEDs and these pads show the same playing state.' },
+  sampleload: { t: 'Load sample', photo: 'IMG_0314', q: 'The samples need to have a full length menu you can cover the song tracks, also let\'s have a single load button that then goes into a choose pad', cur: ['Tracks page with a LOAD TO · PAD 1–4 · DONE strip; the song list and both deck rows stay on screen.'], red: ['Its own full screen: SAMPLES, TRACKS, or any list through SOURCES….', 'Mixxx’s track table underneath, so search and scrolling work as in Tracks; it keeps its own place.', 'One LOAD TO PAD… button, then Choose pad. No preview yet (it waits for the headphone routing).'] },
+  choosepad: { t: 'Choose pad', photo: 'IMG_0313', q: 'Im down to go back to a similar to the OG sampler that had eight just slightly larger then the load opens a browse menu where you select from library and load', cur: ['PAD 1–4 buttons in the LOAD TO strip; a playing pad is off.'], red: ['All 8 pads, each showing what it holds. Playing pads are off. A tap loads that pad and returns to Sampler.'] },
+  loop: { t: 'Loop panel', cur: ['LOOP opens 12 sizes and ½ ×2 Exit Reloop over the waveforms; that deck’s waveform moves to the bottom row with − and +.'], red: ['Same panel with tabs: LOOP, JUMP (beat jump 1–32 back and forward) and CUES (hot cues 1–8, CLEAR).', 'These are XDJ-AZ pad modes the Starlight does not have.'], star: 'Starlight LOOP pads (1, 2, 4, 8 beats) light LOOP and the size here; HOT CUE pads light cues 1–4.' },
+  fx: { t: 'FX 1', q: 'Alright but let\'s see if we can keep the 3 effects switcher between deck 1 deck 2 and master then have another mode. The starlight does have effects settings, maybe we just need to map them.', cur: ['Route DECK 1 / DECK 2 / MASTER, MIX slider, three effect cards. Effect unit 1 only.'], red: ['The DECK 1 / DECK 2 / MASTER switcher stays, as you asked.', 'A second mode, FX 2, shows effect unit 2: the one the Starlight’s deck B FX pads drive. Each mode has its own switcher, mix and three effects.', 'A study of the Starlight’s FX mapping comes with the result; no mapping change in this climb.'], star: 'Deck A FX pads 1–3 switch FX 1’s effects; pad 4 sends FX 1 to deck 1. Deck B’s pads do the same for FX 2 and deck 2.' },
+  fx2: { t: 'FX 2', q: 'keep the 3 effects switcher between deck 1 deck 2 and master then have another mode.', cur: ['Not shown today: deck B’s FX pads change effects you cannot see.'], red: ['The same page for effect unit 2, with its own switcher, mix and effects.'] },
+  settings: { t: 'Settings', q: 'We control the codebase, why can\'t we just save on settings change?', cur: ['Settings replaces the waveforms inside Decks; Advanced… swaps the panel.', 'Mixxx saves settings only when it quits.'], red: ['Full screen: Playback, Interface, Media, Advanced.', 'Each change saves within about a second (atomic write). “Saved” confirms it.', 'Media: Scan bar Show/Hide, RAM cache (also the room for handover copies), Eject on, and the plug-in ping.'] },
+  insert: { t: 'Plugging in a drive', q: 'It should have a small ping that ask\'s to load with a load and dismiss button, it shouldn\'t be very intrusive and can cover the bottom actions.', cur: ['Nothing in Mixxx; udiskie desktop pop-ups at the top right, which covered SETTINGS and REC.'], red: ['A small strip over the bottom row: MANTACORE PLUGGED IN, with DISMISS and LOAD.', 'LOAD opens the drive in Sources. DISMISS leaves it closed; the USB chip and Sources can still open it.', 'It closes by itself after 15 s. The desktop pop-ups are off.'] },
+  media: { t: 'USB & media', photo: 'IMG_0315', q: 'revisit and redesign the load and eject put some refrences (… load is usually automatic actually - eject is what is done safely)', cur: ['LOAD / EJECT opens a dialog: drive list, Refresh, Load, Eject…, Close.', 'Eject… leads to a second dialog that cannot eject.'], red: ['The USB chip always shows the state: READY, IN USE, SCAN NN%, EJECTING, SAFE TO REMOVE.', 'Media is full screen: one card per drive with EJECT first, then OPEN/BROWSE and COPY TO PI.', 'No Load step: the drive mounts by itself; Mixxx reads it only when you load it from the ping, open it here, or pick it in Sources.'] },
+  eject: { t: 'Eject', photo: 'IMG_0316', q: 'Eject and the media controls need a revisit. I wanted it to work like a pioneer dj where you choose when the program can access the files and choose when to eject and keep the last playong/loaded song in storage for handover (get\'s cleaned out after transition out)', cur: ['Eject… opens a second dialog: “Eject is not available on this system” and a “Prepare selected disk” button that does nothing.'], red: ['The sheet lists what uses the drive and what happens to each.', 'Steps: stop new reads → keep the items playing from their Pi copies → close files → unmount and check.', 'A deck playing a track too big for Pi memory blocks Eject until it stops.'] },
+  handover: { t: 'Handover', photo: 'IMG_0316', q: '…keep the last playong/loaded song in storage for handover (get\'s cleaned out after transition out)', cur: ['No handover: eject is off.'], red: ['A green SAFE TO REMOVE strip flashes up at the bottom (your answer 2).', 'Deck 1 keeps playing from its copy in Pi memory: see ON PI.', 'Load another track on Deck 1 to see the copy cleaned out (Media › Cleaned out).', 'Pi memory is used only if it costs at most 10% more load than playing from the drive; otherwise the copy is made when you press Eject (your answer 3).'] },
+  scan: { t: 'Scan bar', photo: 'IMG_0310', q: 'The scan bar can be improved it was messy and it covered the quick actions, let\'s just show the final file / in the filename instead of the entire path, in the list then have a hide and cancel. With the hide it is okay that it covers but if it is hidden save that setting and put a USB icon with the % of it loading that is done.', cur: ['A bar over the transport row: the full path, a small progress bar and Cancel.'], red: ['A 48 px strip over the overview row, so CUE and ▶ stay reachable.', 'File name only, a %, HIDE and CANCEL.', 'HIDE saves the choice. The USB chip then shows SCAN NN%.'] },
+  scanhidden: { t: 'Scan hidden', photo: 'IMG_0310', q: 'if it is hidden save that setting and put a USB icon with the % of it loading that is done.', cur: ['No hide: the bar stays until the scan ends or you cancel.'], red: ['The USB chip shows SCAN NN%. Settings › Media › Scan bar brings the bar back.'] },
 };
-let CALLS = [];
+let CALLS = [
+  { q: 'Plugging in a USB drive', ans: 'A small ping with LOAD and DISMISS; not intrusive; may cover the bottom actions.', go: 'insert', hl: ['insertping'] },
+  { q: 'Eject', ans: 'Yes, system eject, with a bottom indicator that flashes up when it is safe to remove.', go: 'handover', hl: ['safestrip'] },
+  { q: 'Where the handover copy lives', ans: 'Pi memory, if it costs at most 10% more load; otherwise copy when Eject is pressed and wait.', go: 'handover', hl: ['onpi', 'deck1'] },
+  { q: 'Sources layout', ans: 'Grouped tiles. “Alright well see how it works.”', go: 'sources', hl: ['sourcesrail'] },
+  { q: 'Effects for deck B’s pads', ans: 'Keep the DECK 1 / DECK 2 / MASTER switcher, add another mode; look at the Starlight FX mapping.', go: 'fx2', hl: ['fxswitch'] },
+  { q: 'udiskie pop-ups', ans: 'Off. “Absolutely yes.”', go: 'insert', hl: ['usbchip'] },
+  { q: 'Clean quit; reboot waits for Mixxx', ans: 'Yes.', go: 'settings', hl: ['saved'] },
+  { q: 'Audio routing on the test card', ans: 'Set stereo: Master 1–2, Headphones 3–4.', go: null },
+  { q: 'Test drive and flash', ans: 'Eject tests may use MANTACORE (clean unmounts only). Performance on a faster flash drive when you have one. No reflash.', go: null },
+  { q: 'DJ-003 writes to rekordbox', ans: 'Stays in the backlog. “Agreed.”', go: null },
+];
 function renderSide() {
   const n = NOTES[navKey] || NOTES.decks;
   let h = `<div class="card"><h2>${esc(n.t)}</h2>`;
@@ -999,7 +1033,7 @@ function renderSide() {
   h += `<h3>Now</h3><ul>${n.cur.map(x => `<li>${esc(x)}</li>`).join('')}</ul><h3>Redesign</h3><ul>${n.red.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
   if (n.star) h += `<h3>Starlight</h3><p style="margin:0">${esc(n.star)}</p>`;
   h += '</div>';
-  h += `<div class="card calls"><h2>Your calls</h2>${CALLS.length ? `<ol>${CALLS.map((c, i) => `<li><div class="q">${esc(c.q)}</div><div class="opts">${esc(c.opts)}</div><div class="rec">Recommended: ${esc(c.rec)}</div><button data-call="${i}">Show me</button></li>`).join('')}</ol>` : '<p style="margin:0;color:var(--page-dim)">The numbered questions come with the plan.</p>'}</div>`;
+  h += `<div class="card calls"><h2>Your answers (17 Nov)</h2><ol>${CALLS.map((c, i) => `<li><div class="q">${esc(c.q)}</div><div class="opts">${esc(c.ans)}</div>${c.go ? `<button data-call="${i}">Show me</button>` : ''}</li>`).join('')}</ol></div>`;
   $('#side').innerHTML = h;
 }
 $('#side').addEventListener('click', e => { const b = e.target.closest('[data-call]'); if (!b) return; const c = CALLS[+b.dataset.call]; go(c.go, { rd: c.hl || [], cu: c.hlcu || [] }); if (window.innerWidth < 1100) $('#stage').scrollIntoView({ behavior: 'smooth' }); });
@@ -1070,6 +1104,7 @@ function frame(now) {
     if (E.scan.pct >= 100) { E.scan.pct = 100; E.scan.on = false; toast('Scan finished'); renderNav(); }
   }
   if (E.rec.on) E.rec.t += dt;
+  tickMedia(dt);
   if (E.usb.state === 'ejecting') { E.eject.t += dt; const st = Math.floor(E.eject.t / 0.7); if (st !== E.eject.step) { E.eject.step = st; dirty = true; } if (st >= 4) { finishEject(); dirty = true; } }
   if (RD.toast) { RD.toastT -= dt; if (RD.toastT <= 0) { RD.toast = null; dirty = true; } }
   paint();
@@ -1088,7 +1123,7 @@ function paint() {
     else if (k === 'scancount') el.textContent = `${fmtN(done)} of ${fmtN(E.scan.total)}`;
     else if (k === 'scanbar' || k === 'cuscanbar') el.style.width = E.scan.pct + '%';
     else if (k === 'cuscan') el.textContent = 'Scanning: ' + SCAN_DIRS.slice(0, 18) + '…' + SCAN_DIRS.slice(30) + SCAN_FILES[E.scan.fi].replace(/\.\w+$/, '');
-    else if (k === 'usbpct') el.textContent = 'Scanning ' + pctTxt;
+    else if (k === 'usbpct') el.textContent = 'SCAN ' + pctTxt;
     else if (k === 'scanpct2') el.textContent = pctTxt + ' — stops on eject';
     else if (k === 'ring') el.setAttribute('stroke-dashoffset', String(94.25 * (1 - E.scan.pct / 100)));
     else if (k === 'rect') { const s = Math.floor(E.rec.t); el.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }

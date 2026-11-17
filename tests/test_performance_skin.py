@@ -948,6 +948,33 @@ class PerformanceSkinTests(unittest.TestCase):
                               final['[Tab],library']), (3, sampler, 1, 1))
             self.assertIn('+ Empty · tap to load', [t.text for t in empty.iter('Text')])
 
+    def test_pad_top_rows_sit_at_the_left_with_the_duration_at_the_right(self):
+        # m-sampler.png: badge at the pad's left edge, the label right after
+        # it, the duration at the right edge; on empty pads the badge and
+        # label at the left too. Only fixed widths and an expanding gap: a row
+        # of fixed widths alone is centred by WWidgetGroup's AlignCenter
+        # (the C2 card preview had the badge at x 50).
+        for sampler, pad in enumerate(self.pads(), 1):
+            loaded, empty = pad.find('Children')
+            for state, expected in ((loaded, ['MixpiPadTagRow', 'MixpiChipPi', 'MixpiGap', 'MixpiPadTime']),
+                                    (empty, ['MixpiPadTagRow', 'MixpiGap'])):
+                head, = [g for g in state.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiPadHead']
+                children = list(head.find('Children'))
+                self.assertEqual([c.findtext('ObjectName') for c in children], expected, sampler)
+                self.assertEqual(head.findtext('Size'), '0me,24f')
+                tag = children[0]
+                self.assertEqual(tag.findtext('Size'), '64f,24f')
+                self.assertEqual([size(c)[0:3:2] for c in tag.find('Children')], [(24, 'f'), (40, 'f')])
+                self.assertEqual([size(c)[2] for c in children if c.findtext('ObjectName') == 'MixpiGap'], ['me'])
+                self.assertTrue(all(size(c)[2] == 'f' for c in children if c.findtext('ObjectName') != 'MixpiGap'))
+            time = next(c for c in loaded.iter('TrackProperty') if c.findtext('ObjectName') == 'MixpiPadTime')
+            self.assertEqual((time.findtext('Size'), time.findtext('Alignment')), ('56f,24f', 'right'))
+            # Empty: the head first, then "+ Empty · tap to load" centred below.
+            info = next(g for g in empty.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiPadInfo')
+            head, text = info.find('Children')
+            self.assertEqual((head.findtext('ObjectName'), text.findtext('Text'), text.findtext('Alignment')),
+                             ('MixpiPadHead', '+ Empty · tap to load', 'center'))
+
     def test_load_sample_header_button_opens_the_chooser(self):
         load = self.button_by_text('+ LOAD SAMPLE')
         self.assertEqual(load.findtext('Size'), '168f,48f')

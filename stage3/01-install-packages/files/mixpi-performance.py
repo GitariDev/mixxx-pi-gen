@@ -969,12 +969,20 @@ def pad_tag(sampler, size='0me,24f'):
         label(f'{deck}{(sampler - 1) % 4 + 1}', '40f,24f', 'MixpiPadTag')])
 
 
-def sampler_title(sampler, size, name='MixpiSamplerTitle', prop_name='titleInfo'):
+def sampler_title(sampler, size, name='MixpiSamplerTitle', prop_name='titleInfo', align=None):
     title = node('TrackProperty')
     for k, v in dict(ObjectName=name, Group=f'[Sampler{sampler}]', Property=prop_name,
                      Elide='right', Size=size).items():
         prop(title, k, v)
+    if align:
+        prop(title, 'Alignment', align)
     return title
+
+
+def pad_head(sampler, rest):
+    """A pad's top row: the badge and pad label (64 px, fixed) at the left,
+    then REST, which holds an expanding gap so the row fills the pad."""
+    return group('MixpiPadHead', 'horizontal', '0me,24f', [pad_tag(sampler, '64f,24f')] + rest)
 
 
 def choose_pad():
@@ -1036,10 +1044,12 @@ def sampler_pad(sampler):
     key = f'[Sampler{sampler}]'
     width, height = PAD_SIZE
     info = group('MixpiPadInfo', size=f'{width}f,{PAD_INFO}f', children=[
-        group('MixpiPadHead', 'horizontal', '0me,24f', [
-            pad_tag(sampler, '0me,24f'),
-            chip('ON PI', f'{key},mixpi_on_pi', '48f,20f', 'MixpiChipPi'),
-            sampler_title(sampler, '56f,24f', 'MixpiPadTime', 'durationTextSeconds')]),
+        # m-sampler.png: the badge and label at the pad's left edge, the
+        # duration at its right edge. Fixed widths plus an expanding gap, so
+        # WWidgetGroup's default AlignCenter cannot centre them (C2 card preview).
+        pad_head(sampler, [
+            chip('ON PI', f'{key},mixpi_on_pi', '48f,20f', 'MixpiChipPi'), gap('0me,24f'),
+            sampler_title(sampler, '56f,24f', 'MixpiPadTime', 'durationTextSeconds', align='right')]),
         sampler_title(sampler, '0me,24f', 'MixpiPadName')])
     button_width = (width - 3 * PAD_GAP) // 2
     trigger = button('▶ TRIGGER', f'{key},cue_gotoandplay', size=f'{button_width}f,{PAD_STRIP}f',
@@ -1064,7 +1074,8 @@ def sampler_pad(sampler):
     empty = group('MixpiPadEmpty', 'stacked', f'{width}f,{height}f', [
         open_load,
         group('MixpiPadInfo', size=f'{width}f,{height}f', children=[
-            pad_tag(sampler), label('+ Empty · tap to load', '0me,0me', 'MixpiPadEmptyText',
+            pad_head(sampler, [gap('0me,24f')]),
+            label('+ Empty · tap to load', '0me,0me', 'MixpiPadEmptyText',
                                     align='center')])])
     show_when(empty, f'{key},track_loaded', negate=True)
     return group(f'MixpiPad{"A" if sampler <= 4 else "B"}', size=f'{width}f,{height}f',

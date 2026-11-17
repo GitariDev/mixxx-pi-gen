@@ -30,6 +30,8 @@ def main():
     parser.add_argument('--without-bpm-lock-touch', action='store_true')
     parser.add_argument('--without-acceptance-fixes', action='store_true')
     parser.add_argument('--without-council-fixes', action='store_true')
+    # R-9/R-10: only the Sources screen (rail, crumb, edit list) checks.
+    parser.add_argument('--sources-screen', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-source-model-') as temporary:
         target = Path(temporary)
@@ -42,7 +44,11 @@ def main():
             (('mixxx-acceptance-fixes.patch', 'mixxx-council-fixes.patch')
              if args.without_acceptance_fixes else ()) + \
             (('mixxx-council-fixes.patch',) if args.without_council_fixes else ())
-        reconstruct(target, exclude=exclude)
+        # mixxx-sources-screen.patch (R-9, R-10) applies on top of council-fixes.
+        if 'mixxx-council-fixes.patch' in exclude:
+            exclude += ('mixxx-sources-screen.patch',)
+        names, _ = reconstruct(target, exclude=exclude)
+        sources_screen = 'mixxx-sources-screen.patch' in names
         populate_pinned(target, ['src/' + name for name in ('library/treeitem.h', 'library/treeitem.cpp',
                      'library/treeitemmodel.h', 'library/treeitemmodel.cpp',
                      'util/make_const_iterator.h')])
@@ -70,16 +76,18 @@ def main():
 #include <functional>
 #include "preferences/configobject.h"
 #include "util/assert.h"  // reached through control/control.h in the real header
+enum class ControlFlag { None = 0, NoAssertIfMissing = 2, NoWarnIfMissing = 6 };
 class ControlObject {
   public:
-    static ControlObject* getControl(const ConfigKey& key) {
+    static ControlObject* getControl(const ConfigKey& key, ControlFlag = ControlFlag::None) {
         static QHash<QString, ControlObject*> controls;
         auto*& control = controls[key.key];
         if (!control) { control = new ControlObject; }
         return control;
     }
-    void set(double value) { m_value = value; }
+    void set(double value) { m_value = value; ++writes; }
     double get() const { return m_value; }
+    int writes = 0;
     template<typename Receiver, typename Slot>
     void connectValueChangeRequest(Receiver*, Slot slot) { m_request = slot; }
     void requestChange(double value) { if (m_request) { m_request(value); } }
@@ -127,6 +135,8 @@ class WTrackTableView : public QTableView {
                       'void Library::applySidebarSourceVisibility()',
                       'void Library::showSidebarSourcesMenu()',
                       'void Library::onSkinLoadFinished()']
+        if sources_screen:
+            signatures.append('void Library::refreshSidebarSourceEdit()')
         (target / 'library_order_methods.h').write_text(
             '\n'.join(method(library, signature) for signature in signatures))
         # The exact sidebar activation wiring from Library::bindSidebarWidget.
@@ -142,6 +152,12 @@ class WTrackTableView : public QTableView {
         command += ['-I' + str(stubs), '-I' + str(target / 'src'), '-I' + str(target)]
         if args.baseline:
             command += ['-DSOURCE_ORDER_BASELINE']
+        # The menu style block from the skin (R-10: the edit list rules).
+        menus = target / 'pioneered-menus.qss'
+        menus.write_bytes((ROOT / 'stage3/01-install-packages/files/pioneered-menus.qss').read_bytes())
+        command += ['-DMIXPI_MENUS_QSS="' + str(menus) + '"']
+        if sources_screen:
+            command += ['-DMIXPI_SOURCES_SCREEN']
         mocs = [(target / 'src/library/sidebarmodel.h', target / 'src/library/moc_sidebarmodel.cpp'),
                 (target / 'src/library/treeitemmodel.h', target / 'src/library/moc_treeitemmodel.cpp'),
                 (stubs / 'library/libraryfeature.h', target / 'moc_feature.cpp')]
@@ -172,7 +188,8 @@ class WTrackTableView : public QTableView {
         print('COMMAND', repr(command), flush=True)
         subprocess.run(command, check=True, timeout=90)
         environment = qt_environment()
-        subprocess.run([str(target / 'test'), *(['holdout'] if args.holdout else [])],
+        subprocess.run([str(target / 'test'), *(['holdout'] if args.holdout else []),
+                        *(['sources-screen'] if args.sources_screen else [])],
                        env=environment, check=True, timeout=30)
 
 

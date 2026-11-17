@@ -20,8 +20,13 @@ class LibraryFeature : public QObject {
     TreeItemModel* sidebarModel() { return &children; }
     // The source last opened: what the track pane shows.
     inline static LibraryFeature* shown = nullptr;
-    void activate() { ++activations; shown = this; }
-    void activateChild(const QModelIndex&) { ++activations; shown = this; }
+    // The last activation showed a list or a view (Library::slotShowTrackModel
+    // or slotSwitchToView). A rekordbox drive whose playlists still load
+    // shows nothing yet: showsList false.
+    inline static bool listShown = false;
+    bool showsList = true;
+    void activate() { ++activations; shown = this; listShown = showsList; }
+    void activateChild(const QModelIndex&) { ++activations; shown = this; listShown = showsList; }
     void onLazyChildExpandation(const QModelIndex&) {}
     void onRightClick(const QPoint&) {}
     void onRightClickChild(const QPoint&, const QModelIndex&) {}

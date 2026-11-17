@@ -90,3 +90,123 @@ QMenu QCheckBox::indicator:checked {
     padding: 0px 12px;
 }
 #MixpiColumnArrangement QPushButton:pressed { background-color: #285a88; }
+/* Sources screen (R-9): the rail of sources (264 px, 64 px tiles), Back
+ * and the crumb above the list. The colours are the redesign prototype's. */
+#MixpiSourceRail, #MixpiSourceTiles {
+    background-color: #121821;
+    border: 0px;
+}
+#MixpiSourceRail {
+    border-right: 1px solid #2b3646;
+}
+#MixpiSourceRail QPushButton#MixpiSourceTile {
+    background-color: #121821;
+    border: 0px;
+    border-bottom: 1px solid #2b3646;
+    border-radius: 0px;
+    padding: 0px;
+}
+#MixpiSourceRail QPushButton#MixpiSourceTile:checked {
+    background-color: #1f2a17;
+    border-left: 4px solid #b5e15c;
+}
+#MixpiSourceRail QPushButton#MixpiSourceTile:pressed { background-color: #19212d; }
+#MixpiSourceTile QLabel { background-color: transparent; }
+#MixpiSourceTile QLabel#MixpiSourceTileName {
+    color: #eef2f7;
+    font-size: 17px;
+    font-weight: bold;
+}
+#MixpiSourceTile QLabel#MixpiSourceTileSub {
+    color: #8c9ab0;
+    font-size: 13px;
+}
+#MixpiSourceBar {
+    background-color: #0a0d12;
+    border-bottom: 1px solid #2b3646;
+}
+#MixpiSourceBar QPushButton#MixpiSourceBack {
+    background-color: #19212d;
+    border: 1px solid #2b3646;
+    border-radius: 6px;
+    color: #eef2f7;
+    font-size: 16px;
+    font-weight: bold;
+}
+#MixpiSourceBar QPushButton#MixpiSourceBack:pressed { background-color: #285a88; }
+#MixpiSourceBar QPushButton#MixpiSourceBack:disabled {
+    color: #596171;
+    background-color: #0a0d12;
+    border-color: #19212d;
+}
+#MixpiSourceBar QLabel#MixpiSourceCrumb {
+    color: #eef2f7;
+    font-size: 15px;
+}
+/* Sources edit (R-10): one list. 56 px rows; Up, Down and Start here are
+ * 48 px; the on/off switch is 64x48 with a 56x32 track. */
+#MixpiSourceEdit, #MixpiSourceEdit QScrollArea, #MixpiSourceEditRows,
+#MixpiSourceEditFooter {
+    background-color: #0a0d12;
+    border: 0px;
+}
+#MixpiSourceEdit QLabel#MixpiSourceEditHint {
+    background-color: #0a0d12;
+    color: #8c9ab0;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 0px 12px;
+    border-bottom: 1px solid #2b3646;
+}
+#MixpiSourceEdit #MixpiSourceEditRow {
+    background-color: #0a0d12;
+    border-bottom: 1px solid #1c2531;
+}
+#MixpiSourceEdit QPushButton {
+    background-color: #19212d;
+    border: 1px solid #2b3646;
+    border-radius: 6px;
+    color: #eef2f7;
+    font-size: 15px;
+    font-weight: bold;
+}
+#MixpiSourceEdit QPushButton:pressed { background-color: #285a88; }
+#MixpiSourceEdit QPushButton:disabled {
+    color: #596171;
+    background-color: #0a0d12;
+    border-color: #19212d;
+}
+#MixpiSourceEdit QPushButton#MixpiSourceEditName {
+    background-color: #0a0d12;
+    border: 0px;
+    font-size: 17px;
+    text-align: left;
+    padding: 0px 14px;
+}
+#MixpiSourceEdit QPushButton#MixpiSourceEditName:checked {
+    background-color: #1f2a17;
+    border-left: 4px solid #b5e15c;
+}
+#MixpiSourceEdit QPushButton#MixpiSourceStartHere {
+    font-size: 16px;
+}
+#MixpiSourceEdit QCheckBox#MixpiSourceEditSwitch {
+    background-color: transparent;
+    spacing: 0px;
+    padding-left: 4px;
+}
+#MixpiSourceEditSwitch::indicator {
+    width: 56px;
+    height: 32px;
+    border-radius: 16px;
+    background-color: #222c3a;
+    border: 1px solid #2b3646;
+}
+#MixpiSourceEditSwitch::indicator:checked {
+    background-color: #b5e15c;
+    border: 1px solid #b5e15c;
+}
+#MixpiSourceEditSwitch::indicator:disabled {
+    background-color: #5a6e34;
+    border-color: #5a6e34;
+}

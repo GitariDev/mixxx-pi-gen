@@ -1,0 +1,1117 @@
+diff --git a/src/library/library.h b/src/library/library.h
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -174,8 +174,12 @@
+     void applySidebarSourceVisibility();
+     void applySidebarSourceOrder();
+     void saveSidebarSourceOrder(const QStringList& identities);
++    // EDIT LIST / DONE: shows or ends Sources edit (R-10).
+     void showSidebarSourcesMenu();
+-    QPointer<QMenu> m_pSidebarSourcesMenu;
++    void refreshSidebarSourceEdit();
++    // The Sources edit list (LibraryInterface::SourceEditList), owned by the
++    // sidebar it is shown in.
++    QPointer<QWidget> m_pSidebarSourceEdit;
+     QString openRemovableSource(const QJsonObject& volume);
+     std::function<void()> openRemovableSourceAsync(const QJsonObject& volume,
+             QObject* receiver, std::function<void(QString)> completion);
+@@ -183,6 +187,8 @@
+     QPointer<WLibrarySidebar> m_pSidebarWidget;
+     QPointer<KeyboardEventFilter> m_pSidebarKeyboard;
+     QScopedPointer<ControlPushButton> m_pShowSidebarSourcesMenu;
++    // 1 while Sources edit is shown: the skin's EDIT LIST button reads DONE.
++    QScopedPointer<ControlObject> m_pSidebarSourcesEditing;
+     QScopedPointer<ControlPushButton> m_pSidebarBack;
+     QScopedPointer<ControlObject> m_pSidebarCanGoBack;
+ 
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -212,6 +212,9 @@
+             showSidebarSourcesMenu();
+         }
+     });
++    m_pSidebarSourcesEditing.reset(new ControlObject(
++            ConfigKey("[Library]", "sidebar_sources_editing")));
++    m_pSidebarSourcesEditing->setReadOnly();
+     new MixpiMedia(this, [this]() -> QWidget* { return m_pLibraryWidget; },
+             [this](const QJsonObject& volume, QObject* receiver, std::function<void(QString)> completion) {
+                 return openRemovableSourceAsync(volume, receiver, std::move(completion));
+@@ -352,6 +355,13 @@
+ 
+     // Setup the sources view
+     pSidebarWidget->setModel(m_pSidebarModel);
++    // The Sources screen rail (R-9): a fixed second line per kind of source.
++    pSidebarWidget->sourceSubline = [this](const QModelIndex& index) {
++        auto* feature = index.parent().isValid() ? nullptr : m_features.value(index.row());
++        return LibraryInterface::sourceSubline(feature
++                        ? QString::fromLatin1(feature->metaObject()->className())
++                        : QString());
++    };
+     connect(m_pSidebarModel, &QAbstractItemModel::modelReset,
+             pSidebarWidget, [this] { applySidebarSourceVisibility(); });
+     connect(m_pSidebarModel, &QAbstractItemModel::layoutChanged,
+@@ -607,6 +617,8 @@
+     if (!m_pSidebarWidget) {
+         return;
+     }
++    // The Sources screen rail follows (after this change has settled).
++    m_pSidebarWidget->sourcesChanged();
+     QModelIndex firstVisible;
+     for (const auto& source : std::as_const(m_sidebarSources)) {
+         const int row = m_features.indexOf(source.feature);
+@@ -759,21 +771,18 @@
+     if (!m_pSidebarWidget || !m_pLibraryWidget) {
+         return;
+     }
+-    if (m_pSidebarSourcesMenu && m_pSidebarSourcesMenu->isVisible()) {
+-        m_pSidebarSourcesMenu->raise();
++    // Sources edit (R-10): EDIT LIST shows one edit list in place of the
++    // Sources list (the rail stays); DONE shows the list again.
++    if (m_pSidebarWidget->isSourcesEditing()) {
++        m_pSidebarWidget->setSourcesEditing(false);
+         return;
+     }
+-    auto* menu = new LibraryInterface::VisibilityMenu(tr("Sources"), m_pSidebarWidget);
+-    m_pSidebarSourcesMenu = menu;
+-    menu->setAttribute(Qt::WA_DeleteOnClose);
+-    auto choices = std::make_shared<QList<QCheckBox*>>();
+-    for (int i = 0; i < m_sidebarSources.size(); ++i) {
+-        const auto& source = m_sidebarSources[i];
+-        const bool visible = m_pConfig->getValue(source.preference, true);
+-        // Keep one source available; the menu itself remains reachable even
+-        // when the sidebar has been hidden with the Show/Hide button.
+-        auto* choice = LibraryInterface::addVisibilityChoice(menu, source.title,
+-                visible, [this, identity = source.id, choices](bool enabled) {
++    auto* list = static_cast<LibraryInterface::SourceEditList*>(m_pSidebarSourceEdit.data());
++    if (!list) {
++        list = new LibraryInterface::SourceEditList(m_pSidebarWidget);
++        m_pSidebarSourceEdit = list;
++        // The same settings and functions as the old Sources menu.
++        list->visibilityChanged = [this](const QString& identity, bool enabled) {
+             // Copy the factory before addFeature, which may grow the list.
+             const auto found = std::find_if(m_sidebarSources.begin(), m_sidebarSources.end(),
+                     [&identity](const SidebarSource& item) { return item.id == identity; });
+@@ -792,38 +801,35 @@
+                 emit setSelectedClick(m_editMetadataSelectedClick);
+             }
+             applySidebarSourceVisibility();
+-            LibraryInterface::protectLastVisible(*choices);
+-        });
+-        choices->append(choice);
+-    }
+-    LibraryInterface::protectLastVisible(*choices);
+-    QStringList sourceIds;
+-    QStringList sourceTitles;
+-    for (const auto& source : std::as_const(m_sidebarSources)) {
+-        sourceIds.append(source.id);
+-        sourceTitles.append(source.title);
++            refreshSidebarSourceEdit();
++        };
++        list->orderChanged = [this](const QStringList& identities) {
++            saveSidebarSourceOrder(identities);
++            refreshSidebarSourceEdit();
++        };
++        list->startChosen = [this](const QString& identity) {
++            m_pConfig->setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), identity);
++            applySidebarSourceVisibility();
++            refreshSidebarSourceEdit();
++        };
++        m_pSidebarWidget->setSourcesEditPanel(list);
+     }
+-    LibraryInterface::addSourceOrder(menu, sourceIds, sourceTitles,
+-            [this](const QStringList& identities) { saveSidebarSourceOrder(identities); });
+-    menu->addSeparator();
+-    auto* defaults = menu->addMenu(tr("Default source"));
+-    connect(defaults, &QMenu::aboutToShow, defaults, [this, defaults] {
+-        defaults->clear();
+-        const QString preferred = m_pConfig->getValueString(
+-                ConfigKey(kConfigGroup, "SidebarDefaultSource"));
+-        for (const auto& source : std::as_const(m_sidebarSources)) {
+-            auto* action = defaults->addAction(source.title);
+-            action->setCheckable(true);
+-            action->setChecked(source.id == preferred);
+-            action->setEnabled(source.feature && m_pConfig->getValue(source.preference, true));
+-            connect(action, &QAction::triggered, this, [this, identity = source.id] {
+-                m_pConfig->setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), identity);
+-                applySidebarSourceVisibility();
+-            });
+-        }
+-    });
+-    connect(menu->addAction(tr("Close")), &QAction::triggered, menu, &QMenu::close);
+-    menu->popup(m_pSidebarWidget->mapToGlobal(QPoint(0, 0)));
++    refreshSidebarSourceEdit();
++    m_pSidebarWidget->setSourcesEditing(true);
++}
++
++void Library::refreshSidebarSourceEdit() {
++    auto* list = static_cast<LibraryInterface::SourceEditList*>(m_pSidebarSourceEdit.data());
++    if (!list) {
++        return;
++    }
++    QList<LibraryInterface::SourceEditEntry> entries;
++    for (const auto& source : std::as_const(m_sidebarSources)) {
++        entries.append({source.id, source.title, m_pConfig->getValue(source.preference, true),
++                source.feature != nullptr});
++    }
++    list->setSources(entries,
++            m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")));
+ }
+ 
+ void Library::onPlayerManagerTrackAnalyzerProgress(
+@@ -845,6 +851,10 @@
+     VERIFY_OR_DEBUG_ASSERT(trackModel) {
+         return;
+     }
++    if (m_pSidebarWidget) {
++        // A list is in Tracks now: the Sources screen may close.
++        m_pSidebarWidget->noteSourceShown();
++    }
+     emit showTrackModel(model);
+     emit switchToView(m_sTrackViewName);
+     emit restoreSearch(trackModel->currentSearch());
+@@ -852,6 +862,9 @@
+ 
+ void Library::slotSwitchToView(const QString& view) {
+     // qDebug() << "Library::slotSwitchToView" << view;
++    if (m_pSidebarWidget) {
++        m_pSidebarWidget->noteSourceShown();
++    }
+     emit switchToView(view);
+ }
+ 
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+--- a/src/widget/libraryinterface.h
++++ b/src/widget/libraryinterface.h
+@@ -5,6 +5,8 @@
+ #include <memory>
+ #include <utility>
+ 
++#include <QAbstractButton>
++#include <QApplication>
+ #include <QCheckBox>
+ #include <QDialog>
+ #include <QDialogButtonBox>
+@@ -12,11 +14,15 @@
+ #include <QHBoxLayout>
+ #include <QListWidget>
+ #include <QKeyEvent>
++#include <QMouseEvent>
+ #include <QLabel>
+ #include <QMenu>
+ #include <QMap>
+ #include <QPair>
++#include <QPointer>
+ #include <QPushButton>
++#include <QScrollArea>
++#include <QScrollBar>
+ #include <QTreeView>
+ #include <QVBoxLayout>
+ #include <QWidgetAction>
+@@ -346,5 +352,340 @@
+     menu->addMenu(original)->setText(QObject::tr("Original full menu"));
+     return menu;
+ }
++
+ 
++// MixPi Sources screen (R-9, R-10): touch sizes from the redesign plan.
++constexpr int kSourceRailWidth = 264;
++constexpr int kSourceTileHeight = 64;
++constexpr int kSourceBarHeight = 48;
++constexpr int kSourceRowHeight = 56;
++constexpr int kSourceBackWidth = 96;
++constexpr int kSourceSwitchWidth = 64;
++// A touch sidebar narrower than this keeps the one-list layout.
++constexpr int kSourceScreenMinimumWidth = 600;
++
++// The fixed second line of a rail tile, per kind of source.
++inline QString sourceSubline(const QString& identity) {
++    static const QMap<QString, const char*> lines{
++            {QStringLiteral("MixxxLibraryFeature"), QT_TRANSLATE_NOOP("Sources", "All tracks on this Pi")},
++            {QStringLiteral("AutoDJFeature"), QT_TRANSLATE_NOOP("Sources", "Auto DJ queue")},
++            {QStringLiteral("PlaylistFeature"), QT_TRANSLATE_NOOP("Sources", "Your playlists")},
++            {QStringLiteral("CrateFeature"), QT_TRANSLATE_NOOP("Sources", "Your crates")},
++            {QStringLiteral("BrowseFeature"), QT_TRANSLATE_NOOP("Sources", "Folders and drives")},
++            {QStringLiteral("RecordingFeature"), QT_TRANSLATE_NOOP("Sources", "Your recordings")},
++            {QStringLiteral("SetlogFeature"), QT_TRANSLATE_NOOP("Sources", "Past sessions")},
++            {QStringLiteral("AnalysisFeature"), QT_TRANSLATE_NOOP("Sources", "Analyse tracks")},
++            {QStringLiteral("RekordboxFeature"), QT_TRANSLATE_NOOP("Sources", "Rekordbox USB drives")},
++            {QStringLiteral("SeratoFeature"), QT_TRANSLATE_NOOP("Sources", "Serato crates")},
++            {QStringLiteral("ITunesFeature"), QT_TRANSLATE_NOOP("Sources", "iTunes library")},
++            {QStringLiteral("TraktorFeature"), QT_TRANSLATE_NOOP("Sources", "Traktor library")},
++            {QStringLiteral("RhythmboxFeature"), QT_TRANSLATE_NOOP("Sources", "Rhythmbox library")},
++            {QStringLiteral("BansheeFeature"), QT_TRANSLATE_NOOP("Sources", "Banshee library")},
++    };
++    const auto line = lines.constFind(identity);
++    return line == lines.constEnd() ? QCoreApplication::translate("Sources", "Library source")
++                                    : QCoreApplication::translate("Sources", line.value());
+ }
++
++// Buttons in a touch list: a press that moves the drag distance scrolls the
++// list and never clicks, even when it ends on the button it started on (the
++// C-1 rule of the Sources list). A press that stays still is a tap.
++class TouchDragScroll final : public QObject {
++  public:
++    explicit TouchDragScroll(QAbstractScrollArea* area)
++            : QObject(area), m_area(area) {
++    }
++    void watch(QAbstractButton* button) {
++        button->installEventFilter(this);
++    }
++
++  protected:
++    bool eventFilter(QObject* object, QEvent* event) override {
++        auto* button = qobject_cast<QAbstractButton*>(object);
++        if (!button || m_forwarding) {
++            return false;
++        }
++        switch (event->type()) {
++        case QEvent::MouseButtonPress:
++        case QEvent::MouseButtonDblClick: {
++            auto* mouse = static_cast<QMouseEvent*>(event);
++            if (mouse->button() != Qt::LeftButton) {
++                return false;
++            }
++            m_press = mouse->globalPosition().toPoint();
++            m_start = m_area->verticalScrollBar()->value();
++            m_button = button;
++            m_dragging = false;
++            if (event->type() == QEvent::MouseButtonDblClick) {
++                // A second quick tap is a new tap, not a double-click.
++                QMouseEvent press(QEvent::MouseButtonPress, mouse->position(),
++                        mouse->globalPosition(), Qt::LeftButton, mouse->buttons(),
++                        mouse->modifiers());
++                forward(button, &press);
++                return true;
++            }
++            return false;
++        }
++        case QEvent::MouseMove: {
++            auto* mouse = static_cast<QMouseEvent*>(event);
++            if (button != m_button || !(mouse->buttons() & Qt::LeftButton)) {
++                return false;
++            }
++            const QPoint position = mouse->globalPosition().toPoint();
++            if (!m_dragging && (position - m_press).manhattanLength() >=
++                            QApplication::startDragDistance()) {
++                m_dragging = true;
++                // End the button's press away from it: no click.
++                QMouseEvent release(QEvent::MouseButtonRelease, QPointF(-10000, -10000),
++                        mouse->globalPosition(), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
++                forward(button, &release);
++            }
++            if (m_dragging) {
++                m_area->verticalScrollBar()->setValue(m_start - (position.y() - m_press.y()));
++                return true;
++            }
++            return false;
++        }
++        case QEvent::MouseButtonRelease: {
++            const bool dragged = button == m_button && m_dragging;
++            m_dragging = false;
++            m_button = nullptr;
++            return dragged;
++        }
++        default:
++            return false;
++        }
++    }
++
++  private:
++    void forward(QAbstractButton* button, QMouseEvent* event) {
++        m_forwarding = true;
++        QCoreApplication::sendEvent(button, event);
++        m_forwarding = false;
++    }
++
++    QAbstractScrollArea* const m_area;
++    QPointer<QAbstractButton> m_button;
++    QPoint m_press;
++    int m_start = 0;
++    bool m_dragging = false;
++    bool m_forwarding = false;
++};
++
++// An on/off switch: the whole 64x48 area takes the tap.
++class SourceSwitch final : public QCheckBox {
++  public:
++    using QCheckBox::QCheckBox;
++
++  protected:
++    bool hitButton(const QPoint& position) const override {
++        return rect().contains(position);
++    }
++};
++
++struct SourceEditEntry {
++    QString id;
++    QString title;
++    bool visible;
++    // False for an optional source that is not created yet (it is hidden).
++    bool available;
++};
++
++// Sources edit (R-10): one list. Each 56 px row has the name, Up, Down and
++// an on/off switch; the start source carries a star. Start here (under the
++// list) makes the selected row the start source. The last visible source
++// cannot be switched off. No drag-to-reorder, no menu.
++class SourceEditList final : public QWidget {
++  public:
++    std::function<void(const QStringList&)> orderChanged;
++    std::function<void(const QString&, bool)> visibilityChanged;
++    std::function<void(const QString&)> startChosen;
++
++    explicit SourceEditList(QWidget* parent)
++            : QWidget(parent) {
++        setObjectName(QStringLiteral("MixpiSourceEdit"));
++        setAttribute(Qt::WA_StyledBackground);
++        auto* layout = new QVBoxLayout(this);
++        layout->setContentsMargins(0, 0, 0, 0);
++        layout->setSpacing(0);
++        auto* hint = new QLabel(QObject::tr("Show, order, and ★ where Tracks starts"), this);
++        hint->setObjectName(QStringLiteral("MixpiSourceEditHint"));
++        hint->setFixedHeight(kSourceBarHeight);
++        layout->addWidget(hint);
++        m_area = new QScrollArea(this);
++        m_area->setObjectName(QStringLiteral("MixpiSourceEditList"));
++        m_area->setFrameShape(QFrame::NoFrame);
++        m_area->setWidgetResizable(true);
++        m_area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++        m_rows = new QWidget(m_area);
++        m_rows->setObjectName(QStringLiteral("MixpiSourceEditRows"));
++        auto* rows = new QVBoxLayout(m_rows);
++        rows->setContentsMargins(0, 0, 0, 0);
++        rows->setSpacing(0);
++        rows->addStretch();
++        m_area->setWidget(m_rows);
++        layout->addWidget(m_area, 1);
++        auto* footer = new QWidget(this);
++        footer->setObjectName(QStringLiteral("MixpiSourceEditFooter"));
++        footer->setFixedHeight(kSourceRowHeight);
++        auto* footerLayout = new QHBoxLayout(footer);
++        footerLayout->setContentsMargins(8, 4, 8, 4);
++        m_start = new QPushButton(QObject::tr("Start here"), footer);
++        m_start->setObjectName(QStringLiteral("MixpiSourceStartHere"));
++        m_start->setFocusPolicy(Qt::NoFocus);
++        m_start->setFixedSize(160, 48);
++        footerLayout->addWidget(m_start);
++        footerLayout->addStretch();
++        layout->addWidget(footer);
++        m_drag = new TouchDragScroll(m_area);
++        QObject::connect(m_start, &QPushButton::clicked, this, [this] {
++            if (startChosen && !m_selected.isEmpty()) {
++                startChosen(m_selected);
++            }
++        });
++    }
++
++    // Rebuilds the rows. The selection and the scroll position stay.
++    void setSources(const QList<SourceEditEntry>& sources, const QString& start) {
++        const int scroll = m_area->verticalScrollBar()->value();
++        m_sources = sources;
++        m_startSource = start;
++        auto* rows = static_cast<QVBoxLayout*>(m_rows->layout());
++        for (auto* row : std::as_const(m_rowWidgets)) {
++            rows->removeWidget(row);
++            row->hide();
++            // Not now: the button that asked for this may be on that row.
++            row->deleteLater();
++        }
++        m_rowWidgets.clear();
++        m_switches.clear();
++        bool selectedFound = false;
++        for (int position = 0; position < sources.size(); ++position) {
++            const auto& source = sources.at(position);
++            selectedFound |= source.id == m_selected;
++            auto* row = new QWidget(m_rows);
++            row->setObjectName(QStringLiteral("MixpiSourceEditRow"));
++            row->setAttribute(Qt::WA_StyledBackground);
++            row->setFixedHeight(kSourceRowHeight);
++            auto* line = new QHBoxLayout(row);
++            line->setContentsMargins(0, 4, 8, 4);
++            line->setSpacing(6);
++            auto* name = new QPushButton(source.id == start
++                            ? source.title + QStringLiteral("  ★")
++                            : source.title,
++                    row);
++            name->setObjectName(QStringLiteral("MixpiSourceEditName"));
++            name->setCheckable(true);
++            name->setChecked(source.id == m_selected);
++            name->setMinimumHeight(48);
++            name->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
++            name->setProperty("sourceId", source.id);
++            line->addWidget(name, 1);
++            auto* up = new QPushButton(QObject::tr("Up"), row);
++            up->setObjectName(QStringLiteral("MixpiSourceEditUp"));
++            up->setFixedSize(48, 48);
++            up->setEnabled(position > 0);
++            line->addWidget(up);
++            auto* down = new QPushButton(QObject::tr("Down"), row);
++            down->setObjectName(QStringLiteral("MixpiSourceEditDown"));
++            down->setFixedSize(48, 48);
++            down->setEnabled(position + 1 < sources.size());
++            line->addWidget(down);
++            auto* toggle = new SourceSwitch(row);
++            toggle->setObjectName(QStringLiteral("MixpiSourceEditSwitch"));
++            toggle->setAccessibleName(QObject::tr("Show %1").arg(source.title));
++            toggle->setFixedSize(kSourceSwitchWidth, 48);
++            toggle->setChecked(source.visible);
++            line->addWidget(toggle);
++            for (QAbstractButton* button : {static_cast<QAbstractButton*>(name),
++                         static_cast<QAbstractButton*>(up),
++                         static_cast<QAbstractButton*>(down),
++                         static_cast<QAbstractButton*>(toggle)}) {
++                button->setFocusPolicy(Qt::NoFocus);
++                m_drag->watch(button);
++            }
++            const QString id = source.id;
++            QObject::connect(name, &QPushButton::clicked, this, [this, id] { select(id); });
++            QObject::connect(up, &QPushButton::clicked, this, [this, id] { move(id, -1); });
++            QObject::connect(down, &QPushButton::clicked, this, [this, id] { move(id, 1); });
++            QObject::connect(toggle, &QCheckBox::toggled, this, [this, id](bool on) {
++                if (visibilityChanged) {
++                    visibilityChanged(id, on);
++                }
++            });
++            rows->insertWidget(rows->count() - 1, row);
++            m_rowWidgets.append(row);
++            m_switches.append(toggle);
++        }
++        if (!selectedFound) {
++            m_selected.clear();
++        }
++        protectLastVisible(m_switches);
++        updateStart();
++        rows->activate();
++        m_rows->adjustSize();
++        m_area->verticalScrollBar()->setValue(scroll);
++    }
++
++    QString selected() const {
++        return m_selected;
++    }
++    QList<QWidget*> rows() const {
++        return m_rowWidgets;
++    }
++    QPushButton* startButton() const {
++        return m_start;
++    }
++    QScrollArea* area() const {
++        return m_area;
++    }
++
++  private:
++    void select(const QString& id) {
++        m_selected = id;
++        for (auto* row : std::as_const(m_rowWidgets)) {
++            auto* name = row->findChild<QPushButton*>(QStringLiteral("MixpiSourceEditName"));
++            name->setChecked(name->property("sourceId").toString() == id);
++        }
++        updateStart();
++    }
++
++    void move(const QString& id, int direction) {
++        QStringList order;
++        for (const auto& source : std::as_const(m_sources)) {
++            order.append(source.id);
++        }
++        const int from = order.indexOf(id);
++        const int to = from + direction;
++        if (from < 0 || to < 0 || to >= order.size()) {
++            return;
++        }
++        order.move(from, to);
++        m_selected = id;
++        if (orderChanged) {
++            orderChanged(order);
++        }
++    }
++
++    void updateStart() {
++        bool startable = false;
++        for (const auto& source : std::as_const(m_sources)) {
++            if (source.id == m_selected) {
++                startable = source.visible && source.available && source.id != m_startSource;
++            }
++        }
++        m_start->setEnabled(startable);
++    }
++
++    QScrollArea* m_area;
++    QWidget* m_rows;
++    QPushButton* m_start;
++    TouchDragScroll* m_drag;
++    QList<SourceEditEntry> m_sources;
++    QList<QWidget*> m_rowWidgets;
++    QList<QCheckBox*> m_switches;
++    QString m_selected;
++    QString m_startSource;
++};
++
++}
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -1,10 +1,13 @@
+ #pragma once
+ 
+ #include <QBasicTimer>
++#include <QList>
+ #include <QModelIndex>
+ #include <QPersistentModelIndex>
+ #include <QPoint>
++#include <QPointer>
+ #include <QTreeView>
++#include <functional>
+ 
+ #include "library/library_decl.h"
+ #include "widget/wbasewidget.h"
+@@ -12,7 +15,13 @@
+ class ControlObject;
+ class TouchSourceNavigation;
+ class LibraryFeature;
++class QLabel;
+ class QPoint;
++class QPushButton;
++class QScrollArea;
++namespace LibraryInterface {
++class TouchDragScroll;
++}
+ 
+ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     Q_OBJECT
+@@ -22,6 +31,29 @@
+     void enableTouchNavigation();
+     void returnToSourceRoot();
+ 
++    // MixPi Sources screen (touch, at least kSourceScreenMinimumWidth wide):
++    // the rail of visible sources on the left, Back and the crumb on top,
++    // the list of the shown folder on the right.
++    bool hasSourceScreen() const {
++        return m_sourceScreen;
++    }
++    // The second line of a rail tile, for a top-level row.
++    std::function<QString(const QModelIndex&)> sourceSubline;
++    // Visibility or order of the sources changed: the rail follows.
++    void sourcesChanged();
++    // The Library noticed that the last tap opened a list or a view.
++    void noteSourceShown();
++    // Sources edit: the panel takes the right part; the rail stays.
++    void setSourcesEditPanel(QWidget* pPanel);
++    bool isSourcesEditing() const {
++        return m_sourcesEditing;
++    }
++    void setSourcesEditing(bool editing);
++    QString sourceCrumb() const;
++    QList<QPushButton*> sourceTiles() const {
++        return m_sourceTiles;
++    }
++
+     void contextMenuEvent(QContextMenuEvent * event) override;
+     void dragMoveEvent(QDragMoveEvent * event) override;
+     void dragEnterEvent(QDragEnterEvent * event) override;
+@@ -53,21 +85,52 @@
+     bool event(QEvent* pEvent) override;
+     // Touch navigation: keeps the one column as wide as the list.
+     void updateGeometries() override;
++    void resizeEvent(QResizeEvent* pEvent) override;
++    void hideEvent(QHideEvent* pEvent) override;
+ 
+   private:
+     void fitTouchColumn();
+     bool isTouchDrag(QPoint position) const;
+     void focusSelectedIndex();
+     QModelIndex selectedIndex();
++    // A tap on a row (or on a rail tile): open it, and in the Sources screen
++    // close Sources when it was a list without children.
++    void activateTouchIndex(const QModelIndex& index);
++    void updateSourceScreen();
++    void layoutSourceScreen();
++    void applySourceMargins();
++    void scheduleSourceRail();
++    void rebuildSourceRail();
++    void updateSourceChrome();
++    void openSourceTile(const QPersistentModelIndex& index);
++    void closeSources();
+ 
+     TouchSourceNavigation* m_touchNavigation = nullptr;
+     ControlObject* m_sourceCanGoBack = nullptr;
++    ControlObject* m_sourcesEditingControl = nullptr;
+     // Touch mode: the row under a left press. A source opens on release over
+     // the same row only, so a press or a drag never opens one.
+     QPersistentModelIndex m_touchPressIndex;
+     // Where that press was. A press that moves the drag distance away from
+-    // it is a drag and opens nothing, wherever it is released.
++    // it is a drag and opens nothing, wherever it is released; in the
++    // Sources screen it scrolls the list.
+     QPoint m_touchPressPosition;
++    int m_touchScrollStart = 0;
++    bool m_touchDragging = false;
+     QBasicTimer m_expandTimer;
+     QModelIndex m_hoverIndex;
++
++    bool m_sourceScreen = false;
++    QFrame::Shape m_frameShape = QFrame::StyledPanel;
++    bool m_sourcesEditing = false;
++    bool m_sourceRailPending = false;
++    bool m_sourceShown = false;
++    QScrollArea* m_sourceRail = nullptr;
++    LibraryInterface::TouchDragScroll* m_sourceRailDrag = nullptr;
++    QWidget* m_sourceBar = nullptr;
++    QPushButton* m_sourceBack = nullptr;
++    QLabel* m_sourceCrumbLabel = nullptr;
++    QPointer<QWidget> m_sourcesEditPanel;
++    QList<QPushButton*> m_sourceTiles;
++    QList<QPersistentModelIndex> m_sourceTileIndexes;
+ };
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -2,12 +2,24 @@
+ 
+ #include <QApplication>
+ #include <QCoreApplication>
++#include <QHBoxLayout>
+ #include <QHeaderView>
++#include <QIcon>
++#include <QLabel>
++#include <QPushButton>
++#include <QResizeEvent>
++#include <QScrollArea>
++#include <QScrollBar>
++#include <QStyledItemDelegate>
++#include <QTimer>
+ #include <QUrl>
++#include <QVBoxLayout>
+ #include <QtDebug>
++#include <algorithm>
+ 
+ #include "control/controlobject.h"
+ #include "library/sidebarmodel.h"
++#include "widget/libraryinterface.h"
+ #include "widget/touchsourcenavigation.h"
+ #include "moc_wlibrarysidebar.cpp"
+ #include "util/defs.h"
+@@ -15,6 +27,36 @@
+ 
+ constexpr int expand_time = 250;
+ 
++namespace {
++
++// Sources screen rows are at least 56 px high, whatever the style gives.
++class SourceRowDelegate final : public QStyledItemDelegate {
++  public:
++    explicit SourceRowDelegate(WLibrarySidebar* pSidebar)
++            : QStyledItemDelegate(pSidebar),
++              m_pSidebar(pSidebar) {
++    }
++    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
++        QSize size = QStyledItemDelegate::sizeHint(option, index);
++        if (m_pSidebar->hasSourceScreen()) {
++            size.setHeight(std::max(size.height(), LibraryInterface::kSourceRowHeight));
++        }
++        return size;
++    }
++
++  private:
++    WLibrarySidebar* const m_pSidebar;
++};
++
++QLabel* tileLabel(const QString& name, QWidget* pParent) {
++    auto* pLabel = new QLabel(pParent);
++    pLabel->setObjectName(name);
++    pLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
++    return pLabel;
++}
++
++} // namespace
++
+ WLibrarySidebar::WLibrarySidebar(QWidget* parent)
+         : QTreeView(parent),
+           WBaseWidget(this) {
+@@ -58,6 +100,7 @@
+     };
+     m_touchNavigation->changed = [this](bool canGoBack) {
+         m_sourceCanGoBack->set(canGoBack ? 1 : 0);
++        updateSourceChrome();
+     };
+     sourceBack->connectValueChangeRequest(this, [this](double value) {
+         if (value > 0) {
+@@ -71,9 +114,300 @@
+     connect(this, &QObject::destroyed, QCoreApplication::instance(), [] {
+         QCoreApplication::instance()->setProperty("mixpiTouchNavigation", QVariant());
+     });
++    // The Sources screen (R-9): rows of 56 px, a rail that follows every
++    // change of the top-level rows (USB hot-plug resets the model), and a
++    // list that scrolls by drag.
++    m_sourcesEditingControl = ControlObject::getControl(
++            ConfigKey("[Library]", "sidebar_sources_editing"));
++    setItemDelegate(new SourceRowDelegate(this));
++    setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
++    auto* pModel = model();
++    connect(pModel, &QAbstractItemModel::rowsInserted, this, [this] { scheduleSourceRail(); });
++    connect(pModel, &QAbstractItemModel::rowsRemoved, this, [this] { scheduleSourceRail(); });
++    connect(pModel, &QAbstractItemModel::rowsMoved, this, [this] { scheduleSourceRail(); });
++    connect(pModel, &QAbstractItemModel::modelReset, this, [this] { scheduleSourceRail(); });
++    connect(pModel, &QAbstractItemModel::layoutChanged, this, [this] { scheduleSourceRail(); });
++    connect(pModel, &QAbstractItemModel::dataChanged, this, [this] { scheduleSourceRail(); });
+     fitTouchColumn();
++    updateSourceScreen();
++}
++
++void WLibrarySidebar::updateSourceScreen() {
++    const bool wanted = m_touchNavigation &&
++            width() >= LibraryInterface::kSourceScreenMinimumWidth;
++    if (wanted != m_sourceScreen) {
++        m_sourceScreen = wanted;
++        if (wanted && !m_sourceRail) {
++            m_sourceRail = new QScrollArea(this);
++            m_sourceRail->setObjectName("MixpiSourceRail");
++            m_sourceRail->setFrameShape(QFrame::NoFrame);
++            m_sourceRail->setWidgetResizable(true);
++            m_sourceRail->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++            auto* pTiles = new QWidget(m_sourceRail);
++            pTiles->setObjectName("MixpiSourceTiles");
++            auto* pTileLayout = new QVBoxLayout(pTiles);
++            pTileLayout->setContentsMargins(0, 0, 0, 0);
++            pTileLayout->setSpacing(0);
++            pTileLayout->addStretch();
++            m_sourceRail->setWidget(pTiles);
++            m_sourceRailDrag = new LibraryInterface::TouchDragScroll(m_sourceRail);
++            m_sourceBar = new QWidget(this);
++            m_sourceBar->setObjectName("MixpiSourceBar");
++            m_sourceBar->setAttribute(Qt::WA_StyledBackground);
++            m_sourceBack = new QPushButton(tr("Back"), m_sourceBar);
++            m_sourceBack->setObjectName("MixpiSourceBack");
++            m_sourceBack->setFocusPolicy(Qt::NoFocus);
++            m_sourceBack->setFixedSize(LibraryInterface::kSourceBackWidth,
++                    LibraryInterface::kSourceBarHeight);
++            connect(m_sourceBack, &QPushButton::clicked, this, [this] {
++                if (m_touchNavigation) {
++                    m_touchNavigation->back();
++                }
++            });
++            m_sourceCrumbLabel = new QLabel(m_sourceBar);
++            m_sourceCrumbLabel->setObjectName("MixpiSourceCrumb");
++        }
++        if (m_sourceRail) {
++            m_sourceRail->setVisible(wanted);
++            m_sourceBar->setVisible(wanted && !m_sourcesEditing);
++        }
++        if (wanted) {
++            // The rail and the bar start at the edge: no frame around them.
++            m_frameShape = frameShape();
++            setFrameShape(QFrame::NoFrame);
++            applySourceMargins();
++            rebuildSourceRail();
++        } else {
++            setFrameShape(m_frameShape);
++            // QTreeView sets its own (header) margins again.
++            setViewportMargins(0, 0, 0, 0);
++            updateGeometries();
++        }
++        // Row heights change with the screen.
++        scheduleDelayedItemsLayout();
++    }
++    layoutSourceScreen();
++}
++
++void WLibrarySidebar::layoutSourceScreen() {
++    if (m_sourceScreen && frameShape() != QFrame::NoFrame) {
++        // Polishing (a style sheet) may bring the frame back.
++        setFrameShape(QFrame::NoFrame);
++    }
++    const int frame = frameWidth();
++    const QRect inside = rect().adjusted(frame, frame, -frame, -frame);
++    if (m_sourceScreen) {
++        const int rail = LibraryInterface::kSourceRailWidth;
++        const int bar = LibraryInterface::kSourceBarHeight;
++        m_sourceRail->setGeometry(inside.x(), inside.y(), rail, inside.height());
++        m_sourceBar->setGeometry(inside.x() + rail, inside.y(), inside.width() - rail, bar);
++        m_sourceBack->move(4, 0);
++        const int crumbLeft = 4 + LibraryInterface::kSourceBackWidth + 8;
++        m_sourceCrumbLabel->setGeometry(crumbLeft, 0,
++                std::max(0, m_sourceBar->width() - crumbLeft - 8), bar);
++        m_sourceRail->raise();
++        m_sourceBar->raise();
++        updateSourceChrome();
++    }
++    if (m_sourcesEditPanel) {
++        m_sourcesEditPanel->setGeometry(m_sourceScreen
++                        ? inside.adjusted(LibraryInterface::kSourceRailWidth, 0, 0, 0)
++                        : inside);
++        if (m_sourcesEditing) {
++            m_sourcesEditPanel->raise();
++        }
++    }
++}
++
++void WLibrarySidebar::resizeEvent(QResizeEvent* pEvent) {
++    QTreeView::resizeEvent(pEvent);
++    updateSourceScreen();
++}
++
++void WLibrarySidebar::hideEvent(QHideEvent* pEvent) {
++    // Leaving Sources (its close button) ends Sources edit.
++    if (m_sourcesEditing) {
++        setSourcesEditing(false);
++    }
++    QTreeView::hideEvent(pEvent);
++}
++
++void WLibrarySidebar::sourcesChanged() {
++    scheduleSourceRail();
++}
++
++void WLibrarySidebar::noteSourceShown() {
++    m_sourceShown = true;
++}
++
++void WLibrarySidebar::scheduleSourceRail() {
++    if (!m_sourceScreen || m_sourceRailPending) {
++        return;
++    }
++    // After the model change has finished (a reset or a row move is not
++    // over while its signal runs), and once for a burst of changes.
++    m_sourceRailPending = true;
++    QTimer::singleShot(0, this, [this] { rebuildSourceRail(); });
++}
++
++void WLibrarySidebar::rebuildSourceRail() {
++    m_sourceRailPending = false;
++    if (!m_sourceScreen || !m_sourceRail || !model()) {
++        return;
++    }
++    QWidget* pTiles = m_sourceRail->widget();
++    auto* pTileLayout = static_cast<QVBoxLayout*>(pTiles->layout());
++    for (auto* pTile : std::as_const(m_sourceTiles)) {
++        pTileLayout->removeWidget(pTile);
++        pTile->hide();
++        pTile->deleteLater();
++    }
++    m_sourceTiles.clear();
++    m_sourceTileIndexes.clear();
++    // One tile per visible top-level source, in the model's (saved) order.
++    for (int row = 0; row < model()->rowCount(); ++row) {
++        if (isRowHidden(row, QModelIndex())) {
++            continue;
++        }
++        const QPersistentModelIndex index(model()->index(row, 0));
++        auto* pTile = new QPushButton(pTiles);
++        pTile->setObjectName("MixpiSourceTile");
++        pTile->setCheckable(true);
++        pTile->setFocusPolicy(Qt::NoFocus);
++        pTile->setFixedHeight(LibraryInterface::kSourceTileHeight);
++        pTile->setAccessibleName(index.data().toString());
++        auto* pLine = new QHBoxLayout(pTile);
++        pLine->setContentsMargins(12, 6, 8, 6);
++        pLine->setSpacing(10);
++        auto* pIcon = tileLabel("MixpiSourceTileIcon", pTile);
++        pIcon->setFixedSize(26, 26);
++        pIcon->setPixmap(index.data(Qt::DecorationRole).value<QIcon>().pixmap(26, 26));
++        pLine->addWidget(pIcon);
++        auto* pText = new QVBoxLayout;
++        pText->setSpacing(2);
++        auto* pName = tileLabel("MixpiSourceTileName", pTile);
++        pName->setText(index.data().toString());
++        pText->addWidget(pName);
++        auto* pSub = tileLabel("MixpiSourceTileSub", pTile);
++        pSub->setText(sourceSubline ? sourceSubline(index) : QString());
++        pText->addWidget(pSub);
++        pLine->addLayout(pText, 1);
++        connect(pTile, &QPushButton::clicked, this, [this, index] { openSourceTile(index); });
++        m_sourceRailDrag->watch(pTile);
++        pTileLayout->insertWidget(pTileLayout->count() - 1, pTile);
++        m_sourceTiles.append(pTile);
++        m_sourceTileIndexes.append(index);
++    }
++    updateSourceChrome();
+ }
+ 
++QString WLibrarySidebar::sourceCrumb() const {
++    QStringList parts;
++    for (QModelIndex index = rootIndex(); index.isValid(); index = index.parent()) {
++        parts.prepend(index.data().toString());
++    }
++    return parts.isEmpty() ? tr("All sources") : parts.join(QStringLiteral(" \u203A "));
++}
++
++void WLibrarySidebar::updateSourceChrome() {
++    if (!m_sourceScreen || !m_touchNavigation) {
++        return;
++    }
++    m_sourceBack->setEnabled(m_touchNavigation->canGoBack());
++    const QString crumb = sourceCrumb();
++    m_sourceCrumbLabel->setToolTip(crumb);
++    // The end of the path matters most: elide at the left.
++    m_sourceCrumbLabel->setText(m_sourceCrumbLabel->fontMetrics().elidedText(
++            crumb, Qt::ElideLeft, m_sourceCrumbLabel->width()));
++    QModelIndex top = rootIndex();
++    if (!top.isValid()) {
++        top = currentIndex();
++    }
++    while (top.parent().isValid()) {
++        top = top.parent();
++    }
++    for (int tile = 0; tile < m_sourceTiles.size(); ++tile) {
++        m_sourceTiles.at(tile)->setChecked(top.isValid() && m_sourceTileIndexes.at(tile) == top);
++    }
++}
++
++void WLibrarySidebar::openSourceTile(const QPersistentModelIndex& index) {
++    if (!m_touchNavigation || m_sourcesEditing || !index.isValid() ||
++            index.model() != model() || index.parent().isValid() ||
++            isRowHidden(index.row(), QModelIndex())) {
++        return;
++    }
++    // That source's top level on the right: home, then enter it.
++    m_touchNavigation->home();
++    selectionModel()->setCurrentIndex(index,
++            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
++    activateTouchIndex(index);
++}
++
++void WLibrarySidebar::activateTouchIndex(const QModelIndex& tapped) {
++    const QPersistentModelIndex index(tapped);
++    m_sourceShown = false;
++    // The same signal a mouse click emits: SidebarModel::clicked() opens the
++    // source at once and TouchSourceNavigation enters it.
++    emit clicked(index);
++    // A list without children (a playlist, a crate, a folder of tracks) is
++    // now in Tracks: close Sources. A row whose children still load (a
++    // rekordbox drive) showed nothing yet and stays open.
++    if (m_sourceScreen && m_sourceShown && index.isValid() && rootIndex() != index &&
++            model()->rowCount(index) == 0) {
++        closeSources();
++    }
++    m_sourceShown = false;
++    updateSourceChrome();
++}
++
++void WLibrarySidebar::closeSources() {
++    // The skin's controls: the sidebar-visible control and [MixPi],screen
++    // (0 none, 1 Sources, ...). A skin without them has nothing to close.
++    for (const auto& key : {ConfigKey("[Sidebar]", "sidebar_visible"),
++                 ConfigKey("[MixPi]", "screen")}) {
++        if (auto* pControl = ControlObject::getControl(key, ControlFlag::NoWarnIfMissing)) {
++            pControl->set(0);
++        }
++    }
++}
++
++void WLibrarySidebar::setSourcesEditPanel(QWidget* pPanel) {
++    if (m_sourcesEditPanel == pPanel) {
++        return;
++    }
++    if (m_sourcesEditPanel) {
++        m_sourcesEditPanel->hide();
++    }
++    m_sourcesEditPanel = pPanel;
++    if (pPanel) {
++        pPanel->setParent(this);
++        pPanel->setVisible(m_sourcesEditing);
++    } else {
++        m_sourcesEditing = false;
++    }
++    layoutSourceScreen();
++}
++
++void WLibrarySidebar::setSourcesEditing(bool editing) {
++    editing = editing && m_sourcesEditPanel;
++    m_sourcesEditing = editing;
++    if (m_sourcesEditPanel) {
++        m_sourcesEditPanel->setVisible(editing);
++    }
++    if (m_sourceBar) {
++        m_sourceBar->setVisible(m_sourceScreen && !editing);
++    }
++    if (m_sourcesEditingControl) {
++        m_sourcesEditingControl->set(editing ? 1 : 0);
++    }
++    layoutSourceScreen();
++    if (!editing) {
++        // The rail shows the new order and visibility.
++        rebuildSourceRail();
++    }
++}
++
+ void WLibrarySidebar::fitTouchColumn() {
+     if (m_touchNavigation && header()->count() > 0 &&
+             header()->sectionSize(0) != viewport()->width()) {
+@@ -83,7 +417,18 @@
+ 
+ void WLibrarySidebar::updateGeometries() {
+     QTreeView::updateGeometries();
++    // QTreeView sets the viewport margins for its header on every layout;
++    // the Sources screen keeps the rail and the bar beside the list.
++    applySourceMargins();
+     fitTouchColumn();
++}
++
++void WLibrarySidebar::applySourceMargins() {
++    const QMargins margins(LibraryInterface::kSourceRailWidth,
++            LibraryInterface::kSourceBarHeight, 0, 0);
++    if (m_sourceScreen && viewportMargins() != margins) {
++        setViewportMargins(margins);
++    }
+ }
+ 
+ void WLibrarySidebar::returnToSourceRoot() {
+@@ -422,6 +767,8 @@
+         m_touchPressPosition = event->pos();
+ #endif
+         m_touchPressIndex = indexAt(m_touchPressPosition);
++        m_touchScrollStart = verticalScrollBar()->value();
++        m_touchDragging = false;
+         event->accept();
+         return;
+     }
+@@ -441,7 +788,13 @@
+ #endif
+         if (isTouchDrag(position)) {
+             m_touchPressIndex = QPersistentModelIndex();
++            m_touchDragging = true;
+         }
++        if (m_touchDragging && m_sourceScreen) {
++            // The Sources screen list follows the finger.
++            verticalScrollBar()->setValue(
++                    m_touchScrollStart - (position.y() - m_touchPressPosition.y()));
++        }
+         event->accept();
+         return;
+     }
+@@ -461,6 +814,7 @@
+ #endif
+     const QPersistentModelIndex pressed = m_touchPressIndex;
+     m_touchPressIndex = QPersistentModelIndex();
++    m_touchDragging = false;
+ #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+     const bool dragged = isTouchDrag(event->position().toPoint());
+ #else
+@@ -474,9 +828,7 @@
+     }
+     selectionModel()->setCurrentIndex(index,
+             QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+-    // The same signal a mouse click emits: SidebarModel::clicked() opens the
+-    // source at once and TouchSourceNavigation enters it.
+-    emit clicked(index);
++    activateTouchIndex(index);
+ }
+ 
+ bool WLibrarySidebar::isTouchDrag(QPoint position) const {
+@@ -521,6 +873,7 @@
+     setSelectionModel(pModel);
+     setCurrentIndex(index);
+     scrollTo(index);
++    updateSourceChrome();
+ }
+ 
+ /// Selects a child index from a feature and ensures visibility
+@@ -554,6 +907,7 @@
+         parentIndex = parentIndex.parent();
+     }
+     scrollTo(translated, EnsureVisible);
++    updateSourceChrome();
+ }
+ 
+ QModelIndex WLibrarySidebar::selectedIndex() {

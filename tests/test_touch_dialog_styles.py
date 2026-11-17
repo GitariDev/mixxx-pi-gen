@@ -73,6 +73,23 @@ class TouchDialogStyleTests(unittest.TestCase):
             if selector.startswith('#MixpiColumnArrangement'):
                 self.assertNotRegex(selector, r'\bQ(Widget|ScrollBar|AbstractScrollArea)\b')
 
+    def test_sources_screen_rules_are_dark_with_readable_text(self):
+        # R-9, R-10: the rail, the bar and Sources edit. Sizes are set in the
+        # patch; the style gives colours and text of 13 px or more.
+        sources = {selector: rule for selector, rule in self.rules.items()
+                   if selector.startswith('#MixpiSource')}
+        for selector in ('#MixpiSourceRail', '#MixpiSourceBar', '#MixpiSourceEdit',
+                         '#MixpiSourceEdit #MixpiSourceEditRow',
+                         '#MixpiSourceRail QPushButton#MixpiSourceTile'):
+            self.assertTrue(dark(self.rule(selector)['background-color']), selector)
+        sized = [selector for selector, rule in sources.items() if 'font-size' in rule]
+        self.assertGreaterEqual(len(sized), 8)
+        for selector in sized:
+            self.assertGreaterEqual(pixels(sources[selector]['font-size'])[0], 13, selector)
+        switch = self.rule('#MixpiSourceEditSwitch::indicator')
+        self.assertEqual((switch['width'], switch['height']), ('56px', '32px'))
+        self.assertIn('#MixpiSourceEditSwitch::indicator:checked', self.rules)
+
     def test_skin_patch_installs_the_style_block(self):
         styled = PATCH.patch_styles('#LibraryWrapper QTableView { color: #fff; }\n')
         block = styled[styled.index(PATCH.STYLE_BEGIN):styled.index(PATCH.STYLE_END)]

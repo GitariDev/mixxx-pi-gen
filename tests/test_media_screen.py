@@ -108,5 +108,69 @@ class MediaScreenFixesNativeTests(unittest.TestCase):
             self.assertIn('PASS style: the page resolves the #MixpiPage background', result.stdout)
 
 
+LISTS = runner.PATCH_DIR / runner.LISTS
+
+
+class MediaListsPatchTests(unittest.TestCase):
+    """Council round 1, blocker 3: lists that stay put, scroll and fit."""
+
+    def test_lists_touch_only_n3_files(self):
+        files = re.findall(r'^diff --git a/(\S+) ', LISTS.read_text(), re.MULTILINE)
+        self.assertEqual(sorted(files), ['src/library/mixpimedia.h', 'src/library/mixpimediapage.h'])
+
+    def test_from_usb_control_is_read_only_and_follows_load_unload_eject(self):
+        added = '\n'.join(line[1:] for line in LISTS.read_text().splitlines()
+                          if line.startswith('+') and not line.startswith('+++'))
+        self.assertIn('ConfigKey(group, QStringLiteral("mixpi_from_usb"))', added)
+        self.assertIn('{QStringLiteral("[Channel1]"), QStringLiteral("[Channel2]")}', added)
+        self.assertIn('fromUsb->setReadOnly();', added)
+        # refreshHandover() runs on trackChanged (load/unload), on refresh and
+        # after the eject (ejectFinished -> refresh); it updates the control.
+        self.assertIn('        updateFromUsb();\n    }', added)
+        self.assertIn('onPi.contains(it.key())', added)
+
+    def test_unchanged_refresh_returns_before_any_rebuild(self):
+        added = '\n'.join(line[1:] for line in LISTS.read_text().splitlines()
+                          if line.startswith('+') and not line.startswith('+++'))
+        self.assertIn('mixpi_media::signature(drives) == mixpi_media::signature(m_drives)', added)
+        self.assertIn('qAbs(moved) < QApplication::startDragDistance()', added)
+        self.assertIn('button->setDown(false);', added)
+        for area in ('mixpi_media::touchScroll(m_left)', 'mixpi_media::touchScroll(m_rightScroll)',
+                     'mixpi_media::touchScroll(m_sheetScroll)'):
+            self.assertIn(area, added)
+
+    def test_scroll_bars_are_24px_on_the_page(self):
+        style = (runner.PATCH_DIR / 'pioneered-menus.qss').read_text()
+        rule = style.split('#MixpiPage QScrollBar:vertical {', 1)[1].split('}', 1)[0]
+        self.assertIn('width: 24px;', rule)
+
+    def test_access_wording_is_accurate(self):
+        lines = LISTS.read_text().splitlines()
+        added = [line for line in lines if line.startswith('+')]
+        removed = [line for line in lines if line.startswith('-')]
+        self.assertTrue(any('The library opens only when you choose LOAD or OPEN.' in line for line in added))
+        for claim in ('Nothing is read until', 'Mixxx reads it only', 'Mixxx has not read it'):
+            self.assertFalse(any(claim in line for line in added), claim)
+            self.assertTrue(any(claim in line for line in removed), claim)
+
+
+@unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+class MediaListsNativeTests(unittest.TestCase):
+    def test_lists_at_both_heights(self):
+        with tempfile.TemporaryDirectory(prefix='mixpi-media-lists-') as temporary:
+            binary = runner.build_lists(Path(temporary))
+            result = runner.run(binary)
+            print(result.stdout, result.stderr, flush=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(' 0 failures', result.stdout)
+            for height in ('480', '444'):
+                for name in ('handover: the tenth entry is reachable',
+                             'eject sheet: CANCEL and EJECT stay on screen with ten users',
+                             'refresh: unchanged drives keep the same widgets',
+                             'refresh: unchanged drives keep the scroll position',
+                             'touch: a drag over OPEN does not tap it'):
+                    self.assertIn(f'PASS {name} (800x{height})', result.stdout)
+
+
 if __name__ == '__main__':
     unittest.main()

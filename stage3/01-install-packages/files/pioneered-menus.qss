@@ -240,6 +240,29 @@ QMenu QCheckBox::indicator:checked {
     background-color: #121821;
     border-left: 1px solid #2b3646;
 }
+/* The handover column and the eject sheet's list scroll (council round 1). */
+#MixpiMediaHandoverScroll { background-color: #121821; border: 0px; }
+#MixpiEjectUsers, #MixpiEjectUserList { background-color: #121821; border: 0px; }
+/* 24 px scroll bars on every Media page list, as in the library (R-9). */
+#MixpiPage QScrollBar {
+    background-color: #121821;
+    border: 0px;
+    margin: 0px;
+}
+#MixpiPage QScrollBar:vertical {
+    width: 24px;
+    border-left: 1px solid #2b3646;
+}
+#MixpiPage QScrollBar:horizontal { height: 24px; }
+#MixpiPage QScrollBar::handle {
+    background-color: #5d6b80;
+    border: 5px solid #121821;
+    border-radius: 8px;
+}
+#MixpiPage QScrollBar::handle:vertical { min-height: 56px; }
+#MixpiPage QScrollBar::handle:pressed { background-color: #b5e15c; }
+#MixpiPage QScrollBar::add-line, #MixpiPage QScrollBar::sub-line { height: 0px; width: 0px; }
+#MixpiPage QScrollBar::add-page, #MixpiPage QScrollBar::sub-page { background-color: #121821; }
 #MixpiPage QFrame#MixpiMediaCard {
     background-color: #121821;
     border: 1px solid #2b3646;

@@ -1,0 +1,400 @@
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+index 3f11815..670fab4 100644
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -70,6 +70,13 @@ class MixpiMedia final : public QObject {
+             onPi->setReadOnly();
+             m_onPi.insert(group, onPi);
+         }
++        // [Channel1..2],mixpi_from_usb: the deck plays a track from a drive
++        // (the skin's USB chip on the deck row).
++        for (const auto& group : {QStringLiteral("[Channel1]"), QStringLiteral("[Channel2]")}) {
++            auto* fromUsb = new ControlObject(ConfigKey(group, QStringLiteral("mixpi_from_usb")));
++            fromUsb->setReadOnly();
++            m_fromUsb.insert(group, fromUsb);
++        }
+         m_handover = std::make_unique<MixpiHandover>([this](const QString& group, double value) {
+             if (auto* onPi = m_onPi.value(group)) {
+                 onPi->setAndConfirm(value);
+@@ -125,6 +132,7 @@ class MixpiMedia final : public QObject {
+         delete m_strip.data();
+         m_drains.clear();
+         qDeleteAll(m_onPi);
++        qDeleteAll(m_fromUsb);
+     }
+ 
+     static QString helper() {
+@@ -769,6 +777,31 @@ class MixpiMedia final : public QObject {
+         if (m_page && m_handover) {
+             m_page->setHandover(m_handover->items(), m_handover->cleaned());
+         }
++        updateFromUsb();
++    }
++
++    // Load, unload (trackChanged), eject and the 2 s refresh all land here.
++    void updateFromUsb() {
++        QStringList paths;
++        for (const auto& drive : m_snapshot.value("drives").toArray()) {
++            for (const auto& volume : drive.toObject().value("volumes").toArray()) {
++                paths.append(volume.toObject().value("mount").toObject().value("path").toString());
++            }
++        }
++        QSet<QString> onPi;
++        if (m_handover) {
++            for (const auto& item : m_handover->items()) {
++                onPi.insert(item.group);
++            }
++        }
++        for (auto it = m_fromUsb.constBegin(); it != m_fromUsb.constEnd(); ++it) {
++            const auto track = PlayerInfo::instance().getTrackInfo(it.key());
++            const bool value = mixpi_media::fromUsb(track ? track->getLocation() : QString(), paths,
++                    onPi.contains(it.key()));
++            if (it.value()->get() != (value ? 1 : 0)) {
++                it.value()->setAndConfirm(value ? 1 : 0);
++            }
++        }
+     }
+ 
+     QJsonObject findVolume(const QString& token) const {
+@@ -869,6 +902,7 @@ class MixpiMedia final : public QObject {
+     QList<MixpiMediaUser> m_ejectUsers;
+     QScopedPointer<ControlObject> m_ejectAvailable;
+     QHash<QString, ControlObject*> m_onPi;
++    QHash<QString, ControlObject*> m_fromUsb;
+     mutable QHash<QString, bool> m_rekordbox; // volume key -> rekordbox export found
+     std::unique_ptr<MixpiHandover> m_handover;
+     MixpiEjectEngine* m_engine = nullptr;
+diff --git a/src/library/mixpimediapage.h b/src/library/mixpimediapage.h
+index 20a6130..0d3c9fe 100644
+--- a/src/library/mixpimediapage.h
++++ b/src/library/mixpimediapage.h
+@@ -13,6 +13,10 @@
+ #include <QPointer>
+ #include <QPushButton>
+ #include <QScrollArea>
++#include <QScrollBar>
++#include <QAbstractButton>
++#include <QApplication>
++#include <QMouseEvent>
+ #include <QStyle>
+ #include <QTimer>
+ #include <QVBoxLayout>
+@@ -106,6 +110,22 @@ inline QString fateText(MixpiUserFate value) {
+     return {};
+ }
+ 
++// [ChannelN],mixpi_from_usb (council round 1): 1 while the deck's track lives
++// on a mounted removable drive and is not yet ON PI; 0 for Pi tracks, for an
++// empty deck, and once the eject has marked it ON PI.
++inline bool fromUsb(const QString& location, const QStringList& drivePaths, bool onPi) {
++    if (onPi || location.isEmpty()) {
++        return false;
++    }
++    for (const auto& path : drivePaths) {
++        if (!path.isEmpty() &&
++                location.startsWith(path.endsWith(QLatin1Char('/')) ? path : QString(path + QLatin1Char('/')))) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ inline bool blocksEject(const MixpiMediaDrive& drive) {
+     for (const auto& user : drive.users) {
+         if (fate(user) == MixpiUserFate::StopFirst) {
+@@ -255,6 +275,115 @@ inline QPushButton* button(const QString& text, const QString& name, QWidget* pa
+     return result;
+ }
+ 
++// Council round 1, blocker 3: every scrolling list on the Media page has a
++// 24 px scroll bar (pioneered-menus.qss) and scrolls by a finger drag.
++// A press goes to the widget under the finger as usual. Once the finger has
++// moved the platform drag distance (QApplication::startDragDistance(), as the
++// Sources list uses for C-1), the press becomes a drag: the button is let go,
++// the list follows the finger, and neither the moves nor the release reach
++// the button, so a drag never taps it (C-1), even if it ends on the button.
++class MixpiDragScroll : public QObject {
++  public:
++    explicit MixpiDragScroll(QScrollArea* area)
++            : QObject(area), m_area(area) {
++        QCoreApplication::instance()->installEventFilter(this);
++    }
++
++  protected:
++    bool eventFilter(QObject* watched, QEvent* event) override {
++        const auto type = event->type();
++        // A quick second touch arrives as a double click: it starts a drag too.
++        const bool press = type == QEvent::MouseButtonPress || type == QEvent::MouseButtonDblClick;
++        if (!press && type != QEvent::MouseMove && type != QEvent::MouseButtonRelease) {
++            return false;
++        }
++        auto* widget = qobject_cast<QWidget*>(watched);
++        auto* viewport = m_area->viewport();
++        if (!widget || !(widget == viewport || viewport->isAncestorOf(widget))) {
++            return false;
++        }
++        const auto* mouse = static_cast<QMouseEvent*>(event);
++        const QPoint global = mouse->globalPosition().toPoint();
++        auto* bar = m_area->verticalScrollBar();
++        if (press) {
++            if (mouse->button() == Qt::LeftButton && !m_pressed) {
++                m_pressed = true;
++                m_dragging = false;
++                m_start = global;
++                m_value = bar->value();
++                m_target = widget;
++            }
++            return false;
++        }
++        if (type == QEvent::MouseMove) {
++            if (!m_pressed || !(mouse->buttons() & Qt::LeftButton)) {
++                return false;
++            }
++            const int moved = global.y() - m_start.y();
++            if (!m_dragging && qAbs(moved) < QApplication::startDragDistance()) {
++                return false;
++            }
++            if (!m_dragging) {
++                m_dragging = true;
++                if (auto* button = qobject_cast<QAbstractButton*>(m_target.data())) {
++                    button->setDown(false);
++                }
++            }
++            bar->setValue(m_value - moved);
++            return true;
++        }
++        if (mouse->button() != Qt::LeftButton) {
++            return false;
++        }
++        const bool dragged = m_dragging;
++        m_pressed = false;
++        m_dragging = false;
++        if (dragged) {
++            if (auto* button = qobject_cast<QAbstractButton*>(m_target.data())) {
++                button->setDown(false);
++            }
++            return true;
++        }
++        return false;
++    }
++
++  private:
++    QScrollArea* m_area;
++    QPointer<QWidget> m_target;
++    QPoint m_start;
++    int m_value = 0;
++    bool m_pressed = false;
++    bool m_dragging = false;
++};
++
++inline void touchScroll(QScrollArea* area) {
++    area->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
++    area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    area->setFocusPolicy(Qt::NoFocus);
++    area->verticalScrollBar()->setFocusPolicy(Qt::NoFocus);
++    auto* drag = new MixpiDragScroll(area);
++    drag->setObjectName(QStringLiteral("MixpiDragScroll"));
++}
++
++// What the drive list shows: a refresh that changes none of it changes no widget.
++inline QString signature(const QList<MixpiMediaDrive>& drives) {
++    QStringList parts;
++    for (const auto& drive : drives) {
++        parts.append(drive.identity + '|' + drive.name + '|' + QString::number(drive.size) + '|' +
++                QString::number(drive.rekordbox) + QString::number(drive.opened) + QString::number(drive.busy) +
++                '|' + QString::number(static_cast<int>(drive.state)));
++        for (const auto& volume : drive.volumes) {
++            parts.append(QStringLiteral("v|") + volume.token + '|' + volume.label + '|' + volume.path + '|' +
++                    QString::number(volume.opened));
++        }
++        for (const auto& user : drive.users) {
++            parts.append(QStringLiteral("u|") + user.group + '|' + user.title + '|' + QString::number(user.playing) +
++                    QString::number(user.onCopy));
++        }
++    }
++    return parts.join(QLatin1Char('\n'));
++}
++
+ } // namespace mixpi_media
+ 
+ // A 56 px strip over the bottom (transport) row of the main window: the
+@@ -446,11 +575,19 @@ class MixpiMediaPage : public MixpiPage {
+         m_left->setFrameShape(QFrame::NoFrame);
+         m_left->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+         m_left->setFocusPolicy(Qt::NoFocus);
++        mixpi_media::touchScroll(m_left);
+         columns->addWidget(m_left);
+-        m_right = new QFrame(content());
++        // The handover column scrolls: two decks and eight pads do not fit.
++        m_rightScroll = new QScrollArea(content());
++        m_rightScroll->setObjectName(QStringLiteral("MixpiMediaHandoverScroll"));
++        m_rightScroll->setWidgetResizable(true);
++        m_rightScroll->setFrameShape(QFrame::NoFrame);
++        mixpi_media::touchScroll(m_rightScroll);
++        m_right = new QFrame;
+         m_right->setObjectName(QStringLiteral("MixpiMediaHandover"));
+         m_right->setAttribute(Qt::WA_StyledBackground);
+-        columns->addWidget(m_right, 1);
++        m_rightScroll->setWidget(m_right);
++        columns->addWidget(m_rightScroll, 1);
+         auto* right = new QVBoxLayout(m_right);
+         right->setContentsMargins(12, 14, 12, 12);
+         right->setSpacing(6);
+@@ -481,6 +618,9 @@ class MixpiMediaPage : public MixpiPage {
+     std::function<void()> ejectCancelRequested;                              // steps CANCEL
+ 
+     void setDrives(const QList<MixpiMediaDrive>& drives, const QString& problem = {}) {
++        if (problem == m_problem && mixpi_media::signature(drives) == mixpi_media::signature(m_drives)) {
++            return; // the 2 s refresh: same drives, same states, same widgets
++        }
+         m_drives = drives;
+         m_problem = problem;
+         rebuild();
+@@ -502,12 +642,22 @@ class MixpiMediaPage : public MixpiPage {
+     }
+ 
+     void setOpening(const QString& identity, const QString& message) {
++        if (identity == m_openingIdentity && message == m_openingMessage) {
++            return;
++        }
+         m_openingIdentity = identity;
+         m_openingMessage = message;
+         rebuild();
+     }
+ 
+     void setHandover(const QList<MixpiHandoverItem>& onPi, const QStringList& cleaned) {
++        bool same = cleaned == m_cleaned && onPi.size() == m_onPi.size();
++        for (int index = 0; same && index < onPi.size(); ++index) {
++            same = onPi[index].group == m_onPi[index].group && onPi[index].title == m_onPi[index].title;
++        }
++        if (same) {
++            return;
++        }
+         m_onPi = onPi;
+         m_cleaned = cleaned;
+         rebuildHandover();
+@@ -573,6 +723,8 @@ class MixpiMediaPage : public MixpiPage {
+     }
+ 
+     void rebuild() {
++        // A real change rebuilds the cards; the list stays where it was.
++        const int position = m_left->verticalScrollBar()->value();
+         auto* holder = new QWidget;
+         holder->setObjectName(QStringLiteral("MixpiMediaDriveList"));
+         auto* layout = new QVBoxLayout(holder);
+@@ -590,7 +742,7 @@ class MixpiMediaPage : public MixpiPage {
+             column->addWidget(mixpi_media::label(QStringLiteral("No USB drive"), QStringLiteral("MixpiMediaName"), card));
+             column->addWidget(mixpi_media::label(
+                     QStringLiteral("Plug in a drive. A small strip at the bottom asks whether to load it. "
+-                                   "Nothing is read until you load or open it."),
++                                   "The library opens only when you choose LOAD or OPEN."),
+                     QStringLiteral("MixpiMediaDetail"), card, true));
+             layout->addWidget(card);
+         }
+@@ -599,13 +751,27 @@ class MixpiMediaPage : public MixpiPage {
+         }
+         if (!m_drives.isEmpty()) {
+             layout->addWidget(mixpi_media::label(
+-                    QStringLiteral("The drive mounted by itself. Mixxx reads it only after LOAD on the plug-in strip, "
++                    QStringLiteral("The drive mounted by itself. Its library opens only after LOAD on the plug-in strip, "
+                                    "OPEN here, or a pick in Sources. EJECT keeps every track or sample in use "
+                                    "playing from its copy in Pi memory, then unmounts the drive."),
+                     QStringLiteral("MixpiMediaNote"), holder, true));
+         }
+         layout->addStretch(1);
+         m_left->setWidget(holder); // deletes the old list
++        restoreScroll(m_left, position);
++    }
++
++    static void restoreScroll(QScrollArea* area, int position) {
++        if (auto* widget = area->widget()) {
++            widget->adjustSize();
++        }
++        area->verticalScrollBar()->setValue(position);
++        const QPointer<QScrollArea> guard(area);
++        QTimer::singleShot(0, area, [guard, position] {
++            if (guard) {
++                guard->verticalScrollBar()->setValue(position);
++            }
++        });
+     }
+ 
+     QFrame* card(const MixpiMediaDrive& drive, QWidget* parent) {
+@@ -688,7 +854,7 @@ class MixpiMediaPage : public MixpiPage {
+             column->addWidget(label(drive.volumes.isEmpty()
+                             ? QStringLiteral("Not mounted. Unplug the drive and plug it in again to use it.")
+                             : drive.opened ? QStringLiteral("Open in Sources. Nothing on the decks or pads comes from it.")
+-                                           : QStringLiteral("Not open yet. Mixxx has not read it."),
++                                           : QStringLiteral("Not open yet. Its library is closed."),
+                     QStringLiteral("MixpiMediaUse"), card, true));
+         }
+         if (m_openingIdentity == drive.identity && !m_openingMessage.isEmpty()) {
+@@ -706,6 +872,14 @@ class MixpiMediaPage : public MixpiPage {
+     }
+ 
+     void rebuildHandover() {
++        const int position = m_rightScroll ? m_rightScroll->verticalScrollBar()->value() : 0;
++        rebuildHandoverRows();
++        if (m_rightScroll) {
++            restoreScroll(m_rightScroll, position);
++        }
++    }
++
++    void rebuildHandoverRows() {
+         for (auto* layout : {m_handoverRows, m_cleanedRows}) {
+             while (auto* item = layout->takeAt(0)) {
+                 delete item->widget();
+@@ -728,6 +902,10 @@ class MixpiMediaPage : public MixpiPage {
+             line->addWidget(mixpi_media::label(mixpi_media::playerName(item.group).toUpper(),
+                     QStringLiteral("MixpiMediaPlayer"), row));
+             auto* title = mixpi_media::label(mixpi_media::shortTitle(item.title), QStringLiteral("MixpiMediaOnPiTitle"), row);
++            // The title gives way so the row fits the column beside its 24 px
++            // scroll bar; the whole title is its tooltip.
++            title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
++            title->setToolTip(item.title);
+             line->addWidget(title, 1);
+             line->addWidget(mixpi_media::label(QStringLiteral("ON PI"), QStringLiteral("MixpiOnPiChip"), row));
+             m_handoverRows->addWidget(row);
+@@ -755,10 +933,19 @@ class MixpiMediaPage : public MixpiPage {
+         m_sheetHint = mixpi_media::label({}, QStringLiteral("MixpiEjectHint"), m_sheet, true);
+         column->addWidget(m_sheetTitle);
+         column->addWidget(m_sheetHint);
+-        m_sheetRows = new QVBoxLayout;
++        // The list of users scrolls inside the sheet; CANCEL and EJECT stay.
++        m_sheetScroll = new QScrollArea(m_sheet);
++        m_sheetScroll->setObjectName(QStringLiteral("MixpiEjectUsers"));
++        m_sheetScroll->setWidgetResizable(true);
++        m_sheetScroll->setFrameShape(QFrame::NoFrame);
++        mixpi_media::touchScroll(m_sheetScroll);
++        auto* users = new QWidget;
++        users->setObjectName(QStringLiteral("MixpiEjectUserList"));
++        m_sheetRows = new QVBoxLayout(users);
++        m_sheetRows->setContentsMargins(0, 0, 0, 0);
+         m_sheetRows->setSpacing(4);
+-        column->addLayout(m_sheetRows);
+-        column->addStretch(1);
++        m_sheetScroll->setWidget(users);
++        column->addWidget(m_sheetScroll, 1);
+         auto* actions = new QHBoxLayout;
+         actions->setSpacing(8);
+         actions->addStretch(1);
+@@ -795,7 +982,9 @@ class MixpiMediaPage : public MixpiPage {
+         // 580 px wide at x 110, as the prototype: CANCEL near (392, 308) and
+         // EJECT near (570, 308) on the 800x480 screen.
+         const int width = qMin(580, qMax(0, content()->width() - 20));
+-        m_sheet->setGeometry((content()->width() - width) / 2, 16, width, 280);
++        // Within the content at 800x444 too (348 px): the buttons stay on screen.
++        const int height = qMin(280, qMax(0, content()->height() - 32));
++        m_sheet->setGeometry((content()->width() - width) / 2, 16, width, height);
+     }
+ 
+     void clearSheetRows() {
+@@ -888,6 +1077,8 @@ class MixpiMediaPage : public MixpiPage {
+     QList<MixpiHandoverItem> m_onPi;
+     QStringList m_cleaned;
+     QScrollArea* m_left;
++    QScrollArea* m_rightScroll = nullptr;
++    QScrollArea* m_sheetScroll = nullptr;
+     QFrame* m_right;
+     QVBoxLayout* m_handoverRows;
+     QLabel* m_cleanedHeading;

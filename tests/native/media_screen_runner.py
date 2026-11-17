@@ -18,6 +18,8 @@ SCREEN = 'mixxx-media-screen.patch'
 HANDOVER = 'mixxx-media-handover.patch'
 # Acceptance B repairs (skin root parent, deferred open), after the source groups.
 FIXES = 'mixxx-media-screen-fixes.patch'
+# Council round 1: scrolling lists, no rebuild on an unchanged refresh.
+LISTS = 'mixxx-media-lists.patch'
 QSS = ':'.join(str(PATCH_DIR / name) for name in
                ('pioneered-menus.qss', 'pioneered-touch.qss', 'mixpi-performance.qss'))
 
@@ -29,7 +31,7 @@ def touched(name):
 
 def patched_tree(target, upto=SCREEN):
     """Reconstruct the stack without the N3 patches, then apply them in order."""
-    order = [SCREEN, HANDOVER, FIXES]
+    order = [SCREEN, HANDOVER, FIXES, LISTS]
     ours = order[:order.index(upto) + 1]
     names, _ = reconstruct(target, exclude=tuple(order))
     for name in ours:
@@ -69,6 +71,18 @@ def build_fixes(target):
     command = ['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-I' + str(target / 'src'),
                str(ROOT / 'tests/native/media_screen_fixes_test.cpp'), '-o', str(binary),
                *qt_flags(('QtCore', 'QtGui', 'QtWidgets'))]
+    print('COMPILE', repr(command), flush=True)
+    subprocess.run(command, check=True, timeout=300)
+    return binary
+
+
+def build_lists(target):
+    """The council round 1 list repairs: the whole N3 stack, with QtTest for touch drags."""
+    patched_tree(target, LISTS)
+    binary = target / 'media-screen-lists-test'
+    command = ['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-I' + str(target / 'src'),
+               str(ROOT / 'tests/native/media_screen_lists_test.cpp'), '-o', str(binary),
+               *qt_flags(('QtCore', 'QtGui', 'QtWidgets', 'QtTest'))]
     print('COMPILE', repr(command), flush=True)
     subprocess.run(command, check=True, timeout=300)
     return binary

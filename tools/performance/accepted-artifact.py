@@ -178,6 +178,7 @@ def configuration():
     require(found == CONFIG, 'partial or unknown artifact configuration')
     require(os.environ['MIXPI_ARTIFACT_MODE'] == MODE, 'unknown artifact mode')
     require(os.environ.get('MIXPI_CONTROLLED_MEDIA') == '0', 'artifact mode requires explicit controlled profile OFF')
+    require(os.environ.get('MIXPI_MEDIA_EJECT', '0') == '0', 'artifact mode requires media eject OFF')
     require(os.environ.get('ARCH') == 'arm64', 'artifact image requires ARCH=arm64')
     directory = Path(os.environ['MIXPI_ARTIFACT_DIR'])
     require(directory.is_absolute() and str(directory) == str(directory.resolve()) and directory.is_dir(),
@@ -305,7 +306,9 @@ def unit_target(root, relative):
 
 
 def profile_off(root):
-    for name in ('etc/mixpi/controlled-media', 'etc/mixpi/eject-reviewed',
+    # R-6: the media eject gate is OFF in every artifact image.
+    require(os.environ.get('MIXPI_MEDIA_EJECT', '0') == '0', 'artifact mode requires media eject OFF')
+    for name in ('etc/mixpi/controlled-media', 'etc/mixpi/eject-reviewed', 'etc/mixpi/media-eject',
                  'etc/polkit-1/rules.d/49-mixpi-controlled-media.rules',
                  'etc/sysctl.d/90-mixpi-controlled-media.conf'):
         safe_path(root, name, absent=True)
@@ -545,7 +548,7 @@ def verify(final=False):
         load()
         receipt = {'status': 'assembled-not-image-qualified', 'manifest_sha256': digest(regular(MANIFEST)),
                    'binary_sha256': manifest['binary_sha256'], 'controlled_media': 'OFF',
-                   'eject_reviewed': False,
+                   'eject_reviewed': False, 'media_eject': 'OFF',
                    'package_directory_modes': {name: '0755' for name in PACKAGE_DIRECTORIES}}
         exclusive(root, 'opt/mixpi-accepted-artifact/integration.json', encoded(receipt))
 
@@ -563,6 +566,7 @@ def main():
         copy_pi_dj(args.source)
     elif args.action in ('desktop', 'final'):
         verify(final=args.action == 'final')
+        print('accepted-artifact: media eject OFF')
     else:
         globals()[args.action]()
     print('accepted-artifact: ' + args.action + ' PASS (not image qualification)')

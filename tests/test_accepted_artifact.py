@@ -281,6 +281,7 @@ class AcceptedArtifactTests(unittest.TestCase):
         ingest.verify(final=True)
         receipt = json.loads((self.rootfs / 'opt/mixpi-accepted-artifact/integration.json').read_bytes())
         self.assertFalse(receipt['eject_reviewed'])
+        self.assertEqual(receipt['media_eject'], 'OFF')
         self.assertEqual(receipt['controlled_media'], 'OFF')
         self.assertEqual((self.rootfs / 'opt/pioneered.version').stat().st_mode & 0o777, 0o644)
         self.assertTrue((self.rootfs / 'opt/mixxx-package/candidate.deb').exists())
@@ -457,6 +458,20 @@ class AcceptedArtifactTests(unittest.TestCase):
         target.unlink()
         with self.assertRaises(FileNotFoundError):
             ingest.profile_off(self.rootfs)
+
+    def test_media_eject_gate_must_be_absent_in_artifact_mode(self):
+        # R-6: the eject gate file and the build switch are both refused.
+        self.initialize()
+        ingest.profile_off(self.rootfs)
+        gate = self.write('etc/mixpi/media-eject', b'v1\n')
+        with self.assertRaisesRegex(ValueError, 'media-eject|stale|exist'):
+            ingest.profile_off(self.rootfs)
+        self.assertEqual(gate.read_bytes(), b'v1\n')
+        gate.unlink()
+        with patch.dict(os.environ, {'MIXPI_MEDIA_EJECT': '1'}):
+            with self.assertRaisesRegex(ValueError, 'media eject OFF'):
+                ingest.profile_off(self.rootfs)
+        ingest.profile_off(self.rootfs)
 
     def test_default_ssh_key_service_is_not_controlled_mount_authority(self):
         self.initialize()

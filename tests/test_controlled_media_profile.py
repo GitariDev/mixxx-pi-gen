@@ -292,5 +292,44 @@ class ControlledProfileTests(unittest.TestCase):
         self.assertIn('multiply linked', checker.findings[-1]['impact'])
 
 
+class MediaEjectGateRecipeTests(unittest.TestCase):
+    """R-6: 06-run.sh writes /etc/mixpi/media-eject only for MIXPI_MEDIA_EJECT=1."""
+
+    def run_recipe(self, **settings):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / 'rootfs'
+        for directory in ('opt/mixpi-skin-tools', 'usr/local/bin', 'etc/systemd/system',
+                          'etc/sysctl.d', 'etc/sudoers.d', 'media/pi'):
+            (root / directory).mkdir(parents=True, exist_ok=True)
+        command = 'on_chroot() { cat > "$ROOTFS_DIR/fixture-chroot-commands"; }; export -f on_chroot; ./06-run.sh'
+        environment = {name: value for name, value in os.environ.items()
+                       if not name.startswith(('MIXPI_ARTIFACT_', 'MIXPI_MEDIA_EJECT', 'MIXPI_CONTROLLED_MEDIA'))}
+        environment.update(ROOTFS_DIR=str(root), **settings)
+        result = subprocess.run(['bash', '-eu', '-c', command], cwd=ROOT / 'stage3/02-desktop',
+                                env=environment, check=True, capture_output=True, text=True)
+        return root, result.stdout
+
+    def test_default_build_writes_no_gate_and_says_off(self):
+        root, output = self.run_recipe()
+        self.assertFalse((root / 'etc/mixpi/media-eject').exists())
+        self.assertIn('media eject OFF', output)
+        root, output = self.run_recipe(MIXPI_MEDIA_EJECT='0', MIXPI_CONTROLLED_MEDIA='1')
+        self.assertFalse((root / 'etc/mixpi/media-eject').exists())
+        self.assertIn('media eject OFF', output)
+
+    def test_explicit_switch_writes_v1_mode_644(self):
+        root, output = self.run_recipe(MIXPI_MEDIA_EJECT='1')
+        gate = root / 'etc/mixpi/media-eject'
+        self.assertEqual(gate.read_bytes(), b'v1\n')
+        self.assertEqual(stat.S_IMODE(gate.stat().st_mode), 0o644)
+        self.assertIn('media eject ON', output)
+        # The recipe sets root ownership when it runs as root (as pi-gen does).
+        recipe = (ROOT / 'stage3/02-desktop/06-run.sh').read_text()
+        self.assertIn('chown root:root "${ROOTFS_DIR}/etc/mixpi/media-eject"', recipe)
+        # The controlled profile alone never writes the eject gate.
+        self.assertNotIn('media-eject', recipe.split('if [ "${MIXPI_MEDIA_EJECT:-0}" = 1 ]', 1)[0])
+
+
 if __name__ == '__main__':
     unittest.main()

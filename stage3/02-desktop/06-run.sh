@@ -28,3 +28,17 @@ done
 systemctl enable mixpi-mount-broker.service
 EOF
 fi
+# R-6: the eject gate (engine A, system eject through udisks2). Mixxx enables
+# EJECT only when this root-owned, mode 644 file holds v1. Never by default.
+if [ "${MIXPI_MEDIA_EJECT:-0}" = 1 ]; then
+    install -d -m 755 "${ROOTFS_DIR}/etc/mixpi"
+    printf 'v1\n' > "${ROOTFS_DIR}/etc/mixpi/media-eject"
+    chmod 644 "${ROOTFS_DIR}/etc/mixpi/media-eject"
+    if [ "$(id -u)" = 0 ]; then
+        chown root:root "${ROOTFS_DIR}/etc/mixpi/media-eject"
+    fi
+    echo "media eject ON"
+else
+    rm -f "${ROOTFS_DIR}/etc/mixpi/media-eject"
+    echo "media eject OFF"
+fi

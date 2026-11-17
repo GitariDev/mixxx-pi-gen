@@ -1,5 +1,5 @@
 diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
-index 977939a..d9556d9 100644
+index ad28cb4..222542c 100644
 --- a/src/library/mixpimedia.h
 +++ b/src/library/mixpimedia.h
 @@ -5,7 +5,9 @@
@@ -82,7 +82,7 @@ index 977939a..d9556d9 100644
      }
  
      static QJsonArray entries(const QJsonObject& snapshot, bool eject) {
-@@ -283,10 +321,220 @@ class MixpiMedia final : public QObject {
+@@ -311,10 +349,220 @@ class MixpiMedia final : public QObject {
  
      // Eject (R-6) hooks the page here.
      void connectPageHooks() {
@@ -304,7 +304,7 @@ index 977939a..d9556d9 100644
      }
  
      void observeNow() {
-@@ -346,7 +594,7 @@ class MixpiMedia final : public QObject {
+@@ -374,7 +622,7 @@ class MixpiMedia final : public QObject {
                  observeNow();
              }
          }
@@ -313,7 +313,7 @@ index 977939a..d9556d9 100644
              // Q2: the drive was pulled out.
              if (m_strip) {
                  m_strip->driveGone(m_safeIdentity);
-@@ -359,6 +607,15 @@ class MixpiMedia final : public QObject {
+@@ -387,6 +635,15 @@ class MixpiMedia final : public QObject {
          refresh();
      }
  
@@ -329,7 +329,7 @@ index 977939a..d9556d9 100644
      bool driveOpened(const QJsonObject& drive) const {
          for (const auto& value : drive.value("volumes").toArray()) {
              if (m_opened->contains(value.toObject().value("token").toString())) {
-@@ -394,9 +651,17 @@ class MixpiMedia final : public QObject {
+@@ -422,9 +679,17 @@ class MixpiMedia final : public QObject {
              names.append(item.label);
              paths.append(item.path);
  #ifdef __linux__
@@ -349,7 +349,7 @@ index 977939a..d9556d9 100644
              const auto binding = mixxx::media::observePath(item.path.toStdString());
              if (!binding.generation.empty()) {
                  const auto observed = mixxx::media::registry().observe(binding.generation);
-@@ -472,6 +737,9 @@ class MixpiMedia final : public QObject {
+@@ -500,6 +765,9 @@ class MixpiMedia final : public QObject {
  
      // Handover (R-5) fills the right column.
      void refreshHandover() {
@@ -359,7 +359,7 @@ index 977939a..d9556d9 100644
      }
  
      QJsonObject findVolume(const QString& token) const {
-@@ -564,4 +832,16 @@ class MixpiMedia final : public QObject {
+@@ -592,4 +860,16 @@ class MixpiMedia final : public QObject {
      QString m_safeIdentity;
      QString m_safeSysfs;
      QString m_safeName;

@@ -1,5 +1,5 @@
 diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
-index ec45c9f..977939a 100644
+index ec45c9f..ad28cb4 100644
 --- a/src/library/mixpimedia.h
 +++ b/src/library/mixpimedia.h
 @@ -1,5 +1,6 @@
@@ -73,16 +73,45 @@ index ec45c9f..977939a 100644
      static QJsonArray entries(const QJsonObject& snapshot, bool eject) {
          if (eject) {
              return snapshot.value("drives").toArray();
-@@ -133,6 +155,8 @@ class MixpiMedia final : public QObject {
+@@ -132,7 +154,37 @@ class MixpiMedia final : public QObject {
+         return !inspectSelected(volume).revision.empty();
      }
  
++    // Live use of one drive, as the Load / Eject dialog showed it. The
++    // identity is checked before any transfer state is read. Kept with the
++    // dialog class (R-4: nothing opens the dialog now).
++    static QString driveActivity(const QJsonObject& drive) {
++#ifdef __linux__
++        QStringList states;
++        for (const auto& value : drive.value("volumes").toArray()) {
++            const auto volume = value.toObject();
++            const auto selected = inspectSelected(volume);
++            const auto path = volume.value("mount").toObject().value("path").toString();
++            const auto binding = mixxx::media::observePath(path.toStdString());
++            if (selected.revision.empty() || binding.generation.empty() ||
++                    binding.source != selected.revision) {
++                states.append(QStringLiteral("This drive changed or could not be checked."));
++                continue;
++            }
++            states.append(mixxx::media::activityText(
++                    mixxx::media::registry().observe(binding.generation),
++                    mixxx::media::copyService().transferStatus(binding)));
++        }
++        states.removeDuplicates();
++        return states.isEmpty() ? QStringLiteral("Not mounted.") : states.join(QStringLiteral(" | "));
++#else
++        Q_UNUSED(drive);
++        return QStringLiteral("Live usage unavailable on this platform");
++#endif
++    }
++
    private:
 +    // Engine B (the controlled profile). Kept in the source; the Media page
 +    // does not open it (R-4, R-6: engine A only).
      void showControlled(bool mount, const QString& token = {}) {
          if (!m_controlled) {
              m_controlled = MixpiControlledMedia::openProduction();
-@@ -191,53 +215,326 @@ class MixpiMedia final : public QObject {
+@@ -191,53 +243,326 @@ class MixpiMedia final : public QObject {
          process->start(QStringLiteral("/usr/bin/python3"), {helper()});
      }
  
@@ -117,7 +146,9 @@ index ec45c9f..977939a 100644
 +        auto* host = window();
 +        if (!host) {
 +            return false;
-+        }
+         }
+-        if (m_controlled && m_controlled->locked()) {
+-            showControlled(false);
 +        if (m_page && m_page->parentWidget() != host) {
 +            delete m_page.data();
 +            delete m_strip.data();
@@ -154,9 +185,7 @@ index ec45c9f..977939a 100644
 +                    }
 +                });
 +            }
-         }
--        if (m_controlled && m_controlled->locked()) {
--            showControlled(false);
++        }
 +        return true;
 +    }
 +
@@ -448,7 +477,7 @@ index ec45c9f..977939a 100644
      }
  
      std::function<QWidget*()> m_parent;
-@@ -249,4 +546,22 @@ class MixpiMedia final : public QObject {
+@@ -249,4 +574,22 @@ class MixpiMedia final : public QObject {
      QScopedPointer<ControlPushButton> m_eject;
      QPointer<QDialog> m_dialog;
      QPointer<MixpiControlledMedia> m_controlled;

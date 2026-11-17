@@ -759,6 +759,23 @@ Each question names the screen, and the prototype jump (`go`) and highlight (`hl
     Options: Yes / pull it into this redesign. Recommendation: **Yes**, keep it out. Eject and handover should be proven before any write path is added.
     Area: none.
 
+### 10.1 Owner answers, 2026-11-17, and what they change
+
+Recorded by the orchestrator (Claude Opus 5.5 xhigh). The owner's words are verbatim. Where an answer changes an item, the change below overrides the item text above.
+
+| Q | Owner (verbatim) | Decision and changed items |
+|---|---|---|
+| 1 | "It should have a small ping that ask's to load with a load and dismiss button, it shouldn't be very intrusive and can cover the bottom actions." | **Insert ping.** On insert, a small strip at the bottom (over the transport row, which the owner allows) says "MANTACORE plugged in" with **LOAD** and **DISMISS** (each at least 96×48). LOAD = Open (level 2, R-3); DISMISS closes the ping and leaves the drive closed; it can still be opened from the USB chip or Sources. No sheet, no scrim, no pop-up. It closes by itself after 15 s as DISMISS. Changes R-3 (Insert row), R-4 (chip and ping), R-18 (no on-insert setting: the ping is the behaviour). The ping belongs to the media page code (R-4, N3). |
+| 2 | "Yes, maybe a bottom indicator that flashes up when it's safe to remove." | **Eject approved, engine A (system eject).** The gate (R-6) may be opened on the test card once R-5 and R-6 pass their native fixtures. Add a **Safe to remove** bottom indicator: when the unmount is confirmed, a green strip at the bottom flashes up ("MANTACORE · Safe to remove"), whatever screen is open, and stays until the drive is pulled out or 30 s pass. Changes R-4, R-6. The controlled profile (engine B) stays off. |
+| 3 | "Yes but only if it doesn't impact performance more than 10% of the current average load if not then we can go with a seamless a when eject is pressed and then pass or wait till it's done." | **RAM copy, with a performance gate.** Measure on the test card: average `[MixPi],audio_load_percent` and underruns with two decks playing tracks from a USB drive, CACHE MB 1024 against OFF, same tracks, 5 min each. Pass: the RAM-copy run's average load is at most 1.10 × the OFF run's. If it fails, switch R-5 to **copy on eject**: Eject copies each in-use file to RAM (or the SD card if it does not fit), swaps the reader to the copy at the next chunk boundary without a gap, then unmounts; the sheet shows the copy step and waits until it is done. Changes R-5 (new acceptance step), R-3. |
+| 4 | "Alright well see how it works" | **Grouped Sources (A)** in wave 2 (`mixxx-source-groups.patch`, N4). The one-tile-per-source rail ships first in build A. |
+| 5 | "Alright but let's see if we can keep the 3 effects switcher between deck 1 deck 2 and master then have another mode. The starlight does have effects settings, maybe we just need to map them." | **FX page keeps today's three-way route switcher** (DECK 1 / DECK 2 / MASTER) for effect unit 1 as the main mode, and adds a **second mode** for effect unit 2 (the unit deck B's pads drive), with the same switcher. Plus a **mapping study** (R-17b): list the Starlight's FX controls in the pinned mapping and propose how they could drive what the screen shows. No mapping file is changed in this climb; the proposal goes to the owner with the result. Changes R-17. |
+| 6 | "Absolutely yes" | Cherry-pick `72e98c4` (R-15). |
+| 7 | "yes" | Cherry-pick `a8a86fa`; build R-14's stop unit. |
+| 8 | "Sure you can go ahead and do that." | **Set the test card's routing to stereo: Master on outputs 1-2, Headphones on 3-4**, through Mixxx Preferences › Sound Hardware on the card (wave 0), after a backup of `soundconfig.xml`. This is the one allowed change to the owner's routing. Changes R-21. |
+| 9 | "It should be okay, I can switch but everything is a usb 2.0 anyway, i'd rather really see performance with a proper flash." | **Open: clarification asked** (see the contract message). Until answered, eject, handover and storm tests use no drive. |
+| 10 | "Agreed." | DJ-003 stays in the backlog. Nothing writes to any USB drive. |
+
 ## 11. Council scoring rubric
 
 Seats: Claude Opus 5.5 (xhigh), Claude Fable 5.2 (high), GPT-6.1 Sol (xhigh). If a provider cannot run, fill its seat as the owner's standing rule says and name the stand-in in every report. Target: all three at 9 or more.

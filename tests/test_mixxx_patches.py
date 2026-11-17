@@ -60,6 +60,8 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-save-on-change.patch",
             "mixxx-sources-screen.patch",
             "mixxx-scan-progress.patch",
+            "mixxx-media-screen.patch",
+            "mixxx-media-handover.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -70,6 +72,8 @@ class PackageRecipeTests(unittest.TestCase):
 # check expands them). Every other patch must apply to pristine upstream on
 # its own, and every listed patch must actually need its prerequisites.
 PREREQUISITES = {
+    "mixxx-media-screen.patch": ["mixxx-council-fixes.patch"],
+    "mixxx-media-handover.patch": ["mixxx-media-screen.patch", "mixxx-removable-ram-cache.patch"],
     "mixxx-sources-screen.patch": ["mixxx-council-fixes.patch"],
     "mixxx-scan-progress.patch": ["mixxx-quiet-scan.patch", "mixxx-media-selection.patch"],
     "mixxx-touch-source-navigation.patch": ["mixxx-sidebar-sources.patch"],

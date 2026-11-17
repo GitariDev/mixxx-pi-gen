@@ -37,6 +37,8 @@ REQUIRED_TESTS = (
     'test_quiet_scan',
     'test_scan_progress',
     'test_sources_screen',
+    'test_media_screen',
+    'test_media_handover',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

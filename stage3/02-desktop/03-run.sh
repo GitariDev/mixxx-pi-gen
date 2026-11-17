@@ -8,6 +8,8 @@
 # Commented out because Mixxx complains about lack of db if you do this
 
 install -m 644 files/udev.mixxx ${ROOTFS_DIR}/etc/udev/rules.d/69-mixxx-usb-uaccess.rules
+# Brightness and Night dim: the video group (pi) may write the backlight level.
+install -m 644 files/udev/99-mixpi-backlight.rules ${ROOTFS_DIR}/etc/udev/rules.d/99-mixpi-backlight.rules
 
 
 # USB Mount

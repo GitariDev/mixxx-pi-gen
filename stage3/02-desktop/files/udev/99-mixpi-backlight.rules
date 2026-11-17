@@ -1,0 +1,5 @@
+# MixPi Settings > Interface: Brightness and Night dim (agreed UI spec s12).
+# Mixxx runs as pi, who is in the video group, and sets the screen backlight
+# through /sys/class/backlight/*/brightness. When a backlight device appears,
+# give the video group write access to its brightness file, and nothing else.
+ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chgrp video %S%p/brightness", RUN+="/bin/chmod g+w %S%p/brightness"

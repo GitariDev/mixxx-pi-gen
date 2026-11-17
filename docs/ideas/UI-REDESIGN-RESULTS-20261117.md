@@ -30,6 +30,10 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Build | Commit | State |
 |---|---|---|
 | A | `9d9bf30` (+ skin tools from `ec580e1`) | pi-gen exit 0 on VM b in 11 min 15 s; 33 patches; check phase all pass; installed in place on the test card 08:30 (`deploy/test-image-20261117a/`, `deploy/ui-redesign-20261117/buildA-update/`): every expected sha256, `dpkg -V` clean, controlled media OFF, media eject OFF |
+| B, run 1 | `67341f2` | **aborted**: pi-gen exit 0 and the check phase passed, but the file listing failed with I/O errors when the Mac's disk filled (VM b's disk file in /tmp grew to 27 GB). The image was discarded; the owner approved deleting two old images to free space. Counted as a pi-gen run. |
+| B, run 2 | `67341f2` | pi-gen exit 0 in 9 min 29 s; 37 patches; check phase all pass; Mac free space logged (lowest 20 GiB); VM trimmed after; installed in place 10:30 (`deploy/test-image-20261117b/`, `acceptance-B/`) |
+
+**Build count against the plan's ceiling (one build = one pi-gen run):** A, B run 1 (aborted), B run 2 = **3 runs**. A build C for the post-B repairs would be the **4th run**, past the contract's ceiling of 3, so it needs the owner's explicit yes (asked 2026-11-17).
 
 ## Build A on the test card (`deploy/ui-redesign-20261117/buildA-checks/`, `wave2-preview/`)
 

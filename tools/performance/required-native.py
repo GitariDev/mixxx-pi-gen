@@ -33,6 +33,10 @@ REQUIRED_TESTS = (
     'test_performance_settings.NativePerformanceSettingsTests',
     'test_table_columns',
     'test_clean_quit',
+    'test_save_on_change',
+    'test_quiet_scan',
+    'test_scan_progress',
+    'test_sources_screen',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

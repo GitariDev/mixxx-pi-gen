@@ -26,6 +26,8 @@ struct QString {
     QString(const char* text) : value(text) {}
     int compare(const QString& other, int) const { return value.compare(other.value); }
     bool isNull() const { return value.empty(); }
+    bool isEmpty() const { return value.empty(); }
+    bool operator==(const QString& other) const { return value == other.value; }
     std::string toStdString() const { return value; }
     QString toUtf8() const { return *this; }
     const char* constData() const { return value.c_str(); }
@@ -146,9 +148,23 @@ struct PlayerManager {
     int numberOfSamplers() const { return 0; }
     Sampler* getSampler(int) const { return nullptr; }
 };
+using QByteArray = QString;
+namespace mixxx {
+// mixxx-save-on-change.patch: the bank is written through this helper.
+bool writeFileAtomically(const QString& path, const QByteArray& contents) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    file.write(contents.constData());
+    file.close();
+    return true;
+}
+}
 struct SamplerBank {
     PlayerManager manager;
     PlayerManager* m_pPlayerManager = &manager;
+    QString m_autosavePath;
+    QByteArray m_fileDocument;
+    QByteArray bankDocument(bool) const { return "synthetic bank"; }
     bool saveSamplerBankToPath(const QString& samplerBankPath);
 };
 PRODUCTION_SAVE

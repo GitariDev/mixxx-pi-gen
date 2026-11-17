@@ -32,6 +32,9 @@ MIXXX_PATCHES=(
     mixxx-acceptance-fixes.patch
     mixxx-council-fixes.patch
     mixxx-clean-quit.patch
+    mixxx-save-on-change.patch
+    mixxx-sources-screen.patch
+    mixxx-scan-progress.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

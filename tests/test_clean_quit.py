@@ -141,7 +141,7 @@ class CleanQuitServiceTests(unittest.TestCase):
         names = subprocess.run(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
                                 '--mixxx-print-patches'], capture_output=True, text=True,
                                check=True).stdout.split()
-        self.assertEqual(names[-1], PATCH_NAME)
+        self.assertEqual(names[names.index('mixxx-council-fixes.patch') + 1], PATCH_NAME)
         self.assertEqual(re.findall(r'^diff --git a/(\S+) ', PATCH.read_text(), re.MULTILINE),
                          ['src/main.cpp', 'src/mixxxmainwindow.cpp', 'src/mixxxmainwindow.h',
                           'src/util/unixsignalquit.h'])

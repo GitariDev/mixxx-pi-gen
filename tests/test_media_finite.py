@@ -57,7 +57,7 @@ class FiniteOwnershipTests(unittest.TestCase):
             ('library/basesqltablemodel', 'QList<TrackRef> BaseSqlTableModel::getTrackRefs(', 'TrackRef::fromFilePath'),
             ('library/coverart', 'CoverInfo::LoadedImage CoverInfo::loadImage(', 'mixxx::FileInfo('),
             ('mixer/samplerbank', 'bool SamplerBank::loadSamplerBankFromPath(', 'QFile file'),
-            ('mixer/samplerbank', 'bool SamplerBank::saveSamplerBankToPath(', 'QFile file'),
+            ('mixer/samplerbank', 'bool SamplerBank::saveSamplerBankToPath(', 'writeFileAtomically'),
             ('library/parser', 'QList<QString> Parser::parse(', 'parseAllLocations'),
             ('library/parserm3u', 'QList<QString> ParserM3u::parseAllLocations(', 'QFile '),
             ('library/parserpls', 'QList<QString> ParserPls::parseAllLocations(', 'QFile '),

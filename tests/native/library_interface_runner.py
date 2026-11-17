@@ -1,5 +1,6 @@
 """Compile exact production helpers from the pinned, patched source with real Qt."""
 import argparse
+import importlib.util
 import os
 from pathlib import Path
 import platform
@@ -137,6 +138,17 @@ def reconstruct(target, include_interface=True, exclude=()):
          '--mixxx-print-patches'], text=True).split()
     names = [name for name in names
              if name not in exclude and (include_interface or name != 'mixxx-library-interface.patch')]
+    # A patch leaves with its prerequisites (PREREQUISITES in
+    # tests/test_mixxx_patches.py); they come earlier in the list.
+    spec = importlib.util.spec_from_file_location('mixpi_patch_prerequisites',
+                                                  ROOT / 'tests/test_mixxx_patches.py')
+    listed = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(listed)
+    kept = []
+    for name in names:
+        if all(prerequisite in kept for prerequisite in listed.PREREQUISITES.get(name, [])):
+            kept.append(name)
+    names = kept
     paths = set()
     for name in names:
         paths.update(re.findall(r'^diff --git a/(\S+) b/\S+$',

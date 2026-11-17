@@ -44,6 +44,8 @@ MIXXX_PATCHES=(
     mixxx-scan-strip-fixes.patch
     mixxx-sources-edit-done.patch
     mixxx-media-lists.patch
+    mixxx-sources-menu.patch
+    mixxx-media-agreed.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

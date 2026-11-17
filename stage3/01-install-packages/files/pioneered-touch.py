@@ -191,7 +191,8 @@ def patch_styles(source):
         r"#LibraryWrapper QScrollBar:horizontal\s*\{\s*height:\s*0;\s*width:\s*0;\s*\}\s*",
         "", source)
     styles = "\n\n".join((ASSETS / name).read_text().strip() for name in
-                           ("pioneered-menus.qss", "pioneered-touch.qss"))
+                           ("pioneered-menus.qss", "mixpi-sources-menu.qss",
+                            "mixpi-media-page.qss", "pioneered-touch.qss"))
     return source.rstrip() + f"\n\n{STYLE_BEGIN}\n{styles}\n{STYLE_END}\n"
 
 

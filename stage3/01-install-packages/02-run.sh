@@ -28,6 +28,7 @@ mkdir -p "${ROOTFS_DIR}/usr/share/mixxx/skins/Pioneered"
 git -C "$skin_sources/Pioneered" archive HEAD | tar -x -C "${ROOTFS_DIR}/usr/share/mixxx/skins/Pioneered"
 install -d "${ROOTFS_DIR}/opt/mixpi-skin-tools"
 install -m 644 files/pioneered-touch.py files/pioneered-touch.qss files/pioneered-menus.qss \
+    files/mixpi-sources-menu.qss files/mixpi-media-page.qss \
     files/mixpi-performance.py files/mixpi-performance.qss files/mixpi-media-inventory.py \
     "${ROOTFS_DIR}/opt/mixpi-skin-tools/"
 on_chroot <<'EOF'

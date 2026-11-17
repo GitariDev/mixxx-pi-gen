@@ -39,6 +39,7 @@ REQUIRED_TESTS = (
     'test_sources_screen',
     'test_media_screen',
     'test_media_handover',
+    'test_media_agreed',
     'test_sample_browser',
     'test_source_groups',
     'test_settings_fixes',

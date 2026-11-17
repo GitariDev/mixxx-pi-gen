@@ -5,7 +5,9 @@
  * Open Sans as the fallback). No text under 13 px. */
 #MixpiTopbar, #MixpiTransport, #MixpiDeckButtons, #MixpiBottom { background: #0a0d12; }
 #MixpiTopbar { border-bottom: 1px solid #2b3646; }
-#MixpiButton, #MixpiPlay, #MixpiRecord, #MixpiDesktopBar, #MixpiUsbChip, #MixpiPrimary {
+#MixpiButton, #MixpiPlay, #MixpiRecord, #MixpiDesktopBar, #MixpiPrimary,
+#MixpiDeck1, #MixpiDeck2, #MixpiCue, #MixpiLoad1, #MixpiLoad2, #MixpiToolTab1, #MixpiToolTab2,
+#MixpiRailButton, #MixpiCueTile1, #MixpiCueTile2, #MixpiCueClearTile {
     color: #eef2f7; background: #19212d; border: 1px solid #2b3646;
     border-radius: 6px; margin: 2px; font-family: "Ubuntu Condensed", "Ubuntu";
     font-size: 16px; font-weight: bold;
@@ -30,8 +32,77 @@
     color: #b5e15c; border-bottom: 3px solid #b5e15c;
     background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 #0a0d12, stop: 1 #1a2312);
 }
-#MixpiUsbChip { margin: 4px 0px; font-size: 16px; border-radius: 8px; }
-#MixpiUsbChip:disabled { color: #8c9ab0; }
+/* USB chip (R-4): the group draws the chip; its look follows [MixPi],media_state
+ * through the highlight property; the transparent button on top takes the taps. */
+#MixpiUsbBody {
+    background: #19212d; border: 1px solid #2b3646; border-radius: 6px; margin: 4px 0px;
+}
+#MixpiUsbBody[highlight="2"] { border-color: #4aa8ff; }
+#MixpiUsbBody[highlight="3"] { border-color: #ffb020; }
+#MixpiUsbBody[highlight="4"] { background: #123a26; border-color: #43d17a; }
+#MixpiUsbButton { background: transparent; border: 0px; margin: 0px; }
+#MixpiUsbButton:pressed { background: rgba(181, 225, 92, 40); }
+#MixpiUsbName { color: #eef2f7; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 15px; font-weight: bold; }
+#MixpiUsbState0, #MixpiUsbState1, #MixpiUsbState2, #MixpiUsbState3, #MixpiUsbState4, #MixpiUsbScan {
+    font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; font-weight: bold;
+}
+#MixpiUsbState0 { color: #8c9ab0; }
+#MixpiUsbState1 { color: #43d17a; }
+#MixpiUsbState2 { color: #9fd0ff; }
+#MixpiUsbState3 { color: #ffb020; }
+#MixpiUsbState4 { color: #b9f5d2; }
+#MixpiUsbScan { color: #ffb020; background: #19212d; }
+
+/* Deck colours (R-16): deck 1 blue, deck 2 amber on lit deck controls. */
+#MixpiDeck1[value="1"], #MixpiToolTab1[value="1"], #MixpiCueTile1[value="1"] {
+    color: #bfe0ff; background: rgba(74, 168, 255, 46); border-color: #4aa8ff;
+}
+#MixpiDeck2[value="1"], #MixpiToolTab2[value="1"], #MixpiCueTile2[value="1"] {
+    color: #ffd6b8; background: rgba(255, 143, 63, 46); border-color: #ff8f3f;
+}
+#MixpiCue { color: #ffd23f; border-color: #8a7420; }
+#MixpiLoad1 { color: #bfe0ff; border-color: #4aa8ff; }
+#MixpiLoad2 { color: #ffd6b8; border-color: #ff8f3f; }
+#MixpiLoad1:disabled, #MixpiLoad2:disabled, #MixpiCueClearTile:disabled {
+    color: #56627a; background: #10151c; border-color: #1f2834;
+}
+#MixpiCueTile1, #MixpiCueTile2 { border-style: dashed; color: #8c9ab0; }
+#MixpiCueTile1[value="1"], #MixpiCueTile2[value="1"] { border-style: solid; }
+#MixpiCueClearTile { color: #ff5468; border-color: #ff5468; }
+#MixpiLoadTitle { color: #8c9ab0; font-size: 13px; padding-left: 6px; }
+#MixpiChip, #MixpiChipPi {
+    font-family: "Ubuntu", "Open Sans"; font-size: 13px; font-weight: bold;
+    border: 1px solid #b5e15c; border-radius: 4px; color: #b5e15c; margin: 1px 2px;
+}
+#MixpiChipPi { color: #0b1a10; background: #43d17a; border-color: #43d17a; }
+#MixpiStateChip {
+    color: #8c9ab0; background: transparent; border: 1px solid #2b3646; border-radius: 4px;
+    font-family: "Ubuntu", "Open Sans"; font-size: 13px; font-weight: bold;
+}
+#MixpiStateChip[value="1"] { color: #b5e15c; border-color: #b5e15c; }
+#MixpiWaveBadge1, #MixpiWaveBadge2 {
+    color: #071019; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 20px; font-weight: bold;
+    border-radius: 7px;
+}
+#MixpiWaveBadge1 { background: #4aa8ff; }
+#MixpiWaveBadge2 { background: #ff8f3f; }
+#MixpiCaption {
+    color: #8c9ab0; font-family: "Ubuntu", "Open Sans"; font-size: 13px; font-weight: bold;
+}
+#MixpiDeckArtist { color: #8c9ab0; font-size: 14px; }
+#MixpiToolTitle { color: #eef2f7; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 18px; font-weight: bold; padding-left: 8px; }
+#MixpiFxPad { color: #8c9ab0; font-size: 13px; }
+#MixpiFxSwitch, #MixpiSettingsHeader { background: #121821; border-bottom: 1px solid #2b3646; }
+#MixpiSettingsRail { background: #121821; border-right: 1px solid #2b3646; }
+#MixpiRailButton {
+    border: 0px; border-bottom: 1px solid #2b3646; border-radius: 0px; margin: 0px;
+    background: #121821; font-size: 18px;
+}
+#MixpiRailButton[value="1"] { background: #1f2a17; border-left: 4px solid #b5e15c; color: #eef2f7; }
+#MixpiSettingTitle { color: #eef2f7; font-size: 16px; font-weight: bold; }
+#MixpiEjectOn, #MixpiEjectOff { font-size: 14px; font-weight: bold; border-radius: 4px; margin: 8px 0px; }
+#MixpiEjectOn { color: #43d17a; border: 1px solid #43d17a; }
+#MixpiEjectOff { color: #8c9ab0; border: 1px solid #2b3646; }
 #MixpiRecord { margin: 4px 0px; }
 #MixpiIconButton {
     background: #19212d; border: 1px solid #2b3646; border-radius: 6px; margin: 0px;
@@ -95,7 +166,8 @@
 #MixpiPadLoad:pressed { background: rgba(181, 225, 92, 30); }
 
 #MixpiLabel, #MixpiWaveKey { color: #eef2f7; font-size: 17px; }
-#MixpiWaveInfo { background: #121821; border-right: 1px solid #2b3646; }
+#MixpiWaveInfo { background: #121821; border-right: 1px solid #2b3646;
+    qproperty-layoutContentsMargins: rect(8 8 4 4); qproperty-layoutSpacing: 6; }
 #MixpiTitleStrip { background: #121821; }
 #MixpiDeckTitle, #MixpiDeckNumber1, #MixpiDeckNumber2 { color: white; font-size: 16px; }
 #MixpiDeckNumber1, #MixpiDeckNumber2 {
@@ -106,13 +178,12 @@
 #MixpiTime, #MixpiRate, #MixpiKey { color: #f4f6fa; font-size: 21px; }
 #MixpiKey, #MixpiWaveKey { font-size: 17px; }
 #MixpiBpm { background: #e9eef5; color: #0b0f14; font-size: 25px; font-weight: bold; margin: 4px; border-radius: 5px; }
-#MixpiLoopPanel { background: rgba(16,22,30,240); border: 1px solid #2b3646; }
-#MixpiLoopHeader { background: #121821; }
+#MixpiLoopPanel { background: #10161e; border: 1px solid #2b3646; }
 #MixpiLoopPanel #MixpiButton { font-size: 19px; }
 #MixpiFx { background: #0a0d12; }
-#MixpiFxCard { border: 1px solid #2b3646; border-radius: 6px; margin: 3px; }
-#MixpiFxHeader { padding: 4px 8px; }
-#MixpiFxMix { background: #121821; border: 1px solid #2b3646; margin: 2px 6px; }
+#MixpiFxCardHead { qproperty-layoutContentsMargins: rect(8 0 8 0); }
+#MixpiFxCard { background: #121821; border: 1px solid #2b3646; border-radius: 10px; margin: 3px; }
+#MixpiFxMix { margin: 2px 8px 2px 6px; }
 #MixpiEffectSelector { color: white; background: #20334a; font-size: 18px; }
 #MixpiEffectSelector QAbstractItemView {
     color: #f5f6fa; background: #20334a;
@@ -131,9 +202,9 @@
 }
 #MixpiDepth { background: #19212d; margin: 2px 12px; }
 
-#MixpiSettings { background: #121821; border: 1px solid #2b3646; }
+#MixpiSettings { background: #0a0d12; }
 #MixpiPlaybackSettings, #MixpiInterfaceSettings { padding: 4px; }
-#MixpiSetting { border-bottom: 1px solid #2b3646; }
-#MixpiSettingLabel { font-size: 13px; color: #d9e3f2; padding: 3px; }
+#MixpiSetting { border-bottom: 1px solid #18202b; }
+#MixpiSettingLabel { font-size: 13px; color: #8c9ab0; }
 #MixpiDesktopBar { border-radius: 6px; }
 #MixpiDesktopBar:disabled { color: #a9b7c8; background: #182536; }

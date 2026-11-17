@@ -115,6 +115,8 @@ class Model:
         push = button.findtext('LeftClickIsPushButton') == 'true'
         connections = [c for c in button.findall('Connection') if c.find('BindProperty') is None
                        and c.findtext('ConnectValueFromWidget', 'true') == 'true']
+        if not connections:
+            return []  # display-only
         if push:
             emitted = 1.0 if phase == 'press' else 0.0
         else:
@@ -230,7 +232,7 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(top.findtext('Size'), '0me,48f')
         items = list(top.find('Children'))
         names = [e.findtext('ObjectName') for e in items]
-        self.assertEqual(names, ['MixpiTabPair', 'MixpiTabPair', 'MixpiTab', 'MixpiTabPair',
+        self.assertEqual(names, ['MixpiTabPair', 'MixpiTabPair', 'MixpiTabPair', 'MixpiTabPair',
                                  'MixpiTopSpacer', 'MixpiUsbChip', 'MixpiGap', 'MixpiRecord',
                                  'MixpiGap', 'MixpiIconButton', 'MixpiGap', 'MixpiCpuBox'])
         widths = [size(e)[0] for e in items if e.findtext('ObjectName') != 'MixpiTopSpacer']
@@ -279,8 +281,9 @@ class PerformanceSkinTests(unittest.TestCase):
 
     def test_every_tab_writes_screen_zero_and_closes_every_view(self):
         tabs = self.tabs()
-        self.assertEqual([b.findtext('State/Text') for b in tabs],
-                         ['DECKS', 'DECKS', 'TRACKS', 'TRACKS', 'FX', 'SAMPLER', 'SAMPLER'])
+        texts = [b.findtext('State/Text') for b in tabs]
+        # The tab, one unlit base per condition level, and SAMPLER's lit twin.
+        self.assertEqual({t: texts.count(t) for t in texts}, {'DECKS': 2, 'TRACKS': 3, 'FX': 2, 'SAMPLER': 4})
         pages = {'DECKS': 'overview', 'TRACKS': 'library', 'FX': 'fx', 'SAMPLER': 'sampler'}
         for tab in tabs:
             self.assertEqual(tab.findtext('LeftClickIsPushButton'), 'true')
@@ -292,13 +295,7 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(self.model.writes(tab, 'release'), [])
 
     def test_active_tab_is_lit_and_sampler_stays_lit_in_sample_screens(self):
-        def lit(text, state):
-            shown = [b for b in self.tabs() if b.findtext('State/Text') == text
-                     and self.model.visible(b, state)]
-            self.assertEqual(len(shown), 1, (text, state))
-            display = [c for c in shown[0].findall('Connection')
-                       if c.find('BindProperty') is None and c.findtext('ConnectValueToWidget') == 'true']
-            return bool(display) and transform(display[-1], float(state.get(display[-1].findtext('ConfigKey'), 0))) == 1
+        lit = self.lit_tab
         tracks = Model.state(0, **{'[Tab]__library': 1})
         self.assertEqual([lit(t, tracks) for t in ('DECKS', 'TRACKS', 'FX', 'SAMPLER')],
                          [False, True, False, False])
@@ -310,8 +307,9 @@ class PerformanceSkinTests(unittest.TestCase):
                              [False, False, True], screen)
         from_sample = Model.state(1, **{'[MixPi]__sample_load': 1})
         self.assertEqual([lit(t, from_sample) for t in ('TRACKS', 'SAMPLER')], [False, True])
-        settings = Model.state(0, **{'[Tab]__overview': 1, '[MixPi]__loop_deck': 3})
-        self.assertFalse(lit('DECKS', settings))
+        decks = Model.state(0, **{'[Tab]__overview': 1})
+        self.assertEqual([lit(t, decks) for t in ('DECKS', 'TRACKS', 'FX', 'SAMPLER')],
+                         [True, False, False, False])
 
     def test_active_tab_style_is_filled_with_a_three_pixel_underline(self):
         style = (self.skin/'style.qss').read_text()
@@ -319,41 +317,10 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertIn('border-bottom: 3px solid #b5e15c;', rule)
         self.assertIn('background:', rule)
 
-    def test_settings_highlights_only_settings_not_decks(self):
-        pair = next(g for g in self.root.findall('.//WidgetGroup')
-                    if g.findtext('ObjectName') == 'MixpiTabPair')
-        self.assertEqual((pair.findtext('Layout'), pair.findtext('Size')), ('stacked', '84f,48f'))
-        normal, twin = pair.findall('Children/PushButton')
-        for b in (normal, twin):
-            self.assertEqual(b.findtext('ObjectName'), 'MixpiTab')
-            self.assertEqual(b.findtext('Size'), '84f,48f')
-            self.assertEqual(b.findtext('State/Text'), 'DECKS')
-            self.assertEqual(b.findtext('LeftClickIsPushButton'), 'true')
-        self.assertEqual(self.model.writes(normal), self.model.writes(twin))
-        self.assertEqual(self.model.writes(twin)[0][0], '[Tab],overview')
-        # The twin never shows the tab state; the normal tab does.
-        self.assertFalse(any(c.findtext('ConnectValueToWidget') == 'true' for c in twin.findall('Connection')))
-        self.assertEqual(normal.findtext('Connection/ConnectValueToWidget'), 'true')
-        for loop_deck in (0, 1, 2, 3):
-            shown = [b for b in (normal, twin)
-                     if self.model.visible(b, {'[MixPi],loop_deck': loop_deck})]
-            self.assertEqual(shown, [twin] if loop_deck == 3 else [normal])
-
     def gear(self):
-        return self.button_by_key('[MixPi],loop_deck', 'MixpiIconButton')
-
-    def test_gear_keeps_settings_inside_decks_and_closes_full_screen_views(self):
-        gear = self.gear()
-        self.assertEqual(gear.findtext('Size'), '48f,48f')
-        self.assertEqual(gear.findtext('Connection/Transform/IsEqual'), '3')
-        self.assertEqual(gear.findtext('Connection/ConnectValueToWidget'), 'true')
-        self.assertEqual(self.model.writes(gear), [
-            ('[MixPi],loop_deck', 3), ('[Tab],overview', 1), ('[MixPi],sample_load', 0),
-            (SCREEN, 0), ('[MixPi],sample_pad', 0), ('[Sidebar],sidebar_visible', 0)])
-        guard = next(c for c in gear.findall('Connection') if c.findtext('BindProperty') == 'enabled')
-        self.assertEqual(guard.findtext('ConfigKey'), '[MixPi],settings_available')
-        self.assertEqual([s.findtext('Unpressed') for s in gear.findall('State')],
-                         ['mixpi-icon-gear.svg'] * 2)
+        return self.button_by_key(SCREEN, 'MixpiIconButton') if False else next(
+            b for b in self.model.one('MixpiTopbar').iter('PushButton')
+            if b.findtext('ObjectName') == 'MixpiIconButton')
 
     def test_media_actions_are_native_gated_and_separate_from_sampler(self):
         buttons = self.root.findall('.//PushButton')
@@ -365,17 +332,6 @@ class PerformanceSkinTests(unittest.TestCase):
                              for button in buttons))
         self.assertTrue(any('[MixPi],sample_load' in [k.text for k in button.findall('Connection/ConfigKey')]
                             for button in buttons))
-
-    def test_usb_chip_replaces_load_eject_and_opens_todays_dialog(self):
-        chip = self.button_by_key('[MixPi],media_load')
-        self.assertEqual((chip.findtext('ObjectName'), chip.findtext('Size')), ('MixpiUsbChip', '150f,48f'))
-        self.assertEqual(self.model.writes(chip), [('[MixPi],media_load', 1)])
-        self.assertEqual({s.findtext('Text').strip() for s in chip.findall('State')}, {'USB'})
-        self.assertEqual({s.findtext('Unpressed') for s in chip.findall('State')}, {'mixpi-icon-usb.svg'})
-        texts = [t.text for t in self.root.iter('Text')]
-        self.assertNotIn('LOAD / EJECT', texts)
-
-    PUSH_GUARD_EXEMPT = ()
 
     def small_buttons(self, root):
         small = []
@@ -818,6 +774,351 @@ class PerformanceSkinTests(unittest.TestCase):
             svg = ET.parse(self.skin/name).getroot()
             self.assertEqual((svg.get('width'), svg.get('height')), ('48', '48'))
 
+    def lit_tab(self, text, state):
+        """The tab on top (Qt: first visible child of a stacked group) and whether it is lit."""
+        shown = [b for b in self.tabs() if b.findtext('State/Text') == text and self.model.tappable(b, state)]
+        self.assertEqual(len(shown), 1, (text, state))
+        display = [c for c in shown[0].findall('Connection')
+                   if c.find('BindProperty') is None and c.findtext('ConnectValueToWidget') == 'true']
+        return bool(display) and transform(display[-1], float(state.get(display[-1].findtext('ConfigKey'), 0))) == 1
+
+    def test_settings_screen_lights_only_the_gear(self):
+        gear = self.gear()
+        for page in ('overview', 'library', 'fx', 'sampler'):
+            state = Model.state(5, **{f'[Tab]__{page}': 1})
+            state['[Tab],library'] = 1 if page == 'library' else 0
+            self.assertEqual([self.lit_tab(t, state) for t in ('DECKS', 'TRACKS', 'FX', 'SAMPLER')],
+                             [False] * 4, page)
+        self.assertEqual(transform(gear.find('Connection'), 5.0), 1)
+        self.assertEqual(transform(gear.find('Connection'), 0.0), 0)
+
+    def test_gear_opens_the_full_screen_settings(self):
+        gear = self.gear()
+        self.assertEqual(gear.findtext('Size'), '48f,48f')
+        self.assertEqual(gear.findtext('Connection/ConfigKey'), SCREEN)
+        self.assertEqual(gear.findtext('Connection/ConnectValueToWidget'), 'true')
+        self.assertEqual(self.model.writes(gear), [
+            (SCREEN, 5), ('[MixPi],loop_deck', 0), ('[MixPi],sample_load', 0),
+            ('[MixPi],sample_pad', 0), ('[Sidebar],sidebar_visible', 0)])
+        guard = next(c for c in gear.findall('Connection') if c.findtext('BindProperty') == 'enabled')
+        self.assertEqual(guard.findtext('ConfigKey'), '[MixPi],settings_available')
+        self.assertEqual([s.findtext('Unpressed') for s in gear.findall('State')],
+                         ['mixpi-icon-gear.svg'] * 2)
+
+    def test_usb_chip_follows_media_state_and_opens_the_media_view(self):
+        chip = self.model.one('MixpiUsbChip')
+        self.assertEqual((chip.findtext('Layout'), chip.findtext('Size')), ('stacked', '150f,48f'))
+        tap = chip.find('Children')[0]
+        self.assertEqual((tap.findtext('ObjectName'), tap.findtext('Size')), ('MixpiUsbButton', '150f,48f'))
+        self.assertEqual(self.model.writes(tap), [('[MixPi],media_load', 1)])
+        gate = tap.findall('Connection')[-1]
+        self.assertEqual((gate.findtext('ConfigKey'), gate.findtext('BindProperty')),
+                         ('[MixPi],media_available', 'enabled'))
+        self.assertEqual({s.findtext('Unpressed') for s in tap.findall('State')}, {'mixpi-icon-usb.svg'})
+        self.assertTrue(self.model.tappable(tap, {'[MixPi],media_available': 1}))
+        name = self.model.one('MixpiUsbName')
+        self.assertEqual((name.tag, name.findtext('Text')), ('Label', 'USB'))
+        body = self.model.one('MixpiUsbBody')
+        self.assertEqual([(c.findtext('ConfigKey'), c.findtext('BindProperty')) for c in body.findall('Connection')],
+                         [('[MixPi],media_state', 'highlight')])
+        words = ['NO USB', 'READY', 'IN USE', 'EJECTING', 'SAFE TO REMOVE']
+        for value in range(5):
+            shown = [l.findtext('Text') for l in body.iter('Label')
+                     if l.findtext('ObjectName').startswith('MixpiUsbState')
+                     and self.model.visible(l, {'[MixPi],media_state': value})]
+            self.assertEqual(shown, [words[value]])
+        scan = self.model.one('MixpiUsbScan')
+        self.assertEqual((scan.tag, scan.findtext('Text')), ('Number', 'SCAN %1%'))
+        self.assertEqual(scan.findtext('Connection/ConfigKey'), '[MixPi],scan_percent')
+        for active in (0, 1):
+            for hidden in (0, 1):
+                state = {'[MixPi],scan_active': active, '[MixPi],scan_bar_hidden': hidden}
+                self.assertEqual(self.model.visible(scan, state), bool(active and hidden))
+        self.assertNotIn('LOAD / EJECT', [t.text for t in self.root.iter('Text')])
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn('#MixpiUsbBody[highlight="4"]', style)
+        self.assertFalse(any(b.findtext('Connection/ConfigKey') == '[MixPi],media_eject'
+                             for b in self.root.iter('PushButton')))
+
+    PAGES_ON = {'[Tab],overview': 1, '[Tab],fx': 1, '[Tab],sampler': 1}
+
+    def rows(self):
+        return [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiDeckButtons']
+
+    def test_deck_page_rows_are_waveforms_256_and_info_72(self):
+        perform = self.page('MixpiPerform')
+        area, info = perform.find('Children')
+        self.assertEqual(area.findtext('Size'), '0me,0me')
+        self.assertEqual(info.findtext('Size'), '0me,72f')
+        waves = self.model.one('MixpiWaveforms')
+        self.assertEqual([size(r)[3] for r in waves.find('Children')], ['me', 'me'])  # 2 x 128 of 256
+        self.assertEqual(328 - 72, 2 * 128)
+        # At 800x444 the page has 444 - 48 - 104 = 292 px: the tallest tool body
+        # (shown alone) plus the panel header and the 72 px info must fit.
+        panel = self.tool(1)
+        fixed = lambda g: sum(size(c)[1] for c in g.find('Children') if size(c)[3] == 'f')
+        bodies = [g for g in panel.find('Children') if g.findtext('ObjectName', '').endswith('Body')]
+        self.assertEqual(len(bodies), 3)
+        for body in bodies:
+            self.assertEqual(fixed(body), size(body)[1])
+            self.assertLessEqual(4 + 48 + 6 + size(body)[1] + 72, 444 - 48 - 104)
+        # Tool panels first: in the overlay trial they sit above the waveforms.
+        self.assertEqual([c.findtext('ObjectName') for c in area.find('Children')],
+                         ['MixpiLoopPanel', 'MixpiLoopPanel', 'MixpiWaveforms'])
+
+    def test_deck_waveform_column_is_92_px_with_badge_key_and_states(self):
+        infos = [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiWaveInfo']
+        self.assertEqual(len(infos), 2)
+        for channel, info in enumerate(infos, 1):
+            self.assertEqual(info.findtext('Size'), '92f,0me')
+            badge = info.find('Children/Label')
+            self.assertEqual((badge.findtext('ObjectName'), badge.findtext('Text')),
+                             (f'MixpiWaveBadge{channel}', str(channel)))
+            key = info.find('Children/Key')
+            self.assertEqual((key.findtext('Size'), key.findtext('PairedNotation'), key.findtext('Channel')),
+                             ('84f,28f', 'true', str(channel)))
+            chips = list(info.iter('PushButton'))
+            self.assertEqual([(c.findtext('State/Text'), c.findtext('Connection/ConfigKey')) for c in chips],
+                             [('MT', f'[Channel{channel}],keylock'), ('Q', f'[Channel{channel}],quantize')])
+            for c in chips:
+                self.assertEqual(self.model.writes(c), [])
+            row = self.model.parent[self.model.parent[info]]
+            self.assertEqual(row.findtext('ObjectName'), 'MixpiWaveRow')
+            self.assertEqual(row.find('Children/Visual').findtext('Size'), '0me,0me')
+
+    def test_deck_info_chips_are_display_only(self):
+        for channel in (1, 2):
+            key = f'[Channel{channel}]'
+            heads = [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiTitleStrip'
+                     and any(e.findtext('Text') == 'MASTER' for e in g.iter('Label'))
+                     and g.find('Children/TrackProperty').findtext('Channel') == str(channel)]
+            self.assertEqual(len(heads), 3)  # Decks, FX, Sampler
+            for head in heads:
+                chips = {l.findtext('Text'): l for l in head.iter('Label') if l.findtext('Text') in ('ON PI', 'MASTER', 'PFL')}
+                self.assertEqual({t: l.findtext('Connection/ConfigKey') for t, l in chips.items()},
+                                 {'ON PI': f'{key},mixpi_on_pi', 'MASTER': f'{key},sync_leader', 'PFL': f'{key},pfl'})
+                for l in chips.values():
+                    self.assertEqual(l.findtext('Connection/BindProperty'), 'visible')
+                self.assertEqual([p.findtext('Property') for p in head.iter('TrackProperty')], ['title', 'artist'])
+
+    def tool(self, channel):
+        return [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiLoopPanel'][channel - 1]
+
+    def test_tool_panel_tabs_and_bodies(self):
+        for channel in (1, 2):
+            panel = self.tool(channel)
+            self.assertEqual(panel.findtext('Connection/Transform/IsEqual'), str(channel))
+            tabs = [b for b in panel.iter('PushButton') if b.findtext('ObjectName') == f'MixpiToolTab{channel}']
+            self.assertEqual([b.findtext('State/Text') for b in tabs], ['LOOP', 'JUMP', 'CUES'])
+            for value, tab in enumerate(tabs):
+                self.assertEqual(self.model.final(tab), {'[MixPi],tool_tab': value, '[MixPi],cue_clear': 0})
+                state = {'[MixPi],loop_deck': channel, '[MixPi],tool_tab': value, '[Tab],overview': 1}
+                shown = [n for n in ('MixpiLoopBody', 'MixpiJumpBody', 'MixpiCuesBody')
+                         if self.model.visible(next(g for g in panel.iter('WidgetGroup') if g.findtext('ObjectName') == n), state)]
+                self.assertEqual(shown, [['MixpiLoopBody', 'MixpiJumpBody', 'MixpiCuesBody'][value]])
+            close = next(b for b in panel.iter('PushButton') if b.findtext('State/Text') == '×  CLOSE')
+            self.assertEqual(self.model.final(close), {'[MixPi],loop_deck': 0, '[MixPi],cue_clear': 0})
+
+    def test_tool_panel_jump_and_cues_use_real_controls(self):
+        key = '[Channel1]'
+        panel = self.tool(1)
+        jumps = [b for b in panel.iter('PushButton') if 'beatjump' in b.findtext('Connection/ConfigKey')]
+        self.assertEqual([b.findtext('Connection/ConfigKey') for b in jumps],
+                         [f'{key},beatjump_{n}_backward' for n in (1, 2, 4, 8, 16, 32)] +
+                         [f'{key},beatjump_{n}_forward' for n in (1, 2, 4, 8, 16, 32)])
+        for b in jumps:
+            self.assertEqual(b.findtext('Size'), '107f,56f')
+            self.assertEqual(b.findtext('Connection/EmitOnPressAndRelease'), 'true')
+        for n in range(1, 9):
+            cell = [g for g in panel.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiCueCell'][n - 1]
+            clear, tap = cell.findall('Children/PushButton')
+            self.assertEqual(tap.findtext('Connection/ConfigKey'), f'{key},hotcue_{n}_activate')
+            self.assertEqual(clear.findtext('Connection/ConfigKey'), f'{key},hotcue_{n}_clear')
+            for b in (tap, clear):
+                self.assertEqual(b.findtext('Size'), '196f,70f')
+                display = [c for c in b.findall('Connection') if c.findtext('ConnectValueFromWidget') == 'false'][-1]
+                self.assertEqual(display.findtext('ConfigKey'), f'{key},hotcue_{n}_enabled')
+                self.assertEqual([transform(display, v) for v in (0, 1, 2)], [0, 1, 1])
+            for clearing, top in ((0, tap), (1, clear)):
+                state = {'[MixPi],loop_deck': 1, '[MixPi],tool_tab': 2, '[Tab],overview': 1,
+                         '[MixPi],cue_clear': clearing, f'{key},hotcue_{n}_enabled': 1}
+                self.assertTrue(self.model.tappable(top, state))
+        clear_pair = next(g for g in panel.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiCueClear')
+        on, off = clear_pair.findall('Children/PushButton')
+        self.assertEqual(self.model.final(off), {'[MixPi],cue_clear': 1})
+        self.assertEqual(self.model.final(on), {'[MixPi],cue_clear': 0})
+        self.assertFalse(self.model.visible(off, {'[MixPi],loop_deck': 1, '[MixPi],tool_tab': 0, '[Tab],overview': 1}))
+        self.assertTrue(self.model.visible(off, {'[MixPi],loop_deck': 1, '[MixPi],tool_tab': 2, '[Tab],overview': 1}))
+
+    def test_tool_panel_hit_map(self):
+        panel = self.tool(1)
+        header = next(g for g in panel.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiToolHeader')
+        x, centres = 0, {}
+        for e in header.find('Children'):
+            w = size(e)[0]
+            centres.setdefault(e.findtext('State/Text') or e.findtext('ObjectName'), x + w / 2)
+            x += w if size(e)[2] == 'f' else 0
+        self.assertEqual([centres['LOOP'], centres['JUMP'], centres['CUES']], [182, 288, 394])
+        x = 800
+        for e in reversed(list(header.find('Children'))):
+            if size(e)[2] != 'f':
+                break
+            x -= size(e)[0]
+            centres[e.findtext('ObjectName') + '<'] = x + size(e)[0] / 2
+        self.assertEqual((centres['MixpiCueClear<'], centres['MixpiButton<']), (627, 737))
+        row = next(g for g in panel.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiJumpRow')
+        x, jumps = 0, []
+        for e in row.find('Children'):
+            if e.tag == 'PushButton':
+                jumps.append(x + size(e)[0] / 2)
+            x += size(e)[0]
+        for got, plan in zip(jumps, (177, 290, 403, 516, 629, 742)):
+            self.assertLessEqual(abs(got - plan), 1)
+        cue_row = next(g for g in panel.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiCueRow')
+        x, cues = 0, []
+        for e in cue_row.find('Children'):
+            if e.findtext('ObjectName') == 'MixpiCueCell':
+                cues.append(x + size(e)[0] / 2)
+            x += size(e)[0]
+        self.assertEqual(cues, [106, 302, 498, 694])
+        # y: panel top 48 + 4, header 48 → centre 76; bodies start at 106.
+        self.assertEqual(48 + 4 + 24, 76)
+        self.assertEqual([48 + 4 + 48 + 6 + 28, 48 + 4 + 48 + 6 + 56 + 6 + 28], [134, 196])
+        self.assertEqual([106 + 35, 106 + 70 + 6 + 35], [141, 217])
+
+    def test_fx_has_two_units_one_visible_per_switch_value(self):
+        units = [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiFxUnit']
+        self.assertEqual(len(units), 2)
+        for unit, group in enumerate(units, 1):
+            selectors = list(group.iter('EffectSelector'))
+            self.assertEqual([(s.findtext('EffectUnit'), s.findtext('Effect')) for s in selectors],
+                             [(str(unit), str(n)) for n in (1, 2, 3)])
+            keys = [k.text for k in group.iter('ConfigKey')]
+            self.assertIn(f'[EffectRack1_EffectUnit{unit}],mix', keys)
+            other = 3 - unit
+            self.assertFalse(any(f'EffectUnit{other}' in k for k in keys))
+            deck = 'A' if unit == 1 else 'B'
+            self.assertEqual([t.text for t in group.iter('Text') if t.text.startswith('deck ')],
+                             [f'deck {deck} FX pad {n}' for n in (1, 2, 3)])
+            for value in (1, 2):
+                self.assertEqual(self.model.visible(group, {'[Tab],fx': 1, '[MixPi],fx_unit': value}), value == unit)
+            ons = [b for b in group.iter('PushButton') if b.findtext('Connection/ConfigKey', '').endswith('],enabled')]
+            self.assertEqual(len(ons), 3)
+            for b in ons:
+                self.assertEqual([s.findtext('Text') for s in b.findall('State')], ['OFF', 'ON'])
+                self.assertEqual(len(b.findall('Connection')), 1)
+        switch = [b for b in self.root.iter('PushButton') if b.findtext('Connection/ConfigKey') == '[MixPi],fx_unit']
+        self.assertEqual([b.findtext('State/Text') for b in switch], ['FX 1 · DECK A PADS', 'FX 2 · DECK B PADS'])
+        self.assertEqual([self.model.final(b) for b in switch], [{'[MixPi],fx_unit': 1}, {'[MixPi],fx_unit': 2}])
+        attributes = {a.get('config_key'): a.text for a in self.root.findall('manifest/attributes/attribute')}
+        self.assertEqual(attributes['[MixPi],fx_unit'], '1')
+
+    def test_settings_is_a_full_screen_with_a_rail(self):
+        settings = self.model.one('MixpiSettings')
+        pages = self.model.one('MixpiPages')
+        for screen in range(6):
+            self.assertEqual(self.model.visible(settings, {SCREEN: screen}), screen == 5)
+            self.assertEqual(self.model.visible(pages, {SCREEN: screen}), screen != 5)
+        rail = [b for b in settings.iter('PushButton') if b.findtext('ObjectName') == 'MixpiRailButton']
+        self.assertEqual([b.findtext('State/Text') for b in rail], ['PLAYBACK', 'INTERFACE', 'MEDIA', 'ADVANCED'])
+        for value, b in enumerate(rail):
+            self.assertEqual(b.findtext('Size'), '200f,56f')
+            self.assertEqual(b.findtext('LeftClickIsPushButton'), 'true')
+            self.assertEqual(self.model.final(b), {'[MixPi],settings_page': value})
+        panes = list(self.model.one('MixpiSettingsPanes').find('Children'))
+        for value in range(4):
+            state = {SCREEN: 5, '[MixPi],settings_page': value}
+            self.assertEqual([self.model.visible(p, state) for p in panes], [i == value for i in range(4)])
+        close = next(b for b in settings.iter('PushButton') if b.findtext('ObjectName') == 'MixpiIconButton')
+        self.assertEqual(self.model.final(close), {SCREEN: 0})
+        saved = next(l for l in settings.iter('Label') if l.findtext('Text') == 'Saved')
+        self.assertEqual(saved.findtext('Connection/ConfigKey'), '[MixPi],saved')
+        # Rail tap points (plan 5.3): x 100, y 124/180/236/292.
+        self.assertEqual([48 + 48 + 28 + 56 * i for i in range(4)], [124, 180, 236, 292])
+        attributes = {a.get('config_key'): a for a in self.root.findall('manifest/attributes/attribute')}
+        self.assertEqual(attributes['[MixPi],settings_page'].text, '0')
+
+    def pane_writes(self, pane):
+        return {b.findtext('State/Text'): self.model.final(b) for b in pane.iter('PushButton')}
+
+    def test_settings_panes_keep_todays_controls(self):
+        panes = list(self.model.one('MixpiSettingsPanes').find('Children'))
+        playback, interface, media, advanced = (self.pane_writes(p) for p in panes)
+        self.assertEqual({k: playback[k] for k in ('ST', 'RB FAST', 'RB FINE')},
+                         {'ST': {'[MixPi],keylock_engine': 0}, 'RB FAST': {'[MixPi],keylock_engine': 1},
+                          'RB FINE': {'[MixPi],keylock_engine': 2}})
+        self.assertEqual([playback[k] for k in ('256', '512', '1024')],
+                         [{'[MixPi],buffer_frames': v} for v in (256, 512, 1024)])
+        self.assertEqual([playback[k] for k in ('6%', '8%', '10%', '16%', '24%')],
+                         [{'[MixPi],tempo_range_index': v} for v in (2, 3, 4, 5, 6)])
+        for b in panes[0].iter('PushButton'):
+            if b.findtext('Connection/ConfigKey') == '[MixPi],buffer_frames':
+                guard = next(c for c in b.findall('Connection') if c.findtext('BindProperty') == 'enabled')
+                self.assertEqual(guard.findtext('ConfigKey'), '[MixPi],buffer_available')
+        self.assertEqual(playback['DECK 1'], {'[Channel1],quantize': 1})
+        self.assertEqual(playback['OFF'], {'[Master],headSplit': 1})
+        self.assertEqual(interface['ELAPSED'], {'[Controls],ShowDurationRemaining': 0})
+        self.assertEqual(interface['REMAINING'], {'[Controls],ShowDurationRemaining': 1})
+        bar = next(b for b in panes[1].iter('PushButton') if b.findtext('ObjectName') == 'MixpiDesktopBar')
+        self.assertEqual(self.model.final(bar), {'[MixPi],desktop_bar': 1})
+        self.assertEqual(media['SHOW'], {'[MixPi],scan_bar_hidden': 0})
+        self.assertEqual(media['HIDE'], {'[MixPi],scan_bar_hidden': 1})
+        self.assertEqual([media[k] for k in ('OFF', '512', '1024')],
+                         [{'[MixPi],cache_mb': v} for v in (0, 512, 1024)])
+        texts = [t.text for t in panes[2].iter('Text')]
+        self.assertIn('MB. Also the room for handover copies. Next launch.', texts)
+        self.assertIn('A small ping at the bottom with LOAD or DISMISS', texts)
+        eject = {l.findtext('Text'): l for l in panes[2].iter('Label') if l.findtext('Text') in ('ON', 'OFF')}
+        for value in (0, 1):
+            state = {SCREEN: 5, '[MixPi],settings_page': 2, '[MixPi],media_eject_available': value}
+            self.assertEqual([t for t, l in eject.items() if self.model.visible(l, state)],
+                             ['ON' if value else 'OFF'])
+        self.assertEqual([advanced[k] for k in ('30', '45', '60')],
+                         [{'[MixPi],waveform_fps': v} for v in (30, 45, 60)])
+        self.assertEqual([advanced[k] for k in ('2', '8', '24')],
+                         [{'[MixPi],read_ahead': v} for v in (2, 8, 24)])
+        # F-2: the Preferences button is on Advanced and is a push button.
+        prefs = next(b for b in panes[3].iter('PushButton') if b.findtext('State/Text') == 'Mixxx preferences…')
+        self.assertEqual(prefs.findtext('LeftClickIsPushButton'), 'true')
+        command, = prefs.findall('Connection')
+        self.assertEqual(command.findtext('ConfigKey'), '[MixPi],show_preferences')
+        self.assertEqual(command.findtext('EmitOnDownPress'), 'true')
+        self.assertEqual(command.findtext('ConnectValueToWidget'), 'false')
+        self.assertIsNone(command.find('Transform'))
+        keys = {k.text for k in self.root.iter('ConfigKey')}
+        self.assertNotIn('[MixPi],settings_advanced', keys)  # the native control takes 0/1 only
+        self.assertIn('Next launch', ' '.join(t.text or '' for t in self.root.iter('Text')))
+
+    def test_fx_and_sampler_pages_fill_328(self):
+        fx = self.page('MixpiFxPage')
+        heights = [size(c)[1] for c in fx.find('Children')]
+        self.assertEqual(heights[0], 256)
+        self.assertEqual(fx.find('Children')[1].findtext('Size'), '0me,1e')
+        content = self.model.one('MixpiFx')
+        for unit in (1, 2):
+            state = {'[Tab],fx': 1, '[MixPi],fx_unit': unit}
+            shown = [size(c)[1] for c in content.find('Children') if self.model.visible(c, state)]
+            self.assertEqual(shown, [56, 200])
+            self.assertEqual(sum(shown) + 72, 328)
+
+    def test_sampler_pads_show_on_pi(self):
+        for sampler, pad in enumerate(self.pads(), 1):
+            chips = [l for l in pad.iter('Label') if l.findtext('Text') == 'ON PI']
+            self.assertEqual([c.findtext('Connection/ConfigKey') for c in chips], [f'[Sampler{sampler}],mixpi_on_pi'])
+
+    def test_header_slot_puts_the_right_button_on_top(self):
+        menu = self.model.one('SidebarButton')
+        closes = {b.findtext('Connection/ConfigKey'): b for b in self.model.one('MixpiHeaderSlot').iter('PushButton')
+                  if b.findtext('ObjectName') == 'MixpiIconButton'}
+        cases = [(Model.state(0, **{'[Tab]__library': 1}), menu),
+                 (Model.state(1), menu),
+                 (Model.state(1, **{'[MixPi]__sample_load': 1}), closes['[Sidebar],sidebar_visible']),
+                 (Model.state(3), closes['[Tab],sampler']),
+                 (Model.state(3, **{'[MixPi]__sample_load': 0}), closes['[Tab],sampler'])]
+        for state, expected in cases:
+            top = [b for b in [menu] + list(closes.values()) if self.model.tappable(b, state)]
+            self.assertEqual(top, [expected], state)
+
     # ---------- carried guards ----------
 
     def test_repeat_keeps_original_and_pinned_waveform_definitions(self):
@@ -851,22 +1152,20 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertNotIn('[Channel2],play', keys)
 
     def test_decks_label_and_quick_controls_are_tab_scoped(self):
-        rows = [group for group in self.root.findall('.//WidgetGroup')
-                if group.findtext('ObjectName') == 'MixpiDeckButtons']
+        rows = self.rows()
         self.assertEqual(len(rows), 2)
-        for row in rows:
-            buttons = row.findall('Children/PushButton')
-            self.assertEqual([button.findtext('State/Text') for button in buttons[:4]],
-                             ['KEY', 'Q', 'SYNC', 'LOOP'])
-            for button in buttons[:4]:
-                guard = next(connection for connection in button.findall('Connection')
-                             if connection.findtext('BindProperty') == 'visible')
-                self.assertEqual(guard.findtext('ConfigKey'), '[Tab],overview')
-            self.assertEqual([button.findtext('State/Text') for button in buttons[4:]],
-                             ['LOAD', 'CUE', '▶'])
-            cue = buttons[5]
-            self.assertFalse(any(connection.findtext('BindProperty') == 'visible'
-                                 for connection in cue.findall('Connection')))
+        for channel, row in enumerate(rows, 1):
+            names = lambda state: [b.findtext('State/Text') for b in row.iter('PushButton')
+                                   if self.model.tappable(b, state)]
+            for page in ('overview', 'fx', 'sampler'):
+                self.assertEqual(names({f'[Tab],{page}': 1}), ['KEY', 'Q', 'SYNC', 'LOOP', 'CUE', '▶'], page)
+            self.assertEqual(names({'[Tab],library': 1}), [f'LOAD {channel}', 'CUE'])
+            # Decks widths (plan R-16): KEY 48, Q 48, SYNC 60, LOOP 60, CUE 76, ▶ the rest.
+            fixed = [size(b)[0] for b in row.iter('PushButton')
+                     if self.model.tappable(b, {'[Tab],overview': 1}) and size(b)[2] == 'f']
+            self.assertEqual(fixed, [48, 48, 60, 60, 76])
+            self.assertLessEqual(sum(fixed), 400)
+            self.assertEqual(row.findtext('Size'), '400me,56f')
 
     def test_six_pixel_corners_only_override_owned_buttons(self):
         style = (self.skin/'style.qss').read_text()
@@ -928,64 +1227,6 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertIn(declaration, popup)
         self.assertNotIn('\nQWidget {', style)
 
-    def test_fx_mix_box_and_ordinary_selectors(self):
-        fx = SKIN.fx()
-        self.assertNotIn('BEAT FX', [text.text for text in fx.findall('.//Text')])
-        mix = next(group for group in fx.findall('.//WidgetGroup')
-                   if group.findtext('ObjectName') == 'MixpiFxMix')
-        self.assertEqual(mix.findtext('Children/SliderComposed/Connection/ConfigKey'),
-                         '[EffectRack1_EffectUnit1],mix')
-        self.assertEqual(len(fx.findall('.//EffectSelector')), 3)
-
-    def test_settings_effective_columns_and_advanced(self):
-        panel = SKIN.settings()
-        basic = next(group for group in panel.findall('.//WidgetGroup')
-                     if group.findtext('ObjectName') == 'MixpiSettingsBasic')
-        self.assertEqual(basic.findtext('Layout'), 'horizontal')
-        self.assertEqual([child.findtext('ObjectName') for child in basic.find('Children')],
-                         ['MixpiPlaybackSettings', 'MixpiInterfaceSettings'])
-        self.assertNotIn('[MixPi],waveform_fps', [key.text for key in basic.findall('.//ConfigKey')])
-        combo = basic.find('.//ComboBox')
-        self.assertEqual([state.findtext('Text') for state in combo.findall('State')],
-                         ['Custom', '4%', '6%', '8%', '10%', '16%', '24%', '50%', '90%'])
-        self.assertIn('[MixPi],desktop_bar', [key.text for key in basic.findall('.//ConfigKey')])
-        advanced = next(group for group in panel.findall('.//WidgetGroup')
-                        if group.findtext('ObjectName') == 'MixpiSettingsAdvanced')
-        buttons = {b.findtext('State/Text'): b for b in panel.findall('.//PushButton')}
-        # settings_advanced is a plain control: a two-state toggle sends 1 on
-        # every press, so both buttons must be explicit set-value push buttons.
-        for text, write in (('Advanced…', 'IsEqual'), ('Back', 'Not')):
-            b = buttons[text]
-            self.assertEqual(b.findtext('LeftClickIsPushButton'), 'true')
-            command = b.find('Connection')
-            self.assertEqual(command.findtext('ConfigKey'), '[MixPi],settings_advanced')
-            self.assertEqual(command.findtext('EmitOnDownPress'), 'true')
-            self.assertEqual(command.findtext('ConnectValueToWidget'), 'false')
-            self.assertIsNotNone(command.find('Transform/' + write))
-        self.assertEqual(buttons['Advanced…'].findtext('Connection/Transform/IsEqual'), '1')
-        self.assertIn(buttons['Advanced…'], list(basic.iter()))
-        self.assertIn(buttons['Back'], list(advanced.iter()))
-
-    def test_advanced_back_and_preferences_share_one_touch_row(self):
-        advanced = next(group for group in SKIN.settings().findall('.//WidgetGroup')
-                        if group.findtext('ObjectName') == 'MixpiSettingsAdvanced')
-        row = next(group for group in advanced.findall('Children/WidgetGroup')
-                   if any(b.findtext('State/Text') == 'Back' for b in group.findall('Children/PushButton')))
-        self.assertEqual(row.findtext('Layout'), 'horizontal')
-        self.assertEqual(row.findtext('Size'), '0me,48f')
-        back, preferences = row.findall('Children/PushButton')
-        self.assertEqual(back.findtext('State/Text'), 'Back')
-        self.assertEqual(preferences.findtext('State/Text'), 'Mixxx preferences…')
-        self.assertEqual(preferences.findtext('LeftClickIsPushButton'), 'true')
-        self.assertEqual(preferences.findtext('Size'), '0me,48f')
-        command, = preferences.findall('Connection')
-        self.assertEqual(command.findtext('ConfigKey'), '[MixPi],show_preferences')
-        self.assertEqual(command.findtext('EmitOnDownPress'), 'true')
-        self.assertEqual(command.findtext('ConnectValueFromWidget'), 'true')
-        self.assertEqual(command.findtext('ConnectValueToWidget'), 'false')
-        self.assertIsNone(command.find('Transform'))
-        self.assertIsNone(command.find('EmitOnPressAndRelease'))
-
     # Controls that Mixxx itself creates as toggling ControlPushButtons. A
     # two-state button on any other control sends 1 on every press (B1).
     REAL_TOGGLES = ('keylock', 'quantize', 'sync_enabled', 'play', 'headSplit', 'enabled')
@@ -998,10 +1239,14 @@ class PerformanceSkinTests(unittest.TestCase):
             if b.findtext('NumberStates') != '2' or b.findtext('LeftClickIsPushButton') == 'true':
                 continue
             writes = [c.findtext('ConfigKey') for c in b.findall('Connection')
-                      if c.findtext('ConnectValueFromWidget') == 'true']
+                      if c.find('BindProperty') is None and c.findtext('ConnectValueFromWidget', 'true') == 'true']
+            if not writes:
+                continue  # display-only chip: a tap writes nothing
             if len(writes) != 1 or writes[0].split(',', 1)[1] not in self.REAL_TOGGLES:
                 offenders.append((b.findtext('State/Text'), writes))
         return offenders
+
+    # ---------- R-16 deck page ----------
 
     def test_guard_catches_a_toggle_on_a_plain_control(self):
         self.root.find('.//Children').append(SKIN.button('Back', '[MixPi],settings_advanced'))
@@ -1039,18 +1284,6 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(close.findtext('Connection/ConnectValueToWidget'), 'false')
         self.assertEqual(len(self.root.findall('.//Overview')), 2)
 
-    def test_settings_expand_instead_of_retaining_deck_details(self):
-        perform = next(group for group in self.root.findall('.//WidgetGroup')
-                       if group.findtext('ObjectName') == 'MixpiPerform')
-        details = perform.find('Children')[-1]
-        gate = details.find('Connection')
-        self.assertEqual(gate.findtext('ConfigKey'), '[MixPi],loop_deck')
-        self.assertEqual(gate.findtext('Transform/IsEqual'), '3')
-        self.assertIsNotNone(gate.find('Transform/Not'))
-        fx = next(group for group in self.root.findall('.//WidgetGroup')
-                  if group.findtext('ObjectName') == 'MixpiFxPage')
-        self.assertEqual(len(fx.find('Children')), 1)
-
     def test_paired_keys_are_display_only_opt_in(self):
         for key in self.root.findall('.//Key'):
             self.assertEqual(key.findtext('PairedNotation'), 'true')
@@ -1060,31 +1293,30 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertIn('KeyUtils::KeyNotation::LancelotAndTraditional', patch)
 
     def test_fx_route_disables_others_before_enabling_selected(self):
-        buttons=[b for b in self.root.findall('.//PushButton')
-                 if b.findtext('State/Text') in ('DECK 1','DECK 2','MASTER')]
-        self.assertEqual(len(buttons),3)
-        for b in buttons:
-            writes=[c for c in b.findall('Connection') if c.findtext('ConnectValueFromWidget')=='true']
-            self.assertEqual(len(writes),3)
-            self.assertTrue(all(c.find('Transform/Not') is not None for c in writes[:2]))
-            self.assertIsNone(writes[-1].find('Transform'))
-            self.assertTrue(all(c.findtext('ConnectValueToWidget')=='false' for c in writes))
-        for b in self.root.findall('.//PushButton'):
-            if b.findtext('State/Text')=='ON / OFF':
-                self.assertEqual(len(b.findall('Connection')),1)
-                self.assertTrue(b.findtext('Connection/ConfigKey').endswith('],enabled'))
+        units = [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiFxUnit']
+        for unit, group in enumerate(units, 1):
+            rack = f'[EffectRack1_EffectUnit{unit}]'
+            buttons = [b for b in group.iter('PushButton') if 'group_[' in b.findtext('Connection/ConfigKey')]
+            texts = [b.findtext('State/Text') for b in buttons]
+            own = ['DECK 1', 'DECK 2'][unit - 1]
+            self.assertEqual(texts, [t + (' · PAD 4' if t == own else '') for t in ('DECK 1', 'DECK 2', 'MASTER')])
+            for b, route in zip(buttons, ('[Channel1]', '[Channel2]', '[Master]')):
+                writes = self.model.writes(b)
+                self.assertEqual(len(writes), 3)
+                self.assertEqual(writes[-1], (f'{rack},group_{route}_enable', 1))
+                self.assertTrue(all(v == 0 for _, v in writes[:2]))
+                self.assertTrue(all(c.findtext('ConnectValueToWidget') == 'false' for c in b.findall('Connection')
+                                    if c.findtext('ConnectValueFromWidget') == 'true'))
+
+    # ---------- R-18 settings ----------
 
     def test_transport_and_tabs_have_real_controls_and_touch_sizes(self):
-        rows=[g for g in self.root.findall('.//WidgetGroup') if g.findtext('ObjectName')=='MixpiDeckButtons']
-        self.assertEqual(len(rows),2)
-        for row in rows:
-            self.assertEqual(row.findtext('Size'),'0me,56f')
-            self.assertEqual(len(row.findall('Children/PushButton')),7)
-            self.assertTrue(all(b.findtext('Size')=='0me,48f' for b in row.findall('Children/PushButton')))
-        self.assertTrue(all(b.findtext('LeftClickIsPushButton')=='true' for b in self.tabs()))
+        for row in self.rows():
+            for b in row.iter('PushButton'):
+                self.assertEqual(size(b)[1], 48)
+        self.assertTrue(all(b.findtext('LeftClickIsPushButton') == 'true' for b in self.tabs()))
         self.assertFalse(any('safe_to_remove' in (c.text or '').lower()
                              for c in self.root.findall('.//ConfigKey')))
-        self.assertEqual(len(self.root.findall('.//EffectSelector')),3)
 
     def test_focus_reuses_real_waveforms_outside_loop_panel(self):
         groups = self.root.findall('.//WidgetGroup')
@@ -1104,41 +1336,30 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertEqual(strip.findtext('Connection/Transform/IsEqual'), str(channel))
             self.assertIsNotNone(strip.find('Connection/Transform/Not'))
 
-    def test_deck_waveforms_use_the_eos_info_column(self):
-        # F-4 A/B decision: restore the 100 px EOS column (700 px waveforms).
-        infos = [g for g in self.root.findall('.//WidgetGroup')
-                 if g.findtext('ObjectName') == 'MixpiWaveInfo']
-        self.assertEqual(len(infos), 2)
-        for channel, info in enumerate(infos, 1):
-            self.assertEqual(info.findtext('Size'), '100f,0me')
-            key = info.find('Children/Key')
-            self.assertEqual(key.findtext('ObjectName'), 'MixpiWaveKey')
-            self.assertEqual(key.findtext('Size'), '92f,36f')
-            self.assertEqual(key.findtext('PairedNotation'), 'true')
-            self.assertEqual(key.findtext('Channel'), str(channel))
-            row = next(g for g in self.root.findall('.//WidgetGroup') if info in list(g.find('Children')))
-            self.assertEqual(row.findtext('ObjectName'), 'MixpiWaveRow')
-            self.assertEqual(row.find('Children/Visual').findtext('Size'), '0me,0me')
-
     def test_deck_readouts_fit_one_time_string_in_a_deck_half(self):
         # Owner decision 1: one time (elapsed, tap for remaining). On the Pi at
         # 21 px, "-14:41.23" is 88 px wide and "125.50" fits the 100 px BPM cell.
         stats = [g for g in self.root.findall('.//WidgetGroup')
                  if g.findtext('ObjectName') == 'MixpiDeckStats']
-        self.assertEqual(len(stats), 4)  # Decks and Sampler, both decks
-        heights = []
+        self.assertEqual(len(stats), 6)  # Decks, FX and Sampler, both decks
         for group in stats:
-            widths = {child.findtext('ObjectName'): int(child.findtext('Size').split('me,')[0])
-                      for child in group.find('Children')}
-            self.assertEqual(widths, {'MixpiTime': 120, 'MixpiBpm': 100, 'MixpiRate': 60, 'MixpiKey': 120})
-            self.assertLessEqual(sum(widths.values()), 400)
-            child_heights = {size(child)[1] for child in group.find('Children')}
-            self.assertEqual(len(child_heights), 1)
-            heights.append(child_heights.pop())
-            self.assertEqual(group.find('Children/NumberPos').findtext('NumberOfDigits'), '6')
-        self.assertEqual(heights, [54, 54, 48, 48])  # Decks 82 px row, Sampler 72 px row
+            self.assertEqual(group.findtext('Size'), '0me,48f')
+            children = list(group.find('Children'))
+            self.assertEqual([c.findtext('ObjectName') for c in children],
+                             ['MixpiTimeCell', 'MixpiBpm', 'MixpiRate', 'MixpiKey'])
+            self.assertEqual([size(c)[0] for c in children], [120, 100, 60, 120])
+            time = next(group.iter('NumberPos'))
+            self.assertEqual(time.findtext('NumberOfDigits'), '6')
+            captions = {l.findtext('Text'): l for l in group.iter('Label')}
+            for mode, shown in ((0, 'ELAPSED · TAP'), (1, 'REMAINING · TAP'), (2, 'ELAPSED · TAP')):
+                state = dict(self.PAGES_ON, **{'[Controls],ShowDurationRemaining': mode})
+                self.assertEqual([t for t, l in captions.items() if self.model.visible(l, state)], [shown])
+        for info in (g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiDeckInfo'):
+            self.assertIn(size(info)[1], (28, 72))
         style = (self.skin/'style.qss').read_text()
         self.assertIn('#MixpiTime, #MixpiRate, #MixpiKey { color: #f4f6fa; font-size: 21px; }', style)
+
+    # ---------- R-17 FX ----------
 
     def test_overlay_probe_is_explicit_and_repeatable(self):
         SKIN.build(self.skin, 'overlay')
@@ -1152,12 +1373,10 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(len(ET.parse(self.skin/'skin.xml').findall('.//Visual')), 4)
 
     def test_tracks_shows_load_and_cue_instead_of_cue_and_play(self):
-        rows = [g for g in self.root.findall('.//WidgetGroup')
-                if g.findtext('ObjectName') == 'MixpiDeckButtons']
-        for channel, row in enumerate(rows, 1):
+        for channel, row in enumerate(self.rows(), 1):
             key = f'[Channel{channel}]'
-            buttons = {b.findtext('State/Text'): b for b in row.findall('Children/PushButton')}
-            load = buttons['LOAD']
+            load = next(b for b in row.iter('PushButton') if b.findtext('State/Text') == f'LOAD {channel}')
+            self.assertEqual(load.findtext('Size'), '104f,48f')
             command, enabled, visible = load.findall('Connection')
             self.assertEqual(command.findtext('ConfigKey'), f'{key},LoadSelectedTrack')
             self.assertEqual(command.findtext('EmitOnPressAndRelease'), 'true')
@@ -1167,40 +1386,43 @@ class PerformanceSkinTests(unittest.TestCase):
             self.assertIsNotNone(enabled.find('Transform/Not'))
             self.assertEqual((visible.findtext('ConfigKey'), visible.findtext('BindProperty')),
                              ('[Tab],library', 'visible'))
-            self.assertIsNone(visible.find('Transform'))
-            play = buttons['▶']
-            gate = play.findall('Connection')[-1]
-            self.assertEqual((gate.findtext('ConfigKey'), gate.findtext('BindProperty')),
-                             ('[Tab],library', 'visible'))
-            self.assertIsNotNone(gate.find('Transform/Not'))
+            # The deck title beside LOAD, inside the 230 px cell (plan 4.2).
+            cell = next(g for g in row.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiLoadCell')
+            self.assertEqual(104 + size(cell)[0], 230)
+            title = next(cell.iter('TrackProperty'))
+            self.assertEqual((title.findtext('Channel'), title.findtext('Property')), (str(channel), 'title'))
+            for play in (0, 1):
+                state = {'[Tab],library': 1, f'{key},play': play}
+                self.assertEqual(self.model.visible(title, state), not play)
+                self.assertEqual(self.model.enabled(load, state), not play)
+            cues = [b for b in row.iter('PushButton') if b.findtext('State/Text') == 'CUE']
+            self.assertEqual(len(cues), 2)
+            for cue in cues:
+                self.assertEqual(self.model.writes(cue), [(f'{key},cue_default', 1)])
+                self.assertEqual(self.model.writes(cue, 'release'), [(f'{key},cue_default', 0)])
+            play = next(b for b in row.iter('PushButton') if b.findtext('State/Text') == '▶')
             self.assertEqual(play.findtext('Connection/ConfigKey'), f'{key},play')
-            cue = buttons['CUE']
-            self.assertEqual([c.findtext('ConfigKey') for c in cue.findall('Connection')],
-                             [f'{key},cue_default'])
-            self.assertEqual(cue.findtext('Connection/EmitOnPressAndRelease'), 'true')
-            names = [b.findtext('State/Text') for b in row.findall('Children/PushButton')]
-            self.assertLess(names.index('LOAD'), names.index('CUE'))
-            for b in buttons.values():
-                self.assertGreaterEqual(int(b.findtext('Size').split(',')[1].rstrip('f')), 48)
+            self.assertFalse(self.model.visible(play, {'[Tab],library': 1}))
         keys = [k.text or '' for k in self.root.findall('.//ConfigKey')]
         self.assertFalse(any('LoadSelectedTrackAndPlay' in key for key in keys))
 
     def test_loop_quick_controls_keep_decks_navigation_and_sampler_reset(self):
-        loops = [button for button in self.root.findall('.//PushButton')
-                 if button.findtext('State/Text') == 'LOOP']
-        for button in loops:
-            self.assertEqual(button.findtext('LeftClickIsPushButton'), 'true')
-            keys = [connection.findtext('ConfigKey') for connection in button.findall('Connection')]
-            self.assertEqual(keys, ['[MixPi],loop_deck', '[Tab],overview', '[Tab],overview', '[MixPi],sample_load'])
-            self.assertEqual(button.findall('Connection')[1].findtext('BindProperty'), 'visible')
-
-    def test_settings_confirmed_native_controls_and_next_launch_labels(self):
-        keys = {key.text for key in self.root.findall('.//ConfigKey')}
-        self.assertIn('[MixPi],buffer_frames', keys)
-        self.assertIn('[MixPi],buffer_available', keys)
-        self.assertIn('[MixPi],read_ahead', keys)
-        self.assertIn('[MixPi],cache_mb', keys)
-        self.assertIn('* Next launch', [text.text for text in self.root.findall('.//Text')])
+        for channel, row in enumerate(self.rows(), 1):
+            loops = [b for b in row.iter('PushButton') if b.findtext('State/Text') == 'LOOP']
+            self.assertEqual(len(loops), 2)
+            for b in loops:
+                self.assertEqual(b.findtext('LeftClickIsPushButton'), 'true')
+                self.assertEqual(self.model.writes(b), [('[MixPi],loop_deck', channel), ('[Tab],overview', 1),
+                                                        ('[MixPi],sample_load', 0)])
+            # Lit while the panel is open, and in the deck colour while a loop plays.
+            for state, lit in (({'[MixPi],loop_deck': channel}, '[MixPi],loop_deck'),
+                               ({f'[Channel{channel}],loop_enabled': 1}, f'[Channel{channel}],loop_enabled')):
+                state['[Tab],overview'] = 1
+                top = [b for b in loops if self.model.tappable(b, state)]
+                self.assertEqual(len(top), 1)
+                display = [c for c in top[0].findall('Connection') if c.findtext('ConnectValueFromWidget') == 'false']
+                self.assertEqual(display[-1].findtext('ConfigKey'), lit)
+                self.assertEqual(transform(display[-1], 1.0 if lit.endswith('loop_enabled') else float(channel)), 1)
 
     @unittest.skipUnless(os.environ.get('PIONEERED_TEST_SKIN'),'pinned upstream checkout optional')
     def test_build_on_pinned_pioneered_preserves_visual_and_overview(self):

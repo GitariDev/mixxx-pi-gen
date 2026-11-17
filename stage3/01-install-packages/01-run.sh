@@ -37,6 +37,8 @@ MIXXX_PATCHES=(
     mixxx-scan-progress.patch
     mixxx-media-screen.patch
     mixxx-media-handover.patch
+    mixxx-sample-browser.patch
+    mixxx-source-groups.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

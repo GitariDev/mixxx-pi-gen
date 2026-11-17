@@ -489,8 +489,11 @@ int main(int argc, char** argv) {
     require(shown == "Rekordbox/MANTACORE" && sidebar.rootIndex() == driveRow && sidebar.isSourceMenuInside(),
             "a tap on the drive opens it and goes inside");
     require(shownRows(sidebar) == QStringList({"Friday set", "Grime"}) &&
-                    sidebar.sourceCrumb() == "MANTACORE" && sidebar.sourceTiles().first()->isChecked(),
-            "its rows are the drive's node; the place names the drive; it is the current source");
+                    sidebar.sourceTiles().first()->isChecked(),
+            "its rows are the drive's node; it is the current source");
+    require(sidebar.sourceCrumb() == QString::fromUtf8("MANTACORE › rekordbox") &&
+                    place->text() == QString::fromUtf8("MANTACORE › rekordbox"),
+            "inside a drive the place reads the drive, then rekordbox (m-sources-sub.png)");
     back->click();
     settle();
     require(!sidebar.isSourceMenuInside() && tileNames(sidebar).value(0) == "MANTACORE",
@@ -508,12 +511,21 @@ int main(int argc, char** argv) {
     // A drive opened in Computer joins after it, in plug-in order.
     {
         std::vector<std::unique_ptr<TreeItem>> rows;
-        rows.push_back(item(stick, stick));
+        auto stickItem = item(stick, stick);
+        stickItem->appendChild("Sets", QString(stick + "/Sets"));
+        rows.push_back(std::move(stickItem));
         computer.children.insertTreeItemRows(std::move(rows), computer.children.rowCount());
     }
     settle();
     require(tileNames(sidebar).mid(0, 2) == QStringList({"MANTACORE", "STICK"}) && tileSub(sidebar, "STICK") == "USB",
             "a drive opened in Computer gets a row (USB), in plug-in order");
+    tileNamed(sidebar, "STICK")->click();
+    settle();
+    require(sidebar.isSourceMenuInside() && sidebar.sourceCrumb() == QString::fromUtf8("STICK › Folders") &&
+                    place->text() == QString::fromUtf8("STICK › Folders"),
+            "inside a drive without an export the place reads the drive, then its folder view (Folders)");
+    back->click();
+    settle();
 
     // Unplug while the drive is selected.
     sidebar.sourceTiles().first()->click();
@@ -863,9 +875,19 @@ int main(int argc, char** argv) {
                             countPixels(sidebar, model.index(3, 0, driveRoot)) > 20 &&
                             countPixels(sidebar, model.index(0, 0, driveRoot)) == 0,
                     "inside the drive each list shows its count at the right; Tracks has none");
+            require(place->text() == QString::fromUtf8("MANTACORE › rekordbox"),
+                    "the render's place reads MANTACORE › rekordbox");
             if (!grabs.isEmpty()) {
                 screen.grab().save(grabs + "/c2-sources-drive.png");
             }
+            // A deeper level keeps the trail.
+            QTest::mouseClick(sidebar.viewport(), Qt::LeftButton, {},
+                    sidebar.visualRect(model.index(1, 0, driveRoot)).center());
+            settle();
+            require(sidebar.sourceCrumb() == QString::fromUtf8("MANTACORE › rekordbox › Playlists"),
+                    "a folder inside the drive keeps the trail: MANTACORE › rekordbox › Playlists");
+            back->click();
+            settle();
             back->click();
             settle();
         }

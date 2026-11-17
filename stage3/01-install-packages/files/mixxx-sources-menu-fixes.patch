@@ -317,3 +317,28 @@ index fa80c0b..eb69e2d 100644
                  QVariant(QList<QString>{currentPath, IS_NOT_RECORDBOX_DEVICE}));
  
          // Create a playlist for this child
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index 4dd69cc..ebe8a1d 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -514,9 +514,19 @@ QString WLibrarySidebar::sourceCrumb() const {
+                 index = index.parent()) {
+             parts.prepend(index.data().toString());
+         }
+-        if (pTile->node.isValid() && !withinSelectedTile()) {
++        const bool within = !pTile->node.isValid() || withinSelectedTile();
++        if (!within) {
+             parts.clear();
+         }
++        // Inside a drive (m-sources-sub.png, "MANTACORE › rekordbox"): the
++        // drive's name, then the part of it shown: rekordbox for its export,
++        // else the folder view (Folders).
++        if (within && pTile->id.startsWith(QStringLiteral("drive:"))) {
++            namespace Groups = LibraryInterface::SourceGroups;
++            parts.prepend(pTile->subline == Groups::driveSubline(true)
++                            ? QStringLiteral("rekordbox")
++                            : Groups::title(Groups::kFolders));
++        }
+         parts.prepend(pTile->name);
+         return parts.join(QStringLiteral(" \u203A "));
+     }

@@ -103,7 +103,15 @@ class SourcesMenuFixesPatchTests(unittest.TestCase):
     def test_patch_changes_only_its_files(self):
         self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) b/\S+$', FIXES.read_text(), re.MULTILINE)),
                          ['src/library/library.cpp', 'src/library/library.h', 'src/library/mixpimedia.h',
-                          'src/library/mixpistartdrive.h', 'src/library/rekordbox/rekordboxfeature.cpp'])
+                          'src/library/mixpistartdrive.h', 'src/library/rekordbox/rekordboxfeature.cpp',
+                          'src/widget/wlibrarysidebar.cpp'])
+
+    def test_place_inside_a_drive_names_the_part_shown(self):
+        sidebar = added_lines('src/widget/wlibrarysidebar.cpp')
+        # m-sources-sub.png: "MANTACORE › rekordbox"; a drive without an
+        # export: its folder view.
+        self.assertIn('QStringLiteral("rekordbox")', sidebar)
+        self.assertIn('Groups::title(Groups::kFolders)', sidebar)
 
     def test_patch_comes_after_the_menu_and_the_media_page(self):
         names = self.names()

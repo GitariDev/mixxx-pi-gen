@@ -1,0 +1,284 @@
+/* Media page, eject sheet and bottom strips: agreed UI s13 (mockups/m-media.png)
+ * and section 1, with the values of agreed-ui/design/tokens.css:
+ *   bg #0d1014, surface #161a20, surface-2 #1d222a, surface-3 #262c35 (pressed),
+ *   surface-off #13161b, line #2c333d, line-strong #3a424e, scrim rgba(5,7,9,.66);
+ *   text #e4e7ec, dim #949dab, off #7f8896, ink #0d1014;
+ *   accent #a3c45e (press #8fad50, lit text #bcd88a, lit tint 26% = alpha 66);
+ *   play #5fae6e (text #7cc58a); info #5aa4c4 (surface #13272f);
+ *   caution #dfa33a (text #e8b65c, surface #30260e); danger #d0574d (text #ec7f74,
+ *   surface #34191b); radius 3 px, chips are pills.
+ * Loads after pioneered-menus.qss. Every rule here sets each property the old
+ * Media section of that file set, so nothing of build B's look leaks through.
+ * Text is 13 px or more; every button is 48 px tall or more. QSS min-height is
+ * the content box, so a button with a 1 px border has min-height 46 px. */
+
+/* ---------- page, header, close ---------- */
+#MixpiPage, #MixpiPageContent, #MixpiMediaDrives, #MixpiMediaDriveList {
+    background-color: #0d1014;
+    color: #e4e7ec;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 14px;
+}
+#MixpiPageHeader {
+    background-color: #161a20;
+    border: 0px;
+    border-bottom: 1px solid #2c333d;
+}
+#MixpiPage QLabel#MixpiPageTitle {
+    background-color: transparent;
+    color: #e4e7ec;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 20px;
+    font-weight: normal;
+}
+#MixpiPage QLabel#MixpiPageHint {
+    color: #949dab;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 13px;
+}
+/* Close (section 1): a square on surface-2, a red ✕ (the text colour), no outline at rest. */
+#MixpiPage QPushButton#MixpiPageClose {
+    min-height: 0px;
+    padding: 0px;
+    background-color: #1d222a;
+    color: #ec7f74;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    font-size: 13px;
+}
+#MixpiPage QPushButton#MixpiPageClose:pressed {
+    background-color: #34191b;
+    border-color: #d0574d;
+}
+
+/* ---------- filter segments (Choose) ---------- */
+#MixpiPage QFrame#MixpiMediaFilter {
+    background-color: #1d222a;
+    border: 1px solid #3a424e;
+    border-radius: 3px;
+}
+#MixpiPage QPushButton#MixpiMediaFilterOption {
+    min-height: 48px;
+    padding: 0px 16px;
+    background-color: transparent;
+    color: #e4e7ec;
+    border: 0px;
+    border-left: 1px solid #3a424e;
+    border-radius: 0px;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 15px;
+    font-weight: bold;
+}
+#MixpiPage QPushButton#MixpiMediaFilterOption[first="true"] { border-left: 0px; }
+#MixpiPage QPushButton#MixpiMediaFilterOption:pressed { background-color: #262c35; }
+#MixpiPage QPushButton#MixpiMediaFilterOption:checked {
+    min-height: 44px; /* 48 px with the 2 px border */
+    background-color: rgba(163, 196, 94, 66);
+    color: #bcd88a;
+    border: 2px solid #a3c45e;
+}
+
+/* ---------- drive rows ---------- */
+#MixpiPage QFrame#MixpiMediaCard {
+    background-color: #161a20;
+    border: 1px solid #2c333d;
+    border-radius: 3px;
+}
+#MixpiPage QLabel {
+    background-color: transparent;
+    color: #e4e7ec;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 14px;
+    font-weight: normal;
+}
+#MixpiPage QWidget#MixpiMediaUsbIcon { background-color: transparent; color: #e4e7ec; }
+#MixpiPage QLabel#MixpiMediaName {
+    color: #e4e7ec;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 22px;
+    font-weight: normal;
+}
+#MixpiPage QLabel#MixpiMediaSize, #MixpiPage QLabel#MixpiMediaUse {
+    color: #949dab;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 13px;
+}
+#MixpiPage QLabel#MixpiMediaProblem { color: #e4e7ec; font-size: 14px; }
+/* State chips: pills, not pressable (section 1, Indicators). */
+#MixpiPage QLabel#MixpiMediaChip {
+    min-height: 20px; /* the content box: 22 px with its 1 px border */
+    max-height: 20px;
+    padding: 0px 9px;
+    background-color: transparent;
+    color: #949dab;
+    border: 1px solid #3a424e;
+    border-radius: 11px;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 13px;
+    font-weight: bold;
+}
+#MixpiPage QLabel#MixpiMediaChip[state="1"] { color: #7cc58a; border-color: #5fae6e; background-color: transparent; }
+#MixpiPage QLabel#MixpiMediaChip[state="2"] { color: #e4e7ec; border-color: #5aa4c4; background-color: #13272f; }
+#MixpiPage QLabel#MixpiMediaChip[state="3"] { color: #e8b65c; border-color: #dfa33a; background-color: #30260e; }
+#MixpiPage QLabel#MixpiMediaChip[state="4"] { color: #0d1014; border-color: #5fae6e; background-color: #5fae6e; }
+
+/* ---------- buttons by role (section 1) ---------- */
+#MixpiPage QPushButton, #MixpiBottomStrip QPushButton {
+    min-height: 46px; /* the content box: 48 px with the 1 px borders */
+    padding: 0px 14px;
+    background-color: #1d222a;
+    color: #e4e7ec;
+    border: 1px solid #3a424e;
+    border-radius: 3px;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 15px;
+    font-weight: bold;
+}
+#MixpiPage QPushButton:pressed, #MixpiBottomStrip QPushButton:pressed { background-color: #262c35; }
+#MixpiPage QPushButton:disabled, #MixpiBottomStrip QPushButton:disabled {
+    background-color: #13161b;
+    color: #7f8896;
+    border: 1px dashed #2c333d;
+}
+/* Navigate: neutral. */
+#MixpiPage QPushButton[role="navigate"], #MixpiBottomStrip QPushButton[role="navigate"] {
+    background-color: #1d222a;
+    color: #e4e7ec;
+    border: 1px solid #3a424e;
+}
+#MixpiPage QPushButton[role="navigate"]:pressed, #MixpiBottomStrip QPushButton[role="navigate"]:pressed {
+    background-color: #262c35;
+}
+/* Confirm: solid muted accent, dark text. */
+#MixpiPage QPushButton[role="confirm"], #MixpiBottomStrip QPushButton[role="confirm"] {
+    background-color: #a3c45e;
+    color: #0d1014;
+    border: 1px solid #a3c45e;
+}
+#MixpiPage QPushButton[role="confirm"]:pressed, #MixpiBottomStrip QPushButton[role="confirm"]:pressed {
+    background-color: #8fad50;
+    border-color: #8fad50;
+}
+/* Caution (EJECT): dark amber, amber border and text; solid amber only while pressed. */
+#MixpiPage QPushButton[role="caution"], #MixpiBottomStrip QPushButton[role="caution"] {
+    background-color: #30260e;
+    color: #e8b65c;
+    border: 1px solid #dfa33a;
+}
+#MixpiPage QPushButton[role="caution"]:pressed, #MixpiBottomStrip QPushButton[role="caution"]:pressed {
+    background-color: #dfa33a;
+    border-color: #dfa33a;
+    color: #0d1014;
+}
+/* The icon buttons draw their icon and label in the palette's text colour:
+ * their pressed text colour comes through down="true". */
+#MixpiPage QPushButton[role="caution"][down="true"] { color: #0d1014; }
+/* Disabled wins over every role. */
+#MixpiPage QPushButton[role="navigate"]:disabled, #MixpiPage QPushButton[role="confirm"]:disabled,
+#MixpiPage QPushButton[role="caution"]:disabled, #MixpiBottomStrip QPushButton[role="navigate"]:disabled,
+#MixpiBottomStrip QPushButton[role="confirm"]:disabled, #MixpiBottomStrip QPushButton[role="caution"]:disabled {
+    background-color: #13161b;
+    color: #7f8896;
+    border: 1px dashed #2c333d;
+}
+
+/* ---------- scrolling: a 24 px bar on every list (section 1, rubric 8) ---------- */
+#MixpiPage QScrollBar {
+    background-color: #1d222a;
+    border: 0px;
+    margin: 0px;
+}
+#MixpiPage QScrollBar:vertical {
+    width: 24px;
+    border: 0px;
+    border-radius: 3px;
+}
+#MixpiPage QScrollBar:horizontal { height: 24px; }
+#MixpiPage QScrollBar::handle {
+    background-color: #5b6472;
+    border: 5px solid #1d222a;
+    border-radius: 8px;
+}
+#MixpiPage QScrollBar::handle:vertical { min-height: 56px; }
+#MixpiPage QScrollBar::handle:pressed { background-color: #a3c45e; }
+#MixpiPage QScrollBar::add-line, #MixpiPage QScrollBar::sub-line { height: 0px; width: 0px; border: 0px; }
+#MixpiPage QScrollBar::add-page, #MixpiPage QScrollBar::sub-page { background-color: #1d222a; }
+
+/* ---------- footer: "N tracks playing from Pi memory" ---------- */
+#MixpiPage QFrame#MixpiMediaFooter {
+    background-color: #161a20;
+    border: 0px;
+    border-top: 1px solid #2c333d;
+}
+#MixpiPage QLabel#MixpiMediaFooterCount {
+    color: #e4e7ec;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 14px;
+    font-weight: 600;
+}
+#MixpiPage QLabel#MixpiMediaFooterText {
+    color: #949dab;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 14px;
+}
+
+/* ---------- eject sheet (R-6; build B's words, section 1 styles) ---------- */
+#MixpiPage QFrame#MixpiMediaScrim { background-color: rgba(5, 7, 9, 168); }
+#MixpiPage QFrame#MixpiEjectSheet {
+    background-color: #161a20;
+    border: 1px solid #3a424e;
+    border-radius: 3px;
+}
+#MixpiEjectUsers, #MixpiEjectUserList { background-color: #161a20; border: 0px; }
+#MixpiPage QLabel#MixpiEjectTitle {
+    color: #e4e7ec;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 24px;
+    font-weight: bold;
+}
+#MixpiPage QLabel#MixpiEjectHint { color: #949dab; font-size: 14px; }
+#MixpiPage QLabel#MixpiEjectUser { color: #e4e7ec; font-size: 16px; }
+#MixpiPage QLabel#MixpiEjectFate { color: #7cc58a; font-size: 15px; }
+#MixpiPage QLabel#MixpiEjectFate[fate="2"] { color: #949dab; }
+#MixpiPage QLabel#MixpiEjectFate[fate="3"] { color: #e8b65c; }
+#MixpiPage QLabel#MixpiEjectStep { color: #949dab; font-size: 15px; }
+#MixpiPage QLabel#MixpiEjectStep[step="done"] { color: #e4e7ec; }
+#MixpiPage QLabel#MixpiEjectDot {
+    background-color: transparent;
+    color: #949dab;
+    border: 2px solid #3a424e;
+    border-radius: 13px;
+    font-size: 13px;
+}
+#MixpiPage QLabel#MixpiEjectDot[step="done"] { background-color: #5fae6e; border-color: #5fae6e; color: #0d1014; }
+#MixpiPage QLabel#MixpiEjectDot[step="now"] { border-color: #dfa33a; color: #e8b65c; }
+
+/* ---------- insert ping and Safe to remove strip (Q1, Q2) ---------- */
+#MixpiBottomStrip {
+    background-color: #1d222a;
+    border: 0px;
+    border-top: 2px solid #5fae6e;
+}
+#MixpiBottomStrip[kind="safe"] { background-color: #5fae6e; border-top: 2px solid #5fae6e; }
+#MixpiBottomStrip[kind="safe"][flash="true"] { background-color: #7cc58a; }
+#MixpiBottomStrip QLabel {
+    background-color: transparent;
+    color: #e4e7ec;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 14px;
+}
+#MixpiBottomStrip QLabel#MixpiStripTitle {
+    color: #e4e7ec;
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 18px;
+    font-weight: bold;
+}
+#MixpiBottomStrip QLabel#MixpiStripDetail { color: #949dab; font-size: 13px; }
+#MixpiBottomStrip[kind="safe"] QLabel#MixpiStripTitle { color: #0d1014; }
+#MixpiBottomStrip[kind="safe"] QLabel#MixpiStripDetail { color: #0d1014; }
+#MixpiBottomStrip[kind="safe"] QPushButton#MixpiStripOk {
+    background-color: #1d222a;
+    border: 1px solid #3a424e;
+    color: #e4e7ec;
+}
+#MixpiBottomStrip[kind="safe"] QPushButton#MixpiStripOk:pressed { background-color: #262c35; }

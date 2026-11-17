@@ -1,0 +1,319 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+index fec7318..776629b 100644
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -220,7 +220,7 @@ Library::Library(
+     m_pSidebarSourcesEditing->setReadOnly();
+     m_samplesPath = BrowseFeature::samplesDirectory();
+     setupSampleBrowser();
+-    new MixpiMedia(this, [this]() -> QWidget* { return m_pLibraryWidget; },
++    m_pMixpiMedia = new MixpiMedia(this, [this]() -> QWidget* { return m_pLibraryWidget; },
+             [this](const QJsonObject& volume, QObject* receiver, std::function<void(QString)> completion) {
+                 return openRemovableSourceAsync(volume, receiver, std::move(completion));
+             },
+@@ -730,7 +730,10 @@ QString Library::openRemovableSource(const QJsonObject& volume) {
+         ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
+         // The drive now shows in Tracks: sample mode ends where it is.
+         leaveSampleMode(false);
+-        ControlObject::set(ConfigKey("[Tab]", "library"), 1);
++        // The drive Tracks starts at (★) opens in Tracks without showing it.
++        if (!volume.value(QStringLiteral("mixpiStart")).toBool()) {
++            ControlObject::set(ConfigKey("[Tab]", "library"), 1);
++        }
+     }
+     return error;
+ }
+@@ -775,7 +778,8 @@ std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volum
+     return static_cast<RekordboxFeature*>(feature)->openRemovableDeviceAsync(
+             volume.value("mount").toObject().value("path").toString(),
+             QString::fromStdString(observed.revision), QString::fromStdString(observed.database), receiver,
+-            [owner, completion = std::move(completion)](QString result) {
++            [owner, completion = std::move(completion),
++                    start = volume.value(QStringLiteral("mixpiStart")).toBool()](QString result) {
+                 if (!owner) {
+                     return;
+                 }
+@@ -783,7 +787,10 @@ std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volum
+                     ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
+                     // The drive now shows in Tracks: sample mode ends where it is.
+                     owner->leaveSampleMode(false);
+-                    ControlObject::set(ConfigKey("[Tab]", "library"), 1);
++                    // The drive Tracks starts at (★) opens in Tracks without showing it.
++                    if (!start) {
++                        ControlObject::set(ConfigKey("[Tab]", "library"), 1);
++                    }
+                 }
+                 completion(result);
+             });
+@@ -899,6 +906,9 @@ void Library::refreshSidebarSourceEdit() {
+             entry.glyph = Groups::glyph(tile);
+             entry.start = Groups::startsAt(tile, start);
+             if (tile == Groups::kDrives) {
++                // ★ (m-sources-edit.png): Tracks starts at the drive when
++                // one is in, else at This Pi.
++                entry.available = true;
+                 // The drives that are open, by name (MANTACORE).
+                 QStringList drives;
+                 const QModelIndex rekordbox = sourceRow(QStringLiteral("RekordboxFeature"));
+@@ -928,7 +938,13 @@ void Library::refreshSidebarSourceEdit() {
+                 entry.subtitle = names(more);
+                 // Tracks can start at its first source that is on.
+                 entry.available = !entry.subtitle.isEmpty();
+-            } else if (tile != Groups::kSamples) {
++            } else if (tile == Groups::kSamples) {
++                // ★ (m-sources-edit.png): Tracks starts at the Samples folder.
++                entry.available = LibraryInterface::locatePlace(m_pSidebarModel,
++                        sampleSourcePlace(LibraryInterface::SampleBrowser::kSamples),
++                        SidebarModel::DataRole)
++                                          .isValid();
++            } else {
+                 const auto source = std::find_if(m_sidebarSources.cbegin(), m_sidebarSources.cend(),
+                         [&tile](const SidebarSource& item) { return item.id == tile; });
+                 if (source == m_sidebarSources.cend()) {
+@@ -1250,6 +1266,32 @@ void Library::moveSourceGroup(const QString& tile, int direction) {
+     refreshSidebarSourceEdit();
+ }
+ 
++bool Library::showStartTile(const QString& start) {
++    namespace Groups = LibraryInterface::SourceGroups;
++    if ((start != Groups::kDrives && start != Groups::kSamples) || !sourceGroupVisible(start)) {
++        return false;
++    }
++    QModelIndex index;
++    if (start == Groups::kSamples) {
++        index = LibraryInterface::locatePlace(m_pSidebarModel,
++                sampleSourcePlace(LibraryInterface::SampleBrowser::kSamples), SidebarModel::DataRole);
++    } else if (const auto drives = driveRows(); !drives.isEmpty()) {
++        index = drives.first();
++    } else {
++        // No drive in: This Pi (Tracks).
++        index = sourceRow(QStringLiteral("MixxxLibraryFeature"));
++        if (index.isValid() && m_pSidebarWidget->isSourceRowHidden(index.row())) {
++            index = {};
++        }
++    }
++    if (!index.isValid()) {
++        return false;
++    }
++    m_pSidebarWidget->selectIndex(index);
++    m_pSidebarModel->clicked(index);
++    return true;
++}
++
+ QList<LibraryInterface::SourceTile> Library::sourceGroupTiles() {
+     namespace Groups = LibraryInterface::SourceGroups;
+     QList<LibraryInterface::SourceTile> tiles;
+@@ -1401,6 +1443,16 @@ void Library::slotCreateCrate() {
+ void Library::onSkinLoadFinished() {
+     if (m_pSidebarWidget) {
+         applySidebarSourceVisibility();
++        // ★ on the drive row: the drive that is in opens, as OPEN on the
++        // Media page opens it, and Tracks shows it.
++        const QString start = m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource"));
++        if (start == LibraryInterface::SourceGroups::kDrives && m_pMixpiMedia &&
++                sourceGroupVisible(start)) {
++            m_pMixpiMedia->openStartDrive();
++        }
++        if (showStartTile(start)) {
++            return;
++        }
+         QStringList identities;
+         QList<bool> visibility;
+         for (auto* feature : std::as_const(m_features)) {
+diff --git a/src/library/library.h b/src/library/library.h
+index f13495a..5ff1e7c 100644
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -26,6 +26,7 @@ class CrateFeature;
+ class LibraryControl;
+ class LibraryFeature;
+ class LibraryTableModel;
++class MixpiMedia;
+ class KeyboardEventFilter;
+ class MixxxLibraryFeature;
+ class PlayerManager;
+@@ -214,6 +215,10 @@ class Library: public QObject {
+     // Once: a tile whose sources are all hidden starts hidden.
+     void mapSourceGroups();
+     void moveSourceGroup(const QString& tile, int direction);
++    // ★ on the drive row or on Samples (agreed UI s5): shows where Tracks
++    // starts (the first open drive, else This Pi; the Samples folder).
++    // False: the start is another source.
++    bool showStartTile(const QString& start);
+     std::unique_ptr<LibraryInterface::SampleBrowser> m_pSampleBrowser;
+     std::unique_ptr<LibraryInterface::BrowsePlace> m_pShownPlace;
+     QScopedPointer<ControlObject> m_pSampleLoad;
+@@ -222,6 +227,8 @@ class Library: public QObject {
+     QScopedPointer<ControlObject> m_pSampleDriveAvailable;
+     QString m_samplesPath;
+     QStringList m_driveOrder;
++    // The Media page's owner (a child of this Library).
++    MixpiMedia* m_pMixpiMedia = nullptr;
+     QList<SidebarSource> m_sidebarSources;
+     QPointer<WLibrarySidebar> m_pSidebarWidget;
+     QPointer<KeyboardEventFilter> m_pSidebarKeyboard;
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+index f1bdd21..2e4c991 100644
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -35,6 +35,7 @@
+ #include "library/mixpimediadialog.h"
+ #include "library/mixpimediaactivity.h"
+ #include "library/mixpimediapage.h"
++#include "library/mixpistartdrive.h"
+ #include "library/media/mediause.h"
+ #include "mixer/playerinfo.h"
+ #include "track/track.h"
+@@ -230,7 +231,29 @@ class MixpiMedia final : public QObject {
+ #endif
+     }
+ 
++    // ★ on the drive row (agreed UI s5): Tracks starts at the drive. Once a
++    // run, the drive that is in (mixpiStartDrive) opens as OPEN on the Media
++    // page opens it, after the first inventory. Opening reads the drive.
++    void openStartDrive() {
++        m_startDriveWanted = !m_startDriveDone;
++        if (m_seenFirst) {
++            openStartDriveNow();
++        }
++    }
++
+   private:
++    void openStartDriveNow() {
++        if (!m_startDriveWanted || m_startDriveDone) {
++            return;
++        }
++        m_startDriveDone = true;
++        const auto start = mixpiStartDrive(m_snapshot,
++                [this](const QJsonObject& drive) { return driveOpened(drive); });
++        if (!start.isEmpty()) {
++            openVolume(start.identity, start.token, true);
++        }
++    }
++
+     // Engine B (the controlled profile). Kept in the source; the Media page
+     // does not open it (R-4, R-6: engine A only).
+     void showControlled(bool mount, const QString& token = {}) {
+@@ -617,6 +640,7 @@ class MixpiMedia final : public QObject {
+             m_seenFirst = true;
+             refresh();
+             runAutoLoads();
++            openStartDriveNow();
+         });
+     }
+ 
+@@ -821,17 +845,22 @@ class MixpiMedia final : public QObject {
+     }
+ 
+     // Level 2 access (R-3): open the drive as a source, as Load did.
+-    void openVolume(const QString& identity, const QString& token) {
+-        const auto volume = findVolume(token);
++    // start: the drive Tracks starts at (★); it opens without showing Tracks,
++    // and an error waits on the Media page instead of opening it.
++    void openVolume(const QString& identity, const QString& token, bool start = false) {
++        auto volume = findVolume(token);
+         if (volume.isEmpty() || !m_openSource || m_opening) {
+             return;
+         }
++        if (start) {
++            volume.insert(QStringLiteral("mixpiStart"), true);
++        }
+         m_opening = true;
+         if (m_page) {
+             m_page->setOpening(identity, QStringLiteral("Opening the drive…"));
+         }
+         const QPointer<MixpiMedia> guard(this);
+-        m_cancelOpen = m_openSource(volume, this, [guard, identity, token](QString error) {
++        m_cancelOpen = m_openSource(volume, this, [guard, identity, token, start](QString error) {
+             if (!guard) {
+                 return;
+             }
+@@ -842,7 +871,9 @@ class MixpiMedia final : public QObject {
+             }
+             if (!error.isEmpty()) {
+                 if (guard->m_page) {
+-                    guard->m_page->open();
++                    if (!start) {
++                        guard->m_page->open();
++                    }
+                     guard->m_page->setOpening(identity, error);
+                 }
+                 guard->runAutoLoads();
+@@ -895,6 +926,8 @@ class MixpiMedia final : public QObject {
+     QSet<QString> m_present;
+     QSet<QString> m_pinged;
+     bool m_seenFirst = false;
++    bool m_startDriveWanted = false;
++    bool m_startDriveDone = false;
+     bool m_observing = false;
+     bool m_opening = false;
+     MixpiMediaDialog::Cancel m_cancelOpen;
+diff --git a/src/library/mixpistartdrive.h b/src/library/mixpistartdrive.h
+new file mode 100644
+index 0000000..7453aa6
+--- /dev/null
++++ b/src/library/mixpistartdrive.h
+@@ -0,0 +1,42 @@
++#pragma once
++
++#include <QJsonArray>
++#include <QJsonObject>
++#include <QString>
++#include <functional>
++
++// ★ on the drive row of Sources edit (agreed UI s5, m-sources-edit.png):
++// Tracks starts at the drive. The drive is the first one in the media
++// inventory that has a mounted volume. It opens only when it has exactly one
++// volume (a drive with more is chosen on the Media page) and no drive is
++// open yet (Tracks shows that one).
++struct MixpiStartDrive {
++    QString identity;
++    QString token;
++    bool isEmpty() const {
++        return token.isEmpty();
++    }
++};
++
++inline MixpiStartDrive mixpiStartDrive(const QJsonObject& snapshot,
++        const std::function<bool(const QJsonObject&)>& opened) {
++    const auto drives = snapshot.value(QStringLiteral("drives")).toArray();
++    for (const auto& value : drives) {
++        if (opened(value.toObject())) {
++            return {};
++        }
++    }
++    for (const auto& value : drives) {
++        const auto drive = value.toObject();
++        const auto volumes = drive.value(QStringLiteral("volumes")).toArray();
++        if (volumes.isEmpty()) {
++            continue;
++        }
++        if (volumes.size() != 1) {
++            return {};
++        }
++        return {drive.value(QStringLiteral("identity")).toString(),
++                volumes.first().toObject().value(QStringLiteral("token")).toString()};
++    }
++    return {};
++}
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+index fa80c0b..eb69e2d 100644
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -727,7 +727,15 @@ void buildPlaylistTree(
+ 
+         QString currentPath = playlistPath + kPLaylistPathDelimiter + playlistItemName;
+ 
+-        TreeItem* child = parent->appendChild(playlistItemName,
++        // Agreed UI s5 (m-sources-sub.png): a playlist's row shows its track
++        // count at the right. The label is "name (count)", as Mixxx labels its
++        // own playlists; the count is the playlist's entries, already read
++        // from export.pdb above (no extra read). Folders have no count.
++        const QString playlistItemLabel = playlistIsFolderMap.value(childID)
++                ? playlistItemName
++                : QStringLiteral("%1 (%2)").arg(playlistItemName,
++                          QString::number(playlistTrackMap.value(childID).size()));
++        TreeItem* child = parent->appendChild(playlistItemLabel,
+                 QVariant(QList<QString>{currentPath, IS_NOT_RECORDBOX_DEVICE}));
+ 
+         // Create a playlist for this child

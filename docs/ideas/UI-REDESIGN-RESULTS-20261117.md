@@ -25,4 +25,21 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 
 | Build | Commit | State |
 |---|---|---|
-| A | `9d9bf30` (+ skin tools from `ec580e1`) | pi-gen exit 0 on VM b, 02:27-02:39Z; check, diff and update kit in progress (`deploy/test-image-20261117a/`) |
+| A | `9d9bf30` (+ skin tools from `ec580e1`) | pi-gen exit 0 on VM b in 11 min 15 s; 33 patches; check phase all pass; installed in place on the test card 08:30 (`deploy/test-image-20261117a/`, `deploy/ui-redesign-20261117/buildA-update/`): every expected sha256, `dpkg -V` clean, controlled media OFF, media eject OFF |
+
+## Build A on the test card (`deploy/ui-redesign-20261117/buildA-checks/`, `wave2-preview/`)
+
+| Item | Result |
+|---|---|
+| R-13 settings | PASS: keylock change written within ~1 s, kept after `kill -9`, no temp file left (`r13-keylock-kill.txt`) |
+| R-13 sampler bank | PASS: pad 6 in `samplers.xml` within 3 s, kept after `kill -9` (`r13-pad6-kill.txt`) |
+| R-14 service stop | PASS: `systemctl --user stop` → "shutdown complete with code 0" in 0.6 s |
+| R-14 reboot | FAIL on build A (log ended 33 s early, no shutdown line): the stop unit and the LightDM session scope stop in parallel, so sway died first (`r14-diagnose.txt`). Fixed by `2c21ede` (logind delay inhibitor, `InhibitDelayMaxSec=20`), applied in place: reboot → "shutdown complete with code 0" 0.7 s after the request, the change made just before the reboot kept, inhibitor re-armed at boot (`r14b-after.txt`) — PASS |
+| R-15 | udiskie runs with `--no-notify` after reboot. Pop-up check with a drive: pending (MANTACORE port disabled, see below) |
+| R-9 rail | PASS: tiles with sub-lines, Back, crumb (Computer › Quick Links › Music), drill-down |
+| R-9 from Load sample | FAIL then fixed in skin `2f46f22`: a leaf pick in Sources opened from Load sample now returns to Load sample |
+| R-10 edit list | renders with Up/Down, switches, ★, Start here (`wave2-preview/x04-edit.png`); persistence check pending |
+| R-7, R-8 | 8 pads with Stop/Clear; Choose pad sheet opens and loads; the empty-pad → Load sample → LOAD TO PAD n path did not load once (re-check in acceptance) |
+| Wave-2 skin preview (R-16, R-17, R-18, chip) | Deck page, tool panel LOOP/JUMP/CUES, FX 1/FX 2 with route switchers, Settings full screen, chip "NO USB". Defects fixed in `228215c`: full-height views, tabs from Settings, cut text |
+
+**MANTACORE:** after each reboot its hub port (1-1 port 2) flaps (234 USB disconnects in 4 h, never attached as a disk: no `/dev/sd*` mount in the journal, no exFAT lines). The port is disabled after each boot (`echo 1 > /sys/bus/usb/devices/1-1:1.0/1-1-port2/disable`). Eject, handover and the R-5 load measurement need a working drive.

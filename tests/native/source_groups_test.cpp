@@ -8,6 +8,12 @@
 // and the controls. With MIXPI_QSS_DIR set, the screen carries the skin's
 // style sheets in their installed order; with MIXPI_SOURCES_GRAB_DIR set, the
 // menu and the edit list are rendered there at 800x480.
+//
+// mixxx-sources-menu-fixes.patch (tests/native/source_groups_runner.py builds
+// this): the drive's rekordbox lists are made by the actual buildPlaylistTree
+// (rekordbox_playlist_tree.inc) on an in-memory SQLite database and carry
+// their counts; ★ works on the drive row and on Samples
+// (Library::showStartTile); mixpiStartDrive picks the drive that opens.
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -27,6 +33,7 @@
 
 #include "control/controlobject.h"
 #include "library/libraryfeature.h"
+#include "library/mixpistartdrive.h"
 #include "library/sidebarmodel.h"
 #include "library/sourceorder.h"
 #include "library/treeitem.h"
@@ -121,9 +128,89 @@ class Library : public QObject {
     bool sourceGroupVisible(const QString& tile) const;
     void mapSourceGroups();
     void moveSourceGroup(const QString& tile, int direction);
+    bool showStartTile(const QString& start);
 };
 
 #include "library_sample_methods.h"
+#include "rekordbox_playlist_tree.inc"
+
+// A rekordbox drive as RekordboxFeature makes it: the device row, then its
+// playlist tree from the actual buildPlaylistTree. "Tracks" first is the
+// fixture's stand-in for the mockup's row. The lists (m-sources-sub.png):
+// Afro house 48, Warm-up 31, Peak time 26, Closing 22, Afro tech 40, and the
+// folder Playlists with Deep cuts 17 and an empty list.
+std::unique_ptr<TreeItem> rekordboxDrive(const QString& path, const QString& revision) {
+    QSqlDatabase database = QSqlDatabase::database(QStringLiteral("rekordbox"));
+    if (!database.isValid()) {
+        database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("rekordbox"));
+        database.setDatabaseName(QStringLiteral(":memory:"));
+        database.open();
+        createPlaylistsTable(database, kRekordboxPlaylistsTable);
+        createPlaylistTracksTable(database, kRekordboxPlaylistTracksTable);
+        QSqlQuery(database).exec(QStringLiteral(
+                "CREATE TABLE rekordbox_library (id INTEGER PRIMARY KEY, rb_id INTEGER, device TEXT)"));
+    }
+    QSqlQuery(database).exec(QStringLiteral("DELETE FROM rekordbox_playlists"));
+    QSqlQuery(database).exec(QStringLiteral("DELETE FROM rekordbox_playlist_tracks"));
+    QSqlQuery(database).exec(QStringLiteral("DELETE FROM rekordbox_library"));
+    QSqlQuery library(database);
+    library.prepare(QStringLiteral("INSERT INTO rekordbox_library (rb_id, device) VALUES (:rb_id, :device)"));
+    for (int track = 1; track <= 60; ++track) {
+        library.bindValue(QStringLiteral(":rb_id"), track);
+        library.bindValue(QStringLiteral(":device"), path);
+        library.exec();
+    }
+    QMap<uint32_t, QString> names;
+    QMap<uint32_t, bool> folders;
+    QMap<uint32_t, QMap<uint32_t, uint32_t>> tree;
+    QMap<uint32_t, QMap<uint32_t, uint32_t>> entries;
+    // id, parent, name, folder, tracks
+    const struct {
+        uint32_t id;
+        uint32_t parent;
+        const char* name;
+        bool folder;
+        uint32_t tracks;
+    } lists[] = {{1, 0, "Playlists", true, 0}, {2, 0, "Afro house", false, 48}, {3, 0, "Warm-up", false, 31},
+            {4, 0, "Peak time", false, 26}, {5, 0, "Closing", false, 22}, {6, 0, "Afro tech", false, 40},
+            {7, 1, "Deep cuts", false, 17}, {8, 1, "Empty", false, 0}};
+    for (const auto& list : lists) {
+        names[list.id] = QString::fromLatin1(list.name);
+        folders[list.id] = list.folder;
+        tree[list.parent][static_cast<uint32_t>(tree[list.parent].size())] = list.id;
+        for (uint32_t entry = 1; entry <= list.tracks; ++entry) {
+            entries[list.id][entry] = entry;
+        }
+    }
+    auto drive = std::make_unique<TreeItem>(path.section('/', -1), QVariantList{path, QString(), revision});
+    drive->appendChild("Tracks", 21);
+    buildPlaylistTree(database, drive.get(), 0, names, folders, tree, entries, path, path,
+            std::make_shared<mixxx::rekordbox::ImportOperation>());
+    return drive;
+}
+
+int playlistTracks(const QString& path) {
+    QSqlQuery query(QSqlDatabase::database(QStringLiteral("rekordbox")));
+    query.prepare(QStringLiteral(
+            "SELECT COUNT(*) FROM rekordbox_playlist_tracks t JOIN rekordbox_playlists p "
+            "ON t.playlist_id = p.id WHERE p.name = :name"));
+    query.bindValue(QStringLiteral(":name"), path);
+    return query.exec() && query.next() ? query.value(0).toInt() : -1;
+}
+
+// Light (text) pixels in the right 64 px of a row, left of a chevron's room:
+// where the count is drawn.
+int countPixels(WLibrarySidebar& sidebar, const QModelIndex& index) {
+    const QImage image = sidebar.viewport()->grab().toImage();
+    const QRect row = sidebar.visualRect(index);
+    int light = 0;
+    for (int y = row.top() + 4; y < row.bottom() - 4; ++y) {
+        for (int x = row.right() - 64; x < row.right() - 8; ++x) {
+            light += qGray(image.pixel(x, y)) > 100;
+        }
+    }
+    return light;
+}
 
 void settle() {
     for (int round = 0; round < 4; ++round) {
@@ -531,13 +618,16 @@ int main(int argc, char** argv) {
     require(settings.getValue(ConfigKey(kConfigGroup, "SidebarSourceSetlogFeature"), false) &&
                     !list->row(Groups::kHistory)->property("off").toBool(),
             "the History switch writes its source's own key and the row is no longer dimmed");
+    require(static_cast<QPushButton*>(rowPart(Groups::kDrives, "MixpiSourcesEditStar"))->isEnabled() &&
+                    static_cast<QPushButton*>(rowPart(Groups::kSamples, "MixpiSourcesEditStar"))->isEnabled(),
+            "★ works on every row that is on, the drive row and Samples too (m-sources-edit.png)");
     static_cast<QCheckBox*>(rowPart(Groups::kDrives, "MixpiSourcesEditSwitch"))->click();
     settle();
     require(!settings.getValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), true),
             "the drives switch writes the group's key");
-    require(!static_cast<QPushButton*>(rowPart(Groups::kSamples, "MixpiSourcesEditStar"))->isEnabled() &&
+    require(static_cast<QPushButton*>(rowPart(Groups::kSamples, "MixpiSourcesEditStar"))->isEnabled() &&
                     !static_cast<QPushButton*>(rowPart(Groups::kDrives, "MixpiSourcesEditStar"))->isEnabled(),
-            "★ is off where Tracks cannot start (Samples, drives)");
+            "the switched-off row (drives) keeps ★ drawn disabled; Samples' ★ still works");
     static_cast<QPushButton*>(rowPart(Groups::kHistory, "MixpiSourcesEditStar"))->click();
     settle();
     require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == "SetlogFeature" &&
@@ -594,19 +684,109 @@ int main(int argc, char** argv) {
             "a source switched on inside This Pi shows there");
     back->click();
     settle();
+
+    // ★ on the drive row (m-sources-edit.png), no drive in: Tracks starts at
+    // This Pi.
+    settings.setValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), true);
+    library.applySidebarSourceVisibility();
+    settle();
+    edit->click();
+    settle();
+    static_cast<QPushButton*>(rowPart(Groups::kDrives, "MixpiSourcesEditStar"))->click();
+    settle();
+    require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == Groups::kDrives &&
+                    rowSub(Groups::kDrives) == "TRACKS STARTS HERE" &&
+                    static_cast<QPushButton*>(rowPart(Groups::kDrives, "MixpiSourcesEditStar"))->text() ==
+                            QString::fromUtf8("★") &&
+                    static_cast<QPushButton*>(rowPart(Groups::kThisPi, "MixpiSourcesEditStar"))->text() ==
+                            QString::fromUtf8("☆"),
+            "★ on the drive row: Tracks starts at the drive (TRACKS STARTS HERE)");
+    list->doneButton()->click();
+    settle();
+    shown.clear();
+    require(library.showStartTile(Groups::kDrives) && shown == "Tracks",
+            "★ on the drive row with no drive in: Tracks starts at This Pi (Tracks)");
+    require(!library.showStartTile(QStringLiteral("SetlogFeature")) &&
+                    !library.showStartTile(QStringLiteral("MixxxLibraryFeature")),
+            "a start at a source of its own is not a start tile (build B's start stays)");
     {
         std::vector<std::unique_ptr<TreeItem>> rows;
-        auto again = item("MANTACORE", QVariantList{mantacore, QString(), QStringLiteral("rev-2")});
-        again->appendChild("Tracks", 21);
-        again->appendChild("Playlists", 22)->appendChild("Afro house", 23);
-        for (const char* name : {"Warm-up", "Peak time", "Closing", "Afro tech"}) {
-            again->appendChild(QString::fromLatin1(name), 24);
-        }
-        again->appendChild("History", 25)->appendChild("2026-11-15", 26);
-        rows.push_back(std::move(again));
+        rows.push_back(rekordboxDrive(mantacore, QStringLiteral("rev-2")));
         rekordbox.children.insertTreeItemRows(std::move(rows), 0);
     }
     settle();
+    shown.clear();
+    require(library.showStartTile(Groups::kDrives) && shown == "Rekordbox/MANTACORE",
+            "★ on the drive row with a drive in: Tracks starts at the drive (its rekordbox export)");
+    {
+        // The rekordbox lists carry their counts, from the entries the
+        // import reads; a folder has none.
+        const QModelIndex mantacoreRow = model.index(0, 0, library.sourceRow("RekordboxFeature"));
+        QStringList labels;
+        for (int row = 0; row < model.rowCount(mantacoreRow); ++row) {
+            labels.append(model.index(row, 0, mantacoreRow).data().toString());
+        }
+        const QModelIndex folder = model.index(1, 0, mantacoreRow);
+        QStringList inside;
+        for (int row = 0; row < model.rowCount(folder); ++row) {
+            inside.append(model.index(row, 0, folder).data().toString());
+        }
+        if (labels.size() != 7) {
+            std::cout << "OBSERVE drive rows " << labels.join(" | ").toStdString() << std::endl;
+        }
+        require(labels == QStringList({"Tracks", "Playlists", "Afro house (48)", "Warm-up (31)",
+                                  "Peak time (26)", "Closing (22)", "Afro tech (40)"}) &&
+                        inside == QStringList({"Deep cuts (17)", "Empty (0)"}),
+                "rekordbox lists are labelled with their track counts; the folder has none");
+        const QString delimiter = QStringLiteral("-->");
+        require(playlistTracks(mantacore + delimiter + "Afro house") == 48 &&
+                        playlistTracks(mantacore + delimiter + "Playlists" + delimiter + "Deep cuts") == 17 &&
+                        playlistTracks(mantacore + delimiter + "Playlists" + delimiter + "Empty") == 0,
+                "each count is the number of tracks the list holds");
+        const auto afro = LibraryInterface::sourceLabelCount(labels.value(2));
+        require(afro.first == "Afro house" && afro.second == "48" &&
+                        LibraryInterface::sourceLabelCount(labels.value(1)).second.isEmpty(),
+                "the menu reads the name and the count the way it reads Mixxx's own playlists");
+    }
+    edit->click();
+    settle();
+    static_cast<QPushButton*>(rowPart(Groups::kSamples, "MixpiSourcesEditStar"))->click();
+    settle();
+    require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == Groups::kSamples &&
+                    rowSub(Groups::kSamples) == "TRACKS STARTS HERE" &&
+                    rowSub(Groups::kDrives) == QString::fromUtf8("USB · rekordbox"),
+            "★ on Samples: Tracks starts at Samples (TRACKS STARTS HERE)");
+    list->doneButton()->click();
+    settle();
+    shown.clear();
+    require(library.showStartTile(Groups::kSamples) && shown == "Computer/Samples",
+            "★ on Samples: Tracks starts at the Samples folder");
+    settings.setValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), false);
+    settings.setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), Groups::kDrives);
+    library.applySidebarSourceVisibility();
+    settle();
+    require(!library.showStartTile(Groups::kDrives), "a start row that is switched off is not used");
+    settings.setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), "MixxxLibraryFeature");
+    {
+        // The drive that opens at the start (mixpimedia.h): the first one
+        // with a mounted volume, when it has exactly one and none is open.
+        auto volume = [](const char* token) { return QJsonObject{{"token", token}}; };
+        auto drive = [](const char* identity, QJsonArray volumes) {
+            return QJsonObject{{"identity", identity}, {"volumes", volumes}};
+        };
+        const QJsonObject one{{"drives", QJsonArray{drive("empty", {}), drive("mantacore", {volume("m1")}),
+                                                   drive("stick", {volume("s1")})}}};
+        const QJsonObject two{{"drives", QJsonArray{drive("split", {volume("a"), volume("b")}),
+                                                   drive("stick", {volume("s1")})}}};
+        auto none = [](const QJsonObject&) { return false; };
+        const auto start = mixpiStartDrive(one, none);
+        require(start.identity == "mantacore" && start.token == "m1" && mixpiStartDrive(two, none).isEmpty() &&
+                        mixpiStartDrive(one, [](const QJsonObject& item) {
+                            return item.value("identity").toString() == "stick";
+                        }).isEmpty() &&
+                        mixpiStartDrive(QJsonObject{}, none).isEmpty(),
+                "the start drive is the first drive in with one volume; none when it has more or one is open");
+    }
     require(!tileNamed(sidebar, "MANTACORE"), "with the drives switch off, a drive gets no row");
 
     // The renders (agreed UI s5): the state of m-sources-top.png, a list with
@@ -642,7 +822,7 @@ int main(int argc, char** argv) {
                         tileSub(sidebar, "This Pi") == "Tracks" && !sidebar.isSourceMenuInside(),
                 "the render state matches m-sources-top.png (This Pi, MANTACORE, History, Folders, Samples, More)");
         if (!grabs.isEmpty()) {
-            screen.grab().save(grabs + "/c1-sources-top.png");
+            screen.grab().save(grabs + "/c2-sources-top.png");
         }
         // Inside a source with a long list: This Pi › Playlists.
         settings.setValue(ConfigKey(kConfigGroup, "SidebarSourcePlaylistFeature"), true);
@@ -661,17 +841,30 @@ int main(int argc, char** argv) {
                         scroll->width() == 24 && place->text() == QString::fromUtf8("This Pi › Playlists"),
                 "inside a long list: the place, and the 24 px scroll bar at the right edge");
         if (!grabs.isEmpty()) {
-            screen.grab().save(grabs + "/c1-sources-sub.png");
+            screen.grab().save(grabs + "/c2-sources-list.png");
         }
-        // Inside the drive (rekordbox lists carry no count in Mixxx).
+        // Inside the drive (m-sources-sub.png): its rows with their counts
+        // on the right, Afro house current.
         back->click();
         back->click();
         settle();
-        if (auto* mantacoreTile = tileNamed(sidebar, "MANTACORE")) {
+        auto* mantacoreTile = tileNamed(sidebar, "MANTACORE");
+        require(mantacoreTile, "the drive has its row for the render");
+        if (mantacoreTile) {
             mantacoreTile->click();
             settle();
+            const QModelIndex driveRoot = sidebar.rootIndex();
+            const QModelIndex afroHouse = model.index(2, 0, driveRoot);
+            sidebar.selectionModel()->setCurrentIndex(afroHouse, QItemSelectionModel::ClearAndSelect);
+            settle();
+            require(shownRows(sidebar).mid(0, 4) == QStringList({"Tracks", "Playlists", "Afro house (48)",
+                                                               "Warm-up (31)"}) &&
+                            countPixels(sidebar, afroHouse) > 20 &&
+                            countPixels(sidebar, model.index(3, 0, driveRoot)) > 20 &&
+                            countPixels(sidebar, model.index(0, 0, driveRoot)) == 0,
+                    "inside the drive each list shows its count at the right; Tracks has none");
             if (!grabs.isEmpty()) {
-                screen.grab().save(grabs + "/c1-sources-drive.png");
+                screen.grab().save(grabs + "/c2-sources-drive.png");
             }
             back->click();
             settle();
@@ -690,7 +883,7 @@ int main(int argc, char** argv) {
                         list->row(Groups::kFolders)->property("off").toBool(),
                 "the edit render state matches m-sources-edit.png (MANTACORE by name, Folders off)");
         if (!grabs.isEmpty()) {
-            screen.grab().save(grabs + "/c1-sources-edit.png");
+            screen.grab().save(grabs + "/c2-sources-edit.png");
         }
         list->doneButton()->click();
         settle();

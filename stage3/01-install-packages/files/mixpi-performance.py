@@ -34,6 +34,8 @@ VIEW_RESETS = ('[MixPi],loop_deck', '[MixPi],sample_load', SCREEN,
 TOPBAR = [('DECKS', 'overview', 84), ('TRACKS', 'library', 84),
           ('FX', 'fx', 72), ('SAMPLER', 'sampler', 96)]
 TOP_HEIGHT, OVERVIEW_HEIGHT, TRANSPORT_HEIGHT = 48, 48, 56
+# WidgetStack page order ([Tab],current index).
+PAGES = ('overview', 'library', 'fx', 'sampler')
 USB_CHIP, REC_WIDTH, GEAR, CPU_WIDTH = 150, 72, 48, 56
 TOP_GAPS = (11, 8, 3)
 PAD_SIZE, PAD_TAP, PAD_STRIP = (200, 104), 56, 48
@@ -169,12 +171,19 @@ SCREEN_AT_LEAST_3 = '<Add>-2.5</Add>'
 SCREEN_AT_MOST_4 = '<Add>-4.5</Add><Invert/>'
 
 
+def wrapper_size(size):
+    """A wrapper's size: fixed axes become Maximum from 0, so a shown wrapper
+    whose child is hidden takes no space (its size hint is then 0); expanding
+    axes stay expanding."""
+    return ','.join('0max' if part.endswith('f') else part for part in size.split(','))
+
+
 def when_all(widget, size, *conditions):
     """Visible only while every (key, transform) condition is above 0."""
     key, transform = conditions[0]
     show_when(widget, key, transform=transform)
     for key, transform in conditions[1:]:
-        widget = show_when(group('MixpiWhen', size=size, children=[widget]), key,
+        widget = show_when(group('MixpiWhen', size=wrapper_size(size), children=[widget]), key,
                            transform=transform)
     return widget
 
@@ -528,7 +537,7 @@ def fx():
     for index, (text, unit) in enumerate((('FX 1 · DECK A PADS', 1), ('FX 2 · DECK B PADS', 2))):
         add(switch, *([gap('6f,48f')] if index else []),
             preset(text, '[MixPi],fx_unit', unit, size='206f,48f'))
-    add(switch, label('Starlight FX mode: pads 1-3 switch these effects; pad 4 sends the unit to its deck.',
+    add(switch, label('Starlight FX pads: 1-3 effects · 4 send to deck',
                       '0me,48f', 'MixpiScreenHint', elide='right'))
     return group('MixpiFx', size='0me,256f', children=[switch, fx_unit(1), fx_unit(2)])
 
@@ -552,7 +561,8 @@ def setting_row(title, sub, controls):
     """A Settings row: a 190 px label column, then 48 px choices."""
     labels = group('MixpiSettingText', size='190f,66f', children=[
         gap('0me,0me'), label(title, '0me,24f', 'MixpiSettingTitle', elide='right')] +
-        ([label(sub, '0me,34f', 'MixpiSettingLabel', elide='right')] if sub else []) +
+        # Sub-lines wrap to two lines (QSS word wrap on #MixpiSettingLabel).
+        ([label(sub, '0me,34f', 'MixpiSettingLabel')] if sub else []) +
         [gap('0me,0me')])
     return group('MixpiSetting', 'horizontal', '0me,66f',
                  [gap('14f,66f'), labels, gap('10f,66f')] + list(controls) + [gap('0me,66f')])
@@ -916,8 +926,13 @@ def summary(channel, overview, visual, loop_display):
 
 
 def tab(text, key, width):
-    """A tab writes its page and closes every view (plan 4.1: every tab writes screen 0)."""
+    """A tab writes its page and closes every view (plan 4.1: every tab writes screen 0).
+
+    While Settings is open the WidgetStack is hidden, and a hidden WWidgetStack
+    ignores its page triggers; when it shows again it takes the page from
+    [Tab],current. So the tab also writes [Tab],current, before screen 0."""
     b = button(text, f'[Tab],{key}', size=f'{width}f,48f', push=True, name='MixpiTab')
+    write(b, '[Tab],current', PAGES.index(key))
     return reset_views(b)
 
 

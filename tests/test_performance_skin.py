@@ -169,15 +169,26 @@ class Model:
             element = parent
         return True
 
-    @staticmethod
-    def apply(state, writes):
+    def apply(self, state, writes):
+        """Control writes as WWidgetStack sees them: a visible stack switches page
+        on a trigger or on [Tab],current and keeps the other triggers at 0; a hidden
+        stack ignores both, and on show takes its page from [Tab],current."""
+        stack = next(self.root.iter('WidgetStack'))
+        triggers = [page.get('trigger') for page in stack.find('Children')]
+
+        def show_page(index):
+            state['[Tab],current'] = index
+            for i, trigger in enumerate(triggers):
+                state[trigger] = 1 if i == index else 0
         for key, value in writes:
+            was = self.visible(stack, state)
             state[key] = value
-            # WWidgetStack: showing one page clears the other page triggers.
-            if key.startswith('[Tab],') and key != '[Tab],current' and value:
-                for other in [k for k in state if k.startswith('[Tab],') and k != key]:
-                    if other != '[Tab],current':
-                        state[other] = 0
+            if was and key in triggers and value:
+                show_page(triggers.index(key))
+            elif was and key == '[Tab],current':
+                show_page(int(value))
+            if not was and self.visible(stack, state):
+                show_page(int(state.get('[Tab],current', 0)))
 
     def tap(self, button, state):
         """A touch tap as WPushButton handles it: press, then release only if the
@@ -284,12 +295,17 @@ class PerformanceSkinTests(unittest.TestCase):
         texts = [b.findtext('State/Text') for b in tabs]
         # The tab, one unlit base per condition level, and SAMPLER's lit twin.
         self.assertEqual({t: texts.count(t) for t in texts}, {'DECKS': 2, 'TRACKS': 3, 'FX': 2, 'SAMPLER': 4})
-        pages = {'DECKS': 'overview', 'TRACKS': 'library', 'FX': 'fx', 'SAMPLER': 'sampler'}
+        pages = ['overview', 'library', 'fx', 'sampler']
+        names = {'DECKS': 'overview', 'TRACKS': 'library', 'FX': 'fx', 'SAMPLER': 'sampler'}
+        stack = next(self.root.iter('WidgetStack'))
+        self.assertEqual([p.get('trigger') for p in stack.find('Children')], [f'[Tab],{p}' for p in pages])
         for tab in tabs:
             self.assertEqual(tab.findtext('LeftClickIsPushButton'), 'true')
+            page = names[tab.findtext('State/Text')]
             writes = self.model.writes(tab)
-            self.assertEqual(writes[0], (f"[Tab],{pages[tab.findtext('State/Text')]}", 1.0))
-            self.assertEqual(dict(writes[1:]), {SCREEN: 0, '[MixPi],loop_deck': 0,
+            # The page index goes to [Tab],current before screen 0 shows the stack again.
+            self.assertEqual(writes[:2], [(f'[Tab],{page}', 1.0), ('[Tab],current', pages.index(page))])
+            self.assertEqual(dict(writes[2:]), {SCREEN: 0, '[MixPi],loop_deck': 0,
                                                 '[MixPi],sample_load': 0, '[MixPi],sample_pad': 0,
                                                 '[Sidebar],sidebar_visible': 0})
             self.assertEqual(self.model.writes(tab, 'release'), [])
@@ -1156,6 +1172,84 @@ class PerformanceSkinTests(unittest.TestCase):
                                              'LibraryActionsButton', 'MixpiLibraryMain', 'MixpiTrackTitles'])
         self.assertTrue(model.visible(self.model.one('MixpiBottom'), state))
         self.assertTrue(model.tappable(self.model.one('SidebarButton'), state))
+
+    def test_replay_tab_from_settings_opens_that_tab(self):
+        # Build A preview: FX, FX 2, gear, MEDIA, SAMPLER landed on FX.
+        for text, page in (('SAMPLER', 'sampler'), ('DECKS', 'overview'), ('TRACKS', 'library'), ('FX', 'fx')):
+            model, state = self.model, self.start()
+            state['[MixPi],settings_available'] = 1  # native (performance settings)
+            model.tap(self.tab_button('FX', state), state)
+            model.tap(self.button_by_text('FX 2 · DECK B PADS'), state)
+            model.tap(self.gear(), state)
+            self.assertEqual(state[SCREEN], 5)
+            self.assertFalse(model.visible(next(self.root.iter('WidgetStack')), state))
+            media = next(b for b in self.root.iter('PushButton')
+                         if b.findtext('ObjectName') == 'MixpiRailButton' and b.findtext('State/Text') == 'MEDIA')
+            model.tap(media, state)
+            model.tap(self.tab_button(text, state), state)
+            self.assertEqual(state[SCREEN], 0)
+            self.assertEqual([p for p in ('overview', 'library', 'fx', 'sampler') if state[f'[Tab],{p}']], [page])
+            self.assertTrue(self.lit_tab(text, state), text)
+            self.assertTrue(model.visible(self.model.one('MixpiBottom'), state))
+
+    def reserved(self, element, state, axis):
+        """(fixed px, flexible?) a shown element takes along AXIS (0 width, 1 height)."""
+        if not self.model.visible(element, state):
+            return 0, False
+        w, h, wp, hp = size(element)
+        length, policy = (w, wp) if axis == 0 else (h, hp)
+        if policy == 'f':
+            return length, False
+        if policy == 'max':
+            children = element.find('Children')
+            parts = [self.reserved(c, state, axis) for c in (children if children is not None else [])]
+            along = (element.findtext('Layout') == 'horizontal') == (axis == 0)
+            fixed = [p[0] for p in parts]
+            return (sum(fixed) if along else max(fixed or [0])), any(p[1] for p in parts)
+        return 0, True
+
+    def test_full_screen_views_fill_432_under_the_top_bar(self):
+        root_rows = list(self.root.find('Children'))[1:]  # under the top bar
+        wrapper = self.model.one('LibraryWrapper')
+        cases = {
+            'tracks': (Model.state(0, **{'[Tab]__library': 1}), 104, 48 + 28),
+            'sources': (Model.state(1), 0, 48),
+            'sources from load sample': (Model.state(1, **{'[MixPi]__sample_load': 1}), 0, 48),
+            'load sample': (Model.state(3), 0, 48 + 56 + 64),
+            'choose pad': (Model.state(4), 0, 48 + 56 + 64),
+            'load sample after a native close': (Model.state(0, **{'[MixPi]__sample_load': 1, '[Tab]__library': 1}),
+                                                 0, 48 + 56 + 64),
+            'settings': (Model.state(5, **{'[Tab]__overview': 1}), 0, None),
+            'decks': (Model.state(0, **{'[Tab]__overview': 1}), 104, None),
+        }
+        for name, (state, bottom, browse_fixed) in cases.items():
+            parts = [self.reserved(row, state, 1) for row in root_rows]
+            self.assertEqual(sum(p[0] for p in parts), bottom, name)
+            self.assertEqual(sum(1 for p in parts if p[1]), 1, name)  # one view takes the rest of 432
+            if browse_fixed is not None:
+                rows = [self.reserved(c, state, 1) for c in wrapper.find('Children')]
+                self.assertEqual(sum(p[0] for p in rows), browse_fixed, name)
+                self.assertTrue(any(p[1] for p in rows), name)
+
+    def test_sources_title_sits_right_after_the_close(self):
+        header = self.model.one('MixpiBrowseHeader')
+        for state in (Model.state(1), Model.state(1, **{'[MixPi]__sample_load': 1})):
+            x = 0
+            for child in header.find('Children'):
+                if child.findtext('ObjectName') == 'MixpiSourcesHead':
+                    break
+                x += self.reserved(child, state, 0)[0]
+            self.assertEqual(x, 48)
+
+    def test_settings_sub_lines_wrap_and_fx_hint_fits(self):
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn('qproperty-wordWrap: true;', style.split('#MixpiSettingLabel {', 1)[1].split('}', 1)[0])
+        for l in self.model.one('MixpiSettings').iter('Label'):
+            if l.findtext('ObjectName') == 'MixpiSettingLabel':
+                self.assertIsNone(l.find('Elide'))
+                self.assertEqual(size(l)[1], 34)  # two 13 px lines
+        hint = next(l.findtext('Text') for l in self.model.one('MixpiFxSwitch').iter('Label'))
+        self.assertEqual(hint, 'Starlight FX pads: 1-3 effects · 4 send to deck')
 
     # ---------- carried guards ----------
 

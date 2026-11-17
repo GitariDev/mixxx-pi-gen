@@ -205,6 +205,6 @@
 #MixpiSettings { background: #0a0d12; }
 #MixpiPlaybackSettings, #MixpiInterfaceSettings { padding: 4px; }
 #MixpiSetting { border-bottom: 1px solid #18202b; }
-#MixpiSettingLabel { font-size: 13px; color: #8c9ab0; }
+#MixpiSettingLabel { font-size: 13px; color: #8c9ab0; qproperty-wordWrap: true; }
 #MixpiDesktopBar { border-radius: 6px; }
 #MixpiDesktopBar:disabled { color: #a9b7c8; background: #182536; }

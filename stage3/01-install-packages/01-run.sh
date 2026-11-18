@@ -54,6 +54,7 @@ MIXXX_PATCHES=(
     mixxx-table-fit-media-open.patch
     mixxx-sources-open-edge.patch
     mixxx-sampler-clear-playing.patch
+    mixxx-shared-columns.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

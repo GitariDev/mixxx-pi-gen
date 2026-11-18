@@ -45,6 +45,7 @@ REQUIRED_TESTS = (
     'test_sample_browser',
     'test_source_groups',
     'test_settings_fixes',
+    'test_shared_columns',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

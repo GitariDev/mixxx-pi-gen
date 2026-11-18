@@ -2036,6 +2036,28 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(caret.find('{http://www.w3.org/2000/svg}path').get('fill'), '#949dab')
         self.assertNotIn('\nQWidget {', style)
 
+    def test_empty_effect_selector_text_fits_its_field(self):
+        """Acceptance D FAIL 3: a combo box clips and does not elide, so the
+        whole "SELECT EFFECT…" must fit. In build B's font (Open Sans 18 bold,
+        upper case, from Pioneered's WEffectSelector rule) it is 144 px wide,
+        measured with Qt 6 on VM b. The field is 177 px inside its border
+        (183 px wide in its card, less the 2 px margins and 1 px border); its
+        text area is that less the left padding, the right padding and the ▾
+        zone. QCommonStyle draws the label 1 px in from each side of it."""
+        style = (self.skin/'style.qss').read_text()
+        rule = style.split('#MixpiEffectSelector {', 1)[1].split('}', 1)[0]
+        drop = style.split('#MixpiEffectSelector::drop-down {', 1)[1].split('}', 1)[0]
+        px = lambda body, name: int(re.search(rf'(?<![-\w]){name}: (\d+)px', body).group(1))
+        self.assertEqual(px(rule, 'margin'), 2)
+        # Pioneered's WEffectSelector rule gives padding 4px; the right side is reset here.
+        left, right, zone = px(rule, 'padding-left'), px(rule, 'padding-right'), px(drop, 'width')
+        self.assertEqual((left, right, zone), (6, 0, 24))
+        text_area = 183 - 2 * 2 - 2 * 1 - left - right - zone
+        self.assertGreaterEqual(text_area - 2, 144)
+        # The ▾ (12 px) stays inside the field, with room either side of it.
+        self.assertGreaterEqual(zone, 12 + 2 * 4)
+        self.assertIn('subcontrol-origin: padding; subcontrol-position: center right;', drop)
+
     # Controls that Mixxx itself creates as toggling ControlPushButtons. A
     # two-state button on any other control sends 1 on every press (B1).
     REAL_TOGGLES = ('keylock', 'quantize', 'sync_enabled', 'play', 'headSplit', 'enabled')

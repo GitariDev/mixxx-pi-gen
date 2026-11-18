@@ -353,16 +353,21 @@
 #MixpiFxCardHead { qproperty-layoutContentsMargins: rect(8 0 8 0); }
 #MixpiFxCard { background: #161a20; border: 1px solid #2c333d; border-radius: 3px; margin: 3px; }
 #MixpiFxMix { margin: 0px 8px 0px 6px; }
+/* A combo box clips its text and does not elide, so the whole "SELECT
+ * EFFECT…" (build B's Open Sans 18 bold, upper case: 144 px) must fit the
+ * text area: 177 px inside the border, less 6 px left padding, no right
+ * padding (Pioneered's WEffectSelector gives 4) and the 24 px ▾ zone = 147. */
 #MixpiEffectSelector {
     color: #e4e7ec; background: #1d222a; border: 1px solid #2c333d; border-radius: 3px;
-    margin: 2px; padding-left: 10px; font-family: "Open Sans", "Ubuntu"; font-size: 18px;
+    margin: 2px; padding-left: 6px; padding-right: 0px;
+    font-family: "Open Sans", "Ubuntu"; font-size: 18px;
 }
 /* "SELECT EFFECT…" is dim while the slot is empty (N-C's mixpiEmpty). */
 #MixpiEffectSelector[mixpiEmpty="true"] { color: #949dab; }
 /* The ▾ sits inside the field (m-fx.png): no separate box, dim. */
 #MixpiEffectSelector::drop-down {
     subcontrol-origin: padding; subcontrol-position: center right;
-    width: 30px; border: 0px; background: transparent;
+    width: 24px; border: 0px; background: transparent;
 }
 #MixpiEffectSelector::down-arrow { image: url(skin:/mixpi-icon-caret.svg); width: 12px; height: 8px; }
 /* The open list: the token colours of every list. The current effect is the

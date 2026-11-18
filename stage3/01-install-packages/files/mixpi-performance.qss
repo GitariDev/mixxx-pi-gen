@@ -7,8 +7,11 @@
  * Radius 3 (thumbs 2); chips are pills. Lit or chosen: the role colour at
  * 26% (alpha 66 of 255) over what is behind, a 2 px role border and the
  * light role text. Sound borders at rest are the tone at 60% over surface-2.
- * Fonts on the image only: Ubuntu Condensed for labels and buttons, Open Sans
- * for body and list text, Ubuntu Mono for numbers. No text under 13 px. */
+ * Fonts are build B's (owner, 2026-11-18: "All fonts back to build B"): each
+ * element has the family, size and weight build B gave it (ef0874d). Where
+ * build B set no family, Pioneered's own `*` rule gave it Open Sans, so
+ * those rules name "Open Sans" here. A new element
+ * takes the build B font of its role. No text under 13 px. */
 #MixpiTopbar, #MixpiTransport, #MixpiDeckButtons, #MixpiBottom, #MixpiSourcesBottom { background: #0d1014; }
 #MixpiTopbar { border-bottom: 1px solid #2c333d; }
 
@@ -128,57 +131,58 @@
 #MixpiCueTile1, #MixpiCueTile2 { border-style: dashed; color: #949dab; }
 #MixpiCueTile1[value="1"], #MixpiCueTile2[value="1"] { border-style: solid; }
 #MixpiCueClearTile { color: #ec7f74; background: #34191b; border-color: #d0574d; }
-#MixpiLoadTitle { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 14px; padding-left: 6px; }
+#MixpiLoadTitle { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 13px; padding-left: 6px; }
 
 /* Chips: indicators, never pressed, so pills. */
 #MixpiChip, #MixpiChipPi, #MixpiChipUsb, #MixpiChipSync1, #MixpiChipSync2 {
-    font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; font-weight: bold;
+    font-family: "Ubuntu", "Open Sans"; font-size: 13px; font-weight: bold;
     border: 1px solid #a3c45e; border-radius: 10px; color: #a3c45e; margin: 1px 2px;
 }
 #MixpiChipPi { color: #0d1014; background: #5fae6e; border-color: #5fae6e; }
 #MixpiChipUsb { color: #949dab; border-color: #3a424e; }
 #MixpiChipSync1, #MixpiChipSync2 { color: #86c0d8; border-color: #5aa4c4; }
-#MixpiRange { color: #949dab; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; font-weight: bold; }
+#MixpiRange { color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 13px; font-weight: bold; }
 #MixpiStateChip {
     color: #949dab; background: transparent; border: 1px solid #3a424e; border-radius: 10px;
-    font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; font-weight: bold;
+    font-family: "Ubuntu", "Open Sans"; font-size: 13px; font-weight: bold;
 }
 #MixpiStateChip[value="1"] { color: #a3c45e; border-color: #a3c45e; }
 #MixpiWaveBadge1, #MixpiWaveBadge2 {
-    color: #0d1014; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 18px; font-weight: bold;
+    color: #0d1014; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 20px; font-weight: bold;
     border-radius: 2px;
 }
 #MixpiWaveBadge1 { background: #5b95d4; }
 #MixpiWaveBadge2 { background: #d6784a; }
 #MixpiCaption {
-    color: #949dab; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; font-weight: bold;
+    color: #949dab; font-family: "Ubuntu", "Open Sans"; font-size: 13px; font-weight: bold;
 }
-#MixpiToolTitle { color: #e4e7ec; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 20px; padding-left: 10px; }
+#MixpiToolTitle { color: #e4e7ec; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 18px; font-weight: bold; padding-left: 10px; }
 #MixpiToolHeader { background: #161a20; border-bottom: 1px solid #2c333d; }
-#MixpiFxPad { color: #949dab; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; }
+#MixpiFxPad { color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 13px; }
 #MixpiFxSwitch, #MixpiSettingsHeader { background: #161a20; border-bottom: 1px solid #2c333d; }
 
 /* Settings rail: menu rows, the text left-aligned 16 px in (m-settings-media.png).
  * The label under a clear button carries the text; the current row is
- * surface-2 with a 4 px accent edge and semibold text. */
+ * surface-2 with a 4 px accent edge. The text is build B's rail button font
+ * (Ubuntu Condensed 18 px bold) on every row. */
 #MixpiSettingsRail { background: #161a20; border-right: 1px solid #2c333d; }
 #MixpiRailButton { background: transparent; border: 0px; border-radius: 0px; margin: 0px; }
 #MixpiRailButton[pressed="true"] { background: rgba(163, 196, 94, 40); }
 #MixpiRailLabel {
     color: #e4e7ec; background: #161a20; border: 0px; border-bottom: 1px solid #2c333d;
-    padding-left: 16px; font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: normal;
+    padding-left: 16px; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 18px; font-weight: bold;
 }
 #MixpiRailLabel[highlight="1"] {
-    background: #1d222a; border-left: 4px solid #a3c45e; padding-left: 12px; font-weight: 600;
+    background: #1d222a; border-left: 4px solid #a3c45e; padding-left: 12px;
 }
-#MixpiSettingTitle { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: 600; }
+#MixpiSettingTitle { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: bold; }
 /* The ON/OFF toggle (primitives.css .mx-toggle), here only an indicator:
  * OFF is surface-2 with a dim knob at the left and OFF at the right; ON is
  * accent-surface with an accent border, ON at the left and the accent knob. */
 #MixpiToggleOn, #MixpiToggleOff { border-radius: 3px; margin: 1px 0px; }
 #MixpiToggleOff { background: #1d222a; border: 1px solid #3a424e; }
 #MixpiToggleOn { background: #253019; border: 1px solid #a3c45e; }
-#MixpiToggleWord { font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 15px; font-weight: bold; }
+#MixpiToggleWord { font-family: "Open Sans", "Ubuntu"; font-size: 14px; font-weight: bold; }
 #MixpiToggleOff #MixpiToggleWord { color: #949dab; }
 #MixpiToggleOn #MixpiToggleWord { color: #a3c45e; }
 #MixpiToggleKnob { border-radius: 2px; }
@@ -191,7 +195,7 @@
 }
 /* The Brightness readout ("80%"). */
 #MixpiSettingValue {
-    color: #e4e7ec; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 18px; font-weight: bold;
+    color: #e4e7ec; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 17px; font-weight: bold;
     qproperty-alignment: 'AlignRight | AlignVCenter';
 }
 #MixpiIconButton {
@@ -208,7 +212,7 @@
 #MixpiClose[pressed="true"] { background: #34191b; border-color: #d0574d; }
 #MixpiClose:disabled { background: #13161b; border-color: #13161b; }
 #MixpiCpuBox { margin: 0px 0px 0px 6px; }
-#MixpiCpuLabel { color: #949dab; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; }
+#MixpiCpuLabel { color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 13px; }
 #MixpiCpu { color: #a3c45e; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 17px; font-weight: bold; }
 
 /* Confirm: the one main action of a screen, solid muted accent, dark text. */
@@ -222,11 +226,11 @@
 }
 #MixpiSampleFooter { border-bottom: 0px; border-top: 1px solid #2c333d; }
 #MixpiScreenTitle {
-    color: #e4e7ec; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 20px;
+    color: #e4e7ec; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 22px; font-weight: bold;
     padding-left: 12px;
 }
 #MixpiScreenHint {
-    color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 13px; padding: 0px 10px;
+    color: #949dab; font-family: "Ubuntu", "Open Sans"; font-size: 14px; padding: 0px 10px;
 }
 #MixpiSavedNote { color: #7cc58a; font-family: "Open Sans", "Ubuntu"; font-size: 14px; }
 #MixpiTrackTitles { background: #161a20; border-top: 1px solid #2c333d; }
@@ -234,7 +238,7 @@
 /* Choose pad: a sheet over the dimmed list. */
 #MixpiChooseScrim { background: rgba(5, 7, 9, 168); }
 #MixpiChooseSheet { background: #161a20; border: 1px solid #3a424e; border-radius: 3px; }
-#MixpiSheetTitle { color: #e4e7ec; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 20px; font-weight: bold; }
+#MixpiSheetTitle { color: #e4e7ec; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 23px; font-weight: bold; }
 #MixpiChooseCell { background: #1d222a; border: 1px solid #3a424e; border-radius: 3px; }
 #MixpiChooseInfo { qproperty-layoutContentsMargins: rect(10 8 10 6); }
 #MixpiChooseName { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 14px; }
@@ -249,21 +253,20 @@
 #MixpiPadA, #MixpiPadB { background: #161a20; border-right: 1px solid #2c333d; border-bottom: 1px solid #2c333d; }
 #MixpiPadEmpty { background: #0d1014; border-right: 1px solid #2c333d; border-bottom: 1px solid #2c333d; }
 #MixpiPadBadgeA, #MixpiPadBadgeB {
-    color: #0d1014; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 14px; font-weight: bold;
+    color: #0d1014; font-family: "Ubuntu", "Open Sans"; font-size: 15px; font-weight: bold;
     border-radius: 2px; margin: 2px;
 }
 #MixpiPadBadgeA, #MixpiDeckNumber1 { background: #5b95d4; }
 #MixpiPadBadgeB, #MixpiDeckNumber2 { background: #d6784a; }
-#MixpiPadTag { color: #e4e7ec; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 15px; padding-left: 6px; }
+#MixpiPadTag { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 13px; font-weight: bold; padding-left: 6px; }
 #MixpiPadInfo { qproperty-layoutContentsMargins: rect(8 4 8 2); }
 #MixpiPadTime { color: #949dab; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 13px; }
-#MixpiPadName { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 15px; font-weight: 600; }
-#MixpiPadEmptyText { color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 14px; }
+#MixpiPadName { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 15px; font-weight: bold; }
+#MixpiPadEmptyText { color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 15px; }
 #MixpiPadLoad { background: transparent; border: 0px; margin: 0px; }
 #MixpiPadLoad[pressed="true"] { background: rgba(163, 196, 94, 40); }
 /* A playing pad has a 2 px play-coloured edge (m-sampler.png). */
 #MixpiPadLoaded[highlight="1"] { border: 2px solid #5fae6e; }
-#MixpiPadLoaded #MixpiSound, #MixpiPadLoaded #MixpiCaution { font-size: 15px; }
 
 /* Clear samples popover (m-sampler-clear.png): the scrim dims the screen; a
  * 480 px sheet, title row, the rows, the note and CANCEL / CLEAR (n). */
@@ -283,13 +286,13 @@
 #MixpiClearTick { background: transparent; border: 0px; border-radius: 0px; margin: 0px; }
 #MixpiClearRowText { background: #161a20; border-bottom: 1px solid #2c333d; }
 #MixpiClearRowText[highlight="1"] { background: #1d222a; }
-#MixpiClearName { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: 600; }
+#MixpiClearName { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 15px; font-weight: bold; }
 #MixpiClearTime {
-    color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 14px;
+    color: #949dab; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 13px;
     qproperty-alignment: 'AlignRight | AlignVCenter';
 }
 #MixpiClearNote {
-    color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 13px; padding: 0px 16px;
+    color: #949dab; font-family: "Ubuntu", "Open Sans"; font-size: 14px; padding: 0px 16px;
 }
 #MixpiClearFoot { border-top: 1px solid #2c333d; }
 /* CLEAR (n): Danger. Lit (n ticked) as drawn; not enabled at 0. */
@@ -317,7 +320,7 @@
 }
 #MixpiClearList QScrollBar::add-page, #MixpiClearList QScrollBar::sub-page { background: #161a20; }
 
-#MixpiLabel, #MixpiWaveKey { color: #e4e7ec; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 17px; }
+#MixpiLabel, #MixpiWaveKey { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 17px; }
 #MixpiWaveInfo { background: #161a20; border-right: 1px solid #2c333d;
     qproperty-layoutContentsMargins: rect(8 8 4 4); qproperty-layoutSpacing: 6; }
 
@@ -329,22 +332,21 @@
 #MixpiDeckTitle { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 16px; padding-left: 4px; }
 #MixpiDeckArtist { color: #949dab; font-family: "Open Sans", "Ubuntu"; font-size: 14px; padding-left: 6px; }
 #MixpiDeckNumber1, #MixpiDeckNumber2 {
-    color: #0d1014; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 14px; font-weight: bold;
+    color: #0d1014; font-family: "Open Sans", "Ubuntu"; font-size: 16px; font-weight: bold;
     qproperty-alignment: AlignCenter; margin: 2px; border-radius: 2px;
 }
 #MixpiDeckStats { background: #161a20; border-right: 1px solid #2c333d; }
-#MixpiTime, #MixpiRate, #MixpiKey { color: #e4e7ec; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 21px; }
-#MixpiRate { font-size: 19px; }
+#MixpiTime, #MixpiRate, #MixpiKey { color: #e4e7ec; font-family: "Open Sans", "Ubuntu"; font-size: 21px; }
 #MixpiKey, #MixpiWaveKey { font-size: 17px; }
 #MixpiBpm {
-    background: #e4e7ec; color: #0d1014; font-family: "Ubuntu Mono", "Ubuntu"; font-size: 24px;
+    background: #e4e7ec; color: #0d1014; font-family: "Open Sans", "Ubuntu"; font-size: 25px;
     font-weight: bold; margin: 4px; border-radius: 3px;
 }
 
 /* Tool panel (LOOP · JUMP · CUES). */
 #MixpiLoopPanel { background: #0d1014; }
 #MixpiLoopPanel #MixpiButton, #MixpiLoopPanel #MixpiSize, #MixpiLoopPanel #MixpiDanger,
-#MixpiLoopPanel #MixpiSound { font-size: 17px; }
+#MixpiLoopPanel #MixpiSound { font-size: 19px; }
 
 /* FX: boxes, selectors and full-height slider fills. */
 #MixpiFx { background: #0d1014; }
@@ -353,7 +355,7 @@
 #MixpiFxMix { margin: 0px 8px 0px 6px; }
 #MixpiEffectSelector {
     color: #e4e7ec; background: #1d222a; border: 1px solid #2c333d; border-radius: 3px;
-    margin: 2px; padding-left: 10px; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 17px;
+    margin: 2px; padding-left: 10px; font-family: "Open Sans", "Ubuntu"; font-size: 18px;
 }
 /* "SELECT EFFECT…" is dim while the slot is empty (N-C's mixpiEmpty). */
 #MixpiEffectSelector[mixpiEmpty="true"] { color: #949dab; }
@@ -364,7 +366,8 @@
 }
 #MixpiEffectSelector::down-arrow { image: url(skin:/mixpi-icon-caret.svg); width: 12px; height: 8px; }
 /* The open list: the token colours of every list. The current effect is the
- * current menu row: surface-2, a 4 px accent edge, semibold. */
+ * current menu row: surface-2 and a 4 px accent edge (the text keeps build
+ * B's selector font). */
 #MixpiEffectSelector QAbstractItemView {
     color: #e4e7ec; background: #161a20; border: 1px solid #3a424e;
     selection-color: #e4e7ec; selection-background-color: #1d222a;
@@ -374,10 +377,10 @@
 }
 #MixpiEffectSelector QAbstractItemView::item:disabled { color: #7f8896; }
 #MixpiEffectSelector QAbstractItemView::item:selected {
-    color: #e4e7ec; background: #1d222a; border-left: 4px solid #a3c45e; font-weight: 600;
+    color: #e4e7ec; background: #1d222a; border-left: 4px solid #a3c45e;
 }
 #MixpiSettingSelector, #MixpiSettingSelector QAbstractItemView {
-    color: #e4e7ec; background: #1d222a; font-size: 17px;
+    color: #e4e7ec; background: #1d222a; font-family: "Open Sans", "Ubuntu"; font-size: 17px;
     selection-color: #0d1014; selection-background-color: #a3c45e;
 }
 /* The slider widget is the track: surface-2, a line-strong border, radius 3.

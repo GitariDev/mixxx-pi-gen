@@ -7,8 +7,17 @@
  * accent-surface #253019, accent-lit #bcd88a, deck 2 #d6784a,
  * danger #d0574d, danger-text #ec7f74, danger-surface #34191b). Radius 3 px;
  * lit states are a 26% tint of the role colour with a 2 px border.
- * Labels and buttons in Ubuntu Condensed (upper case), list text in
- * Open Sans. */
+ * Fonts are build B's (owner, 2026-11-18: "All fonts back to build B"), from
+ * build B's Sources screen (ef0874d pioneered-menus.qss and
+ * pioneered-touch.qss) over Pioneered's own rules: its `*` rule (Open Sans
+ * for every widget) and its bold source list (#LibraryWrapper WLibrarySidebar).
+ * The source list: Open Sans 17 px bold, its counts part of that text. A
+ * source tile: name Open Sans 17 px bold, line under it 13 px. BACK: Open Sans
+ * 16 px bold. EDIT and DONE (build B's EDIT LIST / DONE button): Ubuntu
+ * Condensed 17 px bold. The place: Open Sans 15 px. Sources edit: the hint
+ * Open Sans 13 px bold, a row name Open Sans 17 px bold, the row buttons Open
+ * Sans 15 px bold, ★ (build B's "Start here") Open Sans 16 px bold. New
+ * elements take their role's build B font (see each rule). */
 
 /* --- Side menu: the panel (m-sources-top.png, m-sources-sub.png) --- */
 #LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"],
@@ -17,7 +26,8 @@ WLibrarySidebar[mixpiSourceMenu="true"] {
     color: #e4e7ec;
     border: 0px;
     font-family: "Open Sans", "Ubuntu";
-    font-size: 16px;
+    font-size: 17px;
+    font-weight: bold;
     selection-background-color: #1d222a;
     selection-color: #e4e7ec;
     /* The rows inside a source (drawn natively in these colours). */
@@ -29,7 +39,7 @@ WLibrarySidebar[mixpiSourceMenu="true"] {
     qproperty-menuTextColor: #e4e7ec;
     qproperty-menuDimColor: #949dab;
     qproperty-menuIconColor: #d6784a;
-    qproperty-menuNotePixelSize: 14;
+    qproperty-menuNotePixelSize: 17;
 }
 #LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"]::item,
 WLibrarySidebar[mixpiSourceMenu="true"]::item {
@@ -57,11 +67,16 @@ WLibrarySidebar #MixpiSourcesMenuHeader {
     border: 1px solid #3a424e;
     border-radius: 3px;
     color: #e4e7ec;
-    font-family: "Ubuntu Condensed", "Ubuntu";
-    font-size: 15px;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 16px;
     font-weight: bold;
     padding: 0px 8px;
     margin: 0px;
+}
+/* EDIT is build B's EDIT LIST button (#LibrarySourcesButton). */
+#MixpiSourcesMenuHeader QPushButton#MixpiSourcesMenuEdit {
+    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-size: 17px;
 }
 #MixpiSourcesMenuHeader QPushButton#MixpiSourcesMenuBack:pressed,
 #MixpiSourcesMenuHeader QPushButton#MixpiSourcesMenuEdit:pressed {
@@ -106,8 +121,8 @@ WLibrarySidebar #MixpiSourcesMenuTop,
     background-color: transparent;
     color: #e4e7ec;
     font-family: "Open Sans", "Ubuntu";
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 17px;
+    font-weight: bold;
 }
 #MixpiSourcesMenuTile QLabel#MixpiSourcesMenuSub {
     background-color: transparent;
@@ -211,15 +226,15 @@ WLibrarySidebar #MixpiSourcesMenuScrollTop {
     background-color: transparent;
     color: #e4e7ec;
     font-family: "Ubuntu Condensed", "Ubuntu";
-    font-size: 20px;
-    font-weight: normal;
+    font-size: 22px;
+    font-weight: bold;
 }
 #MixpiSourcesEditHeader QLabel#MixpiSourcesEditHint {
     background-color: transparent;
     color: #949dab;
     font-family: "Open Sans", "Ubuntu";
     font-size: 13px;
-    font-weight: normal;
+    font-weight: bold;
 }
 /* DONE: Confirm (solid muted accent, dark text). */
 #MixpiSourcesEditHeader QPushButton#MixpiSourcesEditDone {
@@ -228,7 +243,7 @@ WLibrarySidebar #MixpiSourcesMenuScrollTop {
     border-radius: 3px;
     color: #0d1014;
     font-family: "Ubuntu Condensed", "Ubuntu";
-    font-size: 15px;
+    font-size: 17px;
     font-weight: bold;
     padding: 0px;
 }
@@ -259,8 +274,8 @@ WLibrarySidebar #MixpiSourcesMenuScrollTop {
     background-color: transparent;
     color: #e4e7ec;
     font-family: "Open Sans", "Ubuntu";
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 17px;
+    font-weight: bold;
 }
 #MixpiSourcesEditRow QLabel#MixpiSourcesEditSub {
     background-color: transparent;
@@ -269,11 +284,11 @@ WLibrarySidebar #MixpiSourcesMenuScrollTop {
     font-size: 13px;
     font-weight: normal;
 }
-/* The start row's line: "TRACKS STARTS HERE" in Ubuntu Condensed, dim (as
- * m-sources-edit.png draws it). */
+/* The start row's line, "TRACKS STARTS HERE": dim, in the line's build B
+ * font (a tile's line under the name, Open Sans 13 px). */
 #MixpiSourcesEditRow QLabel#MixpiSourcesEditSub[start="true"] {
     color: #949dab;
-    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-family: "Open Sans", "Ubuntu";
     font-size: 13px;
 }
 #MixpiSourcesEditRow #MixpiSourcesEditIcon {
@@ -299,13 +314,13 @@ WLibrarySidebar #MixpiSourcesMenuScrollTop {
     border: 1px solid #3a424e;
     border-radius: 3px;
     color: #e4e7ec;
-    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-family: "Open Sans", "Ubuntu";
     font-size: 15px;
     font-weight: bold;
     padding: 0px;
 }
 #MixpiSourcesEditRow QPushButton#MixpiSourcesEditStar {
-    font-size: 18px;
+    font-size: 16px;
 }
 #MixpiSourcesEditRow QPushButton#MixpiSourcesEditStar:pressed,
 #MixpiSourcesEditRow QPushButton#MixpiSourcesEditUp:pressed,
@@ -328,14 +343,15 @@ WLibrarySidebar #MixpiSourcesMenuScrollTop {
 }
 
 /* The ON/OFF toggle: ON accent-surface with an accent border, OFF neutral;
- * the word and the square take the text colour. */
+ * the word and the square take the text colour. The word is build B's
+ * ON/OFF toggle word (Settings, Open Sans 14 px bold). */
 #MixpiSourcesEditRow QCheckBox#MixpiSourcesEditSwitch {
     background-color: #1d222a;
     border: 1px solid #3a424e;
     border-radius: 3px;
     color: #949dab;
-    font-family: "Ubuntu Condensed", "Ubuntu";
-    font-size: 15px;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 14px;
     font-weight: bold;
     padding: 0px;
     spacing: 0px;

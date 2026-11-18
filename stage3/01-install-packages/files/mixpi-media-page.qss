@@ -10,14 +10,20 @@
  * Loads after pioneered-menus.qss. Every rule here sets each property the old
  * Media section of that file set, so nothing of build B's look leaks through.
  * Text is 13 px or more; every button is 48 px tall or more. QSS min-height is
- * the content box, so a button with a 1 px border has min-height 46 px. */
+ * the content box, so a button with a 1 px border has min-height 46 px.
+ * Fonts are build B's (owner, 2026-11-18: "All fonts back to build B"), from
+ * build B's Media section (tests/fixtures/media-screen-build-b.qss) over
+ * Pioneered's own `*` rule (Open Sans for every widget): Open Sans; page
+ * 16 px, title 21 px bold, hint 14 px, labels 15 px, drive name 24 px bold,
+ * details 14 px, chips 13 px bold, buttons 17 px bold, strip title 18 px bold.
+ * New elements take their role's build B font (see each rule). */
 
 /* ---------- page, header, close ---------- */
 #MixpiPage, #MixpiPageContent, #MixpiMediaDrives, #MixpiMediaDriveList {
     background-color: #0d1014;
     color: #e4e7ec;
     font-family: "Open Sans", "Ubuntu";
-    font-size: 14px;
+    font-size: 16px;
 }
 #MixpiPageHeader {
     background-color: #161a20;
@@ -27,14 +33,14 @@
 #MixpiPage QLabel#MixpiPageTitle {
     background-color: transparent;
     color: #e4e7ec;
-    font-family: "Ubuntu Condensed", "Ubuntu";
-    font-size: 20px;
-    font-weight: normal;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 21px;
+    font-weight: bold;
 }
 #MixpiPage QLabel#MixpiPageHint {
     color: #949dab;
     font-family: "Open Sans", "Ubuntu";
-    font-size: 13px;
+    font-size: 14px;
 }
 /* Close (section 1): a square on surface-2, a red ✕ (the text colour), no outline at rest. */
 #MixpiPage QPushButton#MixpiPageClose {
@@ -65,8 +71,8 @@
     border: 0px;
     border-left: 1px solid #3a424e;
     border-radius: 0px;
-    font-family: "Ubuntu Condensed", "Ubuntu";
-    font-size: 15px;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 17px;
     font-weight: bold;
 }
 #MixpiPage QPushButton#MixpiMediaFilterOption[first="true"] { border-left: 0px; }
@@ -88,20 +94,20 @@
     background-color: transparent;
     color: #e4e7ec;
     font-family: "Open Sans", "Ubuntu";
-    font-size: 14px;
+    font-size: 15px;
     font-weight: normal;
 }
 #MixpiPage QWidget#MixpiMediaUsbIcon { background-color: transparent; color: #e4e7ec; }
 #MixpiPage QLabel#MixpiMediaName {
     color: #e4e7ec;
-    font-family: "Ubuntu Condensed", "Ubuntu";
-    font-size: 22px;
-    font-weight: normal;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 24px;
+    font-weight: bold;
 }
 #MixpiPage QLabel#MixpiMediaSize, #MixpiPage QLabel#MixpiMediaUse {
     color: #949dab;
     font-family: "Open Sans", "Ubuntu";
-    font-size: 13px;
+    font-size: 14px;
 }
 #MixpiPage QLabel#MixpiMediaProblem { color: #e4e7ec; font-size: 14px; }
 /* State chips: pills, not pressable (section 1, Indicators). */
@@ -113,7 +119,7 @@
     color: #949dab;
     border: 1px solid #3a424e;
     border-radius: 11px;
-    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-family: "Open Sans", "Ubuntu";
     font-size: 13px;
     font-weight: bold;
 }
@@ -130,8 +136,8 @@
     color: #e4e7ec;
     border: 1px solid #3a424e;
     border-radius: 3px;
-    font-family: "Ubuntu Condensed", "Ubuntu";
-    font-size: 15px;
+    font-family: "Open Sans", "Ubuntu";
+    font-size: 17px;
     font-weight: bold;
 }
 #MixpiPage QPushButton:pressed, #MixpiBottomStrip QPushButton:pressed { background-color: #262c35; }
@@ -210,11 +216,12 @@
     border: 0px;
     border-top: 1px solid #2c333d;
 }
+/* The count: build B's drive details (14 px) in bold, as build B's headings. */
 #MixpiPage QLabel#MixpiMediaFooterCount {
     color: #e4e7ec;
     font-family: "Open Sans", "Ubuntu";
     font-size: 14px;
-    font-weight: 600;
+    font-weight: bold;
 }
 #MixpiPage QLabel#MixpiMediaFooterText {
     color: #949dab;
@@ -232,7 +239,7 @@
 #MixpiEjectUsers, #MixpiEjectUserList { background-color: #161a20; border: 0px; }
 #MixpiPage QLabel#MixpiEjectTitle {
     color: #e4e7ec;
-    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-family: "Open Sans", "Ubuntu";
     font-size: 24px;
     font-weight: bold;
 }
@@ -265,11 +272,10 @@
     background-color: transparent;
     color: #e4e7ec;
     font-family: "Open Sans", "Ubuntu";
-    font-size: 14px;
 }
 #MixpiBottomStrip QLabel#MixpiStripTitle {
     color: #e4e7ec;
-    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-family: "Open Sans", "Ubuntu";
     font-size: 18px;
     font-weight: bold;
 }

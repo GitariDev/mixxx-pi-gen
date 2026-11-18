@@ -1,6 +1,7 @@
 /* Browse is the only Pioneered page with a LibraryWrapper. Keep the decks
  * and Overview/Samples at their existing sizes on the 800x444 display.
- * Colours are the agreed UI tokens (agreed-ui/design/tokens.css). */
+ * Colours are the agreed UI tokens (agreed-ui/design/tokens.css). Fonts are
+ * build B's (owner, 2026-11-18). */
 #LibraryWrapper QTableView,
 #LibraryWrapper WLibraryTextBrowser,
 #LibraryWrapper WLibrarySidebar {
@@ -109,14 +110,17 @@
     border: 1px dashed #2c333d;
 }
 
-/* The search field fills the header (spec s3): a field on the page colour. */
+/* The search field fills the header (spec s3): a field on the page colour.
+ * Build B's font: Open Sans (Pioneered's `*` rule), 17 px, bold (Pioneered's
+ * #SearchBox rule). */
 #LibraryWrapper #SearchBox {
     background-color: #0d1014;
     border: 1px solid #2c333d;
     border-radius: 3px;
     color: #e4e7ec;
-    font-family: "Ubuntu Condensed", "Ubuntu";
+    font-family: "Open Sans", "Ubuntu";
     font-size: 17px;
+    font-weight: bold;
     margin: 0px;
 }
 

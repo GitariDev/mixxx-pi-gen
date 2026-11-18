@@ -1554,7 +1554,10 @@ class PerformanceSkinTests(unittest.TestCase):
         label = style.split('#MixpiRailLabel {', 1)[1].split('}', 1)[0]
         self.assertIn('padding-left: 16px;', label)
         current = style.split('#MixpiRailLabel[highlight="1"] {', 1)[1].split('}', 1)[0]
-        self.assertIn('border-left: 4px solid #a3c45e; padding-left: 12px; font-weight: 600;', current)
+        self.assertIn('border-left: 4px solid #a3c45e; padding-left: 12px;', current)
+        # Build B's rail button font on every row (fonts back to build B).
+        self.assertIn('font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 18px; font-weight: bold;', label)
+        self.assertNotIn('font-weight', current)
         self.assertNotIn('text-align', style)
         panes = list(self.model.one('MixpiSettingsPanes').find('Children'))
         for value in range(4):
@@ -2072,8 +2075,10 @@ class PerformanceSkinTests(unittest.TestCase):
         for info in (g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiDeckInfo'):
             self.assertIn(size(info)[1], (28, 72))
         style = (self.skin/'style.qss').read_text()
-        self.assertIn('#MixpiTime, #MixpiRate, #MixpiKey { color: #e4e7ec; font-family: "Ubuntu Mono", '
+        # Build B's readout font: Open Sans 21 px (fonts back to build B).
+        self.assertIn('#MixpiTime, #MixpiRate, #MixpiKey { color: #e4e7ec; font-family: "Open Sans", '
                       '"Ubuntu"; font-size: 21px; }', style)
+        self.assertNotIn('#MixpiRate { font-size', style)
 
     # ---------- R-17 FX ----------
 

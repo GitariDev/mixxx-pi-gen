@@ -331,3 +331,17 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
 - **Conformance pass** (orchestrator, `acceptance-E/conformance/e*.png`, pairs in `acceptance-E/pairs/`): every spec screen against its mockup.
   - Tracks, the Sources menu (in the owner's new order), Edit sources (★ on GANDER1, child rows), inside the drive ("GANDER1 › rekordbox" with counts), the tool panel, Sampler, Clear samples, Load sample, FX, Settings and the Media page all match, in build B's fonts.
   - **Owner question:** with the extra columns the owner added to GANDER1's table (#, PREVIEW, DURATION and others), the narrowed table cannot fit seven columns in 480 px, so headers are cut and a sideways bar shows. With the mockup's four columns it fits.
+
+### Wave F1 (2026-11-18 evening)
+
+- **Builder N-F** (Claude Opus 5.5 medium): `mixxx-shared-columns.patch`. One column setup for every track table, kept as `[Library],SharedColumns` in `mixxx.cfg`:
+  - The visible columns, their order and widths are shared. The sort stays per list.
+  - A change is saved by the save-on-change path in 585-694 ms. A 15-step drag gives one write, and the setup is kept after SIGKILL.
+  - The first run starts from This Pi › Tracks' setup. The old per-list rows are left unused.
+  - Fitted widths are never saved, and the table re-fits each time it is shown.
+  - The acceptance E fault (narrowed columns kept after ✕) did not reproduce in the fixture; the Pi check is the proof.
+  - Registration: `86d14a9`, 53 patches.
+- **Gates at `86d14a9`:** Mac suite 799 run, OK (151 platform skips); native gate 247/247, 0 skips.
+- **Notes for the owner:**
+  - The shared setup starts from This Pi › Tracks, so the extra columns the owner added on GANDER1 give way to it.
+  - Load sample's Samples table shows Filename plus the shared columns, not spec s7's fixed four. The owner's 2c choice wins over s7.

@@ -17,6 +17,7 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Build C baseline | `ef0874d` | 710 run, OK (141 platform skips) | 190/190, 0 skips | Handoff state of thread 2 |
 | Wave C1 integrated | `dda4966` | 732 run; 1 error in `test_chroot_runtime` (5 s timeout while the native gate ran), then 3 of 3 OK alone | 206/206, 0 skips | S1 skin (U-1, U-2, U-3, U-6, U-7 skin, Settings header), N-A Sources side menu and edit list, N-B Media page and `drive_insert` |
 | Wave C2 integrated | `85dc076` | 761 run, OK (146 platform skips) | 227/227, 0 skips (at `123b5e6`; `85dc076` adds only a generator change and its unit test) | 49 patches. S2 skin, N-C controls and saving, N-A2 Sources repairs; the backlight udev rule |
+| Wave D1 integrated | `335a75b` | 786 run, OK (150 platform skips) | 236/236, 0 skips | 50 patches. S4 fonts back to build B and shorter loop rows at 800×444; N-D1 ★ for the saved start, current-row edge, Edit sources child rows; N-D2 narrowed table fits, OPEN and BROWSE switch to Tracks; C3 skin repairs |
 
 ## Wave 0 on the test card (build 2)
 
@@ -229,3 +230,19 @@ Plan 12.5 and spec 2a record them:
 - shorter loop rows while the desktop top bar shows;
 - the Starlight session later;
 - **at most 3 agents running at a time**, all kinds counted.
+
+### Wave D1 (2026-11-18 morning)
+
+- **Builders** (Claude Opus 5.5 medium, own worktrees, three at once, the owner's cap):
+  - S4: `8bf674c`, `4872049`.
+  - N-D1: `ef11be3`.
+  - N-D2: `9a0da7d`, `0060f82`, `4af56f5`.
+  - Registration by the orchestrator: `335a75b`.
+- **OPEN's cause** (N-D2): opening the drive wrote `[Tab],library` while the skin's page stack was hidden behind the Media page. A hidden `WWidgetStack` ignores its triggers, so closing the page brought back the old tab. The fix closes the page first, then switches to Tracks.
+- **Skin preview on build C's native** (`waveD/d1-preview/`), all as intended:
+  - fonts back to build B's (deck time, BPM and key in Open Sans; the Settings rail in Ubuntu Condensed 18 bold);
+  - the loop panel at 800×444 with all four rows (39 px each);
+  - the Clear samples list showing both rows, ticked by a tap on the name;
+  - the USB chip lit, with no tab lit, on the Media page.
+- **N-D1 render:** Edit sources with the owner's start shows ★ and "TRACKS STARTS HERE" on the drive row, and This Pi's child rows indented with ON/OFF only.
+- **Next:** build D (the 5th pi-gen run, approved), in-place update, targeted acceptance D, conformance pass, then council round 2.

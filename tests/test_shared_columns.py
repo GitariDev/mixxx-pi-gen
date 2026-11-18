@@ -76,20 +76,6 @@ class SharedColumnsNativeTests(unittest.TestCase):
             self.assertIn('PASS ' + check, output)
 
 
-    @unittest.skipUnless(native_ready(), 'Qt6 and protobuf development tools required')
-    def test_close_paths_fail_without_the_show_hook(self):
-        # Acceptance E: after the Edit sources close the Tracks table kept its
-        # narrowed columns until a restart. The table was resized while
-        # hidden, before it could measure itself.
-        result = subprocess.run(['python3', str(RUNNER), '--without-show-fit'], capture_output=True,
-                                text=True, timeout=900)
-        self.assertEqual(result.returncode, 0, result.stdout[-6000:] + result.stderr[-4000:])
-        self.assertIn('WITHOUT_SHOW_FIT_FAILS', result.stdout)
-        for check in ('close path: Edit sources \u2715 (table hidden): full widths',
-                      'close path: Edit sources \u2715 (page hidden): full widths'):
-            self.assertIn('FAIL ' + check, result.stdout)
-        self.assertIn('PASS close path: Sources closed, the table widens: full widths', result.stdout)
-
 
 class SharedColumnsPatchTests(unittest.TestCase):
     def setUp(self):

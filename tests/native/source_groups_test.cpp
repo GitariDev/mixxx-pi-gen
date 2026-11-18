@@ -129,6 +129,16 @@ class Library : public QObject {
     void mapSourceGroups();
     void moveSourceGroup(const QString& tile, int direction);
     bool showStartTile(const QString& start);
+    // mixxx-sources-start-rows.patch: the actual start (onSkinLoadFinished);
+    // the Media page only counts the start drive's open request.
+    struct StartDrive {
+        int requests = 0;
+        void openStartDrive() {
+            ++requests;
+        }
+    };
+    StartDrive* m_pMixpiMedia = nullptr;
+    void onSkinLoadFinished();
 };
 
 #include "library_sample_methods.h"
@@ -580,6 +590,16 @@ int main(int argc, char** argv) {
         }
         return names;
     };
+    // The source rows only (not This Pi's or More's own lists).
+    auto topNames = [&list] {
+        QStringList names;
+        for (auto* row : list->rows()) {
+            if (!row->property("member").toBool()) {
+                names.append(row->findChild<QLabel*>("MixpiSourcesEditName")->text());
+            }
+        }
+        return names;
+    };
     auto rowPart = [&list](const QString& id, const char* name) -> QWidget* {
         auto* row = list->row(id);
         return row ? row->findChild<QWidget*>(name) : nullptr;
@@ -590,12 +610,77 @@ int main(int argc, char** argv) {
         return sub ? sub->text() : QStringLiteral("<none>");
     };
     namespace Groups = LibraryInterface::SourceGroups;
-    const QStringList expected{"USB drives (each drive)", "This Pi", "Recordings", "History", "Folders",
-            "Samples", "More"};
+    // Build D (spec 2a, "Bring the rows back"): This Pi's own lists and
+    // More's come back under their source.
+    const QStringList expected{"USB drives (each drive)", "This Pi", "Tracks", "Playlists", "Crates", "Auto DJ",
+            "Recordings", "History", "Folders", "Samples", "More", "Analyse", "Serato"};
     if (rowNames() != expected) {
         std::cout << "OBSERVE edit rows " << rowNames().join(" | ").toStdString() << std::endl;
     }
-    require(rowNames() == expected, "the edit list has one row per Sources row, in order (no member rows)");
+    require(rowNames() == expected,
+            "the edit list has one row per Sources row, in order, with This Pi's and More's lists under them");
+    require(topNames() == QStringList({"USB drives (each drive)", "This Pi", "Recordings", "History", "Folders",
+                                  "Samples", "More"}),
+            "the source rows are the Sources menu's rows");
+    {
+        // The child rows (spec 2a): indented under their source, ON/OFF
+        // only (no ★, no UP or DOWN), in the agreed row style.
+        bool children = true;
+        for (const auto& id : {"MixxxLibraryFeature", "PlaylistFeature", "CrateFeature", "AutoDJFeature",
+                     "AnalysisFeature", "SeratoFeature"}) {
+            auto* row = list->row(QString::fromLatin1(id));
+            children &= row && row->property("member").toBool() &&
+                    row->objectName() == "MixpiSourcesEditRow" && row->height() == 52 &&
+                    !rowPart(id, "MixpiSourcesEditStar")->isVisible() &&
+                    !rowPart(id, "MixpiSourcesEditUp")->isVisible() &&
+                    !rowPart(id, "MixpiSourcesEditDown")->isVisible() &&
+                    rowPart(id, "MixpiSourcesEditSwitch")->isVisible();
+        }
+        require(children, "each child row is a 52 px edit row with only its ON/OFF (no ★, no UP or DOWN)");
+        auto x = [&list, &rowPart](const QString& id, const char* name) {
+            auto* part = rowPart(id, name);
+            return part ? part->mapTo(list, QPoint(0, 0)).x() : -1;
+        };
+        const int parentTitle = x(Groups::kThisPi, "MixpiSourcesEditName");
+        const int parentStar = x(Groups::kThisPi, "MixpiSourcesEditStar");
+        require(parentTitle > parentStar + 48 && x("MixxxLibraryFeature", "MixpiSourcesEditName") == parentTitle &&
+                        x("AnalysisFeature", "MixpiSourcesEditName") == x(Groups::kMore, "MixpiSourcesEditName") &&
+                        !rowPart("MixxxLibraryFeature", "MixpiSourcesEditIcon")->isVisible(),
+                "a child row is indented: its title starts under its source's title, past the ★ and icon");
+        require(x("CrateFeature", "MixpiSourcesEditSwitch") == x(Groups::kThisPi, "MixpiSourcesEditSwitch") &&
+                        x("SeratoFeature", "MixpiSourcesEditSwitch") == x(Groups::kMore, "MixpiSourcesEditSwitch"),
+                "a child's ON/OFF is in line with the source rows' toggles");
+        require(list->row("CrateFeature")->property("off").toBool() &&
+                        list->row("SeratoFeature")->property("off").toBool() &&
+                        !list->row("PlaylistFeature")->property("off").toBool() &&
+                        !static_cast<QCheckBox*>(rowPart("CrateFeature", "MixpiSourcesEditSwitch"))->isChecked(),
+                "a child list that is off (Crates, Serato) reads OFF and is dimmed");
+        // A child's ON/OFF switches the setting build B's child row switched
+        // (its source's own key); the menu follows and it is kept.
+        static_cast<QCheckBox*>(rowPart("PlaylistFeature", "MixpiSourcesEditSwitch"))->click();
+        settle();
+        settings.settings.sync();
+        QSettings restarted(settings.settings.fileName(), QSettings::IniFormat);
+        require(!settings.getValue(ConfigKey(kConfigGroup, "SidebarSourcePlaylistFeature"), true) &&
+                        restarted.value("Library/SidebarSourcePlaylistFeature").toString() == "false" &&
+                        list->row("PlaylistFeature")->property("off").toBool() &&
+                        list->row("PlaylistFeature")->property("member").toBool(),
+                "OFF on the Playlists child writes SidebarSourcePlaylistFeature (kept in the file) and dims the row");
+        require(sidebar.isSourceRowHidden(library.sourceRow("PlaylistFeature").row()) &&
+                        tileSub(sidebar, "This Pi") == QString::fromUtf8("Tracks · Auto DJ"),
+                "a child list that is off stays off in the menu (This Pi: Tracks · Auto DJ)");
+        library.refreshSidebarSourceEdit();
+        settle();
+        require(list->row("PlaylistFeature")->property("off").toBool() &&
+                        !static_cast<QCheckBox*>(rowPart("PlaylistFeature", "MixpiSourcesEditSwitch"))->isChecked(),
+                "the edit list built again (as after a restart) keeps the child OFF");
+        static_cast<QCheckBox*>(rowPart("PlaylistFeature", "MixpiSourcesEditSwitch"))->click();
+        settle();
+        require(settings.getValue(ConfigKey(kConfigGroup, "SidebarSourcePlaylistFeature"), false) &&
+                        !list->row("PlaylistFeature")->property("off").toBool() &&
+                        tileSub(sidebar, "This Pi") == QString::fromUtf8("Tracks · Playlists · Auto DJ"),
+                "ON on the child shows Playlists in This Pi again");
+    }
     require(rowSub(Groups::kThisPi) == "TRACKS STARTS HERE" &&
                     static_cast<QPushButton*>(rowPart(Groups::kThisPi, "MixpiSourcesEditStar"))->text() ==
                             QString::fromUtf8("★") &&
@@ -623,8 +708,10 @@ int main(int argc, char** argv) {
             "Down moves a row and saves the order");
     static_cast<QPushButton*>(rowPart(Groups::kThisPi, "MixpiSourcesEditDown"))->click();
     settle();
-    require(rowNames().mid(1, 3) == QStringList({"History", "This Pi", "Recordings"}),
-            "This Pi moves down past History");
+    require(topNames().mid(1, 3) == QStringList({"History", "This Pi", "Recordings"}) &&
+                    rowNames().mid(2, 6) == QStringList({"This Pi", "Tracks", "Playlists", "Crates", "Auto DJ",
+                                                    "Recordings"}),
+            "This Pi moves down past History, with its lists under it");
     static_cast<QCheckBox*>(rowPart(Groups::kHistory, "MixpiSourcesEditSwitch"))->click();
     settle();
     require(settings.getValue(ConfigKey(kConfigGroup, "SidebarSourceSetlogFeature"), false) &&
@@ -801,6 +888,129 @@ int main(int argc, char** argv) {
     }
     require(!tileNamed(sidebar, "MANTACORE"), "with the drives switch off, a drive gets no row");
 
+    // Build D (U-4, mixxx-sources-start-rows.patch): every start value build
+    // B could save shows ★ on its row; the saved value is not rewritten.
+    settings.setValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), true);
+    library.applySidebarSourceVisibility();
+    settle();
+    {
+        const QList<QPair<QString, QString>> starts{{"", Groups::kThisPi},
+                {"MixxxLibraryFeature", Groups::kThisPi}, {"PlaylistFeature", Groups::kThisPi},
+                {"CrateFeature", Groups::kThisPi}, {"AutoDJFeature", Groups::kThisPi},
+                {"RekordboxFeature", Groups::kDrives}, {Groups::kDrives, Groups::kDrives},
+                {"RecordingFeature", Groups::kRecordings}, {"SetlogFeature", Groups::kHistory},
+                {"BrowseFeature", Groups::kFolders}, {Groups::kSamples, Groups::kSamples},
+                {"AnalysisFeature", Groups::kMore}, {"SeratoFeature", Groups::kMore},
+                {Groups::kMore, Groups::kMore}};
+        edit->click();
+        settle();
+        bool everyStart = true;
+        for (const auto& [saved, row] : starts) {
+            settings.setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), saved);
+            library.refreshSidebarSourceEdit();
+            settle();
+            QStringList starred;
+            for (auto* line : list->rows()) {
+                auto* star = line->findChild<QPushButton*>("MixpiSourcesEditStar");
+                if (star && star->text() == QString::fromUtf8("★")) {
+                    starred.append(line->property("sourceId").toString());
+                }
+            }
+            const bool ok = starred == QStringList({row}) && rowSub(row) == "TRACKS STARTS HERE" &&
+                    rowPart(row, "MixpiSourcesEditStar")->property("start").toBool() &&
+                    settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == saved;
+            std::cout << "OBSERVE saved start '" << saved.toStdString() << "' starred "
+                      << starred.join(",").toStdString() << (ok ? "" : " (wrong)") << std::endl;
+            everyStart &= ok;
+        }
+        require(everyStart, "every start value build B could save shows ★ on its row only; the value is kept");
+        settings.setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), "RekordboxFeature");
+        library.refreshSidebarSourceEdit();
+        settle();
+        require(rowSub(Groups::kDrives) == "TRACKS STARTS HERE" &&
+                        static_cast<QLabel*>(rowPart(Groups::kDrives, "MixpiSourcesEditName"))->text() == "MANTACORE",
+                "the owner's start (RekordboxFeature) with MANTACORE in: ★ on the MANTACORE row");
+        list->doneButton()->click();
+        settle();
+    }
+    {
+        // The start itself (the actual onSkinLoadFinished) with the owner's
+        // value: the drive opens (the Media page's start request) and Tracks
+        // shows it; never Mixxx's Rekordbox page.
+        Library::StartDrive media;
+        library.m_pMixpiMedia = &media;
+        settings.setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), "RekordboxFeature");
+        shown.clear();
+        library.onSkinLoadFinished();
+        settle();
+        require(media.requests == 1 && shown == "Rekordbox/MANTACORE" &&
+                        settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) ==
+                                "RekordboxFeature",
+                "start with RekordboxFeature and a drive in: the drive opens and Tracks shows it (value kept)");
+        require(sidebar.shownSourceTile() == QString("drive:" + QDir::cleanPath(mantacore)) &&
+                        tileNamed(sidebar, "MANTACORE")->isChecked() && !tileNamed(sidebar, "This Pi")->isChecked(),
+                "the menu's accent edge sits on the drive Tracks shows");
+        rekordbox.children.removeRows(0, 1);
+        settle();
+        shown.clear();
+        library.onSkinLoadFinished();
+        settle();
+        require(media.requests == 2 && shown == "Tracks" && tileNamed(sidebar, "This Pi")->isChecked(),
+                "start with RekordboxFeature and no drive in: Tracks starts at This Pi, its edge on This Pi");
+        require(library.showStartTile("RekordboxFeature") && shown == "Tracks",
+                "showStartTile maps the owner's value to the drive row (no drive: This Pi)");
+        settings.setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), "MixxxLibraryFeature");
+        shown.clear();
+        library.onSkinLoadFinished();
+        settle();
+        require(media.requests == 2 && shown != "Rekordbox/MANTACORE",
+                "a start at This Pi does not open the drive");
+        library.m_pMixpiMedia = nullptr;
+        {
+            std::vector<std::unique_ptr<TreeItem>> rows;
+            rows.push_back(rekordboxDrive(mantacore, QStringLiteral("rev-3")));
+            rekordbox.children.insertTreeItemRows(std::move(rows), 0);
+        }
+        settle();
+    }
+    {
+        // The current-row edge follows the source whose lists Tracks shows,
+        // also when it changes from outside the menu (the Media page's OPEN
+        // selects the drive's row).
+        tileNamed(sidebar, "This Pi")->click();
+        settle();
+        back->click();
+        settle();
+        const QModelIndex driveNode = model.index(0, 0, library.sourceRow("RekordboxFeature"));
+        sidebar.selectIndex(model.index(2, 0, driveNode));
+        settle();
+        require(!sidebar.isSourceMenuInside() && tileNamed(sidebar, "MANTACORE")->isChecked() &&
+                        !tileNamed(sidebar, "This Pi")->isChecked(),
+                "a drive list shown in Tracks from outside the menu: the edge moves to the drive");
+        sidebar.selectIndex(library.sourceRow("PlaylistFeature"));
+        settle();
+        require(tileNamed(sidebar, "This Pi")->isChecked() && !tileNamed(sidebar, "MANTACORE")->isChecked(),
+                "Playlists shown: the edge is on This Pi");
+        screenControl.setAndConfirm(1);
+        tileNamed(sidebar, "Recordings")->click();
+        settle();
+        int checked = 0;
+        for (auto* tile : sidebar.sourceTiles()) {
+            checked += tile->isChecked() ? 1 : 0;
+        }
+        require(tileNamed(sidebar, "Recordings")->isChecked() && checked == 1,
+                "Recordings picked: the edge is on Recordings only");
+        tileNamed(sidebar, "This Pi")->click();
+        settle();
+        back->click();
+        settle();
+        require(tileNamed(sidebar, "Recordings")->isChecked() && !tileNamed(sidebar, "This Pi")->isChecked(),
+                "going into This Pi and back without picking a list: the edge stays on what Tracks shows");
+    }
+    settings.setValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), false);
+    library.applySidebarSourceVisibility();
+    settle();
+
     // The renders (agreed UI s5): the state of m-sources-top.png, a list with
     // counts and a scroll bar, and m-sources-edit.png.
     const QString grabs = qEnvironmentVariable("MIXPI_SOURCES_GRAB_DIR");
@@ -899,13 +1109,34 @@ int main(int argc, char** argv) {
         edit->click();
         settle();
         require(list->isVisible() &&
-                        rowNames().mid(0, 6) == QStringList({"This Pi", "MANTACORE", "History", "Folders",
+                        topNames().mid(0, 6) == QStringList({"This Pi", "MANTACORE", "History", "Folders",
                                                         "Samples", "More"}) &&
+                        rowNames() == QStringList({"This Pi", "Tracks", "Playlists", "Crates", "Auto DJ",
+                                              "MANTACORE", "History", "Folders", "Samples", "More", "Analyse",
+                                              "Serato", "Recordings"}) &&
                         rowSub(Groups::kDrives) == QString::fromUtf8("USB · rekordbox") &&
                         list->row(Groups::kFolders)->property("off").toBool(),
-                "the edit render state matches m-sources-edit.png (MANTACORE by name, Folders off)");
+                "the edit render state matches m-sources-edit.png, with This Pi's and More's lists under them");
+        std::cout << "OBSERVE edit render rows " << rowNames().join(" | ").toStdString() << std::endl;
+        auto* editBar = list->area()->verticalScrollBar();
+        require(editBar->isVisible() && editBar->maximum() > 0 && editBar->width() == 24,
+                "with the child rows the edit list is longer than the screen: a 24 px scroll bar");
         if (!grabs.isEmpty()) {
             screen.grab().save(grabs + "/c2-sources-edit.png");
+            screen.grab().save(grabs + "/d1-sources-edit-rows.png");
+            editBar->setValue(editBar->maximum());
+            settle();
+            screen.grab().save(grabs + "/d1-sources-edit-rows-end.png");
+            editBar->setValue(0);
+            settle();
+            // The owner's saved start (build B's Rekordbox): ★ on the drive.
+            settings.setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), "RekordboxFeature");
+            library.refreshSidebarSourceEdit();
+            settle();
+            screen.grab().save(grabs + "/d1-sources-edit-owner-start.png");
+            settings.setValue(ConfigKey(kConfigGroup, "SidebarDefaultSource"), "MixxxLibraryFeature");
+            library.refreshSidebarSourceEdit();
+            settle();
         }
         list->doneButton()->click();
         settle();

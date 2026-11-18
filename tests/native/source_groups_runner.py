@@ -14,7 +14,9 @@ import re
 import sample_browser_runner as SAMPLE
 from library_interface_runner import ROOT, reconstruct, populate_pinned, qt_flags, qt_environment
 
-METHODS = SAMPLE.GROUP_METHODS + ('bool Library::showStartTile(',)
+# mixxx-sources-start-rows.patch (build D): the start itself, with the saved
+# start mapped to its row (Rekordbox: the drive row).
+METHODS = SAMPLE.GROUP_METHODS + ('bool Library::showStartTile(', 'void Library::onSkinLoadFinished()')
 
 
 def rekordbox_tree(target):

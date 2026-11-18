@@ -16,6 +16,13 @@ mixxx-sources-menu-fixes.patch (wave C2): rekordbox lists carry their track
 counts (m-sources-sub.png), and ★ works on the drive row and on Samples
 (m-sources-edit.png): Tracks starts at the drive that is in (opened as OPEN
 on the Media page opens it), else This Pi; or at the Samples folder.
+
+mixxx-sources-start-rows.patch (build D, spec 2a and U-4): every start value
+build B could save shows ★ on its row (the owner's RekordboxFeature on the
+drive row) and Tracks starts there, without rewriting the value; the menu's
+current-row edge follows the source Tracks shows; This Pi's and More's own
+lists come back in Sources edit as indented rows with only ON/OFF; the menu
+rows' title is drawn in the sidebar's own (build B) font.
 """
 import os
 from pathlib import Path
@@ -30,6 +37,7 @@ from test_sample_browser import checks
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = RUNNER.PATCH_DIR / 'mixxx-source-groups.patch'
 FIXES = RUNNER.PATCH_DIR / 'mixxx-sources-menu-fixes.patch'
+START_ROWS = RUNNER.PATCH_DIR / 'mixxx-sources-start-rows.patch'
 TEST = ROOT / 'tests/native/source_groups_test.cpp'
 
 
@@ -145,6 +153,58 @@ class SourcesMenuFixesPatchTests(unittest.TestCase):
         # Nothing is written to a drive.
         for word in ('QFile::remove', 'QFile::copy', 'O_WRONLY', 'WriteOnly', 'ReadWrite'):
             self.assertNotIn(word, library + media)
+
+
+def start_rows_added(path):
+    """The lines mixxx-sources-start-rows.patch adds to one file."""
+    text = START_ROWS.read_text()
+    start = text.index('diff --git a/' + path + ' ')
+    end = text.find('\ndiff --git', start + 1)
+    return '\n'.join(line[1:] for line in text[start:end if end > 0 else None].splitlines()
+                     if line.startswith('+') and not line.startswith('+++'))
+
+
+class SourcesStartRowsPatchTests(unittest.TestCase):
+    def test_patch_changes_only_its_files(self):
+        self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) b/\S+$', START_ROWS.read_text(), re.MULTILINE)),
+                         ['src/library/library.cpp', 'src/widget/libraryinterface.h',
+                          'src/widget/wlibrarysidebar.cpp', 'src/widget/wlibrarysidebar.h'])
+
+    def test_patch_comes_after_the_menu_fixes(self):
+        names = subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
+                                         '--mixxx-print-patches'], text=True).split()
+        if 'mixxx-sources-start-rows.patch' not in names:
+            self.skipTest('mixxx-sources-start-rows.patch is not registered yet')
+        self.assertLess(names.index('mixxx-sources-menu-fixes.patch'), names.index('mixxx-sources-start-rows.patch'))
+
+    def test_saved_start_maps_to_its_row_and_is_not_rewritten(self):
+        interface = start_rows_added('src/widget/libraryinterface.h')
+        library = start_rows_added('src/library/library.cpp')
+        # Rekordbox (the owner's saved start) is the drive row's start.
+        self.assertIn('if (start == QStringLiteral("RekordboxFeature")) {\n        return kDrives;', interface)
+        self.assertIn('return startTile(start) == row;', interface)
+        self.assertIn('const QString start = Groups::startTile(saved);', library)
+        self.assertIn('if (groupedSources() && Groups::startTile(start) == Groups::kDrives) {', library)
+        # The start only reads the saved value: no write of SidebarDefaultSource.
+        start = library.index('// A drive\'s source saved by build B (Rekordbox) is the drive row\'s')
+        self.assertNotIn('setValue', library[start:])
+
+    def test_child_rows_switch_their_source_only(self):
+        interface = start_rows_added('src/widget/libraryinterface.h')
+        library = start_rows_added('src/library/library.cpp')
+        # A child row: member, its source's own key; ★, icon, UP, DOWN hidden.
+        self.assertIn('members.append({source.id, source.title, m_pConfig->getValue(source.preference, true),', library)
+        self.assertIn('source.feature != nullptr, true});', library)
+        self.assertIn('entries.append(members);', library)
+        self.assertIn('static_cast<QWidget*>(icon),', interface)
+
+    def test_current_row_follows_tracks_and_row_font_is_the_sidebars(self):
+        sidebar = start_rows_added('src/widget/wlibrarysidebar.cpp')
+        self.assertIn('const QString shown = tileOf(currentIndex());', sidebar)
+        self.assertIn('m_groupedTiles.at(tile).id == shown);', sidebar)
+        # Build B's font for a list row: no weight forced in C++.
+        self.assertNotIn('setWeight', sidebar)
+        self.assertIn('const QFont title = option.font;', sidebar)
 
 
 if __name__ == '__main__':

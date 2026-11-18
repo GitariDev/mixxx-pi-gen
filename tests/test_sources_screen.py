@@ -168,9 +168,9 @@ class SourcesMenuPatchTests(unittest.TestCase):
                   '#73767c', '#4f555f', '#6c4433'}
         body = re.sub(r'/\*.*?\*/', '', style, flags=re.S)
         self.assertEqual(set(re.findall(r'#[0-9a-f]{6}\b', body)) - tokens, set())
-        # Fonts: Ubuntu Condensed for labels and buttons, Open Sans for text.
-        self.assertIn('font-family: "Ubuntu Condensed", "Ubuntu";', style)
-        self.assertIn('font-family: "Open Sans", "Ubuntu";', style)
+        # Fonts are build B's (spec section 1 and 2a, build D): the families,
+        # sizes and weights are checked in tests/test_fonts_build_b.py. Here
+        # only the 13 px minimum for text.
         for size in re.findall(r'font-size: (\d+)px', style):
             self.assertGreaterEqual(int(size), 13)
 

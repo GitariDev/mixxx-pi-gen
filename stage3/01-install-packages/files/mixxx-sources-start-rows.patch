@@ -1,0 +1,227 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+index 776629b..4c5730a 100644
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -900,7 +900,20 @@ void Library::refreshSidebarSourceEdit() {
+             }
+             return shown.join(QStringLiteral(" \u00B7 "));
+         };
++        // This Pi's and More's own lists (build D, spec 2a: "Bring the rows
++        // back"): an indented row each under its source, with only its
++        // ON/OFF, which switches the source's own setting as in build B.
++        QList<LibraryInterface::SourceEditEntry> members;
++        auto member = [this, &members](const QString& id) {
++            for (const auto& source : std::as_const(m_sidebarSources)) {
++                if (source.id == id) {
++                    members.append({source.id, source.title, m_pConfig->getValue(source.preference, true),
++                            source.feature != nullptr, true});
++                }
++            }
++        };
+         for (const auto& tile : sourceGroupOrder()) {
++            members.clear();
+             LibraryInterface::SourceEditEntry entry{tile, Groups::title(tile), sourceGroupVisible(tile), false};
+             entry.subtitle = Groups::subline(tile);
+             entry.glyph = Groups::glyph(tile);
+@@ -928,11 +941,15 @@ void Library::refreshSidebarSourceEdit() {
+             } else if (tile == Groups::kThisPi) {
+                 entry.available = true;
+                 entry.subtitle = names(Groups::thisPi());
++                for (const auto& id : Groups::thisPi()) {
++                    member(id);
++                }
+             } else if (tile == Groups::kMore) {
+                 QStringList more;
+                 for (const auto& source : std::as_const(m_sidebarSources)) {
+                     if (Groups::inMore(source.id)) {
+                         more.append(source.id);
++                        member(source.id);
+                     }
+                 }
+                 entry.subtitle = names(more);
+@@ -957,6 +974,7 @@ void Library::refreshSidebarSourceEdit() {
+                 }
+             }
+             entries.append(entry);
++            entries.append(members);
+         }
+         list->moved = [this](const QString& tile, int direction) {
+             moveSourceGroup(tile, direction);
+@@ -1266,8 +1284,11 @@ void Library::moveSourceGroup(const QString& tile, int direction) {
+     refreshSidebarSourceEdit();
+ }
+ 
+-bool Library::showStartTile(const QString& start) {
++bool Library::showStartTile(const QString& saved) {
+     namespace Groups = LibraryInterface::SourceGroups;
++    // A drive's source saved by build B (Rekordbox) starts as ★ on the drive
++    // row does (build D, U-4).
++    const QString start = Groups::startTile(saved);
+     if ((start != Groups::kDrives && start != Groups::kSamples) || !sourceGroupVisible(start)) {
+         return false;
+     }
+@@ -1445,9 +1466,15 @@ void Library::onSkinLoadFinished() {
+         applySidebarSourceVisibility();
+         // ★ on the drive row: the drive that is in opens, as OPEN on the
+         // Media page opens it, and Tracks shows it.
+-        const QString start = m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource"));
+-        if (start == LibraryInterface::SourceGroups::kDrives && m_pMixpiMedia &&
+-                sourceGroupVisible(start)) {
++        // A drive's source saved by build B (Rekordbox) is the drive row's
++        // start in the Sources menu (build D, U-4): never Mixxx's Rekordbox
++        // page. The saved value stays as it is.
++        namespace Groups = LibraryInterface::SourceGroups;
++        QString start = m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource"));
++        if (groupedSources() && Groups::startTile(start) == Groups::kDrives) {
++            start = Groups::kDrives;
++        }
++        if (start == Groups::kDrives && m_pMixpiMedia && sourceGroupVisible(start)) {
+             m_pMixpiMedia->openStartDrive();
+         }
+         if (showStartTile(start)) {
+@@ -1459,9 +1486,7 @@ void Library::onSkinLoadFinished() {
+             identities.append(QString::fromLatin1(feature->metaObject()->className()));
+             visibility.append(!m_pSidebarWidget->isSourceRowHidden(identities.size() - 1));
+         }
+-        const int preferredRow = LibraryInterface::preferredSourceRow(
+-                m_pConfig->getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")),
+-                identities, visibility);
++        const int preferredRow = LibraryInterface::preferredSourceRow(start, identities, visibility);
+         if (preferredRow >= 0) {
+             const auto index = m_pSidebarModel->index(preferredRow, 0);
+             m_pSidebarWidget->selectIndex(index);
+diff --git a/src/widget/libraryinterface.h b/src/widget/libraryinterface.h
+index b1054f6..cc83387 100644
+--- a/src/widget/libraryinterface.h
++++ b/src/widget/libraryinterface.h
+@@ -883,19 +883,30 @@ inline QString glyph(const QString& tile) {
+     }
+     return {};
+ }
+-// Whether the start source (SidebarDefaultSource; empty: Tracks, Mixxx's
+-// default) belongs to this edit row.
+-inline bool startsAt(const QString& row, QString start) {
++// The edit row that a saved start (SidebarDefaultSource) belongs to, for
++// every value build B could save (build D, U-4): empty (Mixxx's default,
++// Tracks) and This Pi's sources: This Pi; a drive's source (Rekordbox, where
++// build B opened a drive): the drive row; a row of its own (a group,
++// Recordings, History, Folders): that row; any other source: More. The saved
++// value itself is not changed.
++inline QString startTile(QString start) {
+     if (start.isEmpty()) {
+         start = QStringLiteral("MixxxLibraryFeature");
+     }
+-    if (row == start) {
+-        return true;
++    if (thisPi().contains(start)) {
++        return kThisPi;
+     }
+-    if (start.startsWith(QStringLiteral("group:"))) {
+-        return false;
++    if (start == QStringLiteral("RekordboxFeature")) {
++        return kDrives;
+     }
+-    return (row == kThisPi && thisPi().contains(start)) || (row == kMore && inMore(start));
++    if (start.startsWith(QStringLiteral("group:")) || !inMore(start)) {
++        return start;
++    }
++    return kMore;
++}
++// Whether the start source belongs to this edit row (★).
++inline bool startsAt(const QString& row, const QString& start) {
++    return startTile(start) == row;
+ }
+ } // namespace SourceGroups
+ 
+@@ -1045,9 +1056,11 @@ class SourceEditList final : public QWidget {
+             down->setEnabled(movableAfter(position));
+             line->addWidget(down);
+             if (source.member) {
+-                // A source inside a group: its switch only, in line.
+-                for (QWidget* button : {static_cast<QWidget*>(star), static_cast<QWidget*>(up),
+-                             static_cast<QWidget*>(down)}) {
++                // A list inside This Pi or More (build D, spec 2a): indented
++                // under its source (its title under the source's title), with
++                // its ON/OFF only, in line with the other toggles.
++                for (QWidget* button : {static_cast<QWidget*>(star), static_cast<QWidget*>(icon),
++                             static_cast<QWidget*>(up), static_cast<QWidget*>(down)}) {
+                     auto policy = button->sizePolicy();
+                     policy.setRetainSizeWhenHidden(true);
+                     button->setSizePolicy(policy);
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index ebe8a1d..b1bb59d 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -97,8 +97,9 @@ class SourceRowDelegate final : public QStyledItemDelegate {
+                     Qt::AlignRight | Qt::AlignVCenter, count);
+             right -= width + 12;
+         }
+-        QFont title = option.font;
+-        title.setWeight(QFont::DemiBold);
++        // The row title in build B's font for a list row (build D): the
++        // sidebar's own font from the style sheet, as build B's rows had.
++        const QFont title = option.font;
+         painter->setFont(title);
+         painter->setPen(m_pSidebar->menuTextColor());
+         const QRect text(left, row.top(), std::max(0, right - left), row.height());
+@@ -560,10 +561,14 @@ void WLibrarySidebar::updateSourceChrome() {
+     while (top.parent().isValid()) {
+         top = top.parent();
+     }
++    // The current row (accent edge) is the source whose lists the table
++    // shows (build D, U-4): the tile of the row shown in Tracks, else the
++    // tile last opened.
++    const QString shown = groupedTiles ? shownSourceTile() : QString();
+     for (int tile = 0; tile < m_sourceTiles.size(); ++tile) {
+         if (groupedTiles) {
+             m_sourceTiles.at(tile)->setChecked(tile < m_groupedTiles.size() &&
+-                    m_groupedTiles.at(tile).id == m_selectedTile);
++                    m_groupedTiles.at(tile).id == shown);
+             continue;
+         }
+         m_sourceTiles.at(tile)->setChecked(top.isValid() && m_sourceTileIndexes.at(tile) == top);
+@@ -606,6 +611,20 @@ const LibraryInterface::SourceTile* WLibrarySidebar::selectedTile() const {
+     return nullptr;
+ }
+ 
++QString WLibrarySidebar::shownSourceTile() const {
++    const QString shown = tileOf(currentIndex());
++    return shown.isEmpty() ? m_selectedTile : shown;
++}
++
++void WLibrarySidebar::currentChanged(const QModelIndex& current, const QModelIndex& previous) {
++    QTreeView::currentChanged(current, previous);
++    // The current row follows what Tracks shows (a drive opened from the
++    // Media page, the start source).
++    if (m_sourceScreen && groupedTiles) {
++        updateSourceChrome();
++    }
++}
++
+ QString WLibrarySidebar::tileOf(const QModelIndex& index) const {
+     // The tile that holds a row: a node tile's row or a row below it (the
+     // deepest such node), else a set tile with the row's top-level source.
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index cf53cb8..c7b036f 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -89,6 +89,10 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     QString selectedSourceTile() const {
+         return m_selectedTile;
+     }
++    // The tile with the current-row edge at the top level: the source whose
++    // lists Tracks shows (the tile of the current row), else the selected
++    // tile.
++    QString shownSourceTile() const;
+ 
+     QColor menuBackgroundColor() const {
+         return m_menuBackground;
+@@ -156,6 +160,8 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     void resizeEvent(QResizeEvent* pEvent) override;
+     void hideEvent(QHideEvent* pEvent) override;
+     bool eventFilter(QObject* pObject, QEvent* pEvent) override;
++    // The Sources menu's current row follows the row shown in Tracks.
++    void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
+ 
+   private:
+     void fitTouchColumn();

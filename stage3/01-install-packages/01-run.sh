@@ -50,6 +50,8 @@ MIXXX_PATCHES=(
     mixxx-save-within-second.patch
     mixxx-agreed-controls.patch
     mixxx-sources-menu-fixes.patch
+    mixxx-sources-start-rows.patch
+    mixxx-table-fit-media-open.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

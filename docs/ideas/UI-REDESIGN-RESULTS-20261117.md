@@ -166,7 +166,7 @@ Then: registration commit, both gates, skin preview, native renders next to the 
   - N-C controls: `b633757`, `76a849d`, `ae8fea5`.
   - N-A2 Sources repairs: `5f98518`, `2c0e550`, `2d64c6a`, `1efd4cd`.
   - Registration by the orchestrator: `2ae88f3`, `c845cbc`. Runner cleanup: `123b5e6`.
-- **New patches (49 in all):** `mixxx-effects-save.patch`, `mixxx-save-within-second.patch`, `mixxx-agreed-controls.patch`, `mixxx-sources-menu-fixes.patch`. **New system file:** `stage3/02-desktop/files/udev/99-mixpi-backlight.rules` (the video group may write the backlight level), installed by `03-run.sh`.
+- **New patches (48 in all):** `mixxx-effects-save.patch`, `mixxx-save-within-second.patch`, `mixxx-agreed-controls.patch`, `mixxx-sources-menu-fixes.patch`. **New system file:** `stage3/02-desktop/files/udev/99-mixpi-backlight.rules` (the video group may write the backlight level), installed by `03-run.sh`.
 - **Measured on VM b (N-C fixtures):**
   - A settings change reaches `mixxx.cfg` in 555-686 ms. It was 1395 ms; the save now waits for 500 ms of quiet instead of 1000.
   - An effect change reaches `effects.xml` in 441-597 ms, and is kept after `SIGKILL`.
@@ -185,3 +185,47 @@ Then: registration commit, both gates, skin preview, native renders next to the 
   5. CLEAR (n) with a ticked pad that is playing: Mixxx refuses to empty a playing pad (build B's × CLEAR was off while a pad played), so that pad keeps playing and stays loaded while the others clear.
   6. With ★ on the drive row and a drive plugged in, Tracks opens the drive at start (read only). Build B never opened a drive by itself.
 - **Gates:** Mac suite 761 run, OK (146 platform skips) at `85dc076`; native gate 227/227, 0 skips at `123b5e6`.
+
+## Build C (2026-11-18)
+
+- **Build:** operator Claude Opus 5.5 medium, one pi-gen run on VM b from `135a4bf`. Exit 0 in 14 m 40 s (0 ccache hits). 48 patches. `.deb` `5d7aa7aa…`. `finish-image.sh check` and candidate verify pass. Mac free space 21 GiB at the start, lowest 7 GiB, 22 GiB at the end. Kit: `deploy/test-image-20261118c/`.
+- **In-place update** (orchestrator, 00:57, `deploy/ui-redesign-20261117/buildC-update/`):
+  - Steps 0-9 all passed: 67 files, 48 patches, 9 skin tools, `dpkg -V` clean, the skin tree as expected (48 files), the backlight rule installed (the panel is `root:video` with group write), the eject gate unchanged, controlled media OFF.
+  - Mixxx rewrote `soundconfig.xml` at start in a different line order. The routing is unchanged (Master 1-2, Headphones 3-4).
+- **The owner's spare stick GANDER1** (3.8 GB FAT, rekordbox export, 196 tracks, USB 2.0, hub port 1) was plugged in about 00:50. Every drive check ran on it, and nothing was written to it.
+- **Conformance pass** (orchestrator, `acceptance-C/conformance/k*.png`): every spec screen was shot on the card next to its mockup.
+  - Matches: Tracks, the Sources menu (top level and inside a drive, "GANDER1 › rekordbox" with counts), Edit sources (layout), the tool panel, Sampler, FX ("SELECT EFFECT…" dim), Load sample, Settings › Media and › Interface, and the Media page (one drive).
+  - Deviations, skin (fixed in place after build C by builder S3, `f06ad3f`, `5752aac`):
+    - the Clear samples list showed one row at a time with an arrowed scroll bar, and only the tick box toggled;
+    - with the Media page open, the tab stayed lit and the chip did not.
+  - Deviations, native (build D):
+    - no ★ in Edit sources for the owner's saved start `RekordboxFeature`; the menu's accent edge sat on This Pi and Tracks opened on the Rekordbox info page;
+    - the narrowed table keeps full-width columns (sideways bar, KEY cut).
+- **Acceptance C** (tester Claude Opus 5.5 medium, `deploy/ui-redesign-20261117/acceptance-C/ACCEPTANCE.md`): **45 checks, 43 PASS, 2 FAIL, 0 BLOCKED.**
+  - **FAIL R-4:** OPEN on the Media page reads the drive and then reads BROWSE, but goes back to the tab you came from instead of Tracks.
+  - **FAIL U-4:** the ★ defect above.
+  - **PASS:**
+    - all five of build B's FAILs (Media page not overdrawn and styled, tempo range saved in 0.58 s and kept after kill -9, Edit sources DONE and kept, SHOW TOP BAR 3 of 3);
+    - all six of build B's BLOCKED drive checks, now on GANDER1 (chip states, OPEN, eject with the Safe strip, a five-cycle eject storm, no udiskie pop-up, ASK and AUTO LOAD, filters, eject while a deck plays from the drive with the footer "1 track playing from Pi memory");
+    - samples kept over a reboot, with "shutdown complete with code 0"; CLEAR (2) leaves the sample files byte-identical;
+    - effects saved in about 0.5 s and kept after kill -9;
+    - every settings change on disk within 1 s (0.52-0.68 s);
+    - the holdout (REC gives WAV + CUE, F-1 to F-11, F-4 at 86-87 px per beat); 65.7-70.1 °C, `throttled=0x0`.
+  - **Q3 gate: PASS.** CPU readout average 3.40 % with RAM cache 1024 against 3.37 % with it OFF, a ratio of 1.010 (gate ≤ 1.10). 0 underflow lines in either 5-minute run. So the RAM copy ships, as approved.
+  - **Notes:**
+    - Mixxx's underrun counter read 1 in the session after the reboot; the moment is unknown (pad loads, the first two-deck run and REC were in it). A fresh session read 0 before and after two decks plus Reverb with 10 effect changes.
+    - EJECTING is never seen, because the unmount takes under 0.4 s.
+    - No plug-in ping shows while the Media page is open.
+    - Clearing a pad that is playing does nothing and says nothing.
+    - GANDER1 was already marked "not properly unmounted" before testing; no fsck was run, since the stick must not be written.
+- **Owner state restored by the tester:** `mixxx.cfg`, `samplers.xml` and `effects.xml` copied back; two tracks loaded and paused; SYNC off; time REMAINING; panel 255; Night dim OFF; CPU SHOW; top bar hidden; GANDER1 READY; MANTACORE's port disabled. One difference: deck 1 shows 127.00 at ±0 instead of 118.00 at −7.1 %.
+
+## Owner decisions after build C (2026-11-18), and build D
+
+Plan 12.5 and spec 2a record them:
+- all fonts back to build B;
+- **build D approved (the 5th pi-gen run)**;
+- the Edit sources child rows come back;
+- shorter loop rows while the desktop top bar shows;
+- the Starlight session later;
+- **at most 3 agents running at a time**, all kinds counted.

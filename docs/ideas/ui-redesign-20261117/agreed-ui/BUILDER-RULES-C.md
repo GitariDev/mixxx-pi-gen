@@ -9,6 +9,7 @@ The owner, 2026-11-17 19:13: "Please don't deviate from UI we set and have the r
 - **No design of your own; where the spec is silent, build B stays.**
 - Build exactly what `docs/ideas/ui-redesign-20261117/agreed-ui/AGREED-UI-SPEC.md` and its mockups (`agreed-ui/mockups/*.png`, 800×480) show. Read **spec section 0 and section 1 (the rules for every screen)** before anything else, then the spec sections and mockups named in your brief.
 - Mixxx skins and native widgets are Qt, not HTML. Match structure, order, labels (exact copy), roles, colours and states. Pixels may differ only where Qt forces it.
+- **Fonts are build B's** (owner, 2026-11-18; spec section 1 and 2a): use the font family, size and weight build B used for the same element or role, not the mockups' fonts. Read spec section 2a for the other owner changes after build C.
 - The values come from `agreed-ui/design/tokens.css` (colours, radius, lit alpha), `primitives.css` (buttons, segments, close, chips, sliders, tick rows, scroll bars) and `layout.css`. `design/all-mockups.html` holds the 12 screens as HTML, so you can read exact sizes, icons (inline SVG paths) and copy there.
 - The touch minimum of 48 px stays (the mockups draw some buttons 44 px; making them 48 px is not a deviation). Text no smaller than 13 px.
 - **If something cannot be built as drawn, do not choose another design.** Stop that part, and in your report say what, why, and the nearest faithful option. The orchestrator asks the owner.

@@ -871,3 +871,16 @@ Recorded by the orchestrator (Claude Opus 5.5 xhigh).
 - **Any later build** needs the owner's yes again.
 - **Council rounds:** 1 of 5 used.
 - **Flashes:** stay at 0. Delivery is an in-place update.
+
+### 12.5 Owner decisions after build C (2026-11-18)
+
+The owner saw build C on the test card (acceptance C: 43 of 45 PASS, the Q3 gate PASS at 1.01×). Their answers, in chat:
+
+- **Fonts:** "I want you to fold in reverting the font as you continue." Then: "All fonts back to build B". The spec's font rule (section 1) now says build B's fonts; the mockups no longer bind the font.
+- **Build D:** "Yes, run build D". This is the **5th pi-gen run**. It carries the three deviations that need app code (★ for the saved start, the narrowed table's columns, OPEN switching to Tracks), the two below, the font revert, and the skin repairs made after build C. Any later build needs the owner's yes again.
+- **Edit sources child rows:** "Bring the rows back". They are indented rows with only an ON/OFF toggle, in the agreed row style (spec 2a).
+- **Loop panel with the top bar shown (800×444):** "Shorter rows then". The rows may go below 48 px in that mode only (spec 2a).
+- **Starlight session:** later.
+- **Agents:** "Let's change to only having 3 agents running at a time max." This counts builders, testers, operators and council seats together. A 3-seat council round runs only when nothing else does.
+- **Reviewers:** score against the spec as amended in its section 2a. A build D screen whose font differs from the mockup is **not** a finding when it matches build B's font.
+

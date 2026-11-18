@@ -44,7 +44,7 @@ This file says what the app must look like and do. Builders build to it, and rev
 | Ticked rows | The tick and a slight background change, `--mx-surface-2`. **No left edge.** | Comment "We don't need the left border. Just the tick and background slight change it good." |
 | Current menu row (no tick) | `--mx-surface-2` background, a 4 px accent edge on the left, and semibold text. | Round 1 guide, agreed |
 | Indicators | SYNC and MASTER chips, drive-state chips (READY, IN USE, EJECTING, SAFE TO REMOVE) and the USB chip's scan % are pills and can't be pressed. | g4 note; noted only |
-| Fonts | Labels and buttons in Ubuntu Condensed, uppercase. Body and list text in Open Sans. Numbers in Ubuntu Mono. | Round 1 guide, agreed |
+| Fonts | **Build B's fonts** (family, size and weight) for every element. A new element uses the build B font of the element with the same role (a button, a title, a hint, a list row, a number). The mockups draw the round 1 fonts (Ubuntu Condensed, Open Sans, Ubuntu Mono); the font is the one place where they no longer bind. Exact copy, colours, sizes of controls and layout still follow the mockups. | Owner, 2026-11-18, after seeing build C: revert the font, "All fonts back to build B". Replaces the round 1 guide's font rule. |
 | Scroll bars | Every list longer than its space shows a scroll bar at its right edge, so it can be scrolled by drag and by the bar (rubric 8: a 24 px bar natively). | s5 "make sure the scroll bar is present if a list is longer than the viewspace"; item 14 |
 
 ### Roles and colours (`design/tokens.css`)
@@ -177,6 +177,18 @@ Surfaces: bg #0d1014, surface #161a20, surface-2 #1d222a, line #2c333d, line-str
   - **no COPY TO PI** (the copy to Pi memory on load is automatic, owner Q3).
 - **Footer:** one short line, "**N tracks** playing from Pi memory", shown when any tracks are.
 - **What OPEN does:** it reads the drive, which is the same as LOAD on the plug-in strip: its rekordbox export, or its folders if it has none. It then switches to Tracks. After that the button reads **BROWSE**.
+
+## 2a. Owner changes after build C (2026-11-18)
+
+The owner saw build C on the test card and changed four things. They win over everything above. They go into build D (the owner approved a 5th pi-gen run for them).
+
+- **Fonts:** all fonts go back to build B (section 1, Fonts). The owner's words: "I want you to fold in reverting the font as you continue", then the choice "All fonts back to build B".
+- **Edit sources, child rows (s5):** This Pi's own lists (Tracks, Playlists, Crates, Auto DJ) and More's (for example iTunes, Serato) come back as **indented rows under their source**, each with only an **ON/OFF** toggle, in the agreed row style. Build B had them; the mockup shows only the top rows. Owner's choice: "Bring the rows back".
+- **Loop panel with the desktop top bar shown (s2):** while the top bar is shown (the Mixxx window is 800×444), the loop panel's rows get shorter so that all four rows (two rows of sizes, ½ and ×2, EXIT LOOP and RELOOP) fit. This is below the 48 px touch minimum, by the owner's choice ("Shorter rows then"). At 800×480 nothing changes.
+- **Build D** fixes three build C deviations that need app code, by the owner's yes:
+  - ★ shows the saved start in Edit sources, and the Sources menu's current-row edge follows the source in view (the owner's saved start, `RekordboxFeature`, showed no ★, and Tracks opened on Mixxx's Rekordbox info page).
+  - With Sources open, the narrowed table fits its columns (TITLE, ARTIST, BPM, KEY) in its width, as `m-sources-top.png` draws it: no sideways scroll bar.
+  - OPEN on the Media page switches to Tracks (s13).
 
 ## 3. Not part of build C
 

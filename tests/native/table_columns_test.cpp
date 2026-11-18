@@ -1,12 +1,18 @@
 // F-7/F-8: Browse defaults, stretch and header persistence through the real
 // WTrackTableViewHeader, ProxyTrackModel, BrowseTableModel and SettingsDAO.
+// Build D (mixxx-table-fit-media-open.patch): the columns fit the narrowed
+// table (Sources open, x 0-480) through the shipped MixpiTableFit.
 #include <QApplication>
 #include <QCheckBox>
 #include <QDialog>
+#include <QDir>
+#include <QFile>
+#include <QFontDatabase>
 #include <QListWidget>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QStandardItemModel>
+#include <QScrollBar>
 #include <QTableView>
 #include <iostream>
 
@@ -16,6 +22,10 @@
 #include "proto/headers.pb.h"
 #include "recording/recordingmanager.h"
 #include "widget/wtracktableviewheader.h"
+#if __has_include("widget/mixpitablefit.h")
+#include "widget/mixpitablefit.h"
+#define MIXPI_TABLE_FIT 1
+#endif
 
 int failures = 0;
 int asserts = 0;
@@ -57,22 +67,45 @@ class LibraryLikeModel final : public QStandardItemModel, public TrackModel {
 
 // The view part of WTrackTableView::loadTrackModel that swaps headers: the
 // included block is copied verbatim from the patched wtracktableview.cpp.
+// With the fit (build D) the view calls MixpiTableFit where WTrackTableView
+// does: after a resize, at the end of loadTrackModel, and around the saves.
 class View : public QTableView {
   public:
     bool m_sorting = true;
+#ifdef MIXPI_TABLE_FIT
+    MixpiTableFit m_columnFit{this, [](QHeaderView* pHeader) {
+                                  auto* pTrackHeader = qobject_cast<WTrackTableViewHeader*>(pHeader);
+                                  return pTrackHeader ? pTrackHeader->stretchColumnIndex() : -1;
+                              }};
+#endif
     void loadTrackModel(QAbstractItemModel* pNewModel) {
 #include "header_swap.inc"
         show();
+#ifdef MIXPI_TABLE_FIT
+        m_columnFit.fit();
+#endif
         QApplication::processEvents();
     }
     ~View() override {
         // WTrackTableView::~WTrackTableView saves the header state as well.
         if (auto* pHeader = qobject_cast<WTrackTableViewHeader*>(horizontalHeader())) {
+#ifdef MIXPI_TABLE_FIT
+            m_columnFit.withFullWidths(pHeader, [pHeader] { pHeader->saveHeaderState(); });
+#else
             pHeader->saveHeaderState();
+#endif
         }
     }
     WTrackTableViewHeader* header() const {
         return qobject_cast<WTrackTableViewHeader*>(horizontalHeader());
+    }
+
+  protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QTableView::resizeEvent(event);
+#ifdef MIXPI_TABLE_FIT
+        m_columnFit.fit();
+#endif
     }
 };
 
@@ -139,6 +172,204 @@ void check(QListWidget* list, const QString& title, bool checked) {
         if (list->item(row)->text() == title) {
             list->item(row)->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
         }
+    }
+}
+
+// A column's size in a saved header row (-1 if absent).
+int savedSize(const QString& row, int column) {
+    mixxx::library::HeaderViewState state;
+    const QByteArray bytes = QByteArray::fromBase64(row.toLatin1());
+    state.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size()));
+    for (const auto& entry : state.header_state()) {
+        if (entry.logical_index() == column) {
+            return entry.size();
+        }
+    }
+    return -1;
+}
+
+void setViewport(View* view, int width) {
+    view->resize(view->width() - view->viewport()->width() + width, 300);
+    QApplication::processEvents();
+}
+
+// Build D (agreed UI s5, spec 2a; m-sources-top.png): with Sources open the
+// table is x 0-480, a 456 px viewport beside its 24 px scroll bar. TITLE,
+// ARTIST, BPM and KEY all show with no sideways bar; at the full width
+// (776 px) every column has its saved size back exactly, and the fitted
+// sizes are never saved.
+void fitChecks(LibraryLikeModel* library, ProxyTrackModel* proxy) {
+    constexpr int kFull = 776;
+    constexpr int kNarrow = 456;
+    constexpr int kArtist = 1, kTitle = 2, kAlbum = 3, kBpm = 4, kKey = 5;
+    const QString row = QStringLiteral("mixxx.db.model.librarylike.header_state_pb");
+    // The table sits in a window that keeps its width, as in the skin; 776
+    // px is the widest the table is (its full width).
+    QWidget window;
+    window.resize(800, 480);
+    window.show();
+    auto view = std::make_unique<View>();
+    view->setParent(&window);
+    view->resize(700, 300);
+    view->loadTrackModel(library);
+    setViewport(view.get(), kFull);
+    auto* header = view->header();
+    // The owner's Tracks columns on build C (k09-tracks.png): TITLE, ARTIST
+    // 200, BPM 98, KEY 52.
+    header->setSectionHidden(kAlbum, true);
+    header->moveSection(header->visualIndex(kTitle), 0);
+    header->resizeSection(kArtist, 200);
+    header->resizeSection(kBpm, 98);
+    header->resizeSection(kKey, 52);
+    QApplication::processEvents();
+    const int fullTitle = header->sectionSize(kTitle);
+    std::cout << "OBSERVE full width: title " << fullTitle << " artist " << header->sectionSize(kArtist)
+              << " bpm " << header->sectionSize(kBpm) << " key " << header->sectionSize(kKey) << std::endl;
+    require(takesRest(header, kTitle) && visibleWidth(header) == kFull,
+            "fit: at 776 px Title takes the rest and the columns fill the table");
+
+    setViewport(view.get(), kNarrow);
+    std::cout << "OBSERVE narrowed: title " << header->sectionSize(kTitle) << " artist "
+              << header->sectionSize(kArtist) << " bpm " << header->sectionSize(kBpm) << " key "
+              << header->sectionSize(kKey) << " sideways range " << view->horizontalScrollBar()->maximum()
+              << std::endl;
+    require(visibleWidth(header) == kNarrow,
+            "fit: at 456 px TITLE, ARTIST, BPM and KEY fill the narrowed table exactly");
+    require(view->horizontalScrollBar()->maximum() == 0, "fit: no sideways scroll bar in the narrowed table");
+    require(header->sectionSize(kTitle) >= kNarrow / 2 && header->sectionSize(kKey) >= 40 &&
+                    header->sectionSize(kArtist) > header->sectionSize(kBpm) &&
+                    header->sectionSize(kBpm) > header->sectionSize(kKey),
+            "fit: TITLE takes half, the others keep their order of size, none under 40 px");
+    require(view->textElideMode() == Qt::ElideRight, "fit: cut text ends with an ellipsis");
+
+    // A list switch while narrowed saves the full-width sizes.
+    view->loadTrackModel(proxy);
+    const QString saved = settingsRow(row);
+    std::cout << "OBSERVE saved while narrowed: artist " << savedSize(saved, kArtist) << " bpm "
+              << savedSize(saved, kBpm) << " key " << savedSize(saved, kKey) << std::endl;
+    require(savedSize(saved, kArtist) == 200 && savedSize(saved, kBpm) == 98 && savedSize(saved, kKey) == 52,
+            "fit: a list switch while narrowed saves the full-width sizes");
+    view->loadTrackModel(library);
+    header = view->header();
+    require(visibleWidth(header) == kNarrow && view->horizontalScrollBar()->maximum() == 0,
+            "fit: the list opened while narrowed fits too");
+
+    setViewport(view.get(), kFull);
+    std::cout << "OBSERVE widened: title " << header->sectionSize(kTitle) << " artist "
+              << header->sectionSize(kArtist) << " bpm " << header->sectionSize(kBpm) << " key "
+              << header->sectionSize(kKey) << std::endl;
+    require(header->sectionSize(kArtist) == 200 && header->sectionSize(kBpm) == 98 &&
+                    header->sectionSize(kKey) == 52 && header->sectionSize(kTitle) == fullTitle &&
+                    takesRest(header, kTitle),
+            "fit: back at 776 px every column has its full-width size exactly");
+
+    // Columns the user made wider than the full table still scroll there
+    // (build B's table-columns behaviour), and come back after a narrowing.
+    header->resizeSection(kArtist, 600);
+    QApplication::processEvents();
+    setViewport(view.get(), kFull);
+    require(header->sectionSize(kArtist) == 600 && header->sectionSize(kTitle) == 160,
+            "fit: at the full width nothing is fitted (wide columns scroll as before)");
+    setViewport(view.get(), kNarrow);
+    require(visibleWidth(header) == kNarrow, "fit: the wide columns fit the narrowed table");
+    setViewport(view.get(), kFull);
+    require(header->sectionSize(kArtist) == 600, "fit: the wide column has its 600 px back at the full width");
+    header->resizeSection(kArtist, 200);
+    QApplication::processEvents();
+
+    // Quit while narrowed: the full-width sizes are saved.
+    setViewport(view.get(), kNarrow);
+    view.reset();
+    const QString quit = settingsRow(row);
+    require(savedSize(quit, kArtist) == 200 && savedSize(quit, kBpm) == 98 && savedSize(quit, kKey) == 52,
+            "fit: quitting while narrowed saves the full-width sizes");
+}
+
+QString renderStyle() {
+    QString style;
+    for (const auto& path : qEnvironmentVariable("MIXPI_SKIN_QSS").split(':', Qt::SkipEmptyParts)) {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly)) {
+            style += QString::fromUtf8(file.readAll()) + QLatin1Char('\n');
+        }
+    }
+    return style;
+}
+
+// 800x480 renders of the table with the real stylesheets, where the Tracks
+// screen has it (y 100-352): at 800 px, and at x 0-480 with Sources open
+// (m-sources-top.png; the menu itself is not part of this fixture).
+void renderFit(LibraryLikeModel* library, const QString& directory) {
+    const QStringList rows[] = {
+            {"Your Body", "Biscits", "-", "-"},
+            {"YOU'RE THE ONE", "KAYTRANADA / Syd", "118.0", "Am"},
+            {"Yo Soy Abacua", "Willie Rosario and His Orchestra", "-", "C"},
+            {"Yiriyiribon - Mambo Afro", "Beny More / Orquesta Aragon", "163.5", "Gm"},
+            {"Yetikimt Abeba", "The Roha Band", "-", "Eb"},
+            {"Yetikimt Abeba", "The Roha Band", "-", "Eb"}};
+    for (const auto& row : rows) {
+        QList<QStandardItem*> items;
+        for (const auto& text : {QString(), row[1], row[0], QString(), row[2], row[3]}) {
+            items.append(new QStandardItem(text));
+        }
+        library->appendRow(items);
+    }
+    QDir().mkpath(directory);
+    for (const int width : {800, 480}) {
+        QWidget window;
+        window.setObjectName(QStringLiteral("MixpiRenderRoot"));
+        window.setStyleSheet(renderStyle() +
+                QStringLiteral("\n#MixpiRenderRoot { background-color: #0d1014; }"));
+        window.resize(800, 480);
+        auto* wrapper = new QWidget(&window);
+        wrapper->setObjectName(QStringLiteral("LibraryWrapper"));
+        auto* view = new View;
+        view->setParent(wrapper);
+        view->verticalHeader()->hide(); // as WLibraryTableView
+        view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+        // Shown at the full width first, then narrowed when Sources opens.
+        wrapper->setGeometry(0, 100, 800, 252);
+        view->setGeometry(0, 0, 800, 252);
+        window.show();
+        view->loadTrackModel(library);
+        // The fixture view leaves the swapped header hidden; Mixxx shows it.
+        view->horizontalHeader()->show();
+        QApplication::processEvents();
+        wrapper->setGeometry(0, 100, width, 252);
+        view->setGeometry(0, 0, width, 252);
+        QApplication::processEvents();
+        const QString name = directory + QStringLiteral("/table-%1.png").arg(width);
+        std::cout << "OBSERVE render " << name.toStdString() << " viewport " << view->viewport()->width()
+                  << " sideways range " << view->horizontalScrollBar()->maximum() << " header shown "
+                  << view->horizontalHeader()->isVisible() << " height " << view->horizontalHeader()->height()
+                  << std::endl;
+        for (int column : visibleOrder(view->header())) {
+            std::cout << "OBSERVE render column "
+                      << library->headerData(column, Qt::Horizontal).toString().toStdString() << " width "
+                      << view->header()->sectionSize(column)
+#ifdef MIXPI_TABLE_FIT
+                      << " label " << MixpiTableFit::labelWidth(view->header(), column, view->font())
+#endif
+                      << " hint " << view->header()->sectionSizeHint(column) << " text "
+                      << view->header()->fontMetrics().horizontalAdvance(
+                                 library->headerData(column, Qt::Horizontal).toString())
+                      << std::endl;
+        }
+        require(window.grab().save(name), "render: the table at its width is saved");
+        if (width == 480) {
+            require(view->horizontalScrollBar()->maximum() == 0,
+                    "render: inside the 800 px screen, the 480 px table fits with no sideways bar");
+#ifdef MIXPI_TABLE_FIT
+            bool labels = true;
+            for (int column : visibleOrder(view->header())) {
+                labels = labels &&
+                        view->header()->sectionSize(column) >=
+                                MixpiTableFit::labelWidth(view->header(), column, view->font());
+            }
+            require(labels, "render: every header label fits in the narrowed table");
+#endif
+        }
+        delete view;
     }
 }
 
@@ -361,6 +592,15 @@ int main(int argc, char** argv) {
         printOrder("browse from an unnamed pre-fix row", view->header());
         require(visibleOrder(view->header()) == oldOrder,
                 "unnamed pre-fix Browse row restores every saved column");
+    }
+    if (!baseline) {
+        fitChecks(&library, &proxy);
+        for (const auto& font : qEnvironmentVariable("MIXPI_FONTS").split(':', Qt::SkipEmptyParts)) {
+            QFontDatabase::addApplicationFont(font);
+        }
+        renderFit(&library, qEnvironmentVariableIsSet("MIXPI_TABLE_RENDERS")
+                        ? qEnvironmentVariable("MIXPI_TABLE_RENDERS")
+                        : QDir::tempPath() + QStringLiteral("/mixpi-table-fit-renders"));
     }
     require(asserts == 0, "no DEBUG_ASSERT fired");
     std::cout << "FAILURES " << failures << (baseline ? " (baseline)" : "") << std::endl;

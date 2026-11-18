@@ -5,15 +5,21 @@ go to a real SQLite `settings` table through the real TrackModel/SettingsDAO cod
 Doubles replace only the track object, player/recording singletons, the browse
 thread and the clipboard. --baseline builds without mixxx-table-columns.patch and
 must fail: it reproduces the field fault.
+
+Build D: mixxx-table-fit-media-open.patch (the columns fit the narrowed table)
+is applied on top of the registered stack when it is not registered yet, which
+is where the registration puts it. --without-fit builds without it and must
+fail the fit checks (build C's sideways bar, acceptance-C k03/k08).
 """
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import shlex
 import subprocess
 import tempfile
 
-from library_interface_runner import (ROOT, reconstruct, populate_pinned, qt_flags,
+from library_interface_runner import (PATCH_DIR, ROOT, reconstruct, populate_pinned, qt_flags,
                                       qt_environment, moc_path)
 
 STUBS = {
@@ -207,6 +213,11 @@ struct SearchQueryParser {
 }
 
 
+FIT = 'mixxx-table-fit-media-open.patch'
+# The stylesheets Mixxx loads for the MixPi skin, in order.
+RENDER_QSS = ('pioneered-menus.qss', 'pioneered-touch.qss', 'mixpi-performance.qss')
+
+
 def extract_header_swap(source):
     start = source.index("    // Save the previous track model's header state")
     marker = '    header->setDefaultAlignment(Qt::AlignLeft);\n'
@@ -220,6 +231,9 @@ def main():
     # Evidence: the stack without mixxx-acceptance-fixes.patch must fail the
     # readable-width checks (an added column is about 26 px).
     parser.add_argument('--without-acceptance-fixes', action='store_true')
+    # Evidence: without mixxx-table-fit-media-open.patch the narrowed table
+    # keeps its full-width columns and scrolls sideways.
+    parser.add_argument('--without-fit', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-table-columns-') as temporary:
         target = Path(temporary)
@@ -229,7 +243,20 @@ def main():
                    'mixxx-acceptance-fixes.patch', 'mixxx-council-fixes.patch') if args.baseline else ()
         if args.without_acceptance_fixes:
             exclude = ('mixxx-acceptance-fixes.patch', 'mixxx-council-fixes.patch')
-        reconstruct(target, exclude=exclude)
+        if args.without_fit:
+            exclude = (FIT,)
+        names, _ = reconstruct(target, exclude=exclude)
+        if FIT not in names and not exclude:
+            touched = [line.split()[2][2:] for line in (PATCH_DIR / FIT).read_text().splitlines()
+                       if line.startswith('diff --git ')]
+            for path in touched:
+                try:
+                    populate_pinned(target, [path])
+                except subprocess.CalledProcessError:
+                    pass  # a new file of this patch
+            subprocess.run(['git', 'apply', str(PATCH_DIR / FIT)], cwd=target, check=True, timeout=15)
+            names.append(FIT)
+        print('PATCHES', ' '.join(names), flush=True)
         populate = ['src/library/proxytrackmodel.cpp', 'src/library/proxytrackmodel.h',
                     'src/library/browse/browsetablemodel.cpp', 'src/library/browse/browsetablemodel.h',
                     'src/library/trackmodel.h', 'src/library/dao/settingsdao.h',
@@ -283,9 +310,21 @@ def main():
                                                         text=True, timeout=15))]
         print('COMMAND', repr(command), flush=True)
         subprocess.run(command, check=True, timeout=300)
+        # The renders (build D) use the real stylesheets and Mixxx's fonts.
+        fonts = ['res/fonts/' + name for name in ('OpenSans-Regular.ttf', 'OpenSans-Semibold.ttf',
+                                                  'OpenSans-Bold.ttf', 'Ubuntu-R.ttf', 'Ubuntu-B.ttf')]
+        populate_pinned(target, fonts)
+        environment = qt_environment()
+        environment['MIXPI_SKIN_QSS'] = ':'.join(str(PATCH_DIR / name) for name in RENDER_QSS)
+        environment['MIXPI_FONTS'] = ':'.join(str(target / name) for name in fonts)
+        environment['MIXPI_TABLE_RENDERS'] = os.environ.get('MIXPI_TABLE_RENDERS', str(target / 'renders'))
         result = subprocess.run([str(target / 'test'), *(['baseline'] if args.baseline else [])],
-                                env=qt_environment(), timeout=60)
-        if args.without_acceptance_fixes:
+                                env=environment, timeout=60)
+        if args.without_fit:
+            if result.returncode == 0:
+                raise SystemExit('Unexpectedly passed without ' + FIT)
+            print('WITHOUT_FIT_FAILS exit', result.returncode, flush=True)
+        elif args.without_acceptance_fixes:
             if result.returncode == 0:
                 raise SystemExit('Unexpectedly passed without mixxx-acceptance-fixes.patch')
             print('WITHOUT_ACCEPTANCE_FIXES_FAILS exit', result.returncode, flush=True)

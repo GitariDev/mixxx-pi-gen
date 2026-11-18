@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 NATIVE = ROOT / 'tests/native'
 # In stack order; applied on top of the registered stack when not yet registered.
 PATCHES = ('mixxx-effects-save.patch', 'mixxx-save-within-second.patch',
-           'mixxx-agreed-controls.patch')
+           'mixxx-agreed-controls.patch', 'mixxx-sampler-clear-playing.patch')
 MODES = ('settings-fast', 'effects-save', 'effects-kill', 'clear', 'backlight',
          'backlight-readonly', 'backlight-saved', 'backlight-none', 'selector')
 # Seconds between "SET" (the effect change) and SIGKILL in effects-kill.

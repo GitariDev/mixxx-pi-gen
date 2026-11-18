@@ -2,6 +2,8 @@
 
 - U-5 Clear samples (spec s6): [MixPi],sampler_clear_open, _tick1-8, _count
   and sampler_clear. "The pads go empty. The files stay where they are."
+  Build E (mixxx-sampler-clear-playing.patch, the owner's "Stop it, then
+  clear"): a ticked pad that is playing is stopped, then emptied.
 - U-9 Brightness, Night dim and CPU readout (spec s12): [MixPi],backlight,
   backlight_available, night_dim and show_cpu, and the udev rule that lets
   the video group write the backlight level.
@@ -23,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = ROOT / 'stage3/01-install-packages/files'
 CONTROLS = FILES / 'mixxx-agreed-controls.patch'
 TIMING = FILES / 'mixxx-save-within-second.patch'
+CLEAR_PLAYING = FILES / 'mixxx-sampler-clear-playing.patch'
 CONTROLS_FILES = ['src/coreservices.cpp', 'src/coreservices.h', 'src/mixer/mixpisamplerclear.h',
                   'src/util/mixpidisplaycontrols.h', 'src/widget/weffectselector.cpp']
 RULE = ROOT / 'stage3/02-desktop/files/udev/99-mixpi-backlight.rules'
@@ -81,6 +84,37 @@ class AgreedControlsPatchTests(unittest.TestCase):
         for forbidden in ('remove(', 'rename(', 'unlink', 'QFile', 'QDir'):
             self.assertNotIn(forbidden, header)
         self.assertIn('padKey(pad, "eject")', header)
+
+
+class SamplerClearPlayingPatchTests(unittest.TestCase):
+    """mixxx-sampler-clear-playing.patch (build E, spec 2b): "Stop it, then clear"."""
+
+    def test_patch_changes_only_the_clear_controls(self):
+        text = CLEAR_PLAYING.read_text()
+        self.assertEqual(re.findall(r'^diff --git a/(\S+) ', text, re.MULTILINE),
+                         ['src/mixer/mixpisamplerclear.h'])
+
+    def test_patch_is_registered_after_the_agreed_controls(self):
+        names = subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
+                                         '--mixxx-print-patches'], text=True).split()
+        self.assertIn('mixxx-sampler-clear-playing.patch', names)
+        self.assertLess(names.index('mixxx-agreed-controls.patch'),
+                        names.index('mixxx-sampler-clear-playing.patch'))
+
+    def test_a_playing_ticked_pad_is_stopped_before_its_eject(self):
+        added = '\n'.join(line[1:] for line in CLEAR_PLAYING.read_text().splitlines()
+                          if line.startswith('+') and not line.startswith('+++'))
+        stop = added.index('ControlObject::set(stop, 1);')
+        self.assertIn('ControlObject::get(play) > 0', added[:stop])
+        self.assertIn('ControlObject::set(stop, 0);', added[stop:])
+        # Only the pad's own controls: no file is deleted or moved.
+        for forbidden in ('remove(', 'rename(', 'unlink', 'QFile', 'QDir', 'setValue'):
+            self.assertNotIn(forbidden, added)
+        # The stop comes before the eject, inside the loop over ticked pads.
+        patched = (CLEAR_PLAYING.read_text().split('@@ -130,')[1])
+        self.assertLess(patched.index('ControlObject::set(stop, 1);'), patched.index('padKey(pad, "eject")'))
+        self.assertLess(patched.index('if (m_ticks[pad]->get() != 1 || !holdsSample(pad)) {'),
+                        patched.index('ControlObject::set(stop, 1);'))
 
 
 class BacklightRuleTests(unittest.TestCase):
@@ -165,9 +199,12 @@ class NativeAgreedControlsTests(unittest.TestCase):
             'the count follows a ticked pad that loads',
             'the count follows an unticked pad',
             'CLEAR empties the ticked pads that hold a sample',
+            'a ticked pad that is not playing is emptied without a stop',
             'CLEAR leaves an unticked pad loaded',
+            'an unticked pad that plays keeps playing (not stopped)',
             'CLEAR never ejects an empty ticked pad (which would reload a sample)',
-            'a playing ticked pad keeps its sample and keeps playing, as in build B',
+            'a playing ticked pad is stopped first (its own stop, once)',
+            'then the stopped pad is emptied: every ticked pad goes empty',
             'CLEAR clears the ticks',
             'CLEAR closes the popover',
             'after CLEAR the count and the trigger read 0',

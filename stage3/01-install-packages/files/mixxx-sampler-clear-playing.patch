@@ -1,0 +1,36 @@
+diff --git a/src/mixer/mixpisamplerclear.h b/src/mixer/mixpisamplerclear.h
+index 27710cf..de96a3b 100644
+--- a/src/mixer/mixpisamplerclear.h
++++ b/src/mixer/mixpisamplerclear.h
+@@ -22,10 +22,12 @@
+ ///
+ /// A pad is emptied through its own [SamplerN],eject, exactly like the
+ /// per-pad CLEAR of build B. Eject only unloads the sample from the pad: the
+-/// file stays where it is. Like build B (whose CLEAR was disabled while the
+-/// pad played) a playing pad is not emptied: Mixxx refuses to eject a
+-/// playing player, so that pad keeps its sample and keeps playing. The
+-/// sampler bank is saved by the R-13 save on change (track unloaded).
++/// file stays where it is. Mixxx refuses to eject a playing player, so a
++/// ticked pad that is playing is stopped first through its own
++/// [SamplerN],stop, like the pad's ■ STOP button, and then emptied (build E,
++/// the owner's "Stop it, then clear"): every ticked pad goes empty. A pad
++/// that is not ticked is not touched. The sampler bank is saved by the R-13
++/// save on change (track unloaded).
+ class MixpiSamplerClear : public QObject {
+   public:
+     static constexpr int kPads = 8;
+@@ -130,6 +132,14 @@ class MixpiSamplerClear : public QObject {
+             if (m_ticks[pad]->get() != 1 || !holdsSample(pad)) {
+                 continue;
+             }
++            // Stop it, then clear: press and release the pad's STOP, so
++            // that the eject below is not refused.
++            const ConfigKey play = padKey(pad, "play");
++            const ConfigKey stop = padKey(pad, "stop");
++            if (ControlObject::exists(play) && ControlObject::exists(stop) && ControlObject::get(play) > 0) {
++                ControlObject::set(stop, 1);
++                ControlObject::set(stop, 0);
++            }
+             const ConfigKey eject = padKey(pad, "eject");
+             if (ControlObject::exists(eject)) {
+                 // Press and release, like the pad's own CLEAR button.

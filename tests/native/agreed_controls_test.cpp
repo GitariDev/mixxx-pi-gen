@@ -338,6 +338,7 @@ int effectsLoad(const QString& directory) {
 
 // A sampler pad with Mixxx's eject rules (BaseTrackPlayerImpl::slotEjectTrack):
 // no eject while playing; an eject on an empty pad reloads the last sample.
+// Its stop is Mixxx's (EngineBuffer::slotControlStop): a press sets play to 0.
 class Pad : public QObject {
   public:
     explicit Pad(int number, const QString& sample)
@@ -345,7 +346,14 @@ class Pad : public QObject {
               m_sample(sample),
               m_loaded(ConfigKey(m_group, "track_loaded")),
               m_play(ConfigKey(m_group, "play")),
+              m_stop(ConfigKey(m_group, "stop")),
               m_eject(ConfigKey(m_group, "eject")) {
+        connect(&m_stop, &ControlObject::valueChanged, this, [this](double value) {
+            if (value > 0) {
+                ++stops;
+                m_play.set(0);
+            }
+        });
         connect(&m_eject, &ControlObject::valueChanged, this, [this](double value) {
             if (value <= 0) {
                 return;
@@ -384,12 +392,14 @@ class Pad : public QObject {
     int ejects = 0;
     int refused = 0;
     int reloads = 0;
+    int stops = 0;
 
   private:
     const QString m_group;
     const QString m_sample;
     ControlObject m_loaded;
     ControlObject m_play;
+    ControlPushButton m_stop;
     ControlPushButton m_eject;
 };
 
@@ -455,17 +465,25 @@ int clearSamples(const QString& directory) {
     check(get("[MixPi]", "sampler_clear_count") == 2, QStringLiteral("the count follows an unticked pad"));
     set("[MixPi]", tick(3), 1);
 
-    // Pad 6 plays: build B's CLEAR was disabled while a pad played.
+    // Pad 6 (ticked) and pad 2 (not ticked) play. Build E, the owner's
+    // "Stop it, then clear": a ticked pad that plays is stopped, then emptied.
     pads[5]->play(true);
+    pads[1]->play(true);
     set("[MixPi]", "sampler_clear", 1);
     check(!pads[0]->loaded() && !pads[2]->loaded() && pads[0]->ejects == 1 && pads[2]->ejects == 1,
             QStringLiteral("CLEAR empties the ticked pads that hold a sample"));
+    check(pads[0]->stops == 0 && pads[2]->stops == 0,
+            QStringLiteral("a ticked pad that is not playing is emptied without a stop"));
     check(pads[1]->loaded() && pads[1]->ejects == 0,
             QStringLiteral("CLEAR leaves an unticked pad loaded"));
+    check(pads[1]->playing() && pads[1]->stops == 0,
+            QStringLiteral("an unticked pad that plays keeps playing (not stopped)"));
     check(pads[3]->reloads == 0 && !pads[3]->loaded(),
             QStringLiteral("CLEAR never ejects an empty ticked pad (which would reload a sample)"));
-    check(pads[5]->loaded() && pads[5]->playing() && pads[5]->ejects == 0,
-            QStringLiteral("a playing ticked pad keeps its sample and keeps playing, as in build B"));
+    check(!pads[5]->playing() && pads[5]->stops == 1 && pads[5]->refused == 0,
+            QStringLiteral("a playing ticked pad is stopped first (its own stop, once)"));
+    check(!pads[5]->loaded() && pads[5]->ejects == 1,
+            QStringLiteral("then the stopped pad is emptied: every ticked pad goes empty"));
     allClear = true;
     for (int pad = 1; pad <= 8; ++pad) {
         allClear = allClear && get("[MixPi]", tick(pad)) == 0;
@@ -483,7 +501,8 @@ int clearSamples(const QString& directory) {
 
     // CLEAR with nothing ticked does nothing.
     set("[MixPi]", "sampler_clear", 1);
-    check(pads[1]->loaded() && pads[1]->ejects == 0 && pads[5]->loaded(),
+    check(pads[1]->loaded() && pads[1]->ejects == 0 && pads[1]->playing() && pads[1]->stops == 0 &&
+                    pads[5]->reloads == 0 && !pads[5]->loaded(),
             QStringLiteral("CLEAR with nothing ticked empties nothing"));
     return failures ? 1 : 0;
 }

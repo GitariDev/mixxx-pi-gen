@@ -207,6 +207,17 @@ The owner read council round 2 (all three seats at 6) and decided the following.
   - the table's alternate rows in the agreed surface colours, as `m-tracks.png` and `m-loadsample.png` draw them.
 - **The owner session** (the Starlight session and the samples power-off test) runs after build E is on the card.
 
+## 2c. Owner decisions after build E (2026-11-18)
+
+- **RELOOP** starts the loop at once and is then disabled while the loop runs, so it never shows its pressed look. This is build B's behaviour, and it stays. Owner: "that is correct".
+- **One column setup for every source** (build F, the 7th pi-gen run, approved by the owner). Owner: "I want to keep the column setup across the different source menus and have it be saved after edit like the settings."
+  - Which columns show, their order and their widths are shared by every track table: This Pi, playlists and crates, each drive's rekordbox lists, folders, History, and the Samples table in Load sample. A column a source does not have is skipped there.
+  - Sorting stays per list, as now.
+  - A change (show or hide a column, move it, resize it) is saved within one second, like the settings, and is kept over `kill -9` and a power cut.
+  - The narrowed table with Sources open still fits its columns (spec 2a). Fitted widths are never saved; closing Sources or Edit sources always brings back the shared full widths.
+- **The FX pads** already follow the owner's model, so nothing changes: deck A's FX pads drive FX 1 and deck B's drive FX 2, whichever unit the screen shows. Each unit has its own DECK 1 / DECK 2 / MASTER route on screen.
+- **Order of work:** build F, then the owner's Starlight and power-off session on build F, then council round 3.
+
 ## 3. Not part of build C
 
 - **G5 extras:** the owner suggested an outline in the fill colour when active and thinner outlines on inactive buttons, then said "What we have now is acceptable". This is noted only.

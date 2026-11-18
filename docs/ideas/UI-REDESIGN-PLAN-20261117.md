@@ -894,3 +894,9 @@ The owner's answers (spec 2b):
 - **Owner session:** after build E is on the card.
 - **Reviewers in round 3:** the three accepted items are **not** findings, and they do not make criterion 8 partial; the owner accepted them.
 
+### 12.7 Owner decisions after build E (2026-11-18)
+
+- **RELOOP:** "that is correct". Build B's behaviour stays (no pressed look while a press starts the loop). Not a finding.
+- **Shared column setup:** "I want to keep the column setup across the different source menus and have it be saved after edit like the settings". The owner chose "Columns, order and widths" (sorting stays per list) and "Build F now, then council". **Build F is the 7th pi-gen run**, approved for this. Spec 2c.
+- **FX pads:** the owner described deck A pads → FX 1 and deck B pads → FX 2, independent of the screen, with a per-unit route override. That is already how the stock Starlight mapping and the FX page work; there is no change. It is checked in the Starlight session.
+

@@ -95,6 +95,11 @@ WAVE_KEY_SIZE = '84f,28f'
 # x 106/302/498/694 at y 141/217.
 JUMPS = (1, 2, 4, 8, 16, 32)
 JUMP_WIDTH, JUMP_HEIGHT = 107, 56
+# LOOP rows (spec s2, owner 2026-11-18 "Shorter rows then"): 48 px at 800x480;
+# with the desktop top bar shown (800x444) the panel is 36 px shorter, so each
+# of the four rows gives up 9 px (4 x 39 + 3 x 4 = 168). Below the touch
+# minimum in that mode only, by the owner's choice.
+LOOP_ROW, LOOP_ROW_SHORT, LOOP_GAP = 48, 39, 4
 CUE_TILE = (196, 70)
 # Transport per deck (plan R-16): KEY 48, Q 48, SYNC 60, LOOP 60, CUE 76, ▶ the rest.
 # Tracks (spec s3, m-tracks.png): LOAD n 84 · the track name · CUE 68 · ▶ 68.
@@ -281,6 +286,21 @@ def button(text, key, *, size='0me,48f', momentary=False,
     connection(e, key, read=display is None, momentary=momentary, transform=transform)
     if display:
         connection(e, display, write=False)
+    return e
+
+
+def shrinking_rows(e, short=LOOP_ROW_SHORT, full=LOOP_ROW):
+    """Spec 2a: a height of FULL at 800x480 that gives way to SHORT at 800x444.
+    Mixxx sets a non-fixed Size number as the minimum (LegacySkinParser::setupSize);
+    MaximumSize caps the growth."""
+    for c in list(e):
+        if c.tag in ('Size', 'MaximumSize'):
+            e.remove(c)
+    at = list(e).index(e.find('Children')) if e.find('Children') is not None else len(e)
+    if e.tag == 'PushButton':
+        at = list(e).index(e.find('NumberStates'))
+    e.insert(at, node('Size', f'0me,{short}me'))
+    e.insert(at + 1, node('MaximumSize', f'-1,{full}'))
     return e
 
 
@@ -515,25 +535,31 @@ def tool_panel(channel, loop_display='focus'):
         gap('0me,48f'), cue_clear_toggle(), gap('8f,48f'), close, gap('4f,48f')])
     # LOOP (spec s2): the 12 sizes in two rows of six (Choose), then ½ and ×2
     # (neutral, green border), then EXIT LOOP (Danger) and RELOOP (Sound).
-    loop = group('MixpiLoopBody', size='0me,204f')
+    # The rows and the body are MinimumExpanding with the short height as their
+    # minimum and the full height as their maximum: at 800x480 the body is the
+    # only growing item in the panel and fills its 204 px (four 48 px rows);
+    # at 800x444 it gets its 168 px minimum (four 39 px rows). The skin knows
+    # the window height only through this layout, as the other pages do.
+    loop = shrinking_rows(group('MixpiLoopBody'), 4 * LOOP_ROW_SHORT + 3 * LOOP_GAP,
+                          4 * LOOP_ROW + 3 * LOOP_GAP)
     for index, offset in enumerate((0, 6)):
-        row = group('MixpiLoopRow', 'horizontal', '0me,48f')
+        row = shrinking_rows(group('MixpiLoopRow', 'horizontal'))
         for text, value in LOOPS[offset:offset+6]:
-            add(row, button(text, f'{key},beatloop_{value}_activate', momentary=True,
-                            display=f'{key},beatloop_{value}_enabled'))
-        add(loop, *([gap('0me,4f')] if index else []), row)
-    sizes = group('MixpiLoopSizes', 'horizontal', '0me,48f', [
-        button('½', f'{key},loop_halve', momentary=True, name='MixpiSize'),
-        button('×2', f'{key},loop_double', momentary=True, name='MixpiSize')])
-    tools = group('MixpiLoopTools', 'horizontal', '0me,48f', [
-        button('EXIT LOOP', f'{key},loop_exit', momentary=True, display=f'{key},loop_enabled',
-               name='MixpiDanger'),
-        button('RELOOP', f'{key},reloop_toggle', momentary=True, display=f'{key},loop_enabled',
-               name='MixpiSound')])
+            add(row, shrinking_rows(button(text, f'{key},beatloop_{value}_activate', momentary=True,
+                                           display=f'{key},beatloop_{value}_enabled')))
+        add(loop, *([gap(f'0me,{LOOP_GAP}f')] if index else []), row)
+    sizes = shrinking_rows(group('MixpiLoopSizes', 'horizontal', children=[
+        shrinking_rows(button('½', f'{key},loop_halve', momentary=True, name='MixpiSize')),
+        shrinking_rows(button('×2', f'{key},loop_double', momentary=True, name='MixpiSize'))]))
+    tools = shrinking_rows(group('MixpiLoopTools', 'horizontal', children=[
+        shrinking_rows(button('EXIT LOOP', f'{key},loop_exit', momentary=True, display=f'{key},loop_enabled',
+                              name='MixpiDanger')),
+        shrinking_rows(button('RELOOP', f'{key},reloop_toggle', momentary=True, display=f'{key},loop_enabled',
+                              name='MixpiSound'))]))
     # Reloop jumps back to the saved loop. Disable it while already looping,
     # so a second tap cannot turn looping off (Exit has its own command).
     connection(tools.find('Children')[1], f'{key},loop_enabled', transform='<Not/>', bind='enabled')
-    add(loop, gap('0me,4f'), sizes, gap('0me,4f'), tools)
+    add(loop, gap(f'0me,{LOOP_GAP}f'), sizes, gap(f'0me,{LOOP_GAP}f'), tools)
     show_when(loop, '[MixPi],tool_tab', 0)
     # JUMP: beatjump_N_backward / _forward, two labelled rows of six (plan 5.3 hit map).
     # JUMP and CUES keep build B's layout (spec s2): their rows still start at
@@ -562,11 +588,13 @@ def tool_panel(channel, loop_display='focus'):
     show_when(cues, '[MixPi],tool_tab', 2)
     # 48 header + 4 + 204 loop body = 256, the waveform area at 800x480. The
     # panel's height is Ignored, so it adds nothing to the page's minimum: at
-    # 800x444 (desktop bar shown) the area is 220 px and the EXIT LOOP and
-    # RELOOP row is cut off at the bottom (48 px rows cannot fit there; an
-    # owner question in the C1 report). JUMP and CUES still fit at 444.
+    # 800x444 (desktop bar shown) the area is 220 px, and the LOOP body takes
+    # 220 - 52 = 168 px (spec 2a). JUMP and CUES still fit at 444. The
+    # trailing gap keeps JUMP and CUES at the top; it is hidden on LOOP, where
+    # it would share the spare height with the body (Qt splits it evenly).
+    tail = show_when(gap('0me,0me'), '[MixPi],tool_tab', 0, negate=True)
     panel = group('MixpiLoopPanel', size='0me,0i', children=[
-        header, gap('0me,4f'), loop, jump, cues, gap('0me,0me')])
+        header, gap('0me,4f'), loop, jump, cues, tail])
     connection(panel, '[MixPi],loop_deck', transform=f'<IsEqual>{channel}</IsEqual>', bind='visible')
     return panel
 

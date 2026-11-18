@@ -360,6 +360,12 @@ class PerformanceSkinTests(unittest.TestCase):
                        for c in b.findall('Connection')):
                 continue  # display-only chip
             w, h, wp, hp = size(b)
+            if b.find('MaximumSize') is not None:
+                # Spec 2a: a LOOP row's button is 48 px at 800x480 and gives way
+                # to 39 px only at 800x444 (owner: "Shorter rows then").
+                self.assertEqual((h, hp, b.findtext('MaximumSize')),
+                                 (SKIN.LOOP_ROW_SHORT, 'me', f'-1,{SKIN.LOOP_ROW}'))
+                h = SKIN.LOOP_ROW
             if h < 48 or (wp == 'f' and w < 48) or (wp != 'f' and w != 0 and w < 48):
                 small.append((b.findtext('ObjectName'), b.findtext('Size')))
         return small
@@ -1174,9 +1180,19 @@ class PerformanceSkinTests(unittest.TestCase):
         bodies = {g.findtext('ObjectName'): g for g in panel.find('Children')
                   if g.findtext('ObjectName', '').endswith('Body')}
         self.assertEqual(len(bodies), 3)
-        for body in bodies.values():
-            self.assertEqual(fixed(body), size(body)[1])
-        self.assertEqual(48 + 4 + size(bodies['MixpiLoopBody'])[1] + 72, 480 - 48 - 104)
+        for name in ('MixpiJumpBody', 'MixpiCuesBody'):
+            self.assertEqual(fixed(bodies[name]), size(bodies[name])[1])
+        # Spec 2a: the LOOP body fills 204 px at 480 (its maximum: four 48 px
+        # rows) and 168 px at 444 (its minimum: four 39 px rows), with the
+        # header and the 4 px gap above it and the 72 px deck info under it.
+        loop = bodies['MixpiLoopBody']
+        self.assertEqual(size(loop)[1:4:2], (168, 'me'))
+        self.assertEqual(loop.findtext('MaximumSize'), '-1,204')
+        self.assertEqual(48 + 4 + 204 + 72, 480 - 48 - 104)
+        self.assertEqual(48 + 4 + 168 + 72, 444 - 48 - 104)
+        self.assertEqual(4 * 48 + 3 * 4, 204)
+        self.assertEqual(4 * 39 + 3 * 4, 168)
+        self.assertEqual(fixed(loop), 3 * 4)
         for name in ('MixpiJumpBody', 'MixpiCuesBody'):
             self.assertLessEqual(48 + 4 + size(bodies[name])[1] + 72, 444 - 48 - 104)
         # Tool panels first: in the overlay trial they sit above the waveforms.
@@ -1255,6 +1271,80 @@ class PerformanceSkinTests(unittest.TestCase):
     def tool(self, channel):
         return [g for g in self.root.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiLoopPanel'][channel - 1]
 
+    LOOP_STATE = {'[MixPi],loop_deck': 1, '[MixPi],tool_tab': 0, '[Tab],overview': 1}
+
+    def box_heights(self, group, space, state):
+        """(child, height) of a vertical group's visible children in SPACE px, as
+        QBoxLayout shares it (qGeomCalc) for the cases the skin uses: a fixed child
+        keeps its size; every other child starts at its minimum (its Size number,
+        LegacySkinParser::setupSize), and the spare height goes in equal shares to
+        the expanding children (me, e) up to their MaximumSize."""
+        children = [c for c in group.find('Children') if self.model.visible(c, state)]
+        heights, limits = {}, {}
+        for c in children:
+            _, h, _, hp = size(c)
+            heights[c] = h
+            if hp in ('me', 'e'):
+                maximum = c.findtext('MaximumSize')
+                limits[c] = int(maximum.split(',')[1]) if maximum else 1 << 24
+        spare = space - sum(heights.values())
+        self.assertGreaterEqual(spare, 0, group.findtext('ObjectName'))
+        growing = [c for c in children if c in limits]
+        while spare and growing:
+            share = spare // len(growing)
+            if share == 0:
+                break
+            for c in list(growing):
+                step = min(share, limits[c] - heights[c])
+                heights[c] += step
+                spare -= step
+                if heights[c] == limits[c]:
+                    growing.remove(c)
+        return [(c, heights[c]) for c in children]
+
+    def test_loop_rows_shorten_only_with_the_top_bar(self):
+        # Spec 2a (owner, 2026-11-18, "Shorter rows then"): with the desktop top
+        # bar shown the window is 800x444 and the panel 220 px tall (444 - 48
+        # top - 104 bottom - 72 deck info); all four LOOP rows fit, 39 px each.
+        # At 800x480 (256 px) nothing changes: four 48 px rows.
+        for channel in (1, 2):
+            state = dict(self.LOOP_STATE, **{'[MixPi],loop_deck': channel})
+            panel = self.tool(channel)
+            for space, row in ((480 - 48 - 104 - 72, 48), (444 - 48 - 104 - 72, 39)):
+                laid = self.box_heights(panel, space, state)
+                self.assertEqual(sum(h for _, h in laid), space)
+                self.assertEqual([c.findtext('ObjectName') for c, _ in laid],
+                                 ['MixpiToolHeader', 'MixpiGap', 'MixpiLoopBody'])
+                body, height = laid[-1]
+                self.assertEqual(height, space - 48 - 4)
+                rows = [(c, h) for c, h in self.box_heights(body, height, state)
+                        if c.findtext('ObjectName') != 'MixpiGap']
+                self.assertEqual([c.findtext('ObjectName') for c, _ in rows],
+                                 ['MixpiLoopRow', 'MixpiLoopRow', 'MixpiLoopSizes', 'MixpiLoopTools'])
+                self.assertEqual([h for _, h in rows], [row] * 4)
+                # The buttons take their row's height: the same minimum and maximum.
+                for c, _ in rows:
+                    for b in c.iter('PushButton'):
+                        self.assertEqual((b.findtext('Size'), b.findtext('MaximumSize')),
+                                         (f'0me,{SKIN.LOOP_ROW_SHORT}me', f'-1,{SKIN.LOOP_ROW}'))
+            # JUMP and CUES are unchanged: the trailing gap (hidden on LOOP)
+            # keeps them at the top, and they fit at 444.
+            tail = panel.find('Children')[-1]
+            self.assertEqual(tail.findtext('ObjectName'), 'MixpiGap')
+            for tab in (0, 1, 2):
+                tab_state = dict(state, **{'[MixPi],tool_tab': tab})
+                self.assertEqual(self.model.visible(tail, tab_state), tab != 0)
+                if tab:
+                    laid = self.box_heights(panel, 444 - 48 - 104 - 72, tab_state)
+                    self.assertEqual(laid[-1][0], tail)
+        # Nothing else in the skin has a MaximumSize but the Clear samples list.
+        capped = {e.findtext('ObjectName') for e in self.root.iter() if e.find('MaximumSize') is not None}
+        self.assertEqual(capped, {'MixpiLoopBody', 'MixpiLoopRow', 'MixpiLoopSizes', 'MixpiLoopTools',
+                                  'MixpiButton', 'MixpiSize', 'MixpiDanger', 'MixpiSound',
+                                  'MixpiClearListArea'})
+        buttons = [b for b in self.root.iter('PushButton') if b.find('MaximumSize') is not None]
+        self.assertEqual(len(buttons), 2 * (6 + 6 + 2 + 2))
+
     def test_tool_panel_tabs_and_bodies(self):
         for channel in (1, 2):
             panel = self.tool(channel)
@@ -1296,9 +1386,11 @@ class PerformanceSkinTests(unittest.TestCase):
         exit_loop, reloop = rows[3].iter('PushButton')
         self.assertEqual(exit_loop.findtext('Connection/ConfigKey'), f'{key},loop_exit')
         self.assertEqual(reloop.findtext('Connection/ConfigKey'), f'{key},reloop_toggle')
-        # Each row is 48 px (the touch minimum); the body fills 256 - 48 - 4.
-        self.assertEqual([size(r)[1] for r in rows], [48] * 4)
-        self.assertEqual(size(body)[1], 256 - 48 - 4)
+        # Each row is 48 px (the touch minimum) at 800x480; the body fills
+        # 256 - 48 - 4 (spec 2a: shorter only at 800x444, see below).
+        heights = dict(self.box_heights(body, 256 - 48 - 4, self.LOOP_STATE))
+        self.assertEqual([heights[r] for r in rows], [48] * 4)
+        self.assertEqual(sum(heights.values()), 256 - 48 - 4)
         style = (FILES/'mixpi-performance.qss').read_text()
         # ½ and ×2: color-mix(accent 60%, surface-2) = #6d8349.
         self.assertIn('#MixpiSize { border-color: #6d8349; }', style)
@@ -1388,10 +1480,10 @@ class PerformanceSkinTests(unittest.TestCase):
         # LOOP rows (m-loop.png): y 100, 152, 204, 256, 48 px each.
         body = next(g for g in panel.iter('WidgetGroup') if g.findtext('ObjectName') == 'MixpiLoopBody')
         y, rows = top['MixpiLoopBody'], []
-        for child in body.find('Children'):
+        for child, height in self.box_heights(body, 204, self.LOOP_STATE):
             if child.findtext('ObjectName') != 'MixpiGap':
-                rows.append(y + 24)
-            y += size(child)[1]
+                rows.append(y + height // 2)
+            y += height
         self.assertEqual(rows, [124, 176, 228, 280])
         self.assertEqual(y, 304)
 

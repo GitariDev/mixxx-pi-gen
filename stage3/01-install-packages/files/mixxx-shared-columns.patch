@@ -1,0 +1,721 @@
+diff --git a/src/widget/mixpisharedcolumns.h b/src/widget/mixpisharedcolumns.h
+new file mode 100644
+index 0000000..d744bb3
+--- /dev/null
++++ b/src/widget/mixpisharedcolumns.h
+@@ -0,0 +1,138 @@
++#pragma once
++
++#include <QByteArray>
++#include <QList>
++#include <QSet>
++#include <QString>
++#include <QStringList>
++
++#include "proto/headers.pb.h"
++
++// Build F (spec 2c, plan 12.7): one column setup for every track table.
++// Which columns show, their order and their widths are shared by This Pi,
++// playlists and crates, Auto DJ, History, folders, each drive's rekordbox
++// lists and the Samples table in Load sample. The setup is a list of named
++// columns in their order; a table shows the ones it has, in that order. A
++// column a table does not have is skipped there and keeps its place in the
++// list for the tables that have it. A column only a table has (Filename in
++// a folder) keeps that table's own default place and state until it is
++// changed there. Sorting is not part of it: it stays per list.
++//
++// The list is stored as a mixxx.library.HeaderViewState (the same message
++// as each list's own header_state_pb, without the sort), Base64 encoded.
++namespace MixpiSharedColumns {
++
++struct Column {
++    QString name;
++    bool hidden = false;
++    int size = 0;
++};
++
++inline QList<Column> parse(const QString& base64) {
++    QList<Column> columns;
++    if (base64.isEmpty()) {
++        return columns;
++    }
++    mixxx::library::HeaderViewState state;
++    const QByteArray bytes = QByteArray::fromBase64(base64.toLatin1());
++    if (!state.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size()))) {
++        return columns;
++    }
++    QSet<QString> seen;
++    for (int i = 0; i < state.header_state_size(); ++i) {
++        const auto& entry = state.header_state(i);
++        const QString name = QString::fromStdString(entry.column_name());
++        if (name.isEmpty() || seen.contains(name)) {
++            continue;
++        }
++        seen.insert(name);
++        columns.append({name, entry.hidden(), entry.size()});
++    }
++    return columns;
++}
++
++inline QString serialize(const QList<Column>& columns) {
++    mixxx::library::HeaderViewState state;
++    int position = 0;
++    for (const auto& column : columns) {
++        auto* entry = state.add_header_state();
++        entry->set_column_name(column.name.toStdString());
++        entry->set_hidden(column.hidden);
++        entry->set_size(column.size);
++        entry->set_visual_index(position++);
++    }
++#if GOOGLE_PROTOBUF_VERSION >= 3001000
++    const int size = static_cast<int>(state.ByteSizeLong());
++#else
++    const int size = state.ByteSize();
++#endif
++    QByteArray bytes(size, '\0');
++    state.SerializeToArray(bytes.data(), size);
++    return QString::fromLatin1(bytes.toBase64());
++}
++
++inline bool anyShown(const QList<Column>& columns) {
++    for (const auto& column : columns) {
++        if (!column.hidden) {
++            return true;
++        }
++    }
++    return false;
++}
++
++inline QSet<QString> names(const QList<Column>& columns) {
++    QSet<QString> result;
++    for (const auto& column : columns) {
++        result.insert(column.name);
++    }
++    return result;
++}
++
++// A table's columns (in its order, with its states) merged into the shared
++// list. The places the table's columns hold in the list are filled with
++// them in the table's order; the other columns keep their places. A column
++// new to the list goes just before the table column that follows it.
++inline QList<Column> merge(const QList<Column>& shared, const QList<Column>& table) {
++    const QSet<QString> sharedNames = names(shared);
++    const QSet<QString> tableNames = names(table);
++    QList<Column> result;
++    int next = 0;
++    for (const auto& column : shared) {
++        if (!tableNames.contains(column.name)) {
++            result.append(column);
++            continue;
++        }
++        while (next < table.size()) {
++            const Column& own = table.at(next++);
++            result.append(own);
++            if (sharedNames.contains(own.name)) {
++                break;
++            }
++        }
++    }
++    while (next < table.size()) {
++        result.append(table.at(next++));
++    }
++    return result;
++}
++
++// The order a table shows its columns in: its own order (its defaults),
++// with the places of the shared columns filled in the shared order.
++inline QStringList arrange(const QStringList& tableOrder, const QList<Column>& shared) {
++    const QSet<QString> own(tableOrder.cbegin(), tableOrder.cend());
++    QStringList sharedOrder;
++    for (const auto& column : shared) {
++        if (own.contains(column.name)) {
++            sharedOrder.append(column.name);
++        }
++    }
++    const QSet<QString> sharedNames(sharedOrder.cbegin(), sharedOrder.cend());
++    QStringList result;
++    int next = 0;
++    for (const auto& name : tableOrder) {
++        result.append(sharedNames.contains(name) ? sharedOrder.at(next++) : name);
++    }
++    return result;
++}
++
++} // namespace MixpiSharedColumns
+diff --git a/src/widget/mixpitablefit.h b/src/widget/mixpitablefit.h
+index 1629666..9d954eb 100644
+--- a/src/widget/mixpitablefit.h
++++ b/src/widget/mixpitablefit.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <QEvent>
+ #include <QHash>
+ #include <QHeaderView>
+ #include <QList>
+@@ -7,6 +8,7 @@
+ #include <QStyle>
+ #include <QStyleOptionHeader>
+ #include <QTableView>
++#include <QTimer>
+ #include <algorithm>
+ #include <functional>
+ 
+@@ -34,7 +36,23 @@ class MixpiTableFit {
+ 
+     MixpiTableFit(QTableView* view, StretchColumn stretchColumn)
+             : m_view(view), m_stretchColumn(std::move(stretchColumn)) {
++        if (m_view) {
++            // Build F: a table resized while hidden (Sources or Edit sources
++            // closed with ✕ while another page shows) gets its resize event
++            // before it is visible, when fit() cannot measure it. It fits,
++            // or gets its full widths back, when it shows.
++            m_showFilter = new ShowFilter(m_view, [this] {
++                fit();
++                QTimer::singleShot(0, m_showFilter, [this] { fit(); });
++            });
++            m_view->installEventFilter(m_showFilter);
++        }
++    }
++    ~MixpiTableFit() {
++        delete m_showFilter.data();
+     }
++    MixpiTableFit(const MixpiTableFit&) = delete;
++    MixpiTableFit& operator=(const MixpiTableFit&) = delete;
+ 
+     bool active() const {
+         return m_active;
+@@ -43,6 +61,26 @@ class MixpiTableFit {
+     int fullWidth(int column) const {
+         return m_full.value(column, -1);
+     }
++    // The size to save for a column: its full-width size while the table is
++    // fitted (TITLE's too), else -1 (the size it has).
++    int savedWidth(int column) const {
++        if (!m_active || !m_header) {
++            return -1;
++        }
++        const int title = m_stretchColumn ? m_stretchColumn(m_header) : -1;
++        if (column == title) {
++            return m_titleFull > 0 ? m_titleFull : -1;
++        }
++        return m_full.value(column, -1);
++    }
++    // The header got new full-width sizes (the shared setup, changed in
++    // another table): fit them again.
++    void refit() {
++        m_full.clear();
++        m_active = false;
++        m_titleFull = -1;
++        fit();
++    }
+ 
+     // Call after the view is resized or a new header is set.
+     void fit() {
+@@ -167,6 +205,22 @@ class MixpiTableFit {
+     }
+ 
+   private:
++    class ShowFilter : public QObject {
++      public:
++        ShowFilter(QObject* parent, std::function<void()> shown)
++                : QObject(parent), m_shown(std::move(shown)) {
++        }
++        bool eventFilter(QObject* watched, QEvent* event) override {
++            if (event->type() == QEvent::Show && watched == parent()) {
++                m_shown();
++            }
++            return false;
++        }
++
++      private:
++        std::function<void()> m_shown;
++    };
++
+     // The columns' sizes in proportion to their full-width sizes, in budget
+     // px, none below its floor.
+     QHash<int, int> share(const QList<int>& columns, const QHash<int, int>& floors, int budget) const {
+@@ -228,6 +282,7 @@ class MixpiTableFit {
+ 
+     QPointer<QTableView> m_view;
+     StretchColumn m_stretchColumn;
++    QPointer<ShowFilter> m_showFilter;
+     QPointer<QHeaderView> m_header;
+     QHash<int, int> m_full; // column -> full-width size, while fitted
+     int m_titleFull = -1;
+diff --git a/src/widget/wtracktableview.cpp b/src/widget/wtracktableview.cpp
+index 5aeb4b0..fb74662 100644
+--- a/src/widget/wtracktableview.cpp
++++ b/src/widget/wtracktableview.cpp
+@@ -8,6 +8,7 @@
+ #include <QUrl>
+ 
+ #include "control/controlobject.h"
++#include "library/dao/settingsdao.h"
+ #include "library/dao/trackschema.h"
+ #include "library/library.h"
+ #include "library/library_prefs.h"
+@@ -42,6 +43,16 @@ const ConfigKey kVScrollBarPosConfigKey{
+ 
+ static_assert(MixpiTableFit::kTitleMinimum == LibraryInterface::kStretchColumnMinimumWidth);
+ 
++// Build F (spec 2c): the one column setup of every track table. It is a
++// setting like the others: kept in mixxx.cfg, which the save-on-change
++// autosave writes atomically within a second of a change.
++const ConfigKey kSharedColumnsConfigKey{
++        QStringLiteral("[Library]"),
++        QStringLiteral("SharedColumns")};
++
++// This Pi > Tracks' own saved header (MixxxLibraryFeature's table model).
++const QString kTracksHeaderSetting = QStringLiteral("mixxx.db.model.library.header_state_pb");
++
+ } // anonymous namespace
+ 
+ WTrackTableView::WTrackTableView(QWidget* pParent,
+@@ -82,6 +93,34 @@ WTrackTableView::WTrackTableView(QWidget* pParent,
+             &WTrackTableView::scrollValueChanged,
+             this,
+             &WTrackTableView::slotScrollValueChanged);
++
++    if (m_pConfig && !WTrackTableViewHeader::hasSharedStore()) {
++        // Weak: the store outlives the views, the config and the library.
++        QWeakPointer<ConfigObject<ConfigValue>> pWeakConfig = m_pConfig;
++        QPointer<Library> pLibrary = m_pLibrary;
++        WTrackTableViewHeader::setSharedStore({
++                [pWeakConfig] {
++                    const auto pConfig = pWeakConfig.toStrongRef();
++                    return pConfig && pConfig->exists(kSharedColumnsConfigKey)
++                            ? pConfig->getValueString(kSharedColumnsConfigKey)
++                            : QString();
++                },
++                [pWeakConfig](const QString& value) {
++                    if (const auto pConfig = pWeakConfig.toStrongRef()) {
++                        pConfig->setValue(kSharedColumnsConfigKey, value);
++                    }
++                },
++                [pLibrary] {
++                    if (!pLibrary || !pLibrary->trackCollectionManager()) {
++                        return QString();
++                    }
++                    return SettingsDAO(pLibrary->trackCollectionManager()
++                                               ->internalCollection()
++                                               ->database())
++                            .getValue(kTracksHeaderSetting);
++                },
++        });
++    }
+ }
+ 
+ WTrackTableView::~WTrackTableView() {
+@@ -277,6 +316,14 @@ void WTrackTableView::loadTrackModel(QAbstractItemModel* pNewModel, bool restore
+     header->setHighlightSections(false);
+     header->setSortIndicatorShown(m_sorting);
+     header->setDefaultAlignment(Qt::AlignLeft);
++    // Build F: the shared setup gets the full widths, never the fitted ones,
++    // and a change made in another table fits here again.
++    header->setFullWidthSource([this](int column) {
++        return m_columnFit.savedWidth(column);
++    });
++    connect(header, &WTrackTableViewHeader::sharedColumnsApplied, this, [this] {
++        m_columnFit.refit();
++    });
+ 
+     // Initialize all column-specific things
+     for (int i = 0; i < pNewModel->columnCount(); ++i) {
+diff --git a/src/widget/wtracktableviewheader.cpp b/src/widget/wtracktableviewheader.cpp
+index 1121418..1226fd4 100644
+--- a/src/widget/wtracktableviewheader.cpp
++++ b/src/widget/wtracktableviewheader.cpp
+@@ -2,8 +2,11 @@
+ 
+ #include <QCheckBox>
+ #include <QContextMenuEvent>
++#include <QMouseEvent>
++#include <QPointer>
+ #include <QWidgetAction>
+ #include <QSignalBlocker>
++#include <algorithm>
+ 
+ #include "library/trackmodel.h"
+ #include "moc_wtracktableviewheader.cpp"
+@@ -11,9 +14,29 @@
+ #include "util/parented_ptr.h"
+ #include "widget/wmenucheckbox.h"
+ #include "widget/libraryinterface.h"
++#include "widget/mixpisharedcolumns.h"
+ 
+ #define WTTVH_MINIMUM_SECTION_SIZE 20
+ 
++namespace {
++
++// Each list keeps its own sort (spec 2c); the old header_state_pb rows are
++// left as they are, unused, so the owner's per-list setups are not lost.
++const QString kSortSetting = QStringLiteral("mixpi_sort_pb");
++
++WTrackTableViewHeader::SharedStore& sharedStore() {
++    static WTrackTableViewHeader::SharedStore store;
++    return store;
++}
++
++// The headers of the open tables, so a change shows in all of them.
++QList<QPointer<WTrackTableViewHeader>>& openHeaders() {
++    static QList<QPointer<WTrackTableViewHeader>> headers;
++    return headers;
++}
++
++} // namespace
++
+ HeaderViewState::HeaderViewState(const WTrackTableViewHeader& headers) {
+     QAbstractItemModel* model = headers.model();
+     for (int vi = 0; vi < headers.count(); ++vi) {
+@@ -139,6 +162,191 @@ WTrackTableViewHeader::WTrackTableViewHeader(Qt::Orientation orientation,
+             updateStretchColumn();
+         }
+     });
++    // A column moved or resized by a drag in the header (build F).
++    auto changed = [this] {
++        if (m_pressed && !m_applyingShared) {
++            m_changedWhilePressed = true;
++        }
++    };
++    connect(this, &QHeaderView::sectionResized, this, changed);
++    connect(this, &QHeaderView::sectionMoved, this, changed);
++    auto& headers = openHeaders();
++    headers.removeAll(QPointer<WTrackTableViewHeader>());
++    headers.append(this);
++}
++
++void WTrackTableViewHeader::setSharedStore(SharedStore store) {
++    sharedStore() = std::move(store);
++}
++
++bool WTrackTableViewHeader::hasSharedStore() {
++    const auto& store = sharedStore();
++    return store.load && store.save;
++}
++
++void WTrackTableViewHeader::setFullWidthSource(std::function<int(int)> source) {
++    m_fullWidth = std::move(source);
++}
++
++void WTrackTableViewHeader::mousePressEvent(QMouseEvent* pEvent) {
++    m_pressed = true;
++    m_changedWhilePressed = false;
++    QHeaderView::mousePressEvent(pEvent);
++}
++
++void WTrackTableViewHeader::mouseDoubleClickEvent(QMouseEvent* pEvent) {
++    // A double tap on a column's edge sizes it to its contents.
++    m_pressed = true;
++    QHeaderView::mouseDoubleClickEvent(pEvent);
++}
++
++void WTrackTableViewHeader::mouseReleaseEvent(QMouseEvent* pEvent) {
++    QHeaderView::mouseReleaseEvent(pEvent);
++    const bool changed = m_changedWhilePressed;
++    m_pressed = false;
++    m_changedWhilePressed = false;
++    if (changed) {
++        // One save for the whole drag.
++        saveSharedColumns();
++    }
++}
++
++void WTrackTableViewHeader::saveSharedColumns() {
++    TrackModel* pTrackModel = getTrackModel();
++    if (!pTrackModel || !hasSharedStore() || m_applyingShared) {
++        return;
++    }
++    QList<MixpiSharedColumns::Column> own;
++    for (int visual = 0; visual < count(); ++visual) {
++        const int column = logicalIndex(visual);
++        if (pTrackModel->isColumnInternal(column)) {
++            continue;
++        }
++        const QString name = model()->headerData(
++                                            column, Qt::Horizontal, TrackModel::kHeaderNameRole)
++                                     .toString();
++        if (name.isEmpty()) {
++            continue;
++        }
++        const bool hidden = isSectionHidden(column);
++        // The full-width size while the table is fitted, never the fitted one.
++        int size = m_fullWidth ? m_fullWidth(column) : -1;
++        if (size <= 0) {
++            size = hidden ? getWidthOfHiddenColumn(column) : sectionSize(column);
++        }
++        if (size <= 0) {
++            size = model()->headerData(column, orientation(), TrackModel::kHeaderWidthRole).toInt();
++        }
++        own.append({name, hidden, size});
++    }
++    if (!MixpiSharedColumns::anyShown(own)) {
++        return;
++    }
++    const QString before = sharedStore().load();
++    const QString after = MixpiSharedColumns::serialize(
++            MixpiSharedColumns::merge(MixpiSharedColumns::parse(before), own));
++    if (after == before) {
++        return;
++    }
++    sharedStore().save(after);
++    const auto headers = openHeaders();
++    for (const auto& header : headers) {
++        if (header && header != this) {
++            header->applySharedFromOtherTable();
++        }
++    }
++}
++
++void WTrackTableViewHeader::applySharedFromOtherTable() {
++    if (!getTrackModel()) {
++        return;
++    }
++    if (restoreSharedColumns()) {
++        syncColumnCheckBoxes();
++        updateStretchColumn();
++        emit sharedColumnsApplied();
++    }
++}
++
++void WTrackTableViewHeader::syncColumnCheckBoxes() {
++    for (auto choice = m_columnCheckBoxes.begin(); choice != m_columnCheckBoxes.end(); ++choice) {
++        const QSignalBlocker blocker(choice.value());
++        choice.value()->setChecked(!isSectionHidden(choice.key()));
++    }
++}
++
++bool WTrackTableViewHeader::restoreSharedColumns() {
++    TrackModel* pTrackModel = getTrackModel();
++    if (!pTrackModel || !hasSharedStore()) {
++        return false;
++    }
++    auto& store = sharedStore();
++    QString value = store.load();
++    if (value.isEmpty() && store.firstRun) {
++        // The first time: the shared setup starts from This Pi > Tracks'.
++        const QString tracks = store.firstRun();
++        if (!tracks.isEmpty() && HeaderViewState(tracks).healthy()) {
++            const auto columns = MixpiSharedColumns::parse(tracks);
++            if (MixpiSharedColumns::anyShown(columns)) {
++                value = MixpiSharedColumns::serialize(columns);
++                store.save(value);
++            }
++        }
++    }
++    const auto shared = MixpiSharedColumns::parse(value);
++    if (!MixpiSharedColumns::anyShown(shared)) {
++        return false;
++    }
++    m_applyingShared = true;
++    // The table's own defaults first: they place the columns the shared
++    // setup does not have (Filename in a folder).
++    loadDefaultHeaderState();
++    QStringList order;
++    QMap<QString, int> columnOf;
++    for (int visual = 0; visual < count(); ++visual) {
++        const int column = logicalIndex(visual);
++        if (pTrackModel->isColumnInternal(column)) {
++            continue;
++        }
++        const QString name = model()->headerData(
++                                            column, Qt::Horizontal, TrackModel::kHeaderNameRole)
++                                     .toString();
++        if (name.isEmpty() || columnOf.contains(name)) {
++            continue;
++        }
++        order.append(name);
++        columnOf.insert(name, column);
++    }
++    const QStringList arranged = MixpiSharedColumns::arrange(order, shared);
++    for (int position = 0; position < arranged.size(); ++position) {
++        const int column = columnOf.value(arranged.at(position));
++        moveSection(visualIndex(column), position);
++    }
++    for (const auto& entry : shared) {
++        const auto it = columnOf.constFind(entry.name);
++        if (it == columnOf.constEnd()) {
++            continue; // a column this table does not have
++        }
++        const int column = it.value();
++        setSectionHidden(column, entry.hidden);
++        const int size = std::max(entry.size, WTTVH_MINIMUM_SECTION_SIZE);
++        resizeSection(column, size);
++        if (entry.hidden) {
++            m_hiddenColumnSizes.insert(column, size);
++        } else {
++            m_hiddenColumnSizes.remove(column);
++        }
++    }
++    bool shown = false;
++    for (int column : std::as_const(columnOf)) {
++        shown = shown || !isSectionHidden(column);
++    }
++    if (!shown) {
++        // None of the shared columns shows here: the table's defaults.
++        loadDefaultHeaderState();
++    }
++    m_applyingShared = false;
++    return true;
+ }
+ 
+ void WTrackTableViewHeader::contextMenuEvent(QContextMenuEvent* pEvent) {
+@@ -281,6 +489,19 @@ void WTrackTableViewHeader::saveHeaderState() {
+     if (!pTrackModel) {
+         return;
+     }
++    if (hasSharedStore()) {
++        // Build F: the columns are shared and saved on each change; only
++        // this list's sort is saved here, when the list goes away (as the
++        // whole header was before).
++        mixxx::library::HeaderViewState sort;
++        sort.set_sort_indicator_shown(isSortIndicatorShown());
++        if (isSortIndicatorShown()) {
++            sort.set_sort_indicator_section(sortIndicatorSection());
++            sort.set_sort_order(static_cast<int>(sortIndicatorOrder()));
++        }
++        pTrackModel->setModelSetting(kSortSetting, HeaderViewState(sort).saveState());
++        return;
++    }
+     // Convert the QByteArray to a Base64 string and save it.
+     HeaderViewState view_state(*this);
+     pTrackModel->setModelSetting("header_state_pb", view_state.saveState());
+@@ -290,6 +511,49 @@ void WTrackTableViewHeader::saveHeaderState() {
+ void WTrackTableViewHeader::restoreHeaderState() {
+     TrackModel* pTrackModel = getTrackModel();
+ 
++    if (!pTrackModel) {
++        return;
++    }
++    if (!hasSharedStore()) {
++        restoreLegacyHeaderState();
++        return;
++    }
++    if (!restoreSharedColumns()) {
++        // No shared setup yet and none from This Pi > Tracks: this list's
++        // own, until the first change.
++        restoreLegacyHeaderState();
++    }
++    restoreSort();
++}
++
++void WTrackTableViewHeader::restoreSort() {
++    TrackModel* pTrackModel = getTrackModel();
++    if (!pTrackModel) {
++        return;
++    }
++    // This list's sort; before its first save, the one its old header
++    // state held.
++    QString sort = pTrackModel->getModelSetting(kSortSetting);
++    if (sort.isEmpty()) {
++        sort = pTrackModel->getModelSetting("header_state_pb");
++    }
++    if (sort.isEmpty()) {
++        return;
++    }
++    mixxx::library::HeaderViewState state;
++    const QByteArray bytes = QByteArray::fromBase64(sort.toLatin1());
++    if (!state.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size()))) {
++        return;
++    }
++    if (state.sort_indicator_shown() && state.sort_indicator_section() >= 0 &&
++            state.sort_indicator_section() < count()) {
++        setSortIndicator(state.sort_indicator_section(),
++                static_cast<Qt::SortOrder>(state.sort_order()));
++    }
++}
++
++void WTrackTableViewHeader::restoreLegacyHeaderState() {
++    TrackModel* pTrackModel = getTrackModel();
+     if (!pTrackModel) {
+         return;
+     }
+@@ -375,6 +639,8 @@ void WTrackTableViewHeader::showColumnArrangement() {
+         }
+         updateStretchColumn();
+         saveHeaderState();
++        // Build F: every table gets the change, on disk within a second.
++        saveSharedColumns();
+     });
+ }
+ 
+@@ -422,6 +688,7 @@ void WTrackTableViewHeader::showOrHideColumn(int column) {
+         }
+     }
+     updateStretchColumn();
++    saveSharedColumns();
+ }
+ 
+ int WTrackTableViewHeader::getWidthOfHiddenColumn(int column) const {
+diff --git a/src/widget/wtracktableviewheader.h b/src/widget/wtracktableviewheader.h
+index d2da9fd..291579f 100644
+--- a/src/widget/wtracktableviewheader.h
++++ b/src/widget/wtracktableviewheader.h
+@@ -3,6 +3,7 @@
+ #include <QHeaderView>
+ #include <QMap>
+ #include <QMenu>
++#include <functional>
+ 
+ #include "proto/headers.pb.h"
+ 
+@@ -73,10 +74,39 @@ class WTrackTableViewHeader : public QHeaderView {
+ 
+     int getWidthOfHiddenColumn(int column) const;
+ 
++    // Build F (spec 2c): one column setup (which columns show, their order
++    // and widths) for every track table, kept outside the lists. Without a
++    // store each list keeps its own header_state_pb, as in stock Mixxx.
++    struct SharedStore {
++        // The shared setup, or a null string before the first one.
++        std::function<QString()> load;
++        // Called once per change; the store writes it to disk.
++        std::function<void(const QString&)> save;
++        // The first time: This Pi > Tracks' own header_state_pb.
++        std::function<QString()> firstRun;
++    };
++    static void setSharedStore(SharedStore store);
++    static bool hasSharedStore();
++    // While the table is fitted (Sources open) a column's full-width size,
++    // else -1: the shared setup gets the full widths, never the fitted ones.
++    void setFullWidthSource(std::function<int(int)> source);
++    // Saves the shared setup after a change by the user (a drag in the
++    // header, Arrange columns, the header menu) and applies it to the other
++    // open tables.
++    void saveSharedColumns();
++
++  signals:
++    // Another table changed the shared setup and this one now shows it.
++    void sharedColumnsApplied();
++
+   protected:
+     // Runs when the table lays the header out (also while it is hidden,
+     // when no resize event arrives).
+     void updateGeometries() override;
++    // A drag that moves or resizes a column saves once, when it ends.
++    void mousePressEvent(QMouseEvent* event) override;
++    void mouseReleaseEvent(QMouseEvent* event) override;
++    void mouseDoubleClickEvent(QMouseEvent* event) override;
+ 
+   private slots:
+     void showOrHideColumn(int);
+@@ -85,10 +115,19 @@ class WTrackTableViewHeader : public QHeaderView {
+     int hiddenCount();
+     void clearActions();
+     TrackModel* getTrackModel();
++    bool restoreSharedColumns();
++    void restoreLegacyHeaderState();
++    void restoreSort();
++    void applySharedFromOtherTable();
++    void syncColumnCheckBoxes();
+ 
+     QMenu m_menu;
+     QMap<int, QCheckBox*> m_columnCheckBoxes;
+     QMap<int, int> m_hiddenColumnSizes;
+     bool m_updatingStretch = false;
+     bool m_stretchPending = false;
++    std::function<int(int)> m_fullWidth;
++    bool m_pressed = false;
++    bool m_changedWhilePressed = false;
++    bool m_applyingShared = false;
+ };

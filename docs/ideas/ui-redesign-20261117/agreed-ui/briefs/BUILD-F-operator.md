@@ -2,7 +2,7 @@
 
 Read `BUILD-C-operator.md`, `BUILD-D-operator.md` and `BUILD-E-operator.md` (same folder) first. Every rule there holds. Build E's kit is your method: `deploy/test-image-20261118f/` (`BUILD.md`, `UPDATE.md`, `DEPLOY-FILES.txt`, `logs/`, including `mac-space-watch.sh`). Only these change:
 
-- **One pi-gen run only, the 6th.** The owner approved it after council round 2 ("do 2"; spec 2b, plan 12.6). If it fails, stop and report; do not start another.
+- **one pi-gen run only, the 7th.** The owner approved it after council round 2 ("do 2"; spec 2b, plan 12.6). If it fails, stop and report; do not start another.
 - **Commit:** the one the orchestrator names. **Patches: 53**, build E's 52 plus `mixxx-shared-columns.patch`.
 - **Names:** workspace `/srv/uiF-20261118`, image `mixpi-test-20261118f`, `IMG_DATE=2026-11-18`, kit `deploy/test-image-20261118f/`. Controlled media OFF, no `MIXPI_MEDIA_EJECT`. ccache: copy `/srv/uiE-20261118/src/.ccache` (read only).
 - **Diffs:** image E → image F (`/srv/uiE-20261118/manifest-e.txt`, or whatever build E named it), and card → image F. The card is image E plus `/etc/mixpi/media-eject`.

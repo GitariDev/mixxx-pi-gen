@@ -1592,7 +1592,9 @@ class PerformanceSkinTests(unittest.TestCase):
         tokens = set(re.findall(r'#[0-9a-f]{6}', (ROOT / 'docs/ideas/ui-redesign-20261117/agreed-ui/design/'
                                                   'tokens.css').read_text().lower()))
         derived = {'#6d8349', '#427086', '#426790', '#8c563d', '#457653', '#857a41', '#263b51', '#5b6472'}
-        native = {'#ffffff'}  # the selected track row's text (pioneered-touch.qss)
+        # The library table's rows: layout.css .mxl-tbl draws them on #000 (spec 2b).
+        derived.add('#000000')
+        native = {'#ffffff'}
         lit = {(163, 196, 94), (90, 164, 196), (91, 149, 212), (214, 120, 74), (95, 174, 110),
                (203, 181, 81), (223, 163, 58), (208, 87, 77), (13, 16, 20), (5, 7, 9)}
         for name in ('mixpi-performance.qss', 'pioneered-touch.qss', 'pioneered-menus.qss'):

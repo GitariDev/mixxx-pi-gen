@@ -132,11 +132,24 @@
     border: 0px;
 }
 
-/* One dark selection bar (the mockups' selected row: deck 1 at 32% over the
- * page); the current-cell outline takes the same colour, so the selected row
- * has no second frame. */
+/* The library tables (Tracks, Load sample, the table beside Sources) in the
+ * mockups' colours (m-tracks.png, m-loadsample.png; agreed-ui layout.css
+ * .mxl-tbl and .mxl-row): rows on #000 with every other row in --mx-surface
+ * #161a20, text in --mx-text, and the selected row deck 1 at 32% over the
+ * page (#263b51) with the same text. This replaces Pioneered's #32323c
+ * stripes, white text and light selection (spec 2b). */
+#LibraryWrapper QTableView {
+    background-color: #000000;
+    alternate-background-color: #161a20;
+    color: #e4e7ec;
+    selection-background-color: #263b51;
+    selection-color: #e4e7ec;
+}
+
+/* One dark selection bar; the current-cell outline takes the same colour,
+ * so the selected row has no second frame. */
 #LibraryWrapper WTrackTableView {
     selection-background-color: #263b51;
-    selection-color: #ffffff;
+    selection-color: #e4e7ec;
     qproperty-focusBorderColor: #263b51;
 }

@@ -7,6 +7,7 @@ unmodified checkout; the test works on a temporary copy.
 
 import importlib.util
 import os
+import re
 from pathlib import Path
 import runpy
 import shutil
@@ -211,8 +212,19 @@ UnrelatedValue preserve this exactly
         table = rule("#LibraryWrapper WTrackTableView")
         # The mockups' selected row: deck 1 at 32% over the page colour.
         self.assertIn("selection-background-color: #263b51;", table)
-        self.assertIn("selection-color: #ffffff;", table)
+        self.assertIn("selection-color: #e4e7ec;", table)
         self.assertIn("qproperty-focusBorderColor: #263b51;", table)
+        # Spec 2b: every library table (Tracks, Load sample, the table beside
+        # Sources) in the mockups' colours (layout.css .mxl-tbl/.mxl-row): #000
+        # rows, --mx-surface #161a20 alternate rows, --mx-text, and the dark
+        # selection. It overrides Pioneered's #32323c stripes, white text and
+        # light selection, which come earlier in the file.
+        rows = rule("#LibraryWrapper QTableView")
+        for declaration in ("background-color: #000000;", "alternate-background-color: #161a20;",
+                            "color: #e4e7ec;", "selection-background-color: #263b51;",
+                            "selection-color: #e4e7ec;"):
+            self.assertIn(declaration, rows)
+        self.assertNotIn("#32323c", re.sub(r"/\*.*?\*/", "", block, flags=re.S))
         # The managed block is last, so it overrides the upstream light selection.
         self.assertTrue(styles.rstrip().endswith(PATCH.STYLE_END))
 

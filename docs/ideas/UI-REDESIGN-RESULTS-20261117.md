@@ -298,3 +298,12 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
 - **Gates at `ee024dd`:** Mac suite OK (150 platform skips); native gate 242/242, 0 skips.
 - **In place on build D** (`buildD-inplace-2/`): the three skin tools from `ee024dd` installed, and the skin regenerated from the originals. Checked on the card: the red REC dot, EXIT LOOP and RELOOP at rest with a 4-beat loop on, and the darker alternate rows.
 - **Card note:** the owner was playing on the card during the in-place installs ("I was using the deck"). The deck-time change seen then (REMAINING to ELAPSED) was the owner's own, not a bug, and the owner's setting is kept. The owner: "Don't let me interrupt. I'll stop you if i need too."
+
+## Build E (2026-11-18)
+
+- **Build:** operator Claude Opus 5.5 medium, one pi-gen run (the 6th, owner-approved) from `c87fff8`.
+  - Exit 0 in 10 m 36 s (769 of 790 ccache hits). 52 patches. `.deb` `5583ca72…`.
+  - Every check passes. Image D → E changed exactly the expected files.
+  - Mac free space: 31 GiB at the start, 15 GiB at the lowest, 30 GiB at the end.
+  - Kit: `deploy/test-image-20261118e/`.
+- **In-place update** (orchestrator, `buildE-update/`): steps 0-9 all pass. The three skin tools were already at `c87fff8`'s bytes from the in-place install. The skin tree is as expected. The eject gate and the backlight rule are unchanged.

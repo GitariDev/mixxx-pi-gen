@@ -286,3 +286,15 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
 - Build E (the 6th pi-gen run) carries the edge after OPEN and BROWSE, and "Stop it, then clear" for a ticked pad that is playing.
 - The skin repairs go in too.
 - The owner session runs after build E.
+
+### Wave E1 (2026-11-18 afternoon)
+
+- **Builders** (Claude Opus 5.5 medium):
+  - N-E `83174c8`, `54a8256`:
+    - The Sources menu follows a drive opened with OPEN or BROWSE. The cause: `featureSelect` moved the sidebar's current row, but the menu's own source, BACK floor and place stayed on the last source picked in the menu.
+    - A ticked playing pad is stopped, then emptied.
+  - S6 `b9ab450`, `8d7ecdd`, `ee024dd`: the library tables take the mockups' row colours (`#000`, alternate rows `#161a20`, text `#e4e7ec`, selected `#263b51`); EXIT LOOP and RELOOP stay at rest while a loop is on; the REC dot is red `#d0574d`.
+  - Registration by the orchestrator: `db4beb9` (52 patches).
+- **Gates at `ee024dd`:** Mac suite OK (150 platform skips); native gate 242/242, 0 skips.
+- **In place on build D** (`buildD-inplace-2/`): the three skin tools from `ee024dd` installed, and the skin regenerated from the originals. Checked on the card: the red REC dot, EXIT LOOP and RELOOP at rest with a 4-beat loop on, and the darker alternate rows.
+- **Card note:** the owner was playing on the card during the in-place installs ("I was using the deck"). The deck-time change seen then (REMAINING to ELAPSED) was the owner's own, not a bug, and the owner's setting is kept. The owner: "Don't let me interrupt. I'll stop you if i need too."

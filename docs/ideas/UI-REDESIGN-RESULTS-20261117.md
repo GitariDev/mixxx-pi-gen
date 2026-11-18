@@ -307,3 +307,27 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
   - Mac free space: 31 GiB at the start, 15 GiB at the lowest, 30 GiB at the end.
   - Kit: `deploy/test-image-20261118e/`.
 - **In-place update** (orchestrator, `buildE-update/`): steps 0-9 all pass. The three skin tools were already at `c87fff8`'s bytes from the in-place install. The skin tree is as expected. The eject gate and the backlight rule are unchanged.
+- **Acceptance E** (tester Claude Opus 5.5 medium, `acceptance-E/ACCEPTANCE.md`): **25 checks, 23 PASS, 2 FAIL, 0 BLOCKED.**
+  - **"FAIL" 1, the edge after OPEN:** when the menu was last left at its top level, it reopens at the top level with the edge on GANDER1. When it was last inside a place, it reopens inside "GANDER1 › rekordbox". Spec 2b asks for the edge (and the place, when there is one) on the drive, so the orchestrator counts this as **PASS by spec 2b**; the tester applied the brief's stricter step.
+  - **FAIL 2, RELOOP's pressed look:** RELOOP never shows it. A press starts the loop at once, and RELOOP is disabled while a loop runs (build B's behaviour). Minor and listed.
+  - **Seen once, not reproduced in four tries:** after ✕ in Edit sources, the Tracks table kept its narrowed columns until a restart.
+  - **PASS:**
+    - stop, then clear (pad 3 stopped and emptied, pad 4 kept playing, sample files byte-identical);
+    - the red REC dot, with REC and its states working;
+    - EXIT LOOP and RELOOP at rest with a loop on;
+    - the table colours sampled from shots;
+    - saves within 1 s;
+    - the ★ start opening GANDER1;
+    - the child rows;
+    - OPEN switching to Tracks.
+  - **CPU:** two decks plus Reverb averaged 4.08 % (build D: 4.33 %), 0 underruns, 66-70 °C, `throttled=0x0`.
+  - **The owner's own changes**, made while they played between 13:23 and 16:31 and kept:
+    - Tracks starts at `group:drives`;
+    - Playlists, Crates, iTunes and Serato are on, in a new source order;
+    - deck time ELAPSED;
+    - key-lock engine RB R3;
+    - extra table columns on GANDER1.
+  - **Side effect:** the tester's 4-beat loop on "Your Body" replaced that track's stored loop. The stored loop at the track's start came from this climb's own loop tests (conformance shots), so no owner data is known to be lost.
+- **Conformance pass** (orchestrator, `acceptance-E/conformance/e*.png`, pairs in `acceptance-E/pairs/`): every spec screen against its mockup.
+  - Tracks, the Sources menu (in the owner's new order), Edit sources (★ on GANDER1, child rows), inside the drive ("GANDER1 › rekordbox" with counts), the tool panel, Sampler, Clear samples, Load sample, FX, Settings and the Media page all match, in build B's fonts.
+  - **Owner question:** with the extra columns the owner added to GANDER1's table (#, PREVIEW, DURATION and others), the narrowed table cannot fit seven columns in 480 px, so headers are cut and a sideways bar shows. With the mockup's four columns it fits.

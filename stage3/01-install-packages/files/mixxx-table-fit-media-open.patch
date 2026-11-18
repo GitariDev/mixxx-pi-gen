@@ -1,0 +1,416 @@
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+index 2e4c991..a09f78a 100644
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -35,6 +35,7 @@
+ #include "library/mixpimediadialog.h"
+ #include "library/mixpimediaactivity.h"
+ #include "library/mixpimediapage.h"
++#include "library/mixpiopentracks.h"
+ #include "library/mixpistartdrive.h"
+ #include "library/media/mediause.h"
+ #include "mixer/playerinfo.h"
+@@ -881,7 +882,12 @@ class MixpiMedia final : public QObject {
+             }
+             guard->m_opened->insert(token);
+             if (guard->m_page && guard->m_page->isVisible()) {
+-                guard->m_page->closePage();
++                if (start) {
++                    guard->m_page->closePage();
++                } else {
++                    // OPEN or BROWSE: then Tracks shows (spec s13).
++                    mixpiClosePageToTracks(guard->m_page.data());
++                }
+             }
+             guard->refresh();
+             guard->runAutoLoads();
+diff --git a/src/library/mixpiopentracks.h b/src/library/mixpiopentracks.h
+new file mode 100644
+index 0000000..5f92ebb
+--- /dev/null
++++ b/src/library/mixpiopentracks.h
+@@ -0,0 +1,16 @@
++#pragma once
++
++#include "control/controlobject.h"
++#include "widget/mixpipage.h"
++
++// Spec s13: OPEN (and BROWSE) read the drive, "It then switches to Tracks."
++// The drive's source asks for Tracks ([Tab],library) while the Media page is
++// still open. The skin hides its page stack under the Media page
++// ([MixPi],screen 2), and a hidden WWidgetStack ignores its page triggers;
++// when the page closes (screen 0) the stack shows again on [Tab],current,
++// the tab the page was opened from (build C, acceptance R-4). So the page
++// closes first, and then Tracks is asked for with the stack showing.
++inline void mixpiClosePageToTracks(MixpiPage* page) {
++    page->closePage();
++    ControlObject::set(ConfigKey(QStringLiteral("[Tab]"), QStringLiteral("library")), 1);
++}
+diff --git a/src/widget/mixpitablefit.h b/src/widget/mixpitablefit.h
+new file mode 100644
+index 0000000..1629666
+--- /dev/null
++++ b/src/widget/mixpitablefit.h
+@@ -0,0 +1,239 @@
++#pragma once
++
++#include <QHash>
++#include <QHeaderView>
++#include <QList>
++#include <QPointer>
++#include <QStyle>
++#include <QStyleOptionHeader>
++#include <QTableView>
++#include <algorithm>
++#include <functional>
++
++// Build D (agreed UI s5, spec 2a): with Sources open the track table is
++// narrowed to x 0-480. Its columns then fit its width, as m-sources-top.png
++// and m-sources-sub.png draw them: TITLE, ARTIST, BPM and KEY all show, with
++// no sideways scroll bar, the text cut with "…". TITLE takes half the width
++// (235 of 457 px in the mockup), the other columns share the rest in
++// proportion to their full-width sizes, none narrower than its header label
++// and 40 px (KEY in the mockup, 41 px with its whole label). When the table
++// widens again every column gets its full-width size back exactly.
++//
++// The full-width sizes stay the saved ones: the fitted sizes are never saved
++// (withFullWidths()), and at the table's full width nothing changes (the
++// table-columns behaviour, including a sideways bar when the user made the
++// columns wider than the table). Load sample shows the same table, so it fits
++// the same way.
++class MixpiTableFit {
++  public:
++    static constexpr int kColumnMinimum = 40;
++    // LibraryInterface::kStretchColumnMinimumWidth (checked in wtracktableview.cpp).
++    static constexpr int kTitleMinimum = 160;
++    // The header's stretch column (TITLE, or Filename in Browse), or -1.
++    using StretchColumn = std::function<int(QHeaderView*)>;
++
++    MixpiTableFit(QTableView* view, StretchColumn stretchColumn)
++            : m_view(view), m_stretchColumn(std::move(stretchColumn)) {
++    }
++
++    bool active() const {
++        return m_active;
++    }
++    // A column's full-width size while the table is fitted.
++    int fullWidth(int column) const {
++        return m_full.value(column, -1);
++    }
++
++    // Call after the view is resized or a new header is set.
++    void fit() {
++        auto* header = m_view ? m_view->horizontalHeader() : nullptr;
++        if (!header || m_applying) {
++            return;
++        }
++        if (header != m_header) {
++            // A new header (another list) restored its saved sizes.
++            m_header = header;
++            m_full.clear();
++            m_active = false;
++            m_titleFull = -1;
++        }
++        if (m_paused || !m_view->isVisible()) {
++            return;
++        }
++        const int available = m_view->viewport()->width();
++        if (available <= 0) {
++            return;
++        }
++        // The full width: the widest the table has been since its window
++        // got its width (Mixxx's window can start wider than the screen).
++        const int windowWidth = m_view->window()->width();
++        if (windowWidth != m_windowWidth) {
++            m_windowWidth = windowWidth;
++            m_widest = 0;
++        }
++        m_widest = std::max(m_widest, available);
++        const int title = m_stretchColumn ? m_stretchColumn(header) : -1;
++        const bool titleShown = title >= 0 && title < header->count() && !header->isSectionHidden(title);
++        QList<int> others;
++        int full = 0;
++        for (int visual = 0; visual < header->count(); ++visual) {
++            const int column = header->logicalIndex(visual);
++            if (column == title || header->isSectionHidden(column)) {
++                continue;
++            }
++            others.append(column);
++            full += m_active && m_full.contains(column) ? m_full.value(column) : header->sectionSize(column);
++        }
++        const int titleMinimum = titleShown ? kTitleMinimum : 0;
++        // Narrowed (Sources open over it): narrower than its full width. At
++        // the full width, and wherever the columns fit, the table is as it
++        // was.
++        const bool narrowed = available < m_widest;
++        if (!narrowed || full + titleMinimum <= available) {
++            if (m_active) {
++                restore();
++            } else if (titleShown && full + header->sectionSize(title) <= available) {
++                m_titleFull = header->sectionSize(title);
++            }
++            return;
++        }
++        if (!m_active) {
++            m_full.clear();
++            m_active = true;
++        }
++        for (int column : std::as_const(others)) {
++            if (!m_full.contains(column)) {
++                m_full.insert(column, header->sectionSize(column));
++            }
++        }
++        int budget = available - (titleShown ? std::max(titleMinimum, available / 2) : 0);
++        QHash<int, int> floors;
++        int floorTotal = 0;
++        for (int column : std::as_const(others)) {
++            floors.insert(column,
++                    std::min(m_full.value(column),
++                            std::max(kColumnMinimum, labelWidth(header, column, m_view->font()))));
++            floorTotal += floors.value(column);
++        }
++        // Many columns: TITLE gives up room down to its minimum first.
++        budget = std::max(budget, std::min(floorTotal, available - titleMinimum));
++        const auto widths = share(others, floors, budget);
++        m_applying = true;
++        for (auto width = widths.constBegin(); width != widths.constEnd(); ++width) {
++            if (header->sectionSize(width.key()) != width.value()) {
++                header->resizeSection(width.key(), width.value());
++            }
++        }
++        m_applying = false;
++    }
++
++    // Arrange columns is open: the table shows (and saves) its full-width
++    // sizes until resume().
++    void pause() {
++        m_paused = true;
++        if (m_active) {
++            restore();
++        }
++    }
++    void resume() {
++        m_paused = false;
++        fit();
++    }
++
++    // Saves the header with its full-width sizes, never the fitted ones.
++    // The header is left at its full-width sizes; fit() fits it again.
++    void withFullWidths(QHeaderView* header, const std::function<void()>& save) {
++        if (m_active && header == m_header) {
++            restore();
++        }
++        save();
++    }
++
++    // The width a column's header label needs: the stylesheet's section
++    // padding and border, no sort arrow, the text measured in the table's
++    // font (the stylesheet gives the section its own font, which the style
++    // does not measure; the table's is not smaller).
++    static int labelWidth(QHeaderView* header, int column, const QFont& font) {
++        QStyleOptionHeader option;
++        option.initFrom(header);
++        option.fontMetrics = QFontMetrics(font);
++        option.orientation = Qt::Horizontal;
++        option.section = column;
++        option.text = header->model()
++                ? header->model()->headerData(column, Qt::Horizontal, Qt::DisplayRole).toString()
++                : QString();
++        option.sortIndicator = QStyleOptionHeader::None;
++        return header->style()->sizeFromContents(QStyle::CT_HeaderSection, &option, QSize(), header).width();
++    }
++
++  private:
++    // The columns' sizes in proportion to their full-width sizes, in budget
++    // px, none below its floor.
++    QHash<int, int> share(const QList<int>& columns, const QHash<int, int>& floors, int budget) const {
++        QHash<int, int> widths;
++        QList<int> pool = columns;
++        int left = budget;
++        bool clamped = true;
++        while (clamped && !pool.isEmpty()) {
++            clamped = false;
++            qint64 total = 0;
++            for (int column : std::as_const(pool)) {
++                total += m_full.value(column);
++            }
++            for (int column : std::as_const(pool)) {
++                const int floor = floors.value(column);
++                const int width = total > 0 ? static_cast<int>(m_full.value(column) * qint64(left) / total) : 0;
++                if (width < floor) {
++                    widths.insert(column, floor);
++                    left -= floor;
++                    pool.removeOne(column);
++                    clamped = true;
++                    break;
++                }
++            }
++        }
++        qint64 total = 0;
++        for (int column : std::as_const(pool)) {
++            total += m_full.value(column);
++        }
++        for (int column : std::as_const(pool)) {
++            widths.insert(column,
++                    total > 0 ? static_cast<int>(m_full.value(column) * qint64(std::max(0, left)) / total) : 0);
++        }
++        return widths;
++    }
++
++    void restore() {
++        if (!m_header) {
++            m_active = false;
++            m_full.clear();
++            return;
++        }
++        m_applying = true;
++        for (auto width = m_full.constBegin(); width != m_full.constEnd(); ++width) {
++            if (m_header->sectionSize(width.key()) != width.value()) {
++                m_header->resizeSection(width.key(), width.value());
++            }
++        }
++        // TITLE last: its full-width size, as it was before the fit (the
++        // stretch gives it the rest again on the next layout).
++        const int title = m_stretchColumn ? m_stretchColumn(m_header) : -1;
++        if (title >= 0 && m_titleFull > 0 && m_header->sectionSize(title) != m_titleFull) {
++            m_header->resizeSection(title, m_titleFull);
++        }
++        m_applying = false;
++        m_full.clear();
++        m_active = false;
++    }
++
++    QPointer<QTableView> m_view;
++    StretchColumn m_stretchColumn;
++    QPointer<QHeaderView> m_header;
++    QHash<int, int> m_full; // column -> full-width size, while fitted
++    int m_titleFull = -1;
++    int m_widest = 0;
++    int m_windowWidth = -1;
++    bool m_active = false;
++    bool m_paused = false;
++    bool m_applying = false;
++};
+diff --git a/src/widget/wtracktableview.cpp b/src/widget/wtracktableview.cpp
+index ac8ff39..5aeb4b0 100644
+--- a/src/widget/wtracktableview.cpp
++++ b/src/widget/wtracktableview.cpp
+@@ -1,5 +1,6 @@
+ #include "widget/wtracktableview.h"
+ 
++#include <QDialog>
+ #include <QDrag>
+ #include <QModelIndex>
+ #include <QScrollBar>
+@@ -39,6 +40,8 @@ const ConfigKey kVScrollBarPosConfigKey{
+         QStringLiteral("[Library]"),
+         QStringLiteral("VScrollBarPos")};
+ 
++static_assert(MixpiTableFit::kTitleMinimum == LibraryInterface::kStretchColumnMinimumWidth);
++
+ } // anonymous namespace
+ 
+ WTrackTableView::WTrackTableView(QWidget* pParent,
+@@ -55,7 +58,11 @@ WTrackTableView::WTrackTableView(QWidget* pParent,
+           m_trackMissingColor(QColor(kDefaultTrackMissingColor)),
+           m_sorting(false),
+           m_selectionChangedSinceLastGuiTick(true),
+-          m_loadCachedOnly(false) {
++          m_loadCachedOnly(false),
++          m_columnFit(this, [](QHeaderView* pHeader) {
++              auto* pTrackHeader = qobject_cast<WTrackTableViewHeader*>(pHeader);
++              return pTrackHeader ? pTrackHeader->stretchColumnIndex() : -1;
++          }) {
+     // Connect slots and signals to make the world go 'round.
+     connect(this, &WTrackTableView::doubleClicked, this, &WTrackTableView::slotMouseDoubleClicked);
+ 
+@@ -81,7 +88,8 @@ WTrackTableView::~WTrackTableView() {
+     WTrackTableViewHeader* pHeader =
+             qobject_cast<WTrackTableViewHeader*>(horizontalHeader());
+     if (pHeader) {
+-        pHeader->saveHeaderState();
++        // The full-width column sizes, never the fitted ones (build D).
++        m_columnFit.withFullWidths(pHeader, [pHeader] { pHeader->saveHeaderState(); });
+     }
+ }
+ #ifdef __LINUX__
+@@ -223,7 +231,8 @@ void WTrackTableView::loadTrackModel(QAbstractItemModel* pNewModel, bool restore
+     WTrackTableViewHeader* oldHeader =
+             qobject_cast<WTrackTableViewHeader*>(horizontalHeader());
+     if (oldHeader) {
+-        oldHeader->saveHeaderState();
++        // The full-width column sizes, never the fitted ones (build D).
++        m_columnFit.withFullWidths(oldHeader, [oldHeader] { oldHeader->saveHeaderState(); });
+     }
+ 
+     // rryan 12/2009 : Due to a bug in Qt, in order to switch to a model with
+@@ -360,6 +369,9 @@ void WTrackTableView::loadTrackModel(QAbstractItemModel* pNewModel, bool restore
+ 
+     setVisible(true);
+ 
++    // Build D: the new list's columns fit the table if it is narrowed.
++    m_columnFit.fit();
++
+     // trigger restoring scrollBar position, selection etc.
+     if (restoreState) {
+         restoreCurrentViewState();
+@@ -627,7 +639,17 @@ void WTrackTableView::showTrackMenu(const QPoint pos, const QModelIndex& index)
+             m_pTrackMenu.get(), [this] {
+                 auto* header = qobject_cast<WTrackTableViewHeader*>(horizontalHeader());
+                 if (header) {
++                    // Arrange columns shows and saves the full-width sizes;
++                    // the columns fit again when it closes (build D).
++                    m_columnFit.pause();
+                     header->showColumnArrangement();
++                    auto* dialog = header->findChild<QDialog*>(
++                            QStringLiteral("MixpiColumnArrangement"), Qt::FindDirectChildrenOnly);
++                    if (dialog) {
++                        connect(dialog, &QObject::destroyed, this, [this] { m_columnFit.resume(); });
++                    } else {
++                        m_columnFit.resume();
++                    }
+                 }
+             }, std::move(loadToPad));
+     connect(m_pLibraryActions, &QMenu::aboutToHide, this, [this] {
+@@ -1264,6 +1286,13 @@ void WTrackTableView::keyPressEvent(QKeyEvent* event) {
+ }
+ 
+ void WTrackTableView::resizeEvent(QResizeEvent* event) {
++    resizeKeepingCurrentRow(event);
++    // Build D: the columns fit the narrowed table (Sources open) and get
++    // their full-width sizes back when it widens.
++    m_columnFit.fit();
++}
++
++void WTrackTableView::resizeKeepingCurrentRow(QResizeEvent* event) {
+     // When the tracks view shrinks in height, e.g. when other skin regions expand,
+     // and if the row was visible before resizing, scroll to it afterwards.
+ 
+diff --git a/src/widget/wtracktableview.h b/src/widget/wtracktableview.h
+index 6542d18..8317467 100644
+--- a/src/widget/wtracktableview.h
++++ b/src/widget/wtracktableview.h
+@@ -11,6 +11,7 @@
+ #include "preferences/usersettings.h"
+ #include "util/duration.h"
+ #include "util/parented_ptr.h"
++#include "widget/mixpitablefit.h"
+ #include "widget/wlibrarytableview.h"
+ 
+ class ControlProxy;
+@@ -42,6 +43,7 @@ class WTrackTableView : public WLibraryTableView {
+     void pasteFromSidebar() override;
+     void keyPressEvent(QKeyEvent* event) override;
+     void resizeEvent(QResizeEvent* event) override;
++    void resizeKeepingCurrentRow(QResizeEvent* event);
+     void activateSelectedTrack();
+     void loadSelectedTrackToGroup(const QString& group, bool play);
+     void assignNextTrackColor() override;
+@@ -191,4 +193,7 @@ class WTrackTableView : public WLibraryTableView {
+     ControlProxy* m_pKeyNotation;
+     ControlProxy* m_pSortColumn;
+     ControlProxy* m_pSortOrder;
++
++    // Build D: the columns fit the narrowed table (Sources open).
++    MixpiTableFit m_columnFit;
+ };

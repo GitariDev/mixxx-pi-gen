@@ -155,6 +155,72 @@ def build_insert(target):
     return binary
 
 
+# Build D (R-4, spec s13): OPEN and BROWSE switch to Tracks.
+OPEN_TRACKS = 'mixxx-table-fit-media-open.patch'
+WIDGET_STACK = ('widget/wwidgetstack.h', 'widget/wwidgetstack.cpp')
+BASE_WIDGET = """#pragma once
+#include <QWidget>
+// widget/wbasewidget.h, as WWidgetStack uses it (Init and the tooltip).
+class WBaseWidget {
+  public:
+    explicit WBaseWidget(QWidget* widget) : m_widget(widget) {}
+    virtual ~WBaseWidget() = default;
+    virtual void Init() {}
+    QWidget* toQWidget() { return m_widget; }
+  protected:
+    void updateTooltip() {}
+  private:
+    QWidget* m_widget;
+};
+"""
+
+
+def build_open_tracks(target, fix=True):
+    """The shipped MixpiPage and mixpiClosePageToTracks with the real
+    WWidgetStack (the skin's page stack) and the real control framework.
+
+    fix=False builds the stack without mixxx-table-fit-media-open.patch: the
+    page closes as on build C, which must fail (acceptance C, R-4)."""
+    from native import save_on_change_runner as save
+    names, _ = reconstruct(target, exclude=(OPEN_TRACKS,))
+    if fix:
+        for path in touched(OPEN_TRACKS):
+            try:
+                populate_pinned(target, [path])
+            except subprocess.CalledProcessError:
+                pass  # a new file of this patch
+        subprocess.run(['git', 'apply', str(PATCH_DIR / OPEN_TRACKS)], cwd=target, check=True, timeout=15)
+        names.append(OPEN_TRACKS)
+    print('PATCHES', ' '.join(names), flush=True)
+    populate_pinned(target, ['src/' + name for name in save.PINNED_FILES + list(WIDGET_STACK)])
+    support = target / 'interfaces'
+    for name in save.DOUBLED:
+        (support / name).parent.mkdir(parents=True, exist_ok=True)
+        (support / name).write_text('#pragma once\n#include "save_on_change_doubles.h"\n')
+    for name, text in {**save.DOUBLES, 'widget/wbasewidget.h': BASE_WIDGET}.items():
+        (support / name).parent.mkdir(parents=True, exist_ok=True)
+        (support / name).write_text(text)
+    includes = ['-I' + str(support), '-I' + str(target / 'src'), '-I' + str(ROOT / 'tests/native')]
+    for header in ('control/control.h', 'control/controlobject.h', 'control/controlproxy.h',
+                   'mixer/samplerbank.h', 'widget/wwidgetstack.h'):
+        path = target / 'src' / header
+        subprocess.run([moc_path(), *includes, str(path), '-o', str(path.parent / ('moc_' + path.stem + '.cpp'))],
+                       check=True, timeout=30)
+    doubles_moc = target / 'moc_save_on_change_doubles.cpp'
+    subprocess.run([moc_path(), *includes, str(ROOT / 'tests/native/save_on_change_doubles.h'),
+                    '-o', str(doubles_moc)], check=True, timeout=30)
+    sources = [target / 'src' / name for name in
+               ('preferences/configobject.cpp', 'control/control.cpp', 'control/controlobject.cpp',
+                'control/controlproxy.cpp', 'mixer/samplerbank.cpp', 'widget/wwidgetstack.cpp')] + [doubles_moc]
+    binary = target / 'media-open-tracks-test'
+    command = ['c++', '-std=c++20', '-Wall', '-Wextra', *includes, *[str(source) for source in sources],
+               str(ROOT / 'tests/native/media_open_tracks_test.cpp'), '-o', str(binary), '-pthread',
+               *qt_flags(('QtCore', 'QtGui', 'QtWidgets', 'QtXml'))]
+    print('COMPILE', repr(command), flush=True)
+    subprocess.run(command, check=True, timeout=300)
+    return binary
+
+
 def run(binary, *arguments, qss=QSS, environment_extra=None):
     environment = qt_environment()
     environment['MIXPI_SKIN_QSS'] = qss

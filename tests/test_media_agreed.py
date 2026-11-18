@@ -198,6 +198,35 @@ class MediaAgreedNativeTests(unittest.TestCase):
                          'no drive: the short line No USB drive, without the paragraph'):
                 self.assertIn('PASS ' + name, result.stdout)
 
+    def test_open_and_browse_switch_to_tracks(self):
+        # Build D (spec s13, acceptance C R-4): OPEN and BROWSE read the
+        # drive, then Tracks shows, from any tab; the close X still goes back.
+        with tempfile.TemporaryDirectory(prefix='mixpi-media-open-tracks-') as temporary:
+            binary = runner.build_open_tracks(Path(temporary))
+            result = runner.run(binary)
+            print(result.stdout, result.stderr[-3000:], flush=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr[-3000:])
+            self.assertIn('FAILURES 0', result.stdout)
+            for name in ('the Media page covers the pages (screen 2)',
+                         'OPEN from DECKS: the page closes and Tracks shows',
+                         'OPEN: screen is 0 after the page closes',
+                         'BROWSE from SAMPLER: the page closes and Tracks shows',
+                         'OPEN from FX: Tracks shows',
+                         'OPEN from TRACKS: Tracks stays',
+                         'close: the red X goes back to DECKS, as before'):
+                self.assertIn('PASS ' + name, result.stdout)
+
+    def test_open_returns_to_the_old_tab_without_the_fix(self):
+        # Build C's fault, reproduced with the same fixture.
+        with tempfile.TemporaryDirectory(prefix='mixpi-media-open-baseline-') as temporary:
+            binary = runner.build_open_tracks(Path(temporary), fix=False)
+            result = runner.run(binary)
+            print(result.stdout, result.stderr[-3000:], flush=True)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('FAIL OPEN from DECKS: the page closes and Tracks shows', result.stdout)
+            self.assertIn('FAIL BROWSE from SAMPLER: the page closes and Tracks shows', result.stdout)
+            self.assertIn('PASS close: the red X goes back to DECKS, as before', result.stdout)
+
     def test_drive_insert_saved_and_read_back(self):
         with tempfile.TemporaryDirectory(prefix='mixpi-media-insert-') as temporary:
             target = Path(temporary)

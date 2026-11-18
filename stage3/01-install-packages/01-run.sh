@@ -52,6 +52,8 @@ MIXXX_PATCHES=(
     mixxx-sources-menu-fixes.patch
     mixxx-sources-start-rows.patch
     mixxx-table-fit-media-open.patch
+    mixxx-sources-open-edge.patch
+    mixxx-sampler-clear-playing.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

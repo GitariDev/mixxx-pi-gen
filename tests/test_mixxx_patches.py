@@ -77,6 +77,8 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-sources-menu-fixes.patch",
             "mixxx-sources-start-rows.patch",
             "mixxx-table-fit-media-open.patch",
+            "mixxx-sources-open-edge.patch",
+            "mixxx-sampler-clear-playing.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -96,6 +98,8 @@ PREREQUISITES = {
     "mixxx-sources-menu-fixes.patch": ["mixxx-sources-menu.patch", "mixxx-media-agreed.patch"],
     "mixxx-sources-start-rows.patch": ["mixxx-sources-menu-fixes.patch"],
     "mixxx-table-fit-media-open.patch": ["mixxx-sources-menu-fixes.patch"],
+    "mixxx-sources-open-edge.patch": ["mixxx-sources-start-rows.patch"],
+    "mixxx-sampler-clear-playing.patch": ["mixxx-agreed-controls.patch"],
     "mixxx-scan-strip-fixes.patch": ["mixxx-scan-progress.patch"],
     "mixxx-sources-edit-done.patch": ["mixxx-source-groups.patch"],
     "mixxx-settings-fixes.patch": ["mixxx-performance-settings.patch", "mixxx-acceptance-fixes.patch"],

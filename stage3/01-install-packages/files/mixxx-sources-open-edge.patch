@@ -1,0 +1,72 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+index 4c5730a..a813297 100644
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -730,6 +730,8 @@ QString Library::openRemovableSource(const QJsonObject& volume) {
+         ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
+         // The drive now shows in Tracks: sample mode ends where it is.
+         leaveSampleMode(false);
++        // The menu's current source and place follow the drive (build E).
++        m_pSidebarWidget->followShownSource();
+         // The drive Tracks starts at (★) opens in Tracks without showing it.
+         if (!volume.value(QStringLiteral("mixpiStart")).toBool()) {
+             ControlObject::set(ConfigKey("[Tab]", "library"), 1);
+@@ -787,6 +789,10 @@ std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volum
+                     ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
+                     // The drive now shows in Tracks: sample mode ends where it is.
+                     owner->leaveSampleMode(false);
++                    // The menu's current source and place follow the drive (build E).
++                    if (owner->m_pSidebarWidget) {
++                        owner->m_pSidebarWidget->followShownSource();
++                    }
+                     // The drive Tracks starts at (★) opens in Tracks without showing it.
+                     if (!start) {
+                         ControlObject::set(ConfigKey("[Tab]", "library"), 1);
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index b1bb59d..067cd9c 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -616,6 +616,29 @@ QString WLibrarySidebar::shownSourceTile() const {
+     return shown.isEmpty() ? m_selectedTile : shown;
+ }
+ 
++void WLibrarySidebar::followShownSource() {
++    // The drive's row is current (featureSelect), but the menu still held
++    // the source picked before (This Pi): ☰ reopened inside it, and BACK
++    // made the drive's parent row current, so the edge fell back to This Pi.
++    // The source shown in Tracks is now the menu's source and place too; the
++    // menu keeps its level (inside or at the top). The saved start (★) is
++    // not touched.
++    if (!m_sourceScreen || !groupedTiles || !m_touchNavigation || m_sourcesEditing) {
++        return;
++    }
++    const QModelIndex shown = currentIndex();
++    const QString id = tileOf(shown);
++    if (id.isEmpty()) {
++        return;
++    }
++    if (id != m_selectedTile || !withinSelectedTile()) {
++        openGroupedTile(id, false);
++    }
++    // A list inside the source: its level.
++    m_touchNavigation->reveal(shown);
++    updateSourceChrome();
++}
++
+ void WLibrarySidebar::currentChanged(const QModelIndex& current, const QModelIndex& previous) {
+     QTreeView::currentChanged(current, previous);
+     // The current row follows what Tracks shows (a drive opened from the
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index c7b036f..a425d2f 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -93,6 +93,9 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     // lists Tracks shows (the tile of the current row), else the selected
+     // tile.
+     QString shownSourceTile() const;
++    // Build E (spec 2b): a source opened from outside the menu (OPEN or
++    // BROWSE on the Media page) becomes the menu's current source and place.
++    void followShownSource();
+ 
+     QColor menuBackgroundColor() const {
+         return m_menuBackground;

@@ -1007,6 +1007,115 @@ int main(int argc, char** argv) {
         require(tileNamed(sidebar, "Recordings")->isChecked() && !tileNamed(sidebar, "This Pi")->isChecked(),
                 "going into This Pi and back without picking a list: the edge stays on what Tracks shows");
     }
+    {
+        // Build E (spec 2b, "do 2"; acceptance D repro 1): OPEN or BROWSE on
+        // the Media page after This Pi › TRACKS was picked in the menu. The
+        // drive opens as RekordboxFeature opens it (activateChild, then
+        // featureSelect with the drive's row) while Sources is closed; then
+        // Library::openRemovableSource* has the menu follow it
+        // (mixxx-sources-open-edge.patch; the runner defines
+        // MIXPI_SOURCES_OPEN_EDGE when the patched sidebar has it).
+        auto openFromMedia = [&](const char* step) {
+            const QModelIndex featureDrive = rekordbox.children.index(0, 0);
+            rekordbox.activateChild(featureDrive);
+            emit rekordbox.featureSelect(&rekordbox, featureDrive);
+            // Library::bindSidebarWidget's second selectIndex connect.
+            library.applySidebarSourceVisibility();
+            settle();
+#ifdef MIXPI_SOURCES_OPEN_EDGE
+            sidebar.followShownSource();
+#endif
+            settle();
+            std::cout << "OBSERVE " << step << ": shown '" << shown.toStdString() << "' inside "
+                      << sidebar.isSourceMenuInside() << " place '" << sidebar.sourceCrumb().toStdString()
+                      << "' tile '" << sidebar.selectedSourceTile().toStdString() << "' shown tile '"
+                      << sidebar.shownSourceTile().toStdString() << "'" << std::endl;
+        };
+        auto pickThisPiTracks = [&] {
+            screenControl.setAndConfirm(1);
+            sidebarVisible.setAndConfirm(1);
+            sidebar.show();
+            settle();
+            while (sidebar.isSourceMenuInside()) {
+                back->click();
+                settle();
+            }
+            tileNamed(sidebar, "This Pi")->click();
+            settle();
+            const QModelIndex tracksRow = library.sourceRow("MixxxLibraryFeature");
+            QTest::mouseClick(sidebar.viewport(), Qt::LeftButton, {}, sidebar.visualRect(tracksRow).center());
+            settle();
+            // The skin hides the menu ([MixPi],screen 0).
+            sidebar.hide();
+            settle();
+            return shown == "Tracks" && screenControl.get() == 0;
+        };
+        auto reopen = [&] {
+            screenControl.setAndConfirm(1);
+            sidebarVisible.setAndConfirm(1);
+            sidebar.show();
+            settle();
+        };
+        const QString driveTile = QString("drive:" + QDir::cleanPath(mantacore));
+        const QString savedStart = settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource"));
+        require(pickThisPiTracks(), "repro 1 step 1: This Pi › TRACKS picked in the menu, which closes");
+        openFromMedia("repro 1 step 2 (OPEN)");
+        require(shown == "Rekordbox/MANTACORE", "repro 1 step 2: Tracks shows the drive");
+        reopen();
+        require(sidebar.isSourceMenuInside() && sidebar.selectedSourceTile() == driveTile &&
+                        sidebar.sourceCrumb() == QString::fromUtf8("MANTACORE › rekordbox") &&
+                        place->text() == QString::fromUtf8("MANTACORE › rekordbox") &&
+                        shownRows(sidebar).value(0) == "Tracks",
+                "after OPEN, ☰ reopens inside the drive (MANTACORE › rekordbox), as Tracks shows");
+        if (const QString directory = qEnvironmentVariable("MIXPI_SOURCES_GRAB_DIR"); !directory.isEmpty()) {
+            // Acceptance D repro 1, step 3 (shots/f1-step3-menu.png).
+            screen.grab().save(directory + "/e1-open-edge-menu.png");
+        }
+        back->click();
+        settle();
+        int edges = 0;
+        for (auto* tile : sidebar.sourceTiles()) {
+            edges += tile->isChecked() ? 1 : 0;
+        }
+        require(!sidebar.isSourceMenuInside() && tileNamed(sidebar, "MANTACORE")->isChecked() && edges == 1,
+                "after OPEN, BACK: the top level has the accent edge on the drive only");
+        if (const QString directory = qEnvironmentVariable("MIXPI_SOURCES_GRAB_DIR"); !directory.isEmpty()) {
+            // Acceptance D repro 1, step 4 (shots/f1-step4-top.png).
+            screen.grab().save(directory + "/e1-open-edge-top.png");
+        }
+        // BROWSE (the drive was opened before): the same.
+        require(pickThisPiTracks(), "BROWSE: This Pi › TRACKS picked again");
+        openFromMedia("BROWSE");
+        reopen();
+        back->click();
+        settle();
+        require(tileNamed(sidebar, "MANTACORE")->isChecked() && !tileNamed(sidebar, "This Pi")->isChecked(),
+                "after BROWSE, the top level has the accent edge on the drive");
+        // From the top level (the menu was left at the top level).
+        tileNamed(sidebar, "This Pi")->click();
+        settle();
+        QTest::mouseClick(sidebar.viewport(), Qt::LeftButton, {},
+                sidebar.visualRect(library.sourceRow("MixxxLibraryFeature")).center());
+        settle();
+        sidebar.hide();
+        openFromMedia("OPEN with the menu at This Pi's rows");
+        reopen();
+        require(sidebar.selectedSourceTile() == driveTile && sidebar.rootIndex().isValid() &&
+                        shownRows(sidebar).value(0) == "Tracks",
+                "the place follows the drive: its lists show");
+        // The saved ★ start is not changed by OPEN.
+        require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == savedStart,
+                "OPEN does not change the saved start");
+        // A pick in the menu still wins: This Pi › TRACKS moves the edge back.
+        require(pickThisPiTracks(), "This Pi › TRACKS picked after the drive");
+        reopen();
+        while (sidebar.isSourceMenuInside()) {
+            back->click();
+            settle();
+        }
+        require(tileNamed(sidebar, "This Pi")->isChecked() && !tileNamed(sidebar, "MANTACORE")->isChecked(),
+                "a pick in the menu after OPEN: the edge is on This Pi again");
+    }
     settings.setValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), false);
     library.applySidebarSourceVisibility();
     settle();

@@ -23,6 +23,11 @@ drive row) and Tracks starts there, without rewriting the value; the menu's
 current-row edge follows the source Tracks shows; This Pi's and More's own
 lists come back in Sources edit as indented rows with only ON/OFF; the menu
 rows' title is drawn in the sidebar's own (build B) font.
+
+mixxx-sources-open-edge.patch (build E, spec 2b "do 2"; acceptance D repro
+1): a drive opened from the Media page (OPEN or BROWSE) becomes the menu's
+current source and place: ☰ reopens inside the drive, and the top level has
+the accent edge on the drive row. The saved start (★) is not touched.
 """
 import os
 from pathlib import Path
@@ -38,6 +43,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PATCH = RUNNER.PATCH_DIR / 'mixxx-source-groups.patch'
 FIXES = RUNNER.PATCH_DIR / 'mixxx-sources-menu-fixes.patch'
 START_ROWS = RUNNER.PATCH_DIR / 'mixxx-sources-start-rows.patch'
+OPEN_EDGE = RUNNER.PATCH_DIR / 'mixxx-sources-open-edge.patch'
 TEST = ROOT / 'tests/native/source_groups_test.cpp'
 
 
@@ -205,6 +211,49 @@ class SourcesStartRowsPatchTests(unittest.TestCase):
         # Build B's font for a list row: no weight forced in C++.
         self.assertNotIn('setWeight', sidebar)
         self.assertIn('const QFont title = option.font;', sidebar)
+
+
+def open_edge_added(path):
+    """The lines mixxx-sources-open-edge.patch adds to one file."""
+    text = OPEN_EDGE.read_text()
+    start = text.index('diff --git a/' + path + ' ')
+    end = text.find('\ndiff --git', start + 1)
+    return '\n'.join(line[1:] for line in text[start:end if end > 0 else None].splitlines()
+                     if line.startswith('+') and not line.startswith('+++'))
+
+
+class SourcesOpenEdgePatchTests(unittest.TestCase):
+    def test_patch_changes_only_its_files_and_only_adds(self):
+        text = OPEN_EDGE.read_text()
+        self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) b/\S+$', text, re.MULTILINE)),
+                         ['src/library/library.cpp', 'src/widget/wlibrarysidebar.cpp',
+                          'src/widget/wlibrarysidebar.h'])
+        self.assertEqual([line for line in text.splitlines() if line.startswith('-') and not line.startswith('---')],
+                         [])
+
+    def test_patch_is_registered_after_the_start_rows(self):
+        names = subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
+                                         '--mixxx-print-patches'], text=True).split()
+        self.assertIn('mixxx-sources-open-edge.patch', names)
+        self.assertLess(names.index('mixxx-sources-start-rows.patch'), names.index('mixxx-sources-open-edge.patch'))
+
+    def test_both_open_paths_follow_the_drive_and_keep_the_start(self):
+        library = open_edge_added('src/library/library.cpp')
+        # The sync path (folders, or a rekordbox drive already read) and the
+        # async one (rekordbox).
+        self.assertIn('        m_pSidebarWidget->followShownSource();', library)
+        self.assertIn('                        owner->m_pSidebarWidget->followShownSource();', library)
+        sidebar = open_edge_added('src/widget/wlibrarysidebar.cpp')
+        self.assertIn('const QString id = tileOf(shown);', sidebar)
+        self.assertIn('openGroupedTile(id, false);', sidebar)
+        # Nothing writes a setting: the saved start (★) stays.
+        for added in (library, sidebar):
+            self.assertNotIn('setValue', added)
+            self.assertNotIn('SidebarDefaultSource', added)
+        # The native repro (acceptance D repro 1) is in the fixture.
+        test = TEST.read_text()
+        self.assertIn('after OPEN, BACK: the top level has the accent edge on the drive only', test)
+        self.assertIn('sidebar.followShownSource();', test)
 
 
 if __name__ == '__main__':

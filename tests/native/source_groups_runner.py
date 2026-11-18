@@ -51,7 +51,12 @@ def main():
         rekordbox_tree(target)
         # The fixture also links QtSql (the tree builder's database).
         SAMPLE.qt_flags = lambda modules: qt_flags(tuple(modules) + ('QtSql',))
-        program = SAMPLE.build(target, ROOT / 'tests/native/source_groups_test.cpp', METHODS, sidebar=True)
+        # mixxx-sources-open-edge.patch (build E): the menu follows a drive
+        # opened from the Media page.
+        sidebar = (target / 'src/widget/wlibrarysidebar.h').read_text()
+        defines = ('-DMIXPI_SOURCES_OPEN_EDGE',) if 'void followShownSource();' in sidebar else ()
+        program = SAMPLE.build(target, ROOT / 'tests/native/source_groups_test.cpp', METHODS,
+                               defines=defines, sidebar=True)
         subprocess.run([str(program)], env=qt_environment(), check=True, timeout=60)
 
 

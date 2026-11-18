@@ -345,3 +345,25 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
 - **Notes for the owner:**
   - The shared setup starts from This Pi › Tracks, so the extra columns the owner added on GANDER1 give way to it.
   - Load sample's Samples table shows Filename plus the shared columns, not spec s7's fixed four. The owner's 2c choice wins over s7.
+
+## Build F (2026-11-18)
+
+- **Build:** operator Claude Opus 5.5 medium, one pi-gen run (the 7th, owner-approved) from `c97fbbd`.
+  - Exit 0 in 12 m 33 s. 53 patches. `.deb` `84e1efae…`.
+  - Every check passes. Image E → F changed only the patch, the `.deb` and the sidecar (plus the files every image changes).
+  - Mac free space: lowest 12 GiB.
+  - Kit: `deploy/test-image-20261118f/`.
+- **In-place update** (`buildF-update/`): steps 0-9 all pass. The skin tree is unchanged.
+- **Acceptance F** (tester Claude Opus 5.5 medium, `acceptance-F/ACCEPTANCE.md`): **25 checks, 24 PASS, 1 FAIL, 0 BLOCKED.** No owner activity seen.
+  - **FAIL:** a column hidden and shown again through Arrange columns comes back at build B's 160 px floor, not its saved width. The 160 px is then saved and shared.
+  - **PASS:**
+    - The first run took This Pi › Tracks' setup (TITLE, ARTIST 200, BPM 100, KEY 50, matching build E's screen pixel for pixel).
+    - A column drag was saved in 0.64 s and kept after SIGKILL. Arrange columns saves in about 0.5-0.6 s.
+    - GANDER1's rekordbox list, History, a folder and Load sample share the same columns, order and widths, with the sort per list.
+    - In 10 closes of Sources and Edit sources, the full widths came back every time; acceptance E's one-off fault did not appear.
+    - OPEN switches to Tracks, and the ★ start opens GANDER1.
+    - CPU: two decks plus Reverb averaged 4.42 %, with 0 underruns and `throttled=0x0`.
+  - **Notes:**
+    - Each start rewrites `SharedColumns` once (two hidden columns' widths), with no visible change.
+    - Load sample now shows FILENAME, TITLE, ARTIST, BPM and KEY (no DURATION). GANDER1's lists lost the owner's extra columns; their old per-list setups are kept, unused.
+    - Once, after an eject and re-plug, Tracks kept GANDER1's tracks until another list was picked.

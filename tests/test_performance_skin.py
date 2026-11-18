@@ -244,7 +244,7 @@ class PerformanceSkinTests(unittest.TestCase):
         items = list(top.find('Children'))
         names = [e.findtext('ObjectName') for e in items]
         self.assertEqual(names, ['MixpiTabPair', 'MixpiTabPair', 'MixpiTabPair', 'MixpiTabPair',
-                                 'MixpiTopSpacer', 'MixpiUsbChip', 'MixpiGap', 'MixpiRecord',
+                                 'MixpiTopSpacer', 'MixpiUsbChip', 'MixpiGap', 'MixpiRecordChip',
                                  'MixpiGap', 'MixpiIconButton', 'MixpiGap', 'MixpiCpuBox'])
         widths = [size(e)[0] for e in items if e.findtext('ObjectName') != 'MixpiTopSpacer']
         self.assertEqual(widths, [84, 84, 72, 96, 150, 11, 72, 8, 48, 3, 56])
@@ -259,7 +259,7 @@ class PerformanceSkinTests(unittest.TestCase):
                 break
             x -= size(e)[0]
             centres[e.findtext('ObjectName')] = x + size(e)[0] / 2
-        self.assertEqual((centres['MixpiUsbChip'], centres['MixpiRecord'],
+        self.assertEqual((centres['MixpiUsbChip'], centres['MixpiRecordChip'],
                           centres['MixpiIconButton']), (527, 649, 717))
         x, tabs = 0, []
         for e in items[:4]:
@@ -1619,7 +1619,8 @@ class PerformanceSkinTests(unittest.TestCase):
             for rgba in re.findall(r'rgba\((\d+), (\d+), (\d+), (\d+)\)', text):
                 self.assertIn(tuple(int(v) for v in rgba[:3]), lit, (name, rgba))
             for radius in re.findall(r'border(?:-[a-z-]+)?-radius:\s*(\d+)px', text):
-                self.assertIn(int(radius), (0, 2, 3, 8, 9, 10), name)
+                # 4: the REC dot, a 9 px circle (layout.css .mxl-recdot).
+                self.assertIn(int(radius), (0, 2, 3, 4, 8, 9, 10), name)
         style = (FILES/'mixpi-performance.qss').read_text()
         # The lit tint is 26% (66 of 255).
         self.assertEqual(round(0.26 * 255), 66)
@@ -2012,7 +2013,7 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(record.findtext('LeftClickIsPushButton'), 'true')
         self.assertEqual([(state.findtext('Number'), state.findtext('Text'))
                           for state in record.findall('State')],
-                         [('0', '● REC'), ('1', 'WAIT'),
+                         [('0', ''), ('1', 'WAIT'),
                           ('2', '■ STOP'), ('3', '■ STOP')])
         command, display = record.findall('Connection')
         self.assertEqual(command.findtext('ConnectValueFromWidget'), 'true')
@@ -2027,6 +2028,37 @@ class PerformanceSkinTests(unittest.TestCase):
         for button in self.root.findall('.//PushButton'):
             if button.findtext('ObjectName') in ('MixpiButton', 'MixpiPlay', 'MixpiTab'):
                 self.assertEqual(button.findtext('NumberStates'), '2')
+
+    def test_rec_at_rest_draws_the_mockups_red_dot_before_rec(self):
+        # Spec 2b / m-tracks.png: "● REC" with the dot in --mx-danger #d0574d,
+        # 9 px, 7 px before REC, centred as one in the 72 px button.
+        chip = self.model.one('MixpiRecordChip')
+        self.assertEqual(chip.findtext('Layout'), 'stacked')
+        self.assertEqual(chip.findtext('Size'), '72f,48f')
+        tap, face = chip.find('Children')
+        self.assertEqual(tap.findtext('ObjectName'), 'MixpiRecord')
+        self.assertEqual(face.findtext('ObjectName'), 'MixpiRecordFace')
+        self.assertEqual(face.findtext('Size'), '72f,48f')
+        items = [(e.findtext('ObjectName'), e.findtext('Size'), e.findtext('Text'))
+                 for e in face.find('Children')]
+        self.assertEqual(items, [('MixpiGap', '0me,48f', None), ('MixpiRecordDot', '9f,9f', ''),
+                                 ('MixpiGap', '7f,48f', None), ('MixpiRecordText', '0min,48f', 'REC'),
+                                 ('MixpiGap', '0me,48f', None)])
+        # The face shows only at rest; WAIT and ■ STOP are the button's text.
+        for status, shown in ((0, True), (1, False), (2, False), (3, False)):
+            state = self.model.state(**{'[Recording]__status': status})
+            self.assertEqual(self.model.visible(face, state), shown, status)
+            self.assertTrue(self.model.tappable(tap, state), status)
+            self.assertEqual(self.model.final(tap, state), {'[Recording],toggle_recording': 0.0})
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn('#MixpiRecordDot { background: #d0574d; border: 0px; border-radius: 4px; }', style)
+        self.assertIn('#MixpiRecord[value="0"] { background: transparent; border-color: transparent; }', style)
+        face_rule = style.split('#MixpiRecordFace {', 1)[1].split('}', 1)[0]
+        for declaration in ('background: #1d222a;', 'border: 1px solid #3a424e;', 'border-radius: 3px;',
+                            'margin: 4px 0px;'):
+            self.assertIn(declaration, face_rule)
+        text_rule = style.split('#MixpiRecordText {', 1)[1].split('}', 1)[0]
+        self.assertIn('color: #e4e7ec;', text_rule)
 
     def test_effect_popup_style_is_scoped_and_has_selected_contrast(self):
         style = (self.skin/'style.qss').read_text()

@@ -79,7 +79,9 @@ class FontsAreBuildB(unittest.TestCase):
                 '#MixpiButton', '#MixpiRecord', '#MixpiDesktopBar', '#MixpiDeck1', '#MixpiDeck2',
                 '#MixpiCue', '#MixpiLoad1', '#MixpiLoad2', '#MixpiSegFirst', '#MixpiSegMid',
                 '#MixpiSegLast', '#MixpiSize', '#MixpiSound', '#MixpiDanger', '#MixpiCaution',
-                '#MixpiCueTile1', '#MixpiCueTile2', '#MixpiCueClearTile', '#MixpiClearConfirm')],
+                '#MixpiCueTile1', '#MixpiCueTile2', '#MixpiCueClearTile', '#MixpiClearConfirm',
+                # REC's word at rest (spec 2b: drawn beside the red dot) keeps the button's font.
+                '#MixpiRecordText')],
             ('#MixpiPlay', (UC, 20, BOLD)),
             ('#MixpiPrimary', (UC, 18, BOLD)),
             # The tool panel's buttons: build B's 19 px.

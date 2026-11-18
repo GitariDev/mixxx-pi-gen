@@ -1332,6 +1332,24 @@ def usb_chip():
     return group('MixpiUsbChip', 'stacked', f'{USB_CHIP}f,48f', [tap, body])
 
 
+def record_button():
+    """REC: build B's four states (● REC, WAIT, ■ STOP, ■ STOP) on one button.
+    At rest the mockups draw a red 9 px dot (--mx-danger) before REC (spec 2b,
+    m-tracks.png). A button draws its text in one colour, so at rest the face
+    under the button draws the dot and REC, centred as one; the button on top
+    is transparent then and takes the taps. WAIT and ■ STOP are the button's
+    own text, as in build B."""
+    tap = button('', '[Recording],toggle_recording', size=f'{REC_WIDTH}f,48f', momentary=True,
+                 display='[Recording],status', name='MixpiRecord',
+                 state_labels=('', 'WAIT', '■ STOP', '■ STOP'))
+    face = group('MixpiRecordFace', 'horizontal', f'{REC_WIDTH}f,48f', [
+        gap('0me,48f'), label('', '9f,9f', 'MixpiRecordDot'), gap('7f,48f'),
+        label('REC', '0min,48f', 'MixpiRecordText', align='center'), gap('0me,48f')])
+    show_when(face, '[Recording],status', 0)
+    # In a stacked group the first child is on top: the button takes the taps.
+    return group('MixpiRecordChip', 'stacked', f'{REC_WIDTH}f,48f', [tap, face])
+
+
 def topbar():
     """R-1: the 48 px top bar in PROTO's order."""
     top = group('MixpiTopbar', 'horizontal', f'0me,{TOP_HEIGHT}f')
@@ -1343,9 +1361,7 @@ def topbar():
     icon_states(gear, 'mixpi-icon-gear.svg', 'mixpi-icon-gear.svg')
     connection(gear, '[MixPi],settings_available', bind='enabled')
     reset_views(gear, keep=(SCREEN,))
-    record = button('● REC', '[Recording],toggle_recording', size=f'{REC_WIDTH}f,48f', momentary=True,
-                    display='[Recording],status', name='MixpiRecord',
-                    state_labels=('● REC', 'WAIT', '■ STOP', '■ STOP'))
+    record = record_button()
     # The gaps put the chip, REC and the gear on the plan's tap points
     # (x 527, 649, 717; plan 5.3) with the brief's widths.
     add(top, group('MixpiTopSpacer', 'horizontal'), usb_chip(), gap(f'{TOP_GAPS[0]}f,48f'), record,

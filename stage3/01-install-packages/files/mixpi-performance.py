@@ -551,13 +551,17 @@ def tool_panel(channel, loop_display='focus'):
     sizes = shrinking_rows(group('MixpiLoopSizes', 'horizontal', children=[
         shrinking_rows(button('½', f'{key},loop_halve', momentary=True, name='MixpiSize')),
         shrinking_rows(button('×2', f'{key},loop_double', momentary=True, name='MixpiSize'))]))
+    # m-loop.png draws both at rest while a loop is on (spec 2b): they show no
+    # state, only the pressed look while pressed (Danger and Sound have no lit
+    # state here).
     tools = shrinking_rows(group('MixpiLoopTools', 'horizontal', children=[
-        shrinking_rows(button('EXIT LOOP', f'{key},loop_exit', momentary=True, display=f'{key},loop_enabled',
-                              name='MixpiDanger')),
-        shrinking_rows(button('RELOOP', f'{key},reloop_toggle', momentary=True, display=f'{key},loop_enabled',
-                              name='MixpiSound'))]))
+        shrinking_rows(button('EXIT LOOP', f'{key},loop_exit', momentary=True, name='MixpiDanger')),
+        shrinking_rows(button('RELOOP', f'{key},reloop_toggle', momentary=True, name='MixpiSound'))]))
+    for b in tools.find('Children'):
+        b.find('Connection/ConnectValueToWidget').text = 'false'
     # Reloop jumps back to the saved loop. Disable it while already looping,
     # so a second tap cannot turn looping off (Exit has its own command).
+    # Disabled, it keeps its at-rest look (mixpi-performance.qss, MixpiLoopTools).
     connection(tools.find('Children')[1], f'{key},loop_enabled', transform='<Not/>', bind='enabled')
     add(loop, gap(f'0me,{LOOP_GAP}f'), sizes, gap(f'0me,{LOOP_GAP}f'), tools)
     show_when(loop, '[MixPi],tool_tab', 0)

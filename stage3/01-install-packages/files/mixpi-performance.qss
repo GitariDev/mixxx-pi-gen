@@ -347,6 +347,10 @@
 #MixpiLoopPanel { background: #0d1014; }
 #MixpiLoopPanel #MixpiButton, #MixpiLoopPanel #MixpiSize, #MixpiLoopPanel #MixpiDanger,
 #MixpiLoopPanel #MixpiSound { font-size: 19px; }
+/* EXIT LOOP and RELOOP stay at rest while a loop is on (m-loop.png, spec 2b).
+ * RELOOP is disabled while looping (a second tap would end the loop); it keeps
+ * the Sound at-rest look then. */
+#MixpiLoopTools #MixpiSound:disabled { color: #86c0d8; background: #1d222a; border: 1px solid #427086; }
 
 /* FX: boxes, selectors and full-height slider fills. */
 #MixpiFx { background: #0d1014; }

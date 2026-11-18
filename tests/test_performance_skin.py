@@ -1386,6 +1386,15 @@ class PerformanceSkinTests(unittest.TestCase):
         exit_loop, reloop = rows[3].iter('PushButton')
         self.assertEqual(exit_loop.findtext('Connection/ConfigKey'), f'{key},loop_exit')
         self.assertEqual(reloop.findtext('Connection/ConfigKey'), f'{key},reloop_toggle')
+        # Spec 2b / m-loop.png: both at rest while a loop is on. Neither shows a
+        # value (no lit state); only RELOOP's enabled gate reads loop_enabled.
+        for b in (exit_loop, reloop):
+            shows = [c.findtext('ConfigKey') for c in b.findall('Connection')
+                     if c.findtext('ConnectValueToWidget') == 'true']
+            self.assertEqual(shows, [], b.findtext('State/Text'))
+        self.assertEqual([c.findtext('BindProperty') for c in exit_loop.findall('Connection')], [None])
+        self.assertEqual([(c.findtext('ConfigKey'), c.findtext('BindProperty')) for c in reloop.findall('Connection')],
+                         [(f'{key},reloop_toggle', None), (f'{key},loop_enabled', 'enabled')])
         # Each row is 48 px (the touch minimum) at 800x480; the body fills
         # 256 - 48 - 4 (spec 2a: shorter only at 800x444, see below).
         heights = dict(self.box_heights(body, 256 - 48 - 4, self.LOOP_STATE))
@@ -1396,6 +1405,9 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertIn('#MixpiSize { border-color: #6d8349; }', style)
         self.assertIn('#MixpiDanger { color: #ec7f74; background: #34191b; border-color: #d0574d; }', style)
         self.assertIn('#MixpiSound { color: #86c0d8; border-color: #427086; }', style)
+        # RELOOP, disabled while looping, keeps the Sound rest look (not the dim one).
+        self.assertIn('#MixpiLoopTools #MixpiSound:disabled { color: #86c0d8; background: #1d222a; '
+                      'border: 1px solid #427086; }', style)
         # The chosen size: the accent tint at 26%, a 2 px accent border, light text.
         self.assertIn('color: #bcd88a; background: rgba(163, 196, 94, 66); border: 2px solid #a3c45e;', style)
 

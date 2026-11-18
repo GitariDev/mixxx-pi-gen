@@ -246,3 +246,25 @@ Plan 12.5 and spec 2a record them:
   - the USB chip lit, with no tab lit, on the Media page.
 - **N-D1 render:** Edit sources with the owner's start shows ★ and "TRACKS STARTS HERE" on the drive row, and This Pi's child rows indented with ON/OFF only.
 - **Next:** build D (the 5th pi-gen run, approved), in-place update, targeted acceptance D, conformance pass, then council round 2.
+
+## Build D (2026-11-18)
+
+- **Build:** operator Claude Opus 5.5 medium, one pi-gen run (the 5th, owner-approved) from `ce2186c`.
+  - Exit 0 in 9 m 26 s (759 of 790 ccache hits). 50 patches. `.deb` `b44299e4…`.
+  - Every check passes. Image C → D changed exactly the expected files.
+  - Mac free space: 33 GiB at the start, after the owner chose to clear `~/Library/Caches`; 18 GiB at the lowest.
+  - Kit: `deploy/test-image-20261118d/`.
+- **In-place update** (orchestrator, `buildD-update/`): steps 0-9 all pass. The backlight rule and the eject gate are unchanged.
+- **Conformance pass** (orchestrator, `acceptance-D/conformance/d*.png`), every spec screen against its mockup, in build B's fonts:
+  - Tracks opens GANDER1 at start, with the edge on GANDER1;
+  - the narrowed table fits four columns and gets its widths back when the menu closes;
+  - Edit sources shows ★ and "TRACKS STARTS HERE" on GANDER1, and This Pi's child rows indented with ON/OFF;
+  - OPEN switches to Tracks;
+  - the popover and the lit chip work.
+- **Acceptance D** (tester Claude Opus 5.5 medium, `acceptance-D/ACCEPTANCE.md`): **31 checks, 28 PASS, 3 FAIL, 0 BLOCKED.**
+  - **FAIL:** after OPEN or BROWSE on the Media page, the Sources menu reopens inside This Pi with its edge there, not on the drive (native).
+  - **FAIL:** Load sample → SOURCES…: the narrowed Samples table's last header is cut to "DURATIO" by its scroll bar (native).
+  - **FAIL:** the empty FX selector reads "SELECT EFFECT." because build B's font no longer fits the field (skin).
+  - **PASS:** ★ and the saved start with and without the drive; the child rows kept over restarts; the table fit and the full widths kept; OPEN and BROWSE from DECKS, SAMPLER and FX; fonts equal to build B's with nothing clipped elsewhere; all four loop rows at 800×444 (35 px), working; the skin repairs; saves within 1 s (0.40-0.67 s); effects kept after kill -9; samples kept; two eject-and-replug cycles; REC; F-4 at 86-87 px per beat.
+  - **CPU:** two decks plus Reverb for 2 minutes averaged 4.33 % (build C's matching run read about 4.0-4.1 %), with 0 underruns and 67-69 °C, `throttled=0x0`.
+- **Owner state restored** (sha256 match): the saved start `RekordboxFeature`, Playlists OFF, two tracks loaded and paused, panel 255, top bar hidden, GANDER1 READY.

@@ -884,3 +884,13 @@ The owner saw build C on the test card (acceptance C: 43 of 45 PASS, the Q3 gate
 - **Agents:** "Let's change to only having 3 agents running at a time max." This counts builders, testers, operators and council seats together. A 3-seat council round runs only when nothing else does.
 - **Reviewers:** score against the spec as amended in its section 2a. A build D screen whose font differs from the mockup is **not** a finding when it matches build B's font.
 
+### 12.6 Owner decisions after council round 2 (2026-11-18)
+
+Council round 2 (at `d75c1fe`, build D on the card) scored Claude Opus 5.5 xhigh 6, Claude Fable 5.2 high 6 and GPT-6.1 Sol xhigh 6. All three were real seats, with no stand-ins.
+
+The owner's answers (spec 2b):
+- **Items accepted as they are:** "1 is not necessary" (Edit sources drag on row text), "3 is not necessary" (the narrowed Samples table's last header) and "4 is not necessary" (Clear samples drag).
+- **Build E:** "do 2" (the accent edge after OPEN and BROWSE). This is the **6th pi-gen run**. It also carries the owner's "Stop it, then clear" for a ticked pad that is playing, and the skin repairs (REC dot, EXIT LOOP and RELOOP at rest, the table's row colours).
+- **Owner session:** after build E is on the card.
+- **Reviewers in round 3:** the three accepted items are **not** findings, and they do not make criterion 8 partial; the owner accepted them.
+

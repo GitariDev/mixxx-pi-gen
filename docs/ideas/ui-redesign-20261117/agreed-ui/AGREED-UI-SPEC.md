@@ -190,6 +190,23 @@ The owner saw build C on the test card and changed four things. They win over ev
   - With Sources open, the narrowed table fits its columns (TITLE, ARTIST, BPM, KEY) in its width, as `m-sources-top.png` draws it: no sideways scroll bar.
   - OPEN on the Media page switches to Tracks (s13).
 
+## 2b. Owner decisions after council round 2 (2026-11-18)
+
+The owner read council round 2 (all three seats at 6) and decided the following. These decisions win over everything above.
+
+- **Accepted as they are (not deviations from now on):**
+  - **Edit sources scrolls by its 24 px bar, and by a drag that starts on a row's button.** A drag that starts on a row's text does not scroll. Owner: "1 is not necessary".
+  - **With Sources open over Load sample, the narrowed Samples table may cut its last header** ("DURATIO"). Owner: "3 is not necessary".
+  - **The Clear samples list scrolls by its bar only.** Owner: "4 is not necessary".
+- **Build E (the 6th pi-gen run), for:**
+  - **The accent edge after OPEN or BROWSE.** After a drive is opened from the Media page, the Sources menu's current-row edge (and the place inside it) is on that drive. Owner: "do 2".
+  - **Clearing a playing pad.** CLEAR (n) **stops a ticked pad that is playing, then empties it**, so every ticked pad goes empty. Owner's choice: "Stop it, then clear".
+- **Skin repairs from council round 2,** each to match the mockups:
+  - the REC dot drawn red;
+  - EXIT LOOP and RELOOP at rest while a loop is on, as `m-loop.png` draws them;
+  - the table's alternate rows in the agreed surface colours, as `m-tracks.png` and `m-loadsample.png` draw them.
+- **The owner session** (the Starlight session and the samples power-off test) runs after build E is on the card.
+
 ## 3. Not part of build C
 
 - **G5 extras:** the owner suggested an outline in the fill colour when active and thinner outlines on inactive buttons, then said "What we have now is acceptable". This is noted only.

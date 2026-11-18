@@ -16,7 +16,7 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Post-B and council R1 repairs | `fb1a119` | 710 run, OK (141 platform skips) | 190/190, 0 skips | 42 patches. Skin: EDIT LIST command no longer drives the label, waveforms hidden for every screen ≠ 0, chip writes screen 2 first, USB/SYNC chips, ±N% caption. Native: Media page under the skin root (styled) and opened after the screen write; tempo range saved to `[Controls],RateRangePercent`; late top-bar confirm re-checked; media lists keep their widgets and scroll, drag-scroll with 24 px bars, bounded handover and eject-user lists, `mixpi_from_usb`; scan strip moves to the deck-info row while a tool panel is open; `sidebar_sources_editing` set with setAndConfirm (read-only control) |
 | Build C baseline | `ef0874d` | 710 run, OK (141 platform skips) | 190/190, 0 skips | Handoff state of thread 2 |
 | Wave C1 integrated | `dda4966` | 732 run; 1 error in `test_chroot_runtime` (5 s timeout while the native gate ran), then 3 of 3 OK alone | 206/206, 0 skips | S1 skin (U-1, U-2, U-3, U-6, U-7 skin, Settings header), N-A Sources side menu and edit list, N-B Media page and `drive_insert` |
-| Wave C2 integrated | `85dc076` | 761 run, OK (146 platform skips) | 227/227, 0 skips (at `123b5e6`; `85dc076` adds only a generator change and its unit test) | 49 patches. S2 skin, N-C controls and saving, N-A2 Sources repairs; the backlight udev rule |
+| Wave C2 integrated | `85dc076` | 761 run, OK (146 platform skips) | 227/227, 0 skips (at `123b5e6`; `85dc076` adds only a generator change and its unit test) | 48 patches. S2 skin, N-C controls and saving, N-A2 Sources repairs; the backlight udev rule |
 | Wave D1 integrated | `335a75b` | 786 run, OK (150 platform skips) | 236/236, 0 skips | 50 patches. S4 fonts back to build B and shorter loop rows at 800×444; N-D1 ★ for the saved start, current-row edge, Edit sources child rows; N-D2 narrowed table fits, OPEN and BROWSE switch to Tracks; C3 skin repairs |
 
 ## Wave 0 on the test card (build 2)
@@ -270,3 +270,19 @@ Plan 12.5 and spec 2a record them:
 - **Owner state restored** (sha256 match): the saved start `RekordboxFeature`, Playlists OFF, two tracks loaded and paused, panel 255, top bar hidden, GANDER1 READY.
 - **In-place repair after acceptance D** (builder S5, `2eedc8f`, `buildD-inplace-1/`): the FX selector's padding and ▾ zone now give the text 147 px, so "SELECT EFFECT…" shows in full in build B's font (the text is 144 px; the area was 133 px). Installed as one skin tool, with the skin regenerated from the upstream originals: `style.qss` `49df2a8f…`, `skin.xml` unchanged. Checked on the card (`e01-fx.png`).
 - **Conformance pairs for the council:** `acceptance-D/pairs/*.png`, each mockup on the left with build D on the card on the right.
+
+## Council round 2 (at `d75c1fe`, build D on the card)
+
+| Seat | Score | Main blockers |
+|---|---|---|
+| Claude Opus 5.5 xhigh | 6 | Unlisted: Edit sources has no drag on row text; the REC dot is white (the mockups draw it red). Listed: the edge after OPEN, "DURATIO", Clear samples drag |
+| Claude Fable 5.2 high | 6 | Unlisted: Edit sources drag; EXIT LOOP and RELOOP drawn lit while a loop is on. Listed: the edge after OPEN, "DURATIO"; the owner session not yet run |
+| GPT-6.1 Sol xhigh | 6 | Unlisted: the table's alternate rows are `#32323c` (the mockups use `#161a20`); Edit sources drag. Listed: the edge after OPEN, "DURATIO" |
+
+Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real seats, with no stand-ins. Each seat confirmed that round 1's findings are repaired or overridden by the agreed spec, and that the other screens match their mockups.
+
+**Owner decisions (plan 12.6, spec 2b):**
+- Edit sources drag, the "DURATIO" header and Clear samples drag are accepted as they are.
+- Build E (the 6th pi-gen run) carries the edge after OPEN and BROWSE, and "Stop it, then clear" for a ticked pad that is playing.
+- The skin repairs go in too.
+- The owner session runs after build E.

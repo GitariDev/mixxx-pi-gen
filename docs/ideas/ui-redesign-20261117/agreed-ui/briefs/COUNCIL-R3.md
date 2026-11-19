@@ -30,7 +30,7 @@ Repo: `/Users/gitaritirima/Documents/Workspace/Personal Projects/mixxx-pi-gen`, 
 - **Results:** `docs/ideas/UI-REDESIGN-RESULTS-20261117.md` has the gates, waves, builds C to H, and acceptances C to H.
 - **Acceptances:** `deploy/ui-redesign-20261117/acceptance-{C,D,E,F,G,H}/ACCEPTANCE.md`.
 - **The owner's own session on build F:** `deploy/ui-redesign-20261117/session-F/SESSION.md`, covering the Starlight items of plan section 7 and the power-off test. The overview freeze found there is analysed in `session-F/OVERVIEW-FREEZE-INVESTIGATION.md`.
-- **Build kits:** `deploy/test-image-20261118{c,d,e,f}/` `deploy/test-image-20261119g/` and `deploy/test-image-20261119h/`, each with BUILD.md, UPDATE.md and logs. The update logs are in `build{C,D,E,F,G,H}-update/`.
+- **Build kits:** `deploy/test-image-20261118{c,d,e,f}/`, `deploy/test-image-20261119g/` and `deploy/test-image-20261119h/`, each with BUILD.md, UPDATE.md and logs. The update logs are in `build{C,D,E,F,G,H}-update/`.
 - **Earlier council reports:** `deploy/ui-redesign-20261117/council/round1-*.md` and `round2-*.md`. Check that their findings are repaired or covered by an owner decision.
 - **Code:**
   - `git log --oneline ef0874d..{HEAD}`;

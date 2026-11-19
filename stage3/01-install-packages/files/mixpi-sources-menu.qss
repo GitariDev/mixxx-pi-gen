@@ -370,3 +370,17 @@ WLibrarySidebar #MixpiSourcesMenuScrollTop {
     border: 1px dashed #2c333d;
     color: #7f8896;
 }
+
+/* --- Side menu: its shadow (spec 2d; m-sources-top.png, m-sources-sub.png) ---
+ * The mockups' box-shadow: -8px 0 24px rgba(0,0,0,.5) on the menu's left
+ * edge (design/all-mockups.html .mxl-side--right), drawn as a plain 40 px
+ * gradient over the table (x 440-480), no graphics effect. Stops fitted to
+ * the black alpha measured in the mockups on a #1d222a row, by distance from
+ * the menu's edge: 40 px 0.03, 28 px 0.03, 24 px 0.06, 16 px 0.13,
+ * 8 px 0.23, 1 px 0.31. Touches pass through it (mixxx-sources-menu-shadow.patch). */
+#MixpiSourcesMenuShadow {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(0, 0, 0, 7), stop:0.3 rgba(0, 0, 0, 8), stop:0.4 rgba(0, 0, 0, 15),
+        stop:0.6 rgba(0, 0, 0, 32), stop:0.8 rgba(0, 0, 0, 59), stop:1 rgba(0, 0, 0, 80));
+    border: 0px;
+}

@@ -493,12 +493,14 @@ class PerformanceSkinTests(unittest.TestCase):
                           ('SidebarButton', 748, 48)])
         self.assertTrue(self.model.tappable(self.model.one('SidebarButton'), opened))
         self.assertTrue(self.model.tappable(self.model.one('LibraryActionsButton'), opened))
-        # The page under the header is a right-overlay: the base, then the menu.
+        # The page under the header is a right-overlay: the base, the menu,
+        # then the menu's shadow (spec 2d).
         wrapper = self.model.one('LibraryWrapper')
         header, body = wrapper.find('Children')
         self.assertEqual((header.findtext('ObjectName'), body.findtext('ObjectName'), body.findtext('Layout')),
                          ('MixpiBrowseHeader', 'MixpiBrowseBody', 'right-overlay'))
-        base, menu = body.find('Children')
+        base, menu, shadow = body.find('Children')
+        self.assertEqual(shadow, self.model.one('MixpiSourcesMenuShadow'))
         self.assertEqual(menu, self.model.one('MixpiSourcesMenu'))
         self.assertEqual(menu.findtext('Size'), '320f,0me')
         self.assertEqual((menu.findtext('Connection/ConfigKey'), menu.findtext('Connection/Transform/IsEqual')),
@@ -550,6 +552,45 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertFalse(self.model.visible(self.model.one('MixpiBottom'), opened))
         # Heights: header 48, table 252 (y 96-348), titles 28, overviews 48, LOAD row 56.
         self.assertEqual(480 - 48 - 48 - 28 - 104, 252)
+
+    def test_sources_menu_shadow_strip(self):
+        # Spec 2d (m-sources-top.png, m-sources-sub.png): the menu's shadow on
+        # its left edge, over the table. The right-overlay's third child
+        # (mixxx-sources-menu-shadow.patch places it against the menu and
+        # lets touches through), 40 px, an empty group with no binding but
+        # its visibility: shown exactly while Sources is open (screen 1, at
+        # the top level and inside a source alike), as the menu is.
+        body = self.model.one('MixpiBrowseBody')
+        children = list(body.find('Children'))
+        self.assertEqual([c.findtext('ObjectName') for c in children],
+                         ['MixpiBrowseBase', 'MixpiSourcesMenu', 'MixpiSourcesMenuShadow'])
+        shadow = children[2]
+        self.assertEqual(SKIN.SOURCES_MENU_SHADOW_WIDTH, 40)
+        self.assertEqual((shadow.tag, shadow.findtext('Size')), ('WidgetGroup', '40f,0me'))
+        self.assertEqual(list(shadow.find('Children')), [])
+        self.assertEqual([(c.findtext('ConfigKey'), c.findtext('BindProperty'), c.findtext('Transform/IsEqual'))
+                          for c in shadow.findall('Connection')], [(SCREEN, 'visible', '1')])
+        menu = self.model.one('MixpiSourcesMenu')
+        for state in [Model.state(v) for v in (0, 1, 2, 3, 4, 5)] + [
+                Model.state(1, **{'[MixPi]__sample_load': 1}), Model.state(0, **{'[Tab]__library': 1})]:
+            self.assertEqual(self.model.visible(shadow, state), self.model.visible(menu, state), state)
+        self.assertTrue(self.model.visible(shadow, Model.state(1)))
+        # The table keeps its fit: the room beside it is still 320 px.
+        self.assertEqual(self.model.one('MixpiSourcesRoom').findtext('Size'), '320f,0me')
+        # Its paint: one plain gradient rule, fitted to the mockups.
+        qss = (FILES/'mixpi-sources-menu.qss').read_text()
+        rule = re.search(r'^#MixpiSourcesMenuShadow \{(.*?)^\}', qss, re.MULTILINE | re.DOTALL).group(1)
+        stops = re.findall(r'stop:([\d.]+) rgba\(0, 0, 0, (\d+)\)', rule)
+        self.assertIn('qlineargradient(x1:0, y1:0, x2:1, y2:0,', rule)
+        self.assertEqual(stops, [('0', '7'), ('0.3', '8'), ('0.4', '15'), ('0.6', '32'), ('0.8', '59'),
+                                 ('1', '80')])
+        self.assertEqual(len(re.findall(r'^#MixpiSourcesMenuShadow\b', qss, re.MULTILINE)), 1)
+        # No graphics effect (costly on the Pi) anywhere in the skin.
+        for name in ('mixpi-performance.py', 'mixpi-sources-menu.qss', 'mixpi-performance.qss',
+                     'pioneered-touch.qss', 'pioneered-touch.py', 'mixxx-sources-menu-shadow.patch'):
+            text = (FILES/name).read_text()
+            for word in ('QGraphics', 'DropShadow', 'GraphicsEffect'):
+                self.assertNotIn(word, text, (name, word))
 
     def test_old_sources_screen_is_gone(self):
         # N-A's handover: no SOURCES title or hints, no EDIT LIST / DONE, no

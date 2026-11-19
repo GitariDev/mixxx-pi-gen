@@ -241,6 +241,8 @@ TRACKS_MODE = (('[MixPi],sample_load', '<Not/>'),)
 # Spec s5 side menu: 320 px at the right (x 480-800), from under the header to
 # the bottom of the screen.
 SOURCES_MENU_WIDTH = 320
+# Its shadow (spec 2d): a 40 px strip left of it, over the table (x 440-480).
+SOURCES_MENU_SHADOW_WIDTH = 40
 
 
 def reset_views(e, keep=(), when='press'):
@@ -991,7 +993,14 @@ def browse_page(library, overview):
         targets, gap('8f,64f')]), '0me,64f', *LOAD_MODE)
 
     base = group('MixpiBrowseBase', children=[source_row, table, titles, sources_bottom, footer])
-    body = group('MixpiBrowseBody', 'right-overlay', children=[base, menu])
+    # The menu's shadow (spec 2d, m-sources-top.png, m-sources-sub.png): a
+    # 40 px gradient strip (mixpi-sources-menu.qss) on the menu's left edge,
+    # over the table, x 440-480. The right-overlay's third child
+    # (mixxx-sources-menu-shadow.patch) is placed against the menu and lets
+    # touches through to the table. A plain gradient, no graphics effect.
+    shadow = show_when(group('MixpiSourcesMenuShadow', size=f'{SOURCES_MENU_SHADOW_WIDTH}f,0me'),
+                       SCREEN, SCREEN_SOURCES)
+    body = group('MixpiBrowseBody', 'right-overlay', children=[base, menu, shadow])
     wrapper = group('LibraryWrapper', children=[header, body])
     # In a stacked group Qt lowers each later child (QStackedLayout::insertWidget),
     # so the first child is on top: the Choose pad sheet comes first.

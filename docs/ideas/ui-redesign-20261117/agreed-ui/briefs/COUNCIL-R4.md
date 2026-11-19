@@ -71,12 +71,12 @@ Repo: `/Users/gitaritirima/Documents/Workspace/Personal Projects/mixxx-pi-gen`, 
 3. **The Vinyl button has no screen copy:** it is script-internal state in the stock mapping (plan section 7).
 4. **The empty part of the table header** takes the header colour but not the mockup's 1 px bottom line (`#2c333d`). A border on the header widget could change its height (wave H1).
 5. **The Starlight session and the power-off test are done** (`session-F/SESSION.md`): 20 of 21 items passed, and none failed. The one fault, the overview freeze (a stock Mixxx bug, upstream #9751), is fixed in build G.
-7. **A quit crash, new in build I** (acceptance I X2, `acceptance-I/INVESTIGATION-X1-X2.md`). It was seen once in 3 quits, after 7 eject cycles, and settings were saved before it.
+6. **A quit crash, new in build I** (acceptance I X2, `acceptance-I/INVESTIGATION-X1-X2.md`). It was seen once in 3 quits, after 7 eject cycles, and settings were saved before it.
    - **Cause:** `mixxx-media-chip-ping.patch` calls `refresh()` on each deck or pad unload, which reaches the deleted `WLibrary` through a raw pointer during quit.
    - **Fix:** a `QPointer` fix (wave J1) is built and gated on the branch. It needs a build J, which needs the owner's yes; the owner is away overnight.
    - Score the card as delivered (build I). Note that the fix is ready.
-8. **The plug-in ping removes itself after 15 s**, an older patch. Opening the Media page does not restart that time, so a late LOAD can land on an empty spot (acceptance I X1). No code fault was found. Whether opening the page should restart the 15 s is an owner question.
-9. **Round 3's other listed items are now built** (spec 2d): the menu shadow, the Tracks row in a drive, IN USE only once something is loaded, the ping over the Media page, and the header strip. Judge them against the mockups; they are no longer excused.
+7. **The plug-in ping removes itself after 15 s**, an older patch. Opening the Media page does not restart that time, so a late LOAD can land on an empty spot (acceptance I X1). No code fault was found. Whether opening the page should restart the 15 s is an owner question.
+8. **Round 3's other listed items are now built** (spec 2d): the menu shadow, the Tracks row in a drive, IN USE only once something is loaded, the ping over the Media page, and the header strip. Judge them against the mockups; they are no longer excused.
 
 ## How to score
 

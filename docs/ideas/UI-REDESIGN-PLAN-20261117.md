@@ -910,3 +910,4 @@ The owner's answers (spec 2b):
   - a short Sync tap syncs once, and a hold latches (`LONGPRESSLATCHING`);
   - Shift+Sync gives the leader only to a playing deck;
   - PFL does not take a deck off master.
+- **Build H (the 9th pi-gen run):** "Yes, build H first". After acceptance G, build H fixes acceptance G's regression: TITLE's stretched width was saved (`mixxx-shared-columns-stretch.patch`). Council round 3 scores build H.

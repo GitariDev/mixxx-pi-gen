@@ -2,7 +2,7 @@
 
 You are one council seat scoring the MixPi UI redesign climb **alone**. Do not read the other seats' round 3 reports. Change no file except your own report. Never touch the Raspberry Pi, any USB drive or any Lima VM. Work read-only on the Mac.
 
-Repo: `/Users/gitaritirima/Documents/Workspace/Personal Projects/mixxx-pi-gen`, branch `feat/pi-performance-target`, head `{HEAD}`. Build G (`9a0d09e`, 55 patches) is on the test card, installed in place.
+Repo: `/Users/gitaritirima/Documents/Workspace/Personal Projects/mixxx-pi-gen`, branch `feat/pi-performance-target`, head `{HEAD}`. Build H (`a5b9913`, 56 patches) is on the test card, installed in place.
 
 ## The owner's words for this climb (verbatim, 2026-11-17 19:13)
 
@@ -17,24 +17,24 @@ Repo: `/Users/gitaritirima/Documents/Workspace/Personal Projects/mixxx-pi-gen`, 
 2. **The 12 mockups:** `docs/ideas/ui-redesign-20261117/agreed-ui/mockups/*.png` (800×480). View each one.
 3. **The card next to each mockup:**
    - `deploy/ui-redesign-20261117/acceptance-E/pairs/*.png` has the mockup on the left and build E on the card on the right, one file per mockup.
-   - Builds F and G changed only the track tables' columns (spec 2c) and the overview fix. Their new pairs for Tracks and Load sample are in `acceptance-G/pairs/`.
-   - The single shots are in `acceptance-E/conformance/` and `acceptance-G/shots/`.
+   - Builds F to H changed only the track tables' columns (spec 2c) and the overview fix. Their new pairs for Tracks and Load sample are in `acceptance-H/pairs/`.
+   - The single shots are in `acceptance-E/conformance/`, `acceptance-G/shots/` and `acceptance-H/shots/`.
 4. **The plan:** `docs/ideas/UI-REDESIGN-PLAN-20261117.md`.
    - Section 11 is the rubric, as amended by 12.3.
-   - 12.1 is precedence. **12.5 to 12.8 hold the owner's decisions after builds C, E and F, and from the build F session.**
+   - 12.1 is precedence. **12.5 to 12.8 hold the owner's decisions after builds C, E and F, from the build F session, and after acceptance G.**
    - Section 7 is Starlight drivability.
 5. **The owner's verbatim review notes:** `docs/ideas/UI-REVIEW-1-20261117.md`, sections 1 and 5-8.
 
 ## Evidence
 
-- **Results:** `docs/ideas/UI-REDESIGN-RESULTS-20261117.md` has the gates, waves, builds C to G, and acceptances C to G.
-- **Acceptances:** `deploy/ui-redesign-20261117/acceptance-{C,D,E,F,G}/ACCEPTANCE.md`.
+- **Results:** `docs/ideas/UI-REDESIGN-RESULTS-20261117.md` has the gates, waves, builds C to H, and acceptances C to H.
+- **Acceptances:** `deploy/ui-redesign-20261117/acceptance-{C,D,E,F,G,H}/ACCEPTANCE.md`.
 - **The owner's own session on build F:** `deploy/ui-redesign-20261117/session-F/SESSION.md`, covering the Starlight items of plan section 7 and the power-off test. The overview freeze found there is analysed in `session-F/OVERVIEW-FREEZE-INVESTIGATION.md`.
-- **Build kits:** `deploy/test-image-20261118{c,d,e,f}/` and `deploy/test-image-20261119g/`, each with BUILD.md, UPDATE.md and logs. The update logs are in `build{C,D,E,F,G}-update/`.
+- **Build kits:** `deploy/test-image-20261118{c,d,e,f}/` `deploy/test-image-20261119g/` and `deploy/test-image-20261119h/`, each with BUILD.md, UPDATE.md and logs. The update logs are in `build{C,D,E,F,G,H}-update/`.
 - **Earlier council reports:** `deploy/ui-redesign-20261117/council/round1-*.md` and `round2-*.md`. Check that their findings are repaired or covered by an owner decision.
 - **Code:**
   - `git log --oneline ef0874d..{HEAD}`;
-  - the patches in `stage3/01-install-packages/files/` (`MIXXX_PATCHES` in `01-run.sh`, 55 patches);
+  - the patches in `stage3/01-install-packages/files/` (`MIXXX_PATCHES` in `01-run.sh`, 56 patches);
   - the generator `mixpi-performance.py`, the stylesheets, the system files and `tests/`.
   - The pinned Mixxx source is the bare repo `/tmp/mixpi-actions-routing-objects-20261115` at `3ebac449`.
 
@@ -71,7 +71,7 @@ Repo: `/Users/gitaritirima/Documents/Workspace/Personal Projects/mixxx-pi-gen`, 
 6. **The plug-in ping** does not show while the Media page is open: the page already shows the drive.
 7. **FX depth and mix reset at start.** This comes from the Starlight's stock script, and changing it was not requested (spec, the FX section).
 8. **The Vinyl button has no screen copy:** it is script-internal state in the stock mapping (plan section 7).
-9. **The Starlight session and the power-off test are done** (`session-F/SESSION.md`): 20 of 21 items passed, and none failed. The one fault, the overview freeze (a stock Mixxx bug, upstream #9751), is fixed in build G.
+9. **The Starlight session and the power-off test are done** (`session-F/SESSION.md`): 20 of 21 items passed, and none failed. The one fault, the overview freeze (a stock Mixxx bug, upstream #9751), is fixed in build G (acceptance G checked it on both decks).
 
 ## How to score
 

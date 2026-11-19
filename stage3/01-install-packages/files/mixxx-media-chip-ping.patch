@@ -1,0 +1,93 @@
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+index a09f78a..aaa995c 100644
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -89,7 +89,10 @@ class MixpiMedia final : public QObject {
+         connect(&PlayerInfo::instance(), &PlayerInfo::trackChanged, this,
+                 [this](const QString& group, TrackPointer, TrackPointer) {
+                     m_handover->trackChanged(group);
+-                    refreshHandover();
++                    // Spec 2d: the chip reads IN USE at the load and READY
++                    // when the last deck or pad lets go, not at the next
++                    // tick (refresh() ends with refreshHandover()).
++                    refresh();
+                 });
+         m_engine = new MixpiEjectEngine(engineHooks(), this);
+         m_engine->progress = [this](MixpiMediaPage::Step step) {
+@@ -615,10 +618,10 @@ class MixpiMedia final : public QObject {
+                 const auto identity = drive.value("identity").toString();
+                 present.insert(identity);
+                 // Q1: a drive that was not here before gets the insert ping,
+-                // unless it is open already or the Media page is in front.
++                // unless it is open already; spec 2d: on the Media page too.
+                 if (mixpi_media::shouldPing(m_seenFirst, m_present.contains(identity),
+                             m_pinged.contains(identity), !drive.value("volumes").toArray().isEmpty(),
+-                            driveOpened(drive), m_page && m_page->isVisible()) &&
++                            driveOpened(drive), false) &&
+                         ensureWidgets()) {
+                     m_pinged.insert(identity);
+                     const auto model = describe(drive);
+diff --git a/src/library/mixpimediapage.h b/src/library/mixpimediapage.h
+index 1c7c65a..6b90c9d 100644
+--- a/src/library/mixpimediapage.h
++++ b/src/library/mixpimediapage.h
+@@ -151,9 +151,17 @@ inline int keptCount(const MixpiMediaDrive& drive) {
+ }
+ 
+ // The drive's own state from what uses it (ejecting and safe are set by eject).
++// Spec 2d, the eject rule's "loaded means in use": IN USE only while a track
++// or sample from the drive is loaded on a deck or a sampler pad. OPEN,
++// BROWSE, its lists and the library's own short reads (opened, busy) leave
++// it READY; it goes back to READY when the last deck or pad lets go.
+ inline MixpiMediaState idleState(const MixpiMediaDrive& drive) {
+-    return (drive.opened || drive.busy || !drive.users.isEmpty()) ? MixpiMediaState::InUse
+-                                                                   : MixpiMediaState::Ready;
++    for (const auto& user : drive.users) {
++        if (user.group.startsWith(QStringLiteral("[Channel")) || isPad(user.group)) {
++            return MixpiMediaState::InUse;
++        }
++    }
++    return MixpiMediaState::Ready;
+ }
+ 
+ // The USB chip shows one drive: ejecting first, then safe, in use, ready.
+@@ -208,11 +216,12 @@ inline QString contentText(const MixpiMediaDrive& drive) {
+ }
+ 
+ // Q1: the insert ping is for a drive that was not here at the last check
+-// (not at start-up), is mounted, is not open, was not pinged since it came,
+-// and only while the Media page is not in front.
++// (not at start-up), is mounted, is not open, and was not pinged since it
++// came. Spec 2d: it shows on the Media page too, as on every other screen,
++// so the page's visibility no longer matters.
+ inline bool shouldPing(bool firstCheckDone, bool wasPresent, bool alreadyPinged, bool mounted, bool opened,
+-        bool pageVisible) {
+-    return firstCheckDone && !wasPresent && !alreadyPinged && mounted && !opened && !pageVisible;
++        bool /*pageVisible*/) {
++    return firstCheckDone && !wasPresent && !alreadyPinged && mounted && !opened;
+ }
+ 
+ inline QString stateWord(MixpiMediaState state) {
+@@ -576,6 +585,13 @@ class MixpiBottomStrip : public QFrame {
+         hide();
+         if (window) {
+             window->installEventFilter(this);
++            // Spec 2d: the ping stays over a full-screen page (the Media
++            // page) that opens or raises itself while the strip shows.
++            for (auto* sibling : window->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
++                if (dynamic_cast<MixpiPage*>(sibling)) {
++                    sibling->installEventFilter(this);
++                }
++            }
+         }
+     }
+ 
+@@ -641,6 +657,8 @@ class MixpiBottomStrip : public QFrame {
+     bool eventFilter(QObject* object, QEvent* event) override {
+         if (object == parentWidget() && event->type() == QEvent::Resize) {
+             place();
++        } else if (object != parentWidget() && event->type() == QEvent::ZOrderChange && isVisible()) {
++            raise(); // a page went over the strip: the strip comes back on top
+         }
+         return QFrame::eventFilter(object, event);
+     }

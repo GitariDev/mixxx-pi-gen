@@ -221,6 +221,33 @@ def build_open_tracks(target, fix=True):
     return binary
 
 
+# Build I, wave I2 (spec 2d): IN USE only once a deck or pad holds a track or
+# sample from the drive; the plug-in ping on the Media page too.
+CHIP_PING = 'mixxx-media-chip-ping.patch'
+
+
+def build_chip_ping(target, fix=True):
+    """The registered stack (every media patch) with mixxx-media-chip-ping.patch
+    on top, as the registration places it after them; Qt only.
+
+    fix=False builds the stack without it: build H's chip and ping, which the
+    fixture must fail."""
+    names, _ = reconstruct(target, exclude=(CHIP_PING,))
+    if fix:
+        populate_pinned(target, touched(CHIP_PING))  # both files exist after the stack
+        subprocess.run(['git', 'apply', str(PATCH_DIR / CHIP_PING)], cwd=target, check=True, timeout=15)
+        names.append(CHIP_PING)
+    print('PATCHES', ' '.join(names), flush=True)
+    populate_pinned(target, FONTS)
+    binary = target / 'media-chip-ping-test'
+    command = ['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-I' + str(target / 'src'),
+               str(ROOT / 'tests/native/media_chip_ping_test.cpp'), '-o', str(binary),
+               *qt_flags(('QtCore', 'QtGui', 'QtWidgets', 'QtTest'))]
+    print('COMPILE', repr(command), flush=True)
+    subprocess.run(command, check=True, timeout=300)
+    return binary
+
+
 def run(binary, *arguments, qss=QSS, environment_extra=None):
     environment = qt_environment()
     environment['MIXPI_SKIN_QSS'] = qss

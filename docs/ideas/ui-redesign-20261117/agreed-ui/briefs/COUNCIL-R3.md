@@ -71,6 +71,7 @@ Repo: `/Users/gitaritirima/Documents/Workspace/Personal Projects/mixxx-pi-gen`, 
 6. **The plug-in ping** does not show while the Media page is open: the page already shows the drive.
 7. **FX depth and mix reset at start.** This comes from the Starlight's stock script, and changing it was not requested (spec, the FX section).
 8. **The Vinyl button has no screen copy:** it is script-internal state in the stock mapping (plan section 7).
+10. **A TITLE edge dragged narrower on Tracks** leaves a blank strip at the right end of the header until the edge is dragged back (acceptance H, `shots/c4-c-title-drag-left.png`). Nothing is saved: build B's stretch fills the row, and wave G3 keeps TITLE's set width.
 9. **The Starlight session and the power-off test are done** (`session-F/SESSION.md`): 20 of 21 items passed, and none failed. The one fault, the overview freeze (a stock Mixxx bug, upstream #9751), is fixed in build G (acceptance G checked it on both decks).
 
 ## How to score

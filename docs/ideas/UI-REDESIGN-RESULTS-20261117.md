@@ -436,3 +436,22 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
 - **Gates:**
   - **Mac suite:** 809 tests, 1 error. It was the known `test_chroot_runtime` 5 s-timeout flake, which passed 3 of 3 runs on its own.
   - **Native gate:** 257/257, 0 skips.
+
+## Build H (2026-11-19/20)
+
+- **Build:** operator Claude Opus 5.5 medium, one pi-gen run (the 9th, owner-approved) from `a5b9913`.
+  - Exit 0 in 12 m 01 s. 56 patches. `.deb` `2f802a3b…`.
+  - Every check passes. Image G → H changed only the one patch, the `.deb` and the sidecar.
+  - Mac free space: 23 GiB at the start, 10 GiB at the lowest point, 24 GiB at the end.
+  - Kit: `deploy/test-image-20261119h/`.
+- **In-place update** (`buildH-update/`): steps 0-9 all pass, with 67 files checked, 56 patches and the expected 48-file skin.
+- **Acceptance H** (tester Claude Opus 5.5 medium, `acceptance-H/ACCEPTANCE.md`): **23 checks, 23 PASS.** No owner activity seen.
+  - **TITLE stays 160** through an Arrange hide and show, a column drag, Load sample and Folders, a drag of TITLE's own edge, and a restart. Load sample and Folders fit FILENAME, TITLE, ARTIST, BPM and KEY with no sideways bar.
+  - **G's fixes hold:** KEY comes back at 50 and BPM at 100, and there is no write at start (43 s watched).
+  - **Overview strip:** deck 1 steps 19/19 px and deck 2 steps 17/18 px.
+  - **Smoke:**
+    - a setting saves in 0.44-0.50 s and an effect in 0.44-0.52 s;
+    - OPEN and the ★ start work;
+    - CPU 4.00 % with 0 underruns and `throttled=0x0`.
+  - **Note:** dragging TITLE's edge narrower saves nothing, as required. But it leaves a blank light-grey strip at the right end of the header until the edge is dragged back (`shots/c4-c-title-drag-left.png`).
+  - **Pairs for the council:** `acceptance-H/pairs/m-tracks.png` and `m-loadsample.png`.

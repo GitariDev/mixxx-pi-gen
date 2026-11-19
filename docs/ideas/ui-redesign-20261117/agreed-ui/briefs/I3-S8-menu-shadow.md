@@ -28,3 +28,25 @@ No Mixxx source and no patches.
 - Give the orchestrator a Pi check:
   - ☰ (772,72) on This Pi › Tracks: say which pixels left of the menu's edge should change, and to what values;
   - then confirm a tap on a table row next to the menu still selects it.
+
+## Addendum (orchestrator, 2026-11-20): native part approved
+
+S8's first pass found the shadow cannot be drawn in the skin alone without blocking taps on the table and its scroll bar. The owner chose to build the shadow as drawn, and build I already carries native code. So **S8 also owns a small native patch**, `mixxx-sources-menu-shadow.patch`. Order it after N-I2's `mixxx-media-chip-ping.patch`, with the prerequisites it needs.
+
+- **The native part.** Pick the smaller of S8's two options:
+  - extend the overlay layout that places the menu over the table so it places a third child, a fixed-width strip, against the menu's left edge;
+  - or let the skin parser mark the `WidgetGroup` named `MixpiSourcesMenuShadow` with `Qt::WA_TransparentForMouseEvents`.
+
+  Either way, touches pass through the strip to the table. Nothing else in the menu or the table changes.
+- **The skin part:**
+  - a 40 px `MixpiSourcesMenuShadow`, shown only while Sources is open;
+  - its QSS `qlineargradient` uses stops fitted to the alpha table measured from the mockups;
+  - no graphics effect.
+- **Files:**
+  - the overlay layout's source file (or the skin parser's `WidgetGroup` setup) and the new patch;
+  - the skin files above;
+  - `tests/test_source_groups.py` or a new `tests/test_sources_menu_shadow.py`, with `tests/native/*` for it.
+  - Do not touch `src/library/rekordbox/*` (N-I1) or the media files (N-I2).
+- **Checks:**
+  - a native fixture: a tap at the strip's position reaches the table row under it, and a drag on the scroll bar under it still scrolls. It fails without the patch.
+  - Then the Mac suite and the full native gate (0 skips), with your registration lines applied locally.

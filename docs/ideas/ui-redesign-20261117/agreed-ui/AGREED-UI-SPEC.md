@@ -224,7 +224,7 @@ The owner read council round 2 (all three seats at 6) and decided the following.
   - **Narrowed tables may cut header letters.** With Sources open, any narrowed track table may cut a header's letters (for example "BPI" under a sort arrow, "TITLI"). Owner: "I'm okay with the cut columns." This extends 2b's "DURATIO" item to every narrowed table.
   - **★ on a switched-off row** in Edit sources is drawn disabled, because Mixxx cannot start Tracks at a source that is off.
 - **Built as the mockups draw them** (build I, the 10th pi-gen run, approved by the owner):
-  - **The Sources side menu's shadow** (`m-sources-top.png`, `m-sources-sub.png`). It is painted as a plain gradient, not Qt's costly blur effect. Skin only.
+  - **The Sources side menu's shadow** (`m-sources-top.png`, `m-sources-sub.png`). It is painted as a plain gradient, not Qt's costly blur effect. The orchestrator first expected this to be skin only. Builder S8 found that a skin widget over the table would block taps on its rows and scroll bar, because the skin cannot make a widget pass touches through. So build I adds a small native piece: a touch-transparent strip placed against the menu's left edge. The skin paints it with the mockup's values (`box-shadow: -8px 0 24px rgba(0,0,0,.5)`, about 40 px wide).
   - **A "Tracks" row inside a rekordbox drive** (`m-sources-sub.png`). It lists every track in the drive's export, next to the playlists and folders that Mixxx's reader already lists.
   - **USB chip and ping timing:**
     - A drive reads **IN USE** only once a track or sample from it is loaded on a deck or pad (the eject rule's "loaded means in use"). After OPEN or BROWSE alone, it still reads **READY**.

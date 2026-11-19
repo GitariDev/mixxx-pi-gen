@@ -225,6 +225,15 @@ UnrelatedValue preserve this exactly
                             "selection-color: #e4e7ec;"):
             self.assertIn(declaration, rows)
         self.assertNotIn("#32323c", re.sub(r"/\*.*?\*/", "", block, flags=re.S))
+        # The header's empty area past the last section (after TITLE's edge is
+        # dragged narrower) takes the sections' --mx-surface-2, as the mockups'
+        # full-width header row does, not Qt's default #efefef. Only the track
+        # table header: no bare QHeaderView rule that would reach other headers.
+        header = rule("#LibraryWrapper WTrackTableViewHeader")
+        self.assertEqual(header.strip(), "background-color: #1d222a;")
+        self.assertIn("background-color: #1d222a;",
+                      rule("#LibraryWrapper WTrackTableViewHeader::section"))
+        self.assertNotRegex(re.sub(r"/\*.*?\*/", "", block, flags=re.S), r"(?m)^[^{}]*QHeaderView")
         # The managed block is last, so it overrides the upstream light selection.
         self.assertTrue(styles.rstrip().endswith(PATCH.STYLE_END))
 

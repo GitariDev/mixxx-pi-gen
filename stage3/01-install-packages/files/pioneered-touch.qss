@@ -20,6 +20,14 @@
     border-right: 1px solid #2c333d;
 }
 
+/* The header's own area past the last section (seen after TITLE's edge is
+ * dragged narrower) in the same --mx-surface-2 as the sections, as the
+ * mockups' header row (layout.css .mxl-th) runs the full width. Without it
+ * Qt draws its default light grey #efefef there. */
+#LibraryWrapper WTrackTableViewHeader {
+    background-color: #1d222a;
+}
+
 /* The source list without the touch menu property; the Sources side menu
  * (spec s5) is styled by mixpi-sources-menu.qss, whose rules win. */
 #LibraryWrapper WLibrarySidebar {

@@ -1,0 +1,40 @@
+MixPi backport of upstream Mixxx commit bef0af317269dba735b06352f775d698c26f7406
+"EngineBuffer: Reset sample counter after indicator update"
+Author: Andrej Lajovic <andrej.lajovic@ad-vega.si>, 28 Mar 2026
+Upstream: https://github.com/mixxxdj/mixxx/pull/16245 (merged into the 2.5
+branch on 2 Jun 2026; not in 2.5.6). Fixes https://github.com/mixxxdj/mixxx/issues/9751
+("Waveform Overview stops progressing").
+
+Taken as it is: the upstream diff applies to the pinned tree (3ebac449, 2.5.6)
+with every MixPi patch before it, with no change and no offset. It touches
+src/engine/enginebuffer.cpp only.
+
+Why: m_iSamplesSinceLastIndicatorUpdate is a signed int that was never reset
+after the playposition update (the reset was lost in 5a4444d520, Jan 2019).
+It grows by the buffer size on every callback while a track is loaded, so it
+overflows after 2^31 samples (about 6 h 46 min at 44.1 kHz stereo) without a
+seek. While it is negative, [ChannelN],playposition and CueControl's
+indicators stop updating, and the DECKS overview strip freezes. With the
+reset, both update at kPlaypositionUpdateRate (15 per second) and the counter
+never exceeds about 5,880 samples plus one buffer.
+
+diff --git a/src/engine/enginebuffer.cpp b/src/engine/enginebuffer.cpp
+index 83bd03b..78cdc72 100644
+--- a/src/engine/enginebuffer.cpp
++++ b/src/engine/enginebuffer.cpp
+@@ -80,6 +80,7 @@ EngineBuffer::EngineBuffer(const QString& group,
+           m_baserate_old(0),
+           m_rate_old(0.),
+           m_trackEndPositionOld(mixxx::audio::kInvalidFramePos),
++          m_iSamplesSinceLastIndicatorUpdate(0),
+           m_slipPos(mixxx::audio::kStartFramePos),
+           m_dSlipRate(1.0),
+           m_bSlipEnabledProcessing(false),
+@@ -1479,6 +1480,7 @@ void EngineBuffer::updateIndicators(double speed, int iBufferSize) {
+                     kPlaypositionUpdateRate)) {
+         m_playposSlider->set(fFractionalPlaypos);
+         m_pCueControl->updateIndicators();
++        m_iSamplesSinceLastIndicatorUpdate = 0;
+     }
+ 
+     // Update visual control object, this needs to be done more often than the

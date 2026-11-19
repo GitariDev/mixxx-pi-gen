@@ -900,3 +900,13 @@ The owner's answers (spec 2b):
 - **Shared column setup:** "I want to keep the column setup across the different source menus and have it be saved after edit like the settings". The owner chose "Columns, order and widths" (sorting stays per list) and "Build F now, then council". **Build F is the 7th pi-gen run**, approved for this. Spec 2c.
 - **FX pads:** the owner described deck A pads → FX 1 and deck B pads → FX 2, independent of the screen, with a per-unit route override. That is already how the stock Starlight mapping and the FX page work; there is no change. It is checked in the Starlight session.
 
+
+### 12.8 Owner decisions in the build F session (2026-11-19)
+
+- **The overview strip freeze:** "Good catch on the strip. Please Fix". The cause is a stock Mixxx 2.5.6 bug, upstream issue #9751: EngineBuffer's `playposition` throttle counter overflows about 6 h 46 min after a load without a seek. Build G backports upstream `bef0af3172` as `mixxx-overview-playposition.patch`.
+- **Build G (the 8th pi-gen run):** the owner chose "Fix both": the overview fix, and acceptance F's FAIL. A column shown again through Arrange columns must come back at its saved width, not 160 px (`mixxx-shared-columns-width.patch`).
+- **MANTACORE's port:** "You can remove the Mantacore port rule and put it on again." Its hub port is no longer disabled after a boot. MANTACORE stays read-only: nothing is ever written, moved or deleted there.
+- **Kept as stock and not findings:**
+  - a short Sync tap syncs once, and a hold latches (`LONGPRESSLATCHING`);
+  - Shift+Sync gives the leader only to a playing deck;
+  - PFL does not take a deck off master.

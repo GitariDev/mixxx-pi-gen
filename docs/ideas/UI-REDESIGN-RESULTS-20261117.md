@@ -367,3 +367,24 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
     - Each start rewrites `SharedColumns` once (two hidden columns' widths), with no visible change.
     - Load sample now shows FILENAME, TITLE, ARTIST, BPM and KEY (no DURATION). GANDER1's lists lost the owner's extra columns; their old per-list setups are kept, unused.
     - Once, after an eject and re-plug, Tracks kept GANDER1's tracks until another list was picked.
+
+## Owner session on build F (2026-11-19)
+
+- **Runner:** Claude Opus 5.5 medium, in its own thread talking to the owner (brief `SESSION-F-operator.md`); the record is `deploy/ui-redesign-20261117/session-F/SESSION.md`.
+- **Results:** 21 items, 20 PASS and 0 FAIL; item 17 was a recording step.
+  - **Starlight, section 7:** Play, Cue, Shift+Cue and Shift+Play, Sync, Shift+Sync, PFL, Shift+PFL (split cue in Settings), hot cues 1-4 with Shift to clear, loops 1/2/4/8, sampler pads A 1-4 and B 1, and tempo and jog all pass.
+  - **FX pads:** deck A's pads drive FX 1 and deck B's pads drive FX 2, with FX 1, FX 2 or DECKS on screen. Shift+FX pad changes the effect on both units.
+  - **Controller LEDs:** the owner confirmed they work. The 50 "not open for output" warnings at start have no visible effect.
+- **Power-off:**
+  - Mixxx saved first, and the log ends "shutdown complete with code 0". After the boot, `mixxx.cfg` and `samplers.xml` are byte-identical to the copies made before. `effects.xml` only has two lines in a different order.
+  - A pulled plug (item 21) kept a setting changed just before it (tempo range 8 % → 24 %).
+- **One fault: the overview strip stops moving during plain playback, and a jump clears it.**
+  - It was seen on deck 1 and on deck 2.
+  - **Cause:** stock Mixxx 2.5.6. `EngineBuffer::m_iSamplesSinceLastIndicatorUpdate` is a signed `int` (`enginebuffer.h:379`, `enginebuffer.cpp:1446`, `:1477-1482`) that is reset only on a seek. It overflows about 6 h 46 min after a load, and `playposition` then stops updating. This is upstream issue #9751, fixed by PR #16245 (`bef0af3172`) on the 2.5 branch, not yet released. The investigation is in `session-F/OVERVIEW-FREEZE-INVESTIGATION.md`.
+  - Builds B-E have it too; no earlier run left a deck loaded that long without a seek.
+- **Wave G1** (builder N-G1, Claude Opus 5.5 medium):
+  - `mixxx-overview-playposition.patch` backports `bef0af3172`: two lines in `enginebuffer.cpp`, an initialiser and a reset after the throttled update.
+  - Its fixture fails on stock (19 of 23 checks fail, including 7 h paused then 0 updates) and passes with the patch.
+  - Registration `7d0042b`, 54 patches, no prerequisite.
+  - **Gates:** Mac suite 804, OK (153 platform skips); native gate 252/252, 0 skips.
+- **Owner's state kept:** tempo range 24 %, ECHO and AUTOPAN on cards 2-3 of both FX units, FX 2 → DECK 2, the test hot cues, GANDER1 IN USE (the ★ start), and MANTACORE's port on (plan 12.8).

@@ -407,3 +407,32 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
   - **Mac suite:** 807 tests, OK (153 platform skips). The first run had one error that did not come back on the rerun; it is the known load flake.
   - **Native gate:** 255/255, 0 skips.
 - **Mac space for build G:** 12 GiB free. With the owner's yes, `~/Library/Caches` was cleared and the build B image `deploy/test-image-20261116b/mixpi-test-20261116b.img.gz` (8.6 GB) was deleted. The rest of that kit stays. That gave 27 GiB.
+
+## Build G (2026-11-19)
+
+- **Build:** operator Claude Opus 5.5 medium, one pi-gen run (the 8th, owner-approved) from `9a0d09e`.
+  - Exit 0 in 13 m 03 s. 55 patches. `.deb` `bd94e9d7…`.
+  - Every check passes. Image F → G changed only the two patches, the `.deb` and the sidecar (plus the files every image changes).
+  - Mac free space: 27 GiB at the start, 11 GiB at the lowest point, 26 GiB at the end. A second `fstrim` was needed (6.3 GiB more).
+  - Kit: `deploy/test-image-20261119g/`.
+- **In-place update** (`buildG-update/`): steps 0-9 all pass, with 67 files checked and the skin tree the expected 48 files. MANTACORE's port was left enabled (plan 12.8).
+- **Acceptance G** (tester Claude Opus 5.5 medium, `acceptance-G/ACCEPTANCE.md`): **21 checks, 20 PASS, 1 FAIL.** No owner activity seen.
+  - **Overview strip:** it moves on both decks: untouched, after Sources, and after a page switch. Deck 1 steps 19-20 px per 10 s (19.3 expected). Deck 2 steps 17-18 px (17.6 expected). The played part is shaded.
+  - **Column width:** a re-shown column keeps its width in both repros (KEY 50, BPM 100, `#` 30). There is no write at start or when a list opens.
+  - **Smoke:**
+    - a setting saves in 0.53 s, an effect in 0.45-0.50 s, and a column drag in 0.56 s, kept after `kill -9`;
+    - OPEN and the ★ start work;
+    - CPU averaged 4.08 % with 0 underruns and `throttled=0x0`.
+  - **FAIL (5b), a regression from G2:** any column change on This Pi › Tracks saves TITLE's stretched width (424, or 364 after a drag). Folders and Load sample (which also show FILENAME) then get a sideways bar, with BPM and KEY off screen. Build F's start-up write had been putting TITLE back to 160 by accident.
+- **Owner:** "Yes, build H first". Build H is the 9th pi-gen run, before council round 3.
+
+## Wave G3 (2026-11-19)
+
+- **Builder N-G3** (Claude Opus 5.5 medium): `mixxx-shared-columns-stretch.patch`, which needs `mixxx-shared-columns-width.patch`.
+- **Cause:** build B's own fill logic (`LibraryInterface::stretchColumn`, `libraryinterface.h:191-206`) widens TITLE (Filename in a folder) to fill the row. `saveSharedColumns()` saved the drawn `sectionSize()`.
+- **Fix:** the stretched column saves its set width (160 on the card). While TITLE is hidden, the last column Qt stretches is covered too. A drag of TITLE's own edge causes no write. Tracks still draws TITLE stretched.
+- **Fixture:** 10 failures without the patch (TITLE saved at 426 or 366; a 936 px table in a 776 px viewport). With the patch, 0 failures: Load sample and the folder fit 776 in 776.
+- **Registration:** 56 patches.
+- **Gates:**
+  - **Mac suite:** 809 tests, 1 error. It was the known `test_chroot_runtime` 5 s-timeout flake, which passed 3 of 3 runs on its own.
+  - **Native gate:** 257/257, 0 skips.

@@ -509,3 +509,15 @@ All three are the real seats; there are no stand-ins. **Owner (spec 2d, plan 12.
   - **VM b:** reached only over the durable SSH key, with no `limactl`.
   - **Mac free space:** lowest 7 GiB at the end of the export (the 5 GiB stop never fired), back to 22 GiB at the end.
 - **In-place update** (`buildI-update/`): steps 0-9 all pass, with 67 files checked, 59 patches, 9 skin tools and the new 48-file skin tree.
+- **Acceptance I** (tester Claude Opus 5.5 medium, `acceptance-I/ACCEPTANCE.md`): **41 checks, 40 PASS, 1 FAIL, plus two faults seen once.** No owner activity seen.
+  - **Header empty area:** `#1d222a` after a TITLE drag, and nothing saved.
+  - **Menu shadow:** x 440-479, within 1 per channel of the mockup values. The same at the top level and inside a source, and gone when the menu closes. A tap under it selects the row, and the scroll bar under it drags.
+  - **Tracks row inside GANDER1:** first, with the music-note icon, no › and no count. It lists all 98 tracks (the largest playlist, ALL Songs, has 97). Load to a deck and to a pad works, and the edge sits on it inside the drive. An eject with it showing is clean.
+  - **IN USE timing:** READY after the ★ start, OPEN and browsing. IN USE within about 1 s of a deck or pad load, and READY within about 0.9 s of the unload. The page row and the filter agree.
+  - **Ping over the Media page:** it shows, DISMISS and LOAD work, and it stays on top when the page opens.
+  - **Earlier fixes hold:** TITLE stays 160, a re-shown column keeps its width, there is no start-up write, the overview strip moves, and OPEN and the ★ start work.
+  - **Smoke:** CPU 4.08 %, 0 underruns, `throttled=0x0`.
+  - **FAIL 1:** after OPEN, ☰ opens at the top level with the edge on GANDER1, even when the menu was last left inside the drive before an eject. **The orchestrator reclassifies it as PASS by spec 2b:** the top-level case after OPEN is accepted, and an eject resets the menu.
+  - **X1 (once in 4):** with the ping raised over Tracks and then the Media page opened, LOAD removed the ping but did not open the drive.
+  - **X2 (once):** Ctrl+Q ended in SIGSEGV after 7 eject and re-plug cycles. `mixxx.cfg` and `samplers.xml` were saved first. Two later quits were clean. Both faults are under a read-only investigation (`acceptance-I/INVESTIGATION-X1-X2.md`).
+  - **Pairs for the council:** `acceptance-I/pairs/` (Sources top, Sources inside a drive, Media, Tracks).

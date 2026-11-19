@@ -23,6 +23,7 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Wave G1 integrated | `7d0042b` | 804 run, OK (153 platform skips) | 252/252, 0 skips (builder's run with the registration applied) | 54 patches. Upstream overview `playposition` fix `bef0af3172` |
 | Wave G2 integrated | `6ca8740` | 807 run, OK (153 platform skips); 1 load-flake error on the first run, clean on the rerun | 255/255, 0 skips (builder's run) | 55 patches. A re-shown column keeps its width; no start-up write |
 | Wave G3 integrated | `9bf9e5d` | 809 run; 1 error in `test_chroot_runtime` (5 s timeout), then 3 of 3 OK alone; 809 OK on 20 Nov after the bare-repo repair | 257/257, 0 skips (builder's run) | 56 patches. TITLE's stretched width is never saved |
+| Waves H1 + I1-I3 integrated | `fd6b16c` | 822 run; 1 `test_chroot_runtime` 5 s timeout under load (passes alone) | 274/274, 0 skips (orchestrator's run on the combined stack) | 59 patches. Header empty area; Tracks row in a drive; IN USE timing and ping on Media; menu shadow |
 
 ## Wave 0 on the test card (build 2)
 
@@ -469,3 +470,30 @@ At 00:00 macOS's daily `/tmp` cleanup deleted files idle for 3 days or more. It 
 - **VM b:** reachable through a durable key in `~/.config/mixpi-lima-b/`.
 
 The native gate logs for waves G1-G3 are the builders' runs on VM b. They are kept in the session scratchpad, not in the repo.
+
+## Council round 3 (2026-11-20, at `afeb5be`, build H)
+
+| Seat | Score | Blockers |
+|---|---|---|
+| Claude Fable 5.2 high | 8 | The TITLE-drag light strip (listed item 9) |
+| GPT-6.1 Sol xhigh | 8 | The TITLE-drag light strip |
+| Claude Opus 5.5 xhigh | 6, capped (8 without the cap) | An unlisted deviation: narrowed headers cut letters ("BPI", "TITLI"); and criterion 7 stays partial while listed items 1-4, 6 and 9 stand |
+
+All three are the real seats; there are no stand-ins. **Owner (spec 2d, plan 12.9):**
+- accepted the cut header letters in every narrowed table, and the disabled ★;
+- chose to build the menu shadow, the Tracks row in a drive, and the chip and ping timing, in build I.
+
+## Waves H1 and I1-I3 (2026-11-20)
+
+- **H1, S7 (skin):** `#LibraryWrapper WTrackTableViewHeader { background-color: #1d222a; }` in `pioneered-touch.qss`, the `--mx-surface-2` header colour. An offscreen render on VM b shows the empty area at `#1d222a`, while other headers keep their colours.
+- **I1, N-I1 (`mixxx-drive-tracks-row.patch`):** a "Tracks" row first under a rekordbox drive. It opens the whole-drive list that `RekordboxFeature` already builds (`createDevicePlaylist`), so it needs no new reading.
+  - The edge selects it after OPEN, the ★ start or a tap. An eject removes it.
+  - Its fixture fails 8 checks without the patch and passes all 12 with it.
+- **I2, N-I2 (`mixxx-media-chip-ping.patch`):**
+  - `idleState()` counts only deck and sampler users, so OPEN, BROWSE and library reads leave the drive READY. A load or unload refreshes the chip at once.
+  - The ASK ping shows over the Media page and stays on top when the page opens.
+  - Its fixture fails 10 of 22 checks on build H and passes all 22 with the patch.
+- **I3, S8 (`mixxx-sources-menu-shadow.patch` plus skin):**
+  - **Native:** S8 first found that a skin-only strip would block taps (the skin cannot make a widget pass touches through). With the orchestrator's approval, `wrightoverlaylayout.h` now places a touch-transparent 40 px third child against the menu's left edge.
+  - **Skin:** paints it with a plain `qlineargradient` fitted to the mockup's `box-shadow: -8px 0 24px rgba(0,0,0,.5)`. Sampled pixels are within 1 per channel of the mockup.
+  - **Fixture:** taps and scroll-bar drags under the strip reach the table. It fails 6 checks without the patch and passes all 19 with it.

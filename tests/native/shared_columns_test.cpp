@@ -9,6 +9,8 @@
 //   checks     every check but the kill
 //   widths     build G: a column shown again keeps its saved width, and
 //              opening lists writes nothing
+//   stretch    wave G3: TITLE's stretched width is never saved, and a
+//              folder or Load sample (Filename too) fits with no sideways bar
 //   kill       makes a change, prints CHANGED, then waits to be killed
 //   after-kill reads the setup the killed process left in mixxx.cfg
 #include <QApplication>
@@ -871,6 +873,165 @@ int widths(const QString& directory) {
     return failures ? 1 : 0;
 }
 
+// Wave G3 (acceptance G, FAIL 1, row 5b). The shown columns' widths add up
+// to the viewport when the stretch column fills the row.
+int shownTotal(const QHeaderView* header) {
+    int total = 0;
+    for (int column = 0; column < header->count(); ++column) {
+        if (!header->isSectionHidden(column)) {
+            total += header->sectionSize(column);
+        }
+    }
+    return total;
+}
+
+// A folder or Load sample: Filename plus the shared columns, all on screen.
+bool fitsWithFilename(View* view, const char* label) {
+    auto* header = view->header();
+    observe(label, header);
+    const QStringList shown = shownOrder(header);
+    const bool all = shown.contains(QStringLiteral("filename")) && shown.contains(QStringLiteral("title")) &&
+            shown.contains(QStringLiteral("artist")) && shown.contains(QStringLiteral("bpm")) &&
+            shown.contains(QStringLiteral("key"));
+    std::cout << "OBSERVE " << label << ": sideways bar maximum " << view->horizontalScrollBar()->maximum()
+              << ", columns " << shownTotal(header) << " px in " << view->viewport()->width() << " px"
+              << std::endl;
+    return all && view->horizontalScrollBar()->maximum() == 0 &&
+            shownTotal(header) <= view->viewport()->width() && widthOf(header, "title") == 160;
+}
+
+int stretch(const QString& directory) {
+    const QString path = directory + QStringLiteral("/mixxx.cfg");
+    auto db = openDatabase();
+    // The owner's line on the test card (acceptance G, start): FILENAME 160,
+    // TITLE 160, ARTIST 200, BPM 100, KEY 50; # hidden at 30; the others
+    // never shown.
+    const QString preset = MixpiSharedColumns::serialize({{"filename", false, 160}, {"title", false, 160},
+            {"artist", false, 200}, {"bpm", false, 100}, {"key", false, 50}, {"position", true, 30},
+            {"album", true, 0}, {"preview", true, 0}, {"duration", true, 20}});
+    {
+        QFile file(path);
+        file.open(QIODevice::WriteOnly);
+        file.write("\n[Library]\nSharedColumns " + preset.toLatin1() + "\n\n[Test]\nexisting 1\n");
+    }
+    UserSettingsPointer pConfig = makeConfig(directory);
+    mixxx::ConfigAutosave autosave(pConfig);
+    autosave.start();
+
+    TrackCollectionManager manager;
+    Library library(&manager);
+    RecordingManager recording;
+    BrowseTableModel browse(nullptr, &manager, &recording);
+    ProxyTrackModel folder(&browse, true);
+    BrowseTableModel samplesBrowse(nullptr, &manager, &recording);
+    ProxyTrackModel samples(&samplesBrowse, true);
+    NamedModel tracks(db, "mixxx.db.model.library", kLibraryNames, kLibraryLabels);
+
+    // The table at its full width in the 800 px screen.
+    constexpr int kFull = 776;
+    constexpr int kNarrow = 456;
+    QWidget window;
+    window.resize(800, 480);
+    window.show();
+    auto view = std::make_unique<View>(pConfig, &library, &window);
+    view->resize(700, 300);
+    view->show();
+    setViewport(view.get(), kFull);
+
+    view->loadTrackModel(&folder);
+    require(fitsWithFilename(view.get(), "a folder with the owner's line"),
+            "stretch: a folder with the owner's line fits (FILENAME, TITLE 160, ARTIST, BPM, KEY)");
+    view->loadTrackModel(&tracks);
+    auto* header = view->header();
+    observe("This Pi > Tracks", header);
+    require(widthOf(header, "title") > 160 && shownTotal(header) == view->viewport()->width(),
+            "stretch: This Pi > Tracks draws TITLE stretched to fill the row");
+
+    // Repro 1: an Arrange-columns hide and show of KEY on This Pi > Tracks.
+    QListWidget* list = arrangeList(header);
+    require(arrange(list, "Key", false) && savedAs(path, "key", true, 50),
+            "stretch: KEY hidden in Arrange columns is saved");
+    spin(1500);
+    arrange(list, "Key", true);
+    closeArrange(list);
+    require(savedAs(path, "key", false, 50), "stretch: KEY shown again is saved at 50 px");
+    observeSaved("after the KEY hide and show", path);
+    require(sharedColumn(fileValue(path), "title").size == 160 && !sharedColumn(fileValue(path), "title").hidden,
+            "stretch: after an Arrange hide and show of KEY, TITLE is saved at its set 160 px, "
+            "not its drawn width");
+    require(widthOf(header, "title") > 160 && shownTotal(header) == view->viewport()->width(),
+            "stretch: TITLE is still drawn stretched");
+
+    // The same after a drag of another column's edge (ARTIST 60 px wider).
+    resizeByDrag(header, QStringLiteral("artist"), 60, 10);
+    require(savedAs(path, "artist", false, 260), "stretch: the ARTIST drag is saved (260 px)");
+    observeSaved("after the ARTIST drag", path);
+    require(sharedColumn(fileValue(path), "title").size == 160,
+            "stretch: after a drag of ARTIST's edge, TITLE is saved at 160 px, not its drawn width");
+
+    // The tables with Filename: a folder, and Load sample's own table.
+    view->loadTrackModel(&folder);
+    require(fitsWithFilename(view.get(), "a folder after the changes"),
+            "stretch: a folder (Filename + the shared columns) fits at 800 px with no sideways bar");
+    QWidget loadSample;
+    loadSample.resize(800, 480);
+    loadSample.show();
+    auto samplesView = std::make_unique<View>(pConfig, &library, &loadSample);
+    samplesView->resize(700, 300);
+    samplesView->show();
+    setViewport(samplesView.get(), kFull);
+    samplesView->loadTrackModel(&samples);
+    require(fitsWithFilename(samplesView.get(), "Load sample > SAMPLES"),
+            "stretch: Load sample > SAMPLES (a second Filename table) fits with no sideways bar");
+    samplesView.reset();
+
+    // A drag of TITLE's own edge where it stretches: its set width stays.
+    view->loadTrackModel(&tracks);
+    header = view->header();
+    resizeByDrag(header, QStringLiteral("title"), 80, 8);
+    spin(1200);
+    observe("This Pi > Tracks after a drag of TITLE's own edge", header);
+    observeSaved("after the TITLE drag", path);
+    require(sharedColumn(fileValue(path), "title").size == 160,
+            "stretch: a drag of TITLE's own edge keeps its set width (160 px)");
+
+    // TITLE hidden: Qt stretches the last column (KEY) instead.
+    list = arrangeList(header);
+    require(arrange(list, "Title", false) && savedAs(path, "title", true, 160),
+            "stretch: TITLE hidden is saved at its set 160 px, not its drawn width");
+    observe("TITLE hidden", header);
+    require(sharedColumn(fileValue(path), "key").size == 50,
+            "stretch: while TITLE is hidden, KEY drawn stretched is saved at its set 50 px");
+    arrange(list, "Title", true);
+    closeArrange(list);
+    observe("TITLE shown again", header);
+    require(savedAs(path, "title", false, 160) && sharedColumn(fileValue(path), "key").size == 50 &&
+                    widthOf(header, "key") == 50 && widthOf(header, "title") > 160 &&
+                    shownTotal(header) == view->viewport()->width(),
+            "stretch: TITLE shown again stretches, saved at 160 px, KEY back at 50 px");
+
+    // The narrowed fit (Sources open): a change saves TITLE's set width.
+    const QString beforeNarrow = fileValue(path);
+    setViewport(view.get(), kNarrow);
+    observe("narrowed (Sources open)", header);
+    moveByDrag(header, QStringLiteral("bpm"), 1);
+    require(waitFor(1000, [&] { return fileValue(path) != beforeNarrow; }),
+            "stretch: a move while narrowed is saved within 1 s");
+    observeSaved("after the move while narrowed", path);
+    require(sharedColumn(fileValue(path), "title").size == 160 &&
+                    sharedColumn(fileValue(path), "artist").size == 260,
+            "stretch: a change while narrowed saves TITLE at 160 px and the full widths");
+    setViewport(view.get(), kFull);
+    view->loadTrackModel(&folder);
+    require(fitsWithFilename(view.get(), "a folder at the end"), "stretch: the folder still fits at the end");
+
+    view.reset();
+    autosave.stop();
+    require(asserts == 0, "stretch: no DEBUG_ASSERT fired");
+    std::cout << "FAILURES " << failures << std::endl;
+    return failures ? 1 : 0;
+}
+
 int killMode(const QString& directory) {
     auto db = openDatabase();
     UserSettingsPointer pConfig = makeConfig(directory);
@@ -941,6 +1102,9 @@ int main(int argc, char** argv) {
     }
     if (mode == QStringLiteral("widths")) {
         return widths(directory);
+    }
+    if (mode == QStringLiteral("stretch")) {
+        return stretch(directory);
     }
     if (mode == QStringLiteral("kill")) {
         return killMode(directory);

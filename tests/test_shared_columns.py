@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / 'tests/native/shared_columns_runner.py'
 PATCH = ROOT / 'stage3/01-install-packages/files/mixxx-shared-columns.patch'
 WIDTH_PATCH = ROOT / 'stage3/01-install-packages/files/mixxx-shared-columns-width.patch'
+STRETCH_PATCH = ROOT / 'stage3/01-install-packages/files/mixxx-shared-columns-stretch.patch'
 
 NATIVE_CHECKS = (
     "first run: a playlist opened first shows This Pi > Tracks' columns, order and widths",
@@ -86,6 +87,28 @@ WIDTH_CHECKS = (
     'widths: no DEBUG_ASSERT fired',
 )
 
+# Wave G3 (acceptance G, FAIL 1, row 5b): the stretch mode.
+STRETCH_CHECKS = (
+    "stretch: a folder with the owner's line fits (FILENAME, TITLE 160, ARTIST, BPM, KEY)",
+    'stretch: This Pi > Tracks draws TITLE stretched to fill the row',
+    'stretch: KEY hidden in Arrange columns is saved',
+    'stretch: KEY shown again is saved at 50 px',
+    'stretch: after an Arrange hide and show of KEY, TITLE is saved at its set 160 px, not its drawn width',
+    'stretch: TITLE is still drawn stretched',
+    'stretch: the ARTIST drag is saved (260 px)',
+    "stretch: after a drag of ARTIST's edge, TITLE is saved at 160 px, not its drawn width",
+    'stretch: a folder (Filename + the shared columns) fits at 800 px with no sideways bar',
+    'stretch: Load sample > SAMPLES (a second Filename table) fits with no sideways bar',
+    "stretch: a drag of TITLE's own edge keeps its set width (160 px)",
+    'stretch: TITLE hidden is saved at its set 160 px, not its drawn width',
+    'stretch: while TITLE is hidden, KEY drawn stretched is saved at its set 50 px',
+    'stretch: TITLE shown again stretches, saved at 160 px, KEY back at 50 px',
+    'stretch: a move while narrowed is saved within 1 s',
+    'stretch: a change while narrowed saves TITLE at 160 px and the full widths',
+    'stretch: the folder still fits at the end',
+    'stretch: no DEBUG_ASSERT fired',
+)
+
 
 def native_ready():
     return qt_available() and shutil.which('protoc') is not None
@@ -99,7 +122,7 @@ class SharedColumnsNativeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout[-6000:] + result.stderr[-4000:])
         self.assertIn('FAILURES 0', result.stdout)
         self.assertNotIn('FAIL ', result.stdout)
-        for check in NATIVE_CHECKS + WIDTH_CHECKS:
+        for check in NATIVE_CHECKS + WIDTH_CHECKS + STRETCH_CHECKS:
             self.assertIn('PASS ' + check, output)
 
 
@@ -152,6 +175,30 @@ class SharedColumnsWidthPatchTests(unittest.TestCase):
     def test_opening_a_list_saves_nothing(self):
         self.assertIn('+    if (!pTrackModel || !hasSharedStore() || m_applyingShared || m_settingUpChoices) {',
                       self.patch)
+
+
+class SharedColumnsStretchPatchTests(unittest.TestCase):
+    """Wave G3: mixxx-shared-columns-stretch.patch (acceptance G, FAIL 1, row 5b)."""
+
+    def setUp(self):
+        self.patch = STRETCH_PATCH.read_text()
+
+    def test_patch_touches_only_the_header(self):
+        touched = {line.split()[2][2:] for line in self.patch.splitlines() if line.startswith('diff --git ')}
+        self.assertEqual(touched, {'src/widget/wtracktableviewheader.cpp',
+                                   'src/widget/wtracktableviewheader.h'})
+
+    def test_stretched_column_saves_its_set_width(self):
+        # Build B's fill (LibraryInterface::stretchColumn) resizes TITLE to
+        # the row; the save takes the shared setup's width for it instead.
+        self.assertIn('+        int size = column == stretch || column == stretched ? '
+                      'setWidth(this, column, name, stored) : -1;', self.patch)
+        self.assertIn('+int WTrackTableViewHeader::stretchedSection() {', self.patch)
+        self.assertIn('+    if (!stretchLastSection()) {', self.patch)
+        # The setup on disk is not rewritten: no write at start or when a
+        # list opens (build G) stays.
+        self.assertNotIn('store.save(', self.patch)
+        self.assertNotIn('sharedStore().save(', self.patch)
 
 
 if __name__ == '__main__':

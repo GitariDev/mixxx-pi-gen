@@ -9,16 +9,21 @@ build F lines. Doubles replace only the track object, the player/recording
 singletons, the browse thread, the clipboard, the Library (it hands out the
 track collection) and the resources ConfigObject reads.
 
-mixxx-shared-columns.patch and mixxx-shared-columns-width.patch (build G) are
-applied on top of the registered stack when they are not registered yet, which
-is where the registration puts them.
+mixxx-shared-columns.patch, mixxx-shared-columns-width.patch (build G) and
+mixxx-shared-columns-stretch.patch (wave G3) are applied on top of the
+registered stack when they are not registered yet, which is where the
+registration puts them.
 
 Modes: checks (one process), widths (build G: a column shown again keeps its
-saved width; opening lists writes nothing), then kill (a change, SIGKILL 2 s later) and
-after-kill (a new process reads the setup the killed one left).
+saved width; opening lists writes nothing), stretch (wave G3: TITLE's stretched
+width is never saved; a folder with Filename fits), then kill (a change, SIGKILL
+2 s later) and after-kill (a new process reads the setup the killed one left).
 
 --without-width-fix builds without mixxx-shared-columns-width.patch and runs
 the widths mode only (it shows that mode fails without the build G patch).
+
+--without-stretch-fix builds without mixxx-shared-columns-stretch.patch and
+runs the stretch mode only (it shows that mode fails without the G3 patch).
 
 --without-show-fit builds MixpiTableFit without its show hook (a diagnostic:
 on Qt 6 offscreen the hidden close paths pass without it too, so it does not
@@ -41,6 +46,7 @@ from table_columns_runner import STUBS as TABLE_STUBS
 
 PATCH = 'mixxx-shared-columns.patch'
 WIDTH_PATCH = 'mixxx-shared-columns-width.patch'
+STRETCH_PATCH = 'mixxx-shared-columns-stretch.patch'
 KILL_AFTER_SECONDS = 2
 
 CONFIG_FILES = [
@@ -95,9 +101,18 @@ def between(source, start, end):
     return source[first:last]
 
 
-def build(target, without_show_fit=False, without_width_fix=False):
-    names, _ = reconstruct(target, exclude=(WIDTH_PATCH,) if without_width_fix else ())
-    for patch in (PATCH,) if without_width_fix else (PATCH, WIDTH_PATCH):
+def build(target, without_show_fit=False, without_width_fix=False, without_stretch_fix=False):
+    if without_width_fix:
+        excluded = (WIDTH_PATCH, STRETCH_PATCH)
+        stack = (PATCH,)
+    elif without_stretch_fix:
+        excluded = (STRETCH_PATCH,)
+        stack = (PATCH, WIDTH_PATCH)
+    else:
+        excluded = ()
+        stack = (PATCH, WIDTH_PATCH, STRETCH_PATCH)
+    names, _ = reconstruct(target, exclude=excluded)
+    for patch in stack:
         if patch in names:
             continue
         touched = [line.split()[2][2:] for line in (PATCH_DIR / patch).read_text().splitlines()
@@ -212,17 +227,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--without-show-fit', action='store_true')
     parser.add_argument('--without-width-fix', action='store_true')
+    parser.add_argument('--without-stretch-fix', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-shared-columns-') as temporary:
         target = Path(temporary)
-        binary = build(target / 'build', args.without_show_fit, args.without_width_fix)
+        binary = build(target / 'build', args.without_show_fit, args.without_width_fix,
+                       args.without_stretch_fix)
         status = 0
         if args.without_width_fix:
             modes = ('widths',)
+        elif args.without_stretch_fix:
+            modes = ('stretch',)
         elif args.without_show_fit:
             modes = ('checks',)
         else:
-            modes = ('checks', 'widths', 'kill')
+            modes = ('checks', 'widths', 'stretch', 'kill')
         for mode in modes:
             directory = target / 'run' / mode
             directory.mkdir(parents=True)

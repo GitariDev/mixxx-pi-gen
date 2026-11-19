@@ -1,0 +1,114 @@
+diff --git a/src/widget/wtracktableviewheader.cpp b/src/widget/wtracktableviewheader.cpp
+index b0e8811..a9aed91 100644
+--- a/src/widget/wtracktableviewheader.cpp
++++ b/src/widget/wtracktableviewheader.cpp
+@@ -37,6 +37,31 @@ QList<QPointer<WTrackTableViewHeader>>& openHeaders() {
+     return headers;
+ }
+ 
++// Build G3: the width saved for the column drawn stretched to fill the row,
++// instead of its drawn one.
++int setWidth(const QHeaderView* header,
++        int column,
++        const QString& name,
++        const QList<MixpiSharedColumns::Column>& stored) {
++    // Its width in the shared setup: what it was set to, by a restore, by a
++    // drag where it does not stretch (TITLE in a folder), or as shown again.
++    // A drag of its own edge where it stretches sets nothing: the stretch
++    // gives it the rest of the row again at the next layout. 0 or the
++    // minimum (20) means it was never shown: the table's default width.
++    for (const auto& entry : stored) {
++        if (entry.name == name) {
++            if (entry.size > WTTVH_MINIMUM_SECTION_SIZE) {
++                return entry.size;
++            }
++            break;
++        }
++    }
++    const int width = header->model()
++                              ->headerData(column, header->orientation(), TrackModel::kHeaderWidthRole)
++                              .toInt();
++    return width > 0 ? width : LibraryInterface::kStretchColumnMinimumWidth;
++}
++
+ } // namespace
+ 
+ HeaderViewState::HeaderViewState(const WTrackTableViewHeader& headers) {
+@@ -218,6 +243,15 @@ void WTrackTableViewHeader::saveSharedColumns() {
+     if (!pTrackModel || !hasSharedStore() || m_applyingShared || m_settingUpChoices) {
+         return;
+     }
++    const QString before = sharedStore().load();
++    const auto stored = MixpiSharedColumns::parse(before);
++    // Build G3 (acceptance G, FAIL 1): the column the table stretches to
++    // fill the row (TITLE, Filename in a folder, or the last one while that
++    // is hidden) is drawn wider than its set width. Its drawn width is never
++    // saved, or the tables with more columns (Filename in a folder and Load
++    // sample) scroll sideways.
++    const int stretch = stretchColumnIndex();
++    const int stretched = stretchedSection();
+     QList<MixpiSharedColumns::Column> own;
+     for (int visual = 0; visual < count(); ++visual) {
+         const int column = logicalIndex(visual);
+@@ -231,8 +265,11 @@ void WTrackTableViewHeader::saveSharedColumns() {
+             continue;
+         }
+         const bool hidden = isSectionHidden(column);
++        int size = column == stretch || column == stretched ? setWidth(this, column, name, stored) : -1;
+         // The full-width size while the table is fitted, never the fitted one.
+-        int size = m_fullWidth ? m_fullWidth(column) : -1;
++        if (size <= 0) {
++            size = m_fullWidth ? m_fullWidth(column) : -1;
++        }
+         if (size <= 0) {
+             size = hidden ? getWidthOfHiddenColumn(column) : sectionSize(column);
+         }
+@@ -244,9 +281,8 @@ void WTrackTableViewHeader::saveSharedColumns() {
+     if (!MixpiSharedColumns::anyShown(own)) {
+         return;
+     }
+-    const QString before = sharedStore().load();
+     const QString after = MixpiSharedColumns::serialize(
+-            MixpiSharedColumns::merge(MixpiSharedColumns::parse(before), own));
++            MixpiSharedColumns::merge(stored, own));
+     if (after == before) {
+         return;
+     }
+@@ -752,6 +788,24 @@ void WTrackTableViewHeader::restoreWidthBeforeHidden(int column) {
+     }
+ }
+ 
++int WTrackTableViewHeader::stretchedSection() {
++    const int stretch = stretchColumnIndex();
++    if (stretch >= 0 && stretch < count() && !isSectionHidden(stretch)) {
++        return stretch;
++    }
++    if (!stretchLastSection()) {
++        return -1;
++    }
++    // The stretch column is hidden: Qt stretches the last one shown.
++    for (int visual = count() - 1; visual >= 0; --visual) {
++        const int column = logicalIndex(visual);
++        if (!isSectionHidden(column)) {
++            return column;
++        }
++    }
++    return -1;
++}
++
+ int WTrackTableViewHeader::getWidthOfHiddenColumn(int column) const {
+     const auto& it = m_hiddenColumnSizes.find(column);
+     if (it != m_hiddenColumnSizes.constEnd()) {
+diff --git a/src/widget/wtracktableviewheader.h b/src/widget/wtracktableviewheader.h
+index bc82e54..df8f489 100644
+--- a/src/widget/wtracktableviewheader.h
++++ b/src/widget/wtracktableviewheader.h
+@@ -123,6 +123,8 @@ class WTrackTableViewHeader : public QHeaderView {
+     // A hidden column just shown again gets its width from before it was
+     // hidden (build G).
+     void restoreWidthBeforeHidden(int column);
++    // Build G3: the column drawn stretched to fill the row, or -1.
++    int stretchedSection();
+ 
+     QMenu m_menu;
+     QMap<int, QCheckBox*> m_columnCheckBoxes;

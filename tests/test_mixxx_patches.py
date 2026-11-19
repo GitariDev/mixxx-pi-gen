@@ -85,6 +85,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-shared-columns-stretch.patch",
             "mixxx-drive-tracks-row.patch",
             "mixxx-media-chip-ping.patch",
+            "mixxx-sources-menu-shadow.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -111,6 +112,7 @@ PREREQUISITES = {
     "mixxx-shared-columns-stretch.patch": ["mixxx-shared-columns-width.patch"],
     "mixxx-drive-tracks-row.patch": ["mixxx-media-continuation.patch"],
     "mixxx-media-chip-ping.patch": ["mixxx-media-agreed.patch"],
+    "mixxx-sources-menu-shadow.patch": ["mixxx-right-overlay.patch"],
     "mixxx-scan-strip-fixes.patch": ["mixxx-scan-progress.patch"],
     "mixxx-sources-edit-done.patch": ["mixxx-source-groups.patch"],
     "mixxx-settings-fixes.patch": ["mixxx-performance-settings.patch", "mixxx-acceptance-fixes.patch"],

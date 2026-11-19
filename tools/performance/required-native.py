@@ -49,6 +49,7 @@ REQUIRED_TESTS = (
     'test_overview_playposition',
     'test_drive_tracks_row',
     'test_media_chip_ping',
+    'test_sources_menu_shadow',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

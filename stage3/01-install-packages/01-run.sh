@@ -60,6 +60,7 @@ MIXXX_PATCHES=(
     mixxx-shared-columns-stretch.patch
     mixxx-drive-tracks-row.patch
     mixxx-media-chip-ping.patch
+    mixxx-sources-menu-shadow.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

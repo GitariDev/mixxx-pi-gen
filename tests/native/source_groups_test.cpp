@@ -145,8 +145,9 @@ class Library : public QObject {
 #include "rekordbox_playlist_tree.inc"
 
 // A rekordbox drive as RekordboxFeature makes it: the device row, then its
-// playlist tree from the actual buildPlaylistTree. "Tracks" first is the
-// fixture's stand-in for the mockup's row. The lists (m-sources-sub.png):
+// playlist tree from the actual buildPlaylistTree, with "Tracks" first: the
+// actual driveTracksRow (mixxx-drive-tracks-row.patch, spec 2d), else a
+// stand-in for the mockup's row. The lists (m-sources-sub.png):
 // Afro house 48, Warm-up 31, Peak time 26, Closing 22, Afro tech 40, and the
 // folder Playlists with Deep cuts 17 and an empty list.
 std::unique_ptr<TreeItem> rekordboxDrive(const QString& path, const QString& revision) {
@@ -193,9 +194,15 @@ std::unique_ptr<TreeItem> rekordboxDrive(const QString& path, const QString& rev
         }
     }
     auto drive = std::make_unique<TreeItem>(path.section('/', -1), QVariantList{path, QString(), revision});
+#ifndef MIXPI_DRIVE_TRACKS_ROW
     drive->appendChild("Tracks", 21);
+#endif
     buildPlaylistTree(database, drive.get(), 0, names, folders, tree, entries, path, path,
             std::make_shared<mixxx::rekordbox::ImportOperation>());
+#ifdef MIXPI_DRIVE_TRACKS_ROW
+    // RekordboxFeature::addDriveTracksRows adds it first once the import is done.
+    drive->insertChild(0, driveTracksRow(*drive));
+#endif
     return drive;
 }
 
@@ -1209,6 +1216,65 @@ int main(int argc, char** argv) {
             settle();
             back->click();
             settle();
+        }
+        // Spec 2d (mixxx-drive-tracks-row.patch): the drive's Tracks row is
+        // first, has no ›, and opens the drive's whole list. When that list
+        // is in Tracks the feature selects the row: the edge sits on it.
+        // An eject with it in view leaves nothing dangling.
+        mantacoreTile = tileNamed(sidebar, "MANTACORE");
+        if (mantacoreTile) {
+            mantacoreTile->click();
+            settle();
+            const QModelIndex driveRoot = sidebar.rootIndex();
+            const QModelIndex tracksRow = model.index(0, 0, driveRoot);
+            const auto* tracksItem = static_cast<const TreeItem*>(tracksRow.internalPointer());
+            require(tracksRow.data().toString() == "Tracks" && !model.hasChildren(tracksRow) && tracksItem &&
+                            tracksItem->getData().toList().value(0).toString() == mantacore,
+                    "inside the drive the first row is Tracks, with no ›, opening the drive's whole list");
+            const QModelIndex featureDrive = rekordbox.children.index(0, 0);
+            emit rekordbox.featureSelect(&rekordbox, rekordbox.children.index(0, 0, featureDrive));
+            settle();
+            auto edgeOn = [&](const QModelIndex& index) {
+                const QImage image = sidebar.viewport()->grab().toImage();
+                const QRect row = sidebar.visualRect(index);
+                return row.isValid() &&
+                        image.pixelColor(row.left() + 1, row.center().y()) == sidebar.menuAccentColor();
+            };
+            const bool edgeOnTracks = sidebar.currentIndex() == tracksRow && edgeOn(tracksRow) &&
+                    !edgeOn(model.index(2, 0, driveRoot));
+            require(edgeOnTracks && sidebar.isSourceMenuInside() &&
+                            sidebar.sourceCrumb() == QString::fromUtf8("MANTACORE › rekordbox"),
+                    "the drive's whole list in Tracks: the accent edge sits on the Tracks row");
+            if (!grabs.isEmpty()) {
+                screen.grab().save(grabs + "/i1-sources-drive-tracks.png");
+            }
+            screenControl.setAndConfirm(1);
+            sidebarVisible.setAndConfirm(1);
+            QTest::mouseClick(sidebar.viewport(), Qt::LeftButton, {}, sidebar.visualRect(tracksRow).center());
+            settle();
+            require(shown == "Rekordbox/Tracks" && screenControl.get() == 0 && sidebarVisible.get() == 0 &&
+                            sidebar.currentIndex() == tracksRow,
+                    "a tap on Tracks opens it in Tracks like any list and closes Sources; it stays current");
+            // The eject: discovery drops the drive's row while Tracks shows it.
+            rekordbox.children.removeRows(0, 1);
+            settle();
+            bool named = true;
+            for (auto* tile : sidebar.sourceTiles()) {
+                named &= !tile->accessibleName().isEmpty();
+            }
+            require(named && !tileNamed(sidebar, "MANTACORE") && !sidebar.rootIndex().isValid() &&
+                            !sidebar.isSourceMenuInside() && sidebar.selectedSourceTile() == Groups::kThisPi,
+                    "an eject with the Tracks row in view: the drive's row goes, This Pi is selected, nothing dangles");
+            {
+                std::vector<std::unique_ptr<TreeItem>> rows;
+                rows.push_back(rekordboxDrive(mantacore, QStringLiteral("rev-4")));
+                rekordbox.children.insertTreeItemRows(std::move(rows), 0);
+            }
+            settle();
+            while (sidebar.isSourceMenuInside()) {
+                back->click();
+                settle();
+            }
         }
         // The edit list in the state of m-sources-edit.png (Folders off).
         settings.setValue(ConfigKey(kConfigGroup, "SidebarSourceBrowseFeature"), false);

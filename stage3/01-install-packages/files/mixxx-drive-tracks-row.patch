@@ -1,0 +1,126 @@
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+index eb69e2d..7c6fca4 100644
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -1139,6 +1139,27 @@ void readAnalyze(TrackPointer track,
+     }
+ }
+ 
++// Agreed UI 2d (m-sources-sub.png): a drive's first row is "Tracks", with the
++// music-note icon of This Pi's Tracks row and no ›. parseDeviceDB already
++// fills the device's own playlist, named by the device path, with every track
++// row of export.pdb, whether or not a playlist holds it; the row opens that
++// playlist as a playlist row opens its own (activateChild), so the table,
++// its columns, its sort and LOAD are a rekordbox list's. Nothing is written
++// to the drive.
++bool isDriveTracksRow(const TreeItem& device, const TreeItem& row) {
++    const QVariantList data = row.getData().toList();
++    return data.value(1).toString() == IS_NOT_RECORDBOX_DEVICE &&
++            data.value(0).toString() == device.getData().toList().value(0).toString();
++}
++
++std::unique_ptr<TreeItem> driveTracksRow(const TreeItem& device) {
++    auto row = std::make_unique<TreeItem>(QObject::tr("Tracks"),
++            QVariant(QList<QString>{device.getData().toList().value(0).toString(),
++                    IS_NOT_RECORDBOX_DEVICE}));
++    row->setIcon(QIcon(QStringLiteral(":/images/library/ic_library_tracks.svg")));
++    return row;
++}
++
+ } // anonymous namespace
+ 
+ RekordboxPlaylistModel::RekordboxPlaylistModel(QObject* parent,
+@@ -1422,6 +1443,20 @@ RekordboxFeature::RekordboxFeature(
+             &QFutureWatcher<QString>::finished,
+             this,
+             &RekordboxFeature::onTracksFound);
++    // After onTracksFound (connected first): an imported drive's Tracks row.
++    connect(&m_tracksFutureWatcher,
++            &QFutureWatcher<QString>::finished,
++            this,
++            &RekordboxFeature::addDriveTracksRows);
++    // A drive's whole list in Tracks (OPEN, ★, a tap on the drive): the
++    // menu's current row is its Tracks row. After the selection that showed
++    // it, so the edge lands on the row.
++    connect(this,
++            &LibraryFeature::showTrackModel,
++            this,
++            [this] {
++                QTimer::singleShot(0, this, &RekordboxFeature::selectShownDriveTracks);
++            });
+     // initialize the model
+     m_pSidebarModel->setRootItem(TreeItem::newRoot(this));
+ #ifdef __LINUX__
+@@ -1793,6 +1828,38 @@ void RekordboxFeature::activateChild(const QModelIndex& index) {
+     }
+ }
+ 
++void RekordboxFeature::addDriveTracksRows() {
++    if (m_trackImportActive) {
++        return;
++    }
++    // On the GUI thread, through the model: the row is announced like any
++    // other. A failed or cancelled import has its retry marker back.
++    TreeItem* root = m_pSidebarModel->getRootItem();
++    for (int row = 0; row < root->childRows(); ++row) {
++        const TreeItem* device = root->child(row);
++        if (device->getData().toList().value(1).toString() != IS_NOT_RECORDBOX_DEVICE ||
++                (device->childRows() > 0 && isDriveTracksRow(*device, *device->child(0)))) {
++            continue;
++        }
++        std::vector<std::unique_ptr<TreeItem>> rows;
++        rows.push_back(driveTracksRow(*device));
++        m_pSidebarModel->insertTreeItemRows(std::move(rows), 0, m_pSidebarModel->index(row, 0));
++    }
++}
++
++void RekordboxFeature::selectShownDriveTracks() {
++    const QString shown = m_pRekordboxPlaylistModel->playlist();
++    const TreeItem* root = m_pSidebarModel->getRootItem();
++    for (int row = 0; row < root->childRows(); ++row) {
++        const TreeItem* device = root->child(row);
++        if (device->getData().toList().value(0).toString() == shown && device->childRows() > 0 &&
++                isDriveTracksRow(*device, *device->child(0))) {
++            emit featureSelect(this, m_pSidebarModel->index(0, 0, m_pSidebarModel->index(row, 0)));
++            return;
++        }
++    }
++}
++
+ void RekordboxFeature::onRekordboxDevicesFound() {
+     // Probing does not touch live TreeItems, so a user import may start while
+     // it runs. Hold completed probe results until that import releases its node.
+diff --git a/src/library/rekordbox/rekordboxfeature.h b/src/library/rekordbox/rekordboxfeature.h
+index 0171e35..b662e3c 100644
+--- a/src/library/rekordbox/rekordboxfeature.h
++++ b/src/library/rekordbox/rekordboxfeature.h
+@@ -57,9 +57,20 @@ class RekordboxPlaylistModel : public BaseExternalPlaylistModel {
+     TrackPointer getTrack(const QModelIndex& index) const override;
+     bool isColumnHiddenByDefault(int column) override;
+     bool isColumnInternal(int column) override;
++    // The list shown (a playlist path, or a drive's path for its Tracks row).
++    void setPlaylist(const QString& path) {
++        m_playlist = path;
++        BaseExternalPlaylistModel::setPlaylist(path);
++    }
++    const QString& playlist() const {
++        return m_playlist;
++    }
+ 
+   protected:
+     void initSortColumnMapping() override;
++
++  private:
++    QString m_playlist;
+ };
+ 
+ class RekordboxFeature : public BaseExternalLibraryFeature {
+@@ -94,6 +105,8 @@ class RekordboxFeature : public BaseExternalLibraryFeature {
+     void requestDeviceRefresh();
+     void refreshDevices();
+     void finishDeviceRefresh();
++    void addDriveTracksRows();
++    void selectShownDriveTracks();
+     QMap<QString, QString> m_requestedMounts;
+     QPointer<mixxx::rekordbox::PendingSelection> m_pendingSelection;
+ #ifdef __LINUX__

@@ -1,0 +1,435 @@
+// Spec 2d (m-sources-sub.png): a "Tracks" row first inside a rekordbox drive,
+// listing every track in the drive's export. The actual import (parseDeviceDB
+// with Kaitai and SQLite) reads a fake export.pdb: seven tracks, tracks 1-4
+// in the playlists Warm-up and Sets › Peak time, tracks 5-7 in none. The
+// actual RekordboxFeature methods run on stand-ins: the sidebar model (a
+// QAbstractItemModel over the real TreeItems), the table model (the list it
+// shows, read with the join BaseExternalPlaylistModel reads) and the track
+// collection (a SQLite file). The stand-in feature wires its signals as the
+// RekordboxFeature constructor does. tests/native/drive_tracks_row_runner.py
+// builds this; BASELINE is the source without mixxx-drive-tracks-row.patch.
+#include <QAbstractItemModel>
+#include <QDateTime>
+#include <QCryptographicHash>
+#include <QDir>
+#include <QDirIterator>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
+#include <QFutureWatcher>
+#include <QGuiApplication>
+#include <QIcon>
+#include <QImage>
+#include <QMap>
+#include <QPersistentModelIndex>
+#include <QPixmap>
+#include <QPointer>
+#include <QResource>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QSqlRecord>
+#include <QStringDecoder>
+#include <QThread>
+#include <QTimer>
+#include <QtConcurrentRun>
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <rekordbox_pdb.h>
+#include "library/treeitem.h"
+#include "library/queryutil.h"
+#include "util/color/rgbcolor.h"
+#include "library/media/mediauseregistry.h"
+#include "library/rekordbox/importoperation.h"
+
+int failures = 0;
+void require(bool condition, const char* name) {
+    std::cout << (condition ? "PASS " : "FAIL ") << name << std::endl;
+    failures += !condition;
+}
+void events(int milliseconds = 60) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < milliseconds) {
+        QCoreApplication::processEvents();
+        QThread::msleep(1);
+    }
+}
+template<typename Predicate>
+bool until(Predicate predicate) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!predicate() && timer.elapsed() < 5000) {
+        events(2);
+    }
+    return predicate();
+}
+
+namespace mixxx {
+using DbConnectionPoolPtr = std::shared_ptr<QString>;
+thread_local QString workerConnection;
+struct DbConnectionPooler {
+    explicit DbConnectionPooler(const DbConnectionPoolPtr& path) {
+        workerConnection = QStringLiteral("worker-%1").arg(quintptr(QThread::currentThreadId()));
+        auto database = QSqlDatabase::addDatabase("QSQLITE", workerConnection);
+        database.setDatabaseName(*path);
+        if (!database.open()) {
+            throw std::runtime_error("worker SQLite open failed");
+        }
+    }
+    ~DbConnectionPooler() {
+        QSqlDatabase::database(workerConnection).close();
+        QSqlDatabase::removeDatabase(workerConnection);
+    }
+};
+QSqlDatabase DbConnectionPooled(const DbConnectionPoolPtr&) {
+    return QSqlDatabase::database(workerConnection);
+}
+struct FileInfo {
+    explicit FileInfo(const QString&) {
+    }
+};
+} // namespace mixxx
+namespace Sandbox {
+bool askForAccess(mixxx::FileInfo*) {
+    return true;
+}
+} // namespace Sandbox
+QString fromUtf16LeString(const std::string& text) {
+    QStringDecoder decoder(QStringDecoder::Utf16LE);
+    return decoder(QByteArray::fromStdString(text));
+}
+QString fromUtf16BeString(const std::string& text) {
+    QStringDecoder decoder(QStringDecoder::Utf16BE);
+    return decoder(QByteArray::fromStdString(text));
+}
+
+#define IS_RECORDBOX_DEVICE "::isRecordboxDevice::"
+#define IS_NOT_RECORDBOX_DEVICE "::isNotRecordboxDevice::"
+const QString kRekordboxLibraryTable = "rekordbox_library";
+const QString kRekordboxPlaylistsTable = "rekordbox_playlists";
+const QString kRekordboxPlaylistTracksTable = "rekordbox_playlist_tracks";
+const QString kPdbPath = "PIONEER/rekordbox/export.pdb";
+const QString kPLaylistPathDelimiter = "-->";
+constexpr int kInvalidPlaylistId = -1;
+// LibraryFeature's icon path (libraryfeature.cpp): This Pi's Tracks row is
+// MixxxLibraryFeature, icon "tracks".
+const QString kIconPath = PRODUCTION_ICON_PATH;
+
+namespace mixxx::rekordbox {
+struct Observation {
+    std::string revision;
+    std::string database;
+};
+QMap<QString, Observation> observations;
+Observation inspectSource(const std::string& path) {
+    return observations.value(QString::fromStdString(path));
+}
+PRODUCTION_MATCHERS
+} // namespace mixxx::rekordbox
+namespace mixxx::media {
+Lease acquirePath(const std::string& path, Producer producer) {
+    return registry().acquire({path, path, {}}, producer);
+}
+} // namespace mixxx::media
+
+PRODUCTION_PARSER
+
+// The sidebar model: TreeItemModel's index, insert and remove over the real
+// TreeItems.
+struct Sidebar : QAbstractItemModel {
+    TreeItem root;
+    int inserted = 0;
+    TreeItem* getRootItem() const {
+        return const_cast<TreeItem*>(&root);
+    }
+    TreeItem* item(const QModelIndex& index) const {
+        return index.isValid() ? static_cast<TreeItem*>(index.internalPointer()) : getRootItem();
+    }
+    QModelIndex index(int row, int column, const QModelIndex& parent = {}) const override {
+        TreeItem* owner = item(parent);
+        if (row < 0 || row >= owner->childRows()) {
+            return {};
+        }
+        return createIndex(row, column, owner->child(row));
+    }
+    QModelIndex parent(const QModelIndex& index) const override {
+        TreeItem* owner = index.isValid() ? item(index)->parent() : nullptr;
+        if (!owner || owner == &root) {
+            return {};
+        }
+        return createIndex(owner->parentRow(), 0, owner);
+    }
+    int rowCount(const QModelIndex& parent = {}) const override {
+        return item(parent)->childRows();
+    }
+    int columnCount(const QModelIndex& = {}) const override {
+        return 1;
+    }
+    QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override {
+        return index.isValid() && role == Qt::DisplayRole ? QVariant(item(index)->getLabel()) : QVariant();
+    }
+    void triggerRepaint() {
+    }
+    void insertTreeItemRows(std::vector<std::unique_ptr<TreeItem>>&& rows, int position,
+            const QModelIndex& parent = QModelIndex()) {
+        if (rows.empty()) {
+            return;
+        }
+        beginInsertRows(parent, position, position + static_cast<int>(rows.size()) - 1);
+        item(parent)->insertChildren(position, std::move(rows));
+        endInsertRows();
+        ++inserted;
+    }
+    bool removeRows(int position, int count, const QModelIndex& parent = QModelIndex()) override {
+        beginRemoveRows(parent, position, position + count - 1);
+        item(parent)->removeChildren(position, count);
+        endRemoveRows();
+        return true;
+    }
+};
+struct Collection {
+    QString name;
+    QSqlDatabase database() {
+        return QSqlDatabase::database(name);
+    }
+};
+// The table: the list RekordboxPlaylistModel shows (its setPlaylist records
+// the path), read with BaseExternalPlaylistModel's join.
+struct PlaylistModel {
+    QString name;
+    QString m_playlist;
+    void setPlaylist(const QString& path) {
+        m_playlist = path;
+    }
+    const QString& playlist() const {
+        return m_playlist;
+    }
+    // Title and location (what getTrack loads) per row, in list order.
+    QList<QPair<QString, QString>> rows() const {
+        QSqlQuery query(QSqlDatabase::database(name));
+        query.prepare(QStringLiteral(
+                "SELECT l.title, l.location FROM rekordbox_playlist_tracks t "
+                "JOIN rekordbox_playlists p ON t.playlist_id = p.id "
+                "JOIN rekordbox_library l ON t.track_id = l.id "
+                "WHERE p.name = :name ORDER BY t.position"));
+        query.bindValue(QStringLiteral(":name"), m_playlist);
+        QList<QPair<QString, QString>> result;
+        if (query.exec()) {
+            while (query.next()) {
+                result.append({query.value(0).toString(), query.value(1).toString()});
+            }
+        }
+        return result;
+    }
+};
+struct Library : QObject {
+    mixxx::DbConnectionPoolPtr pool;
+    explicit Library(QString path)
+            : pool(std::make_shared<QString>(path)) {
+    }
+    mixxx::DbConnectionPoolPtr dbConnectionPool() {
+        return pool;
+    }
+};
+struct DevicesFuture {
+    QList<TreeItem*> found;
+    QList<TreeItem*> result() const {
+        return found;
+    }
+};
+struct RekordboxFeature : QObject {
+    explicit RekordboxFeature(Library* library, const QString& name)
+            : QObject(library) {
+        collection.name = name;
+        playlist.name = name;
+        // As the RekordboxFeature constructor connects them.
+        connect(&m_tracksFutureWatcher, &QFutureWatcher<QString>::finished, this, [this] { onTracksFound(); });
+#ifndef BASELINE
+        connect(&m_tracksFutureWatcher, &QFutureWatcher<QString>::finished, this, [this] {
+            addDriveTracksRows();
+        });
+#endif
+    }
+    Sidebar sidebar;
+    Collection collection;
+    PlaylistModel playlist;
+    Sidebar* m_pSidebarModel = &sidebar;
+    Collection* m_pTrackCollection = &collection;
+    PlaylistModel* m_pRekordboxPlaylistModel = &playlist;
+    std::shared_ptr<mixxx::rekordbox::ImportOperation> m_importOperation;
+    mixxx::media::Lease m_importMediaUse;
+    TreeItem* m_pImportingDevice = nullptr;
+    bool m_trackImportActive = false;
+    bool m_deviceResultsDeferred = false;
+    QFuture<QString> m_tracksFuture;
+    QFutureWatcher<QString> m_tracksFutureWatcher;
+    DevicesFuture m_devicesFuture;
+    int displays = 0;
+    int selections = 0;
+    QPersistentModelIndex selected;
+    void requestDeviceRefresh() {
+    }
+    void refreshDevices() {
+    }
+    void finishDeviceRefresh() {
+    }
+    void clearLastRightClickedIndex() {
+    }
+    void featureSelect(RekordboxFeature*, const QModelIndex& index) {
+        ++selections;
+        selected = index;
+    }
+    void showTrackModel(PlaylistModel*) {
+        ++displays;
+#ifndef BASELINE
+        // The constructor's showTrackModel connection.
+        QTimer::singleShot(0, this, [this] { selectShownDriveTracks(); });
+#endif
+    }
+    void activateChild(const QModelIndex&);
+    void onTracksFound();
+    void onRekordboxDevicesFound();
+#ifndef BASELINE
+    void addDriveTracksRows();
+    void selectShownDriveTracks();
+#endif
+};
+
+PRODUCTION_METHODS
+
+QByteArray driveDigest(const QString& path) {
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    QDirIterator files(path, QDir::Files | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+    QStringList names;
+    while (files.hasNext()) {
+        names.append(files.next());
+    }
+    names.sort();
+    for (const auto& name : names) {
+        QFile file(name);
+        file.open(QIODevice::ReadOnly);
+        const QFileInfo info(name);
+        hash.addData(name.toUtf8());
+        hash.addData(QByteArray::number(info.lastModified().toMSecsSinceEpoch()));
+        hash.addData(file.readAll());
+    }
+    return hash.result();
+}
+
+QStringList labels(const TreeItem* item) {
+    QStringList result;
+    for (int row = 0; row < item->childRows(); ++row) {
+        result.append(item->child(row)->getLabel());
+    }
+    return result;
+}
+
+int count(const QString& connection, const QString& table) {
+    QSqlQuery query(QSqlDatabase::database(connection));
+    return query.exec("SELECT count(*) FROM " + table) && query.next() ? query.value(0).toInt() : -1;
+}
+
+int main(int argc, char** argv) {
+    QGuiApplication application(argc, argv);
+    const QString home = QString::fromLocal8Bit(argv[1]);
+    const QString drive = home + "/media/GANDER1";
+    QResource::registerResource(qEnvironmentVariable("MIXPI_MIXXX_RCC"));
+    const QString name = QStringLiteral("main");
+    Library library(QString(home + "/library.sqlite"));
+    {
+        auto database = QSqlDatabase::addDatabase("QSQLITE", name);
+        database.setDatabaseName(*library.pool);
+        database.open();
+        createLibraryTable(database, kRekordboxLibraryTable);
+        createPlaylistsTable(database, kRekordboxPlaylistsTable);
+        createPlaylistTracksTable(database, kRekordboxPlaylistTracksTable);
+    }
+    mixxx::rekordbox::observations[drive] = {"mount:" + drive.toStdString(), "db:" + drive.toStdString()};
+    const QByteArray before = driveDigest(drive);
+    auto feature = std::make_unique<RekordboxFeature>(&library, name);
+    TreeItem* device = feature->sidebar.root.appendChild("GANDER1",
+            QVariantList{drive, IS_RECORDBOX_DEVICE, QString("db:" + drive)});
+    const QModelIndex deviceIndex = feature->sidebar.index(0, 0);
+
+    // A tap on the drive (or OPEN): the import, then the drive's list.
+    feature->activateChild(deviceIndex);
+    const bool imported = until([&] { return !feature->m_trackImportActive; });
+    require(imported && feature->displays == 1 &&
+                    feature->playlist.playlist() == drive,
+            "the import of the fake export finishes and Tracks shows the drive's whole list");
+    events();
+    const QStringList rows = labels(device);
+    std::cout << "OBSERVE rows " << rows.join(" | ").toStdString() << std::endl;
+    require(rows == QStringList({"Tracks", "Warm-up (3)", "Sets"}) &&
+                    labels(device->child(2)) == QStringList({"Peak time (2)"}),
+            "inside the drive the first row is Tracks, then the export's playlists and folders as before");
+    const TreeItem* tracks = device->childRows() ? device->child(0) : nullptr;
+    require(tracks && tracks->getLabel() == "Tracks" && tracks->childRows() == 0 &&
+                    tracks->getData().toList().value(0).toString() == drive &&
+                    tracks->getData().toList().value(1).toString() == IS_NOT_RECORDBOX_DEVICE,
+            "the Tracks row has no › and opens the drive's own list (every track the import read)");
+    require(feature->sidebar.inserted == 1,
+            "the row is added through the sidebar model (announced to the menu), once");
+    {
+        const QImage expected = QIcon(kIconPath.arg("tracks")).pixmap(20, 20).toImage();
+        const QImage drawn = tracks ? const_cast<TreeItem*>(tracks)->getIcon().pixmap(20, 20).toImage()
+                                    : QImage();
+        require(!expected.isNull() && drawn == expected,
+                "the Tracks row has the music-note icon of This Pi's Tracks row (ic_library_tracks)");
+    }
+
+    // The edge: the list in Tracks is the Tracks row's, so the feature selects
+    // that row (the menu's current row).
+    const bool followed = until([&] { return feature->selected.isValid(); });
+    require(followed &&
+                    feature->selected == feature->sidebar.index(0, 0, deviceIndex),
+            "with the drive's whole list in Tracks, the menu's current row is the Tracks row");
+
+    // Pick a playlist, then the Tracks row.
+    feature->activateChild(feature->sidebar.index(1, 0, deviceIndex));
+    events();
+    const int selectionsAfterPlaylist = feature->selections;
+    require(feature->playlist.rows().size() == 3 && feature->playlist.playlist() == QString(drive + "-->Warm-up") &&
+                    feature->selected == feature->sidebar.index(0, 0, deviceIndex) &&
+                    selectionsAfterPlaylist == 1,
+            "a playlist shows its own tracks and does not move the current row");
+    feature->activateChild(feature->sidebar.index(0, 0, deviceIndex));
+    events();
+    const auto list = feature->playlist.rows();
+    QStringList titles;
+    bool everyFile = !list.isEmpty();
+    for (const auto& row : list) {
+        titles.append(row.first);
+        everyFile = everyFile && row.second.startsWith(QString(drive + "/Contents/")) && QFileInfo(row.second).isFile();
+    }
+    std::cout << "OBSERVE Tracks list " << titles.join(" | ").toStdString() << std::endl;
+    require(feature->playlist.playlist() == drive && feature->displays == 3 &&
+                    titles == QStringList({"Track 1", "Track 2", "Track 3", "Track 4", "Track 5",
+                                      "Track 6", "Track 7"}),
+            "picking Tracks lists all 7 tracks of the export, tracks 5-7 (in no playlist) too");
+    require(everyFile,
+            "each row carries its file on the drive, which LOAD (RekordboxPlaylistModel::getTrack) loads");
+    require(feature->selected == feature->sidebar.index(0, 0, deviceIndex),
+            "with Tracks picked, the edge sits on the Tracks row");
+
+    // Eject with the row in view: discovery finds the drive gone.
+    mixxx::rekordbox::observations.remove(drive);
+    feature->m_devicesFuture.found.clear();
+    feature->onRekordboxDevicesFound();
+    feature->showTrackModel(&feature->playlist);
+    events();
+    require(feature->sidebar.root.childRows() == 0 && !feature->selected.isValid() &&
+                    count(name, kRekordboxLibraryTable) == 0 && count(name, kRekordboxPlaylistsTable) == 0 &&
+                    count(name, kRekordboxPlaylistTracksTable) == 0,
+            "an eject with the Tracks row in view removes the drive, its rows and its lists; nothing dangles");
+    require(driveDigest(drive) == before, "nothing on the drive was written (read only)");
+    feature.reset();
+    QSqlDatabase::database(name).close();
+    QSqlDatabase::removeDatabase(name);
+    std::cout << "OK " << failures << std::endl;
+    return failures ? 1 : 0;
+}

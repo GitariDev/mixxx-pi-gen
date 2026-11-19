@@ -28,6 +28,12 @@ mixxx-sources-open-edge.patch (build E, spec 2b "do 2"; acceptance D repro
 1): a drive opened from the Media page (OPEN or BROWSE) becomes the menu's
 current source and place: ☰ reopens inside the drive, and the top level has
 the accent edge on the drive row. The saved start (★) is not touched.
+
+mixxx-drive-tracks-row.patch (build I, spec 2d): the drive's rows start with
+the feature's own Tracks row (driveTracksRow, no ›); with the drive's whole
+list in Tracks the edge sits on it, a tap opens it like any list, and an
+eject with it in view leaves nothing dangling. The import side is in
+tests/test_drive_tracks_row.py.
 """
 import os
 from pathlib import Path

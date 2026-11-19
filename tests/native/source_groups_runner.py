@@ -6,7 +6,8 @@ TreeItemModel), plus what mixxx-sources-menu-fixes.patch adds:
 Library::showStartTile (★ on the drive row and on Samples), and the actual
 rekordbox playlist tree builder (buildPlaylistTree with its table helpers,
 from the patched rekordboxfeature.cpp) on an in-memory SQLite database, so
-the drive's lists carry the counts the feature makes.
+the drive's lists carry the counts the feature makes; with
+mixxx-drive-tracks-row.patch, the drive's Tracks row (driveTracksRow) too.
 """
 from pathlib import Path
 import re
@@ -39,6 +40,10 @@ def rekordbox_tree(target):
     # The definition (the first match is its forward declaration).
     definition = feature.index('void buildPlaylistTree(', feature.index('void buildPlaylistTree(') + 1)
     parts.append(SAMPLE.method(feature[definition:], 'void buildPlaylistTree('))
+    # mixxx-drive-tracks-row.patch (spec 2d): the drive's Tracks row.
+    if 'bool isDriveTracksRow(' in feature:
+        parts.append(SAMPLE.method(feature, 'bool isDriveTracksRow('))
+        parts.append(SAMPLE.method(feature, 'std::unique_ptr<TreeItem> driveTracksRow('))
     (target / 'rekordbox_playlist_tree.inc').write_text('\n'.join(parts) + '\n')
 
 
@@ -55,6 +60,10 @@ def main():
         # opened from the Media page.
         sidebar = (target / 'src/widget/wlibrarysidebar.h').read_text()
         defines = ('-DMIXPI_SOURCES_OPEN_EDGE',) if 'void followShownSource();' in sidebar else ()
+        # mixxx-drive-tracks-row.patch: the drive's Tracks row as the feature
+        # makes it (else the fixture's stand-in row).
+        if 'driveTracksRow(' in (target / 'rekordbox_playlist_tree.inc').read_text():
+            defines += ('-DMIXPI_DRIVE_TRACKS_ROW',)
         program = SAMPLE.build(target, ROOT / 'tests/native/source_groups_test.cpp', METHODS,
                                defines=defines, sidebar=True)
         subprocess.run([str(program)], env=qt_environment(), check=True, timeout=60)

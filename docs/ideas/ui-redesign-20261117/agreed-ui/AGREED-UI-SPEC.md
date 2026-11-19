@@ -218,6 +218,19 @@ The owner read council round 2 (all three seats at 6) and decided the following.
 - **The FX pads** already follow the owner's model, so nothing changes: deck A's FX pads drive FX 1 and deck B's drive FX 2, whichever unit the screen shows. Each unit has its own DECK 1 / DECK 2 / MASTER route on screen.
 - **Order of work:** build F, then the owner's Starlight and power-off session on build F, then council round 3.
 
+## 2d. Owner decisions after council round 3 (2026-11-20)
+
+- **Accepted as they are:**
+  - **Narrowed tables may cut header letters.** With Sources open, any narrowed track table may cut a header's letters (for example "BPI" under a sort arrow, "TITLI"). Owner: "I'm okay with the cut columns." This extends 2b's "DURATIO" item to every narrowed table.
+  - **★ on a switched-off row** in Edit sources is drawn disabled, because Mixxx cannot start Tracks at a source that is off.
+- **Built as the mockups draw them** (build I, the 10th pi-gen run, approved by the owner):
+  - **The Sources side menu's shadow** (`m-sources-top.png`, `m-sources-sub.png`). It is painted as a plain gradient, not Qt's costly blur effect. Skin only.
+  - **A "Tracks" row inside a rekordbox drive** (`m-sources-sub.png`). It lists every track in the drive's export, next to the playlists and folders that Mixxx's reader already lists.
+  - **USB chip and ping timing:**
+    - A drive reads **IN USE** only once a track or sample from it is loaded on a deck or pad (the eject rule's "loaded means in use"). After OPEN or BROWSE alone, it still reads **READY**.
+    - The plug-in ping (ASK: LOAD and DISMISS) also shows while the Media page is open.
+- **Also fixed** (skin, all three seats): the table header's empty area takes the agreed header colour, so a TITLE edge dragged narrower no longer shows a light-grey strip.
+
 ## 3. Not part of build C
 
 - **G5 extras:** the owner suggested an outline in the fill colour when active and thinner outlines on inactive buttons, then said "What we have now is acceptable". This is noted only.

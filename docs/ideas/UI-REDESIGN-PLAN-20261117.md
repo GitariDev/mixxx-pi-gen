@@ -911,3 +911,10 @@ The owner's answers (spec 2b):
   - Shift+Sync gives the leader only to a playing deck;
   - PFL does not take a deck off master.
 - **Build H (the 9th pi-gen run):** "Yes, build H first". After acceptance G, build H fixes acceptance G's regression: TITLE's stretched width was saved (`mixxx-shared-columns-stretch.patch`). Council round 3 scores build H.
+
+### 12.9 Owner decisions after council round 3 (2026-11-20)
+
+- **Scores:** Fable 8, Sol 8 and Opus 6. The Opus seat was capped by the narrowed-header cuts; it would score 8 without the cap.
+- **Accepted:** the cut header letters in every narrowed table, and the disabled ★ on an off row (spec 2d).
+- **Build I (the 10th pi-gen run):** the owner chose to build three items as drawn: the menu shadow, the Tracks row inside a drive, and the chip and ping timing. The header strip fix also goes in.
+- **The owner is away overnight and asked for no more questions.** The orchestrator carries build I through to acceptance and council round 4 on its own judgement, within the spec. Anything that cannot be built as drawn is recorded for the owner, not asked.

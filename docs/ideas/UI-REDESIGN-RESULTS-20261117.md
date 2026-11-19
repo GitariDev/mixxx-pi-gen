@@ -497,3 +497,15 @@ All three are the real seats; there are no stand-ins. **Owner (spec 2d, plan 12.
   - **Native:** S8 first found that a skin-only strip would block taps (the skin cannot make a widget pass touches through). With the orchestrator's approval, `wrightoverlaylayout.h` now places a touch-transparent 40 px third child against the menu's left edge.
   - **Skin:** paints it with a plain `qlineargradient` fitted to the mockup's `box-shadow: -8px 0 24px rgba(0,0,0,.5)`. Sampled pixels are within 1 per channel of the mockup.
   - **Fixture:** taps and scroll-bar drags under the strip reach the table. It fails 6 checks without the patch and passes all 19 with it.
+
+## Build I (2026-11-20)
+
+- **Build:** operator Claude Opus 5.5 medium, the 10th pi-gen run (owner-approved), from `defbda0`.
+  - **First run:** exit 1 after 9 m 15 s. Every stage and the `.deb` finished, then pi-gen's export step lost a timing race: `mkdosfs: unable to open /dev/loop0p1` ran before the partition node appeared. Build H ran the same step without trouble.
+  - **Resume:** the orchestrator judged that finishing the export completes the approved build. A resume through pi-gen's `SKIP` files ran only the export: exit 0 in 32 s, with no race.
+  - 59 patches. `.deb` `ba87025a…`. Every check passes.
+  - **Image H → I:** the 3 patches, the 3 changed skin tools, `skin.xml` (`0a20396a…`) and `style.qss` (`9e40ec45…`). No file goes stale.
+  - Kit: `deploy/test-image-20261120i/`.
+  - **VM b:** reached only over the durable SSH key, with no `limactl`.
+  - **Mac free space:** lowest 7 GiB at the end of the export (the 5 GiB stop never fired), back to 22 GiB at the end.
+- **In-place update** (`buildI-update/`): steps 0-9 all pass, with 67 files checked, 59 patches, 9 skin tools and the new 48-file skin tree.

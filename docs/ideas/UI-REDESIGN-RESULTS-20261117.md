@@ -388,3 +388,22 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
   - Registration `7d0042b`, 54 patches, no prerequisite.
   - **Gates:** Mac suite 804, OK (153 platform skips); native gate 252/252, 0 skips.
 - **Owner's state kept:** tempo range 24 %, ECHO and AUTOPAN on cards 2-3 of both FX units, FX 2 → DECK 2, the test hot cues, GANDER1 IN USE (the ★ start), and MANTACORE's port on (plan 12.8).
+
+## Wave G2 (2026-11-19)
+
+- **Builder N-G2** (Claude Opus 5.5 medium): `mixxx-shared-columns-width.patch`, which needs `mixxx-shared-columns.patch`. It fixes acceptance F FAIL 1.
+- **Cause:**
+  - Build B's `showColumnReadable()` (`libraryinterface.h:216-224`, from `mixxx-acceptance-fixes.patch`) widens every shown column to at least 160 px.
+  - Arrange columns' hide path also saved the model's default width, not the column's real width.
+- **Fix** (`wtracktableviewheader.{h,cpp}` only):
+  - On a hidden → shown change, the column gets the width the shared setup holds for it.
+  - A saved width of 0 or 20 px counts as never shown and keeps build B's 160 px.
+  - Arrange columns remembers the widths of shown columns.
+- **N1 is fixed** on the same path: building the header menu no longer saves, so a start or opening a list writes nothing.
+- **Side effect:** a column only one table has, such as FILENAME in a folder, joins the shared setup at its first change there, not when the list opens. The owner's current line already holds FILENAME.
+- **Fixture:** 14 checks fail without the patch; 67 PASS with it, including all of build F's checks.
+- **Registration:** `6ca8740`, 55 patches.
+- **Gates:**
+  - **Mac suite:** 807 tests, OK (153 platform skips). The first run had one error that did not come back on the rerun; it is the known load flake.
+  - **Native gate:** 255/255, 0 skips.
+- **Mac space for build G:** 12 GiB free. With the owner's yes, `~/Library/Caches` was cleared and the build B image `deploy/test-image-20261116b/mixpi-test-20261116b.img.gz` (8.6 GB) was deleted. The rest of that kit stays. That gave 27 GiB.

@@ -58,6 +58,7 @@ MIXXX_PATCHES=(
     mixxx-overview-playposition.patch
     mixxx-shared-columns-width.patch
     mixxx-shared-columns-stretch.patch
+    mixxx-drive-tracks-row.patch
     mixxx-media-chip-ping.patch
 )
 MIXXX_CMAKE_FLAGS=(

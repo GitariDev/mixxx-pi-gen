@@ -83,6 +83,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-overview-playposition.patch",
             "mixxx-shared-columns-width.patch",
             "mixxx-shared-columns-stretch.patch",
+            "mixxx-drive-tracks-row.patch",
             "mixxx-media-chip-ping.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
@@ -108,6 +109,7 @@ PREREQUISITES = {
     "mixxx-shared-columns.patch": ["mixxx-table-fit-media-open.patch"],
     "mixxx-shared-columns-width.patch": ["mixxx-shared-columns.patch"],
     "mixxx-shared-columns-stretch.patch": ["mixxx-shared-columns-width.patch"],
+    "mixxx-drive-tracks-row.patch": ["mixxx-media-continuation.patch"],
     "mixxx-media-chip-ping.patch": ["mixxx-media-agreed.patch"],
     "mixxx-scan-strip-fixes.patch": ["mixxx-scan-progress.patch"],
     "mixxx-sources-edit-done.patch": ["mixxx-source-groups.patch"],

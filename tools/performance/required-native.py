@@ -47,6 +47,7 @@ REQUIRED_TESTS = (
     'test_settings_fixes',
     'test_shared_columns',
     'test_overview_playposition',
+    'test_drive_tracks_row',
     'test_media_chip_ping',
 )
 FORBIDDEN_OVERRIDES = (

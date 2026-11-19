@@ -55,6 +55,7 @@ MIXXX_PATCHES=(
     mixxx-sources-open-edge.patch
     mixxx-sampler-clear-playing.patch
     mixxx-shared-columns.patch
+    mixxx-overview-playposition.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

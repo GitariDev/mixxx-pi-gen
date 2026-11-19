@@ -80,6 +80,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-sources-open-edge.patch",
             "mixxx-sampler-clear-playing.patch",
             "mixxx-shared-columns.patch",
+            "mixxx-overview-playposition.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():

@@ -9,11 +9,16 @@ build F lines. Doubles replace only the track object, the player/recording
 singletons, the browse thread, the clipboard, the Library (it hands out the
 track collection) and the resources ConfigObject reads.
 
-mixxx-shared-columns.patch is applied on top of the registered stack when it
-is not registered yet, which is where the registration puts it.
+mixxx-shared-columns.patch and mixxx-shared-columns-width.patch (build G) are
+applied on top of the registered stack when they are not registered yet, which
+is where the registration puts them.
 
-Modes: checks (one process), then kill (a change, SIGKILL 2 s later) and
+Modes: checks (one process), widths (build G: a column shown again keeps its
+saved width; opening lists writes nothing), then kill (a change, SIGKILL 2 s later) and
 after-kill (a new process reads the setup the killed one left).
+
+--without-width-fix builds without mixxx-shared-columns-width.patch and runs
+the widths mode only (it shows that mode fails without the build G patch).
 
 --without-show-fit builds MixpiTableFit without its show hook (a diagnostic:
 on Qt 6 offscreen the hidden close paths pass without it too, so it does not
@@ -35,6 +40,7 @@ from library_interface_runner import (PATCH_DIR, ROOT, reconstruct, populate_pin
 from table_columns_runner import STUBS as TABLE_STUBS
 
 PATCH = 'mixxx-shared-columns.patch'
+WIDTH_PATCH = 'mixxx-shared-columns-width.patch'
 KILL_AFTER_SECONDS = 2
 
 CONFIG_FILES = [
@@ -89,18 +95,20 @@ def between(source, start, end):
     return source[first:last]
 
 
-def build(target, without_show_fit=False):
-    names, _ = reconstruct(target)
-    if PATCH not in names:
-        touched = [line.split()[2][2:] for line in (PATCH_DIR / PATCH).read_text().splitlines()
+def build(target, without_show_fit=False, without_width_fix=False):
+    names, _ = reconstruct(target, exclude=(WIDTH_PATCH,) if without_width_fix else ())
+    for patch in (PATCH,) if without_width_fix else (PATCH, WIDTH_PATCH):
+        if patch in names:
+            continue
+        touched = [line.split()[2][2:] for line in (PATCH_DIR / patch).read_text().splitlines()
                    if line.startswith('diff --git ')]
         for path in touched:
             try:
                 populate_pinned(target, [path])
             except subprocess.CalledProcessError:
                 pass  # a new file of this patch
-        subprocess.run(['git', 'apply', str(PATCH_DIR / PATCH)], cwd=target, check=True, timeout=15)
-        names.append(PATCH)
+        subprocess.run(['git', 'apply', str(PATCH_DIR / patch)], cwd=target, check=True, timeout=15)
+        names.append(patch)
     print('PATCHES', ' '.join(names), flush=True)
     if without_show_fit:
         fit = target / 'src/widget/mixpitablefit.h'
@@ -203,12 +211,19 @@ def run_kill(binary, directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--without-show-fit', action='store_true')
+    parser.add_argument('--without-width-fix', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-shared-columns-') as temporary:
         target = Path(temporary)
-        binary = build(target / 'build', args.without_show_fit)
+        binary = build(target / 'build', args.without_show_fit, args.without_width_fix)
         status = 0
-        for mode in ('checks',) if args.without_show_fit else ('checks', 'kill'):
+        if args.without_width_fix:
+            modes = ('widths',)
+        elif args.without_show_fit:
+            modes = ('checks',)
+        else:
+            modes = ('checks', 'widths', 'kill')
+        for mode in modes:
             directory = target / 'run' / mode
             directory.mkdir(parents=True)
             if mode == 'kill':

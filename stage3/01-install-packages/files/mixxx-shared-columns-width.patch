@@ -1,0 +1,146 @@
+diff --git a/src/widget/wtracktableviewheader.cpp b/src/widget/wtracktableviewheader.cpp
+index 1226fd4..b0e8811 100644
+--- a/src/widget/wtracktableviewheader.cpp
++++ b/src/widget/wtracktableviewheader.cpp
+@@ -2,11 +2,13 @@
+ 
+ #include <QCheckBox>
+ #include <QContextMenuEvent>
++#include <QHash>
+ #include <QMouseEvent>
+ #include <QPointer>
+ #include <QWidgetAction>
+ #include <QSignalBlocker>
+ #include <algorithm>
++#include <memory>
+ 
+ #include "library/trackmodel.h"
+ #include "moc_wtracktableviewheader.cpp"
+@@ -213,7 +215,7 @@ void WTrackTableViewHeader::mouseReleaseEvent(QMouseEvent* pEvent) {
+ 
+ void WTrackTableViewHeader::saveSharedColumns() {
+     TrackModel* pTrackModel = getTrackModel();
+-    if (!pTrackModel || !hasSharedStore() || m_applyingShared) {
++    if (!pTrackModel || !hasSharedStore() || m_applyingShared || m_settingUpChoices) {
+         return;
+     }
+     QList<MixpiSharedColumns::Column> own;
+@@ -424,7 +426,11 @@ void WTrackTableViewHeader::setModel(QAbstractItemModel* pModel) {
+         // due to database schema evolution we gonna hide all columns that may
+         // contain a potential large number of NULL values.  Here we uncheck
+         // the items that are hidden by default (e.g., key column).
++        // Build G (acceptance F, note N1): ticking the box of a column that
++        // shows is not a change by the user, so it saves nothing.
++        m_settingUpChoices = true;
+         pCheckBox->setChecked(!isSectionHidden(i));
++        m_settingUpChoices = false;
+ 
+         auto pAction = make_parented<QWidgetAction>(this);
+         pAction->setDefaultWidget(pCheckBox.get());
+@@ -632,7 +638,30 @@ void WTrackTableViewHeader::showColumnArrangement() {
+             available.append(column);
+         }
+     }
+-    LibraryInterface::arrangeColumns(this, available, [this] {
++    // Build G: the widths of the columns shown before each change. A column
++    // this change hides keeps its width for the save (the header menu does
++    // the same); a column it shows again gets back the width it had.
++    auto shownWidths = std::make_shared<QHash<int, int>>();
++    auto rememberShown = [this, available, shownWidths] {
++        shownWidths->clear();
++        for (int column : available) {
++            if (!isSectionHidden(column)) {
++                shownWidths->insert(column, sectionSize(column));
++            }
++        }
++    };
++    rememberShown();
++    LibraryInterface::arrangeColumns(this, available, [this, available, shownWidths, rememberShown] {
++        for (int column : available) {
++            const auto shown = shownWidths->constFind(column);
++            if (isSectionHidden(column)) {
++                if (shown != shownWidths->constEnd() && shown.value() > 0) {
++                    m_hiddenColumnSizes.insert(column, shown.value());
++                }
++            } else if (shown == shownWidths->constEnd()) {
++                restoreWidthBeforeHidden(column);
++            }
++        }
+         for (auto choice = m_columnCheckBoxes.begin(); choice != m_columnCheckBoxes.end(); ++choice) {
+             const QSignalBlocker blocker(choice.value());
+             choice.value()->setChecked(!isSectionHidden(choice.key()));
+@@ -641,6 +670,7 @@ void WTrackTableViewHeader::showColumnArrangement() {
+         saveHeaderState();
+         // Build F: every table gets the change, on disk within a second.
+         saveSharedColumns();
++        rememberShown();
+     });
+ }
+ 
+@@ -669,7 +699,11 @@ void WTrackTableViewHeader::showOrHideColumn(int column) {
+     }
+     QCheckBox* pCheckBox = it.value();
+     if (pCheckBox->isChecked()) {
++        const bool wasHidden = isSectionHidden(column);
+         LibraryInterface::showColumnReadable(this, column);
++        if (wasHidden) {
++            restoreWidthBeforeHidden(column);
++        }
+         VERIFY_OR_DEBUG_ASSERT(sectionSize(column) >= WTTVH_MINIMUM_SECTION_SIZE) {
+             resizeSection(column, WTTVH_MINIMUM_SECTION_SIZE);
+         }
+@@ -691,6 +725,33 @@ void WTrackTableViewHeader::showOrHideColumn(int column) {
+     saveSharedColumns();
+ }
+ 
++void WTrackTableViewHeader::restoreWidthBeforeHidden(int column) {
++    // Build G (acceptance F, FAIL 1): build B's showColumnReadable()
++    // (libraryinterface.h) gives a column it shows at least 160 px, so BPM
++    // (100), KEY (50) and # (30) came back at 160, which was then saved and
++    // shared. A column shown
++    // again gets the width the shared setup holds for it: the width it had
++    // when it was hidden, in this list or another one. A column never shown
++    // has 0 there (20, the minimum, after build F's start-up write) and
++    // keeps build B's readable width.
++    if (!hasSharedStore()) {
++        return;
++    }
++    const QString name = model()->headerData(column, Qt::Horizontal, TrackModel::kHeaderNameRole)
++                                 .toString();
++    if (name.isEmpty()) {
++        return;
++    }
++    for (const auto& entry : MixpiSharedColumns::parse(sharedStore().load())) {
++        if (entry.name == name) {
++            if (entry.size > WTTVH_MINIMUM_SECTION_SIZE && sectionSize(column) != entry.size) {
++                resizeSection(column, entry.size);
++            }
++            return;
++        }
++    }
++}
++
+ int WTrackTableViewHeader::getWidthOfHiddenColumn(int column) const {
+     const auto& it = m_hiddenColumnSizes.find(column);
+     if (it != m_hiddenColumnSizes.constEnd()) {
+diff --git a/src/widget/wtracktableviewheader.h b/src/widget/wtracktableviewheader.h
+index 291579f..bc82e54 100644
+--- a/src/widget/wtracktableviewheader.h
++++ b/src/widget/wtracktableviewheader.h
+@@ -120,6 +120,9 @@ class WTrackTableViewHeader : public QHeaderView {
+     void restoreSort();
+     void applySharedFromOtherTable();
+     void syncColumnCheckBoxes();
++    // A hidden column just shown again gets its width from before it was
++    // hidden (build G).
++    void restoreWidthBeforeHidden(int column);
+ 
+     QMenu m_menu;
+     QMap<int, QCheckBox*> m_columnCheckBoxes;
+@@ -130,4 +133,6 @@ class WTrackTableViewHeader : public QHeaderView {
+     bool m_pressed = false;
+     bool m_changedWhilePressed = false;
+     bool m_applyingShared = false;
++    // setModel() is ticking the header menu's boxes (build G, note N1).
++    bool m_settingUpChoices = false;
+ };

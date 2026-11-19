@@ -15,6 +15,7 @@ from native.library_interface_runner import qt_available
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / 'tests/native/shared_columns_runner.py'
 PATCH = ROOT / 'stage3/01-install-packages/files/mixxx-shared-columns.patch'
+WIDTH_PATCH = ROOT / 'stage3/01-install-packages/files/mixxx-shared-columns-width.patch'
 
 NATIVE_CHECKS = (
     "first run: a playlist opened first shows This Pi > Tracks' columns, order and widths",
@@ -59,6 +60,32 @@ NATIVE_CHECKS = (
     'kill: the setup changed 2 s before a SIGKILL is there after a restart',
 )
 
+# Build G (acceptance F, FAIL 1 and note N1): the widths mode.
+WIDTH_CHECKS = (
+    'start: opening lists writes nothing to the shared setup (note N1)',
+    'start: This Pi > Tracks shows BPM 100 and KEY 50',
+    'repro A: KEY hidden in Arrange columns is saved hidden at 50 px',
+    'repro A: KEY shown again in Arrange columns is 50 px, not 160',
+    'repro A: the saved line has KEY shown at 50 px',
+    'BPM hidden from the header menu is saved hidden at 100 px',
+    'BPM shown again from the header menu is 100 px, not 160',
+    'the saved line has BPM shown at 100 px',
+    '# hidden again is saved hidden at 30 px',
+    '# shown from the header menu and from Arrange columns is 30 px, not 160',
+    'the saved line has # shown at 30 px',
+    'repro B: BPM hidden in This Pi > Tracks, saved at 100 px',
+    'repro B: BPM is hidden in the playlist',
+    'repro B: BPM shown in the playlist is 100 px, not 160',
+    'repro B: the saved line has BPM shown at 100 px',
+    'repro B: KEY hidden in the playlist, saved at 50 px',
+    "repro B: KEY shown from a folder's header menu is 50 px, not 160",
+    'repro B: This Pi > Tracks has BPM 100 and KEY 50 again',
+    'the saved line keeps the old widths after every show (BPM 100, KEY 50, # 30)',
+    "a column never shown (saved 0 or 20 px) gets build B's 160 px",
+    '... and that width is saved',
+    'widths: no DEBUG_ASSERT fired',
+)
+
 
 def native_ready():
     return qt_available() and shutil.which('protoc') is not None
@@ -72,7 +99,7 @@ class SharedColumnsNativeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout[-6000:] + result.stderr[-4000:])
         self.assertIn('FAILURES 0', result.stdout)
         self.assertNotIn('FAIL ', result.stdout)
-        for check in NATIVE_CHECKS:
+        for check in NATIVE_CHECKS + WIDTH_CHECKS:
             self.assertIn('PASS ' + check, output)
 
 
@@ -101,6 +128,30 @@ class SharedColumnsPatchTests(unittest.TestCase):
     def test_fitted_widths_never_saved(self):
         self.assertIn('return m_columnFit.savedWidth(column);', self.patch)
         self.assertIn('if (event->type() == QEvent::Show && watched == parent()) {', self.patch)
+
+
+class SharedColumnsWidthPatchTests(unittest.TestCase):
+    """Build G: mixxx-shared-columns-width.patch (acceptance F, FAIL 1, N1)."""
+
+    def setUp(self):
+        self.patch = WIDTH_PATCH.read_text()
+
+    def test_patch_touches_only_the_header(self):
+        touched = {line.split()[2][2:] for line in self.patch.splitlines() if line.startswith('diff --git ')}
+        self.assertEqual(touched, {'src/widget/wtracktableviewheader.cpp',
+                                   'src/widget/wtracktableviewheader.h'})
+
+    def test_shown_again_takes_the_shared_width(self):
+        self.assertIn('+void WTrackTableViewHeader::restoreWidthBeforeHidden(int column) {', self.patch)
+        self.assertIn('+            if (entry.size > WTTVH_MINIMUM_SECTION_SIZE && '
+                      'sectionSize(column) != entry.size) {', self.patch)
+        # Both show paths: the header menu and Arrange columns.
+        self.assertEqual(self.patch.count('+                restoreWidthBeforeHidden(column);'), 1)
+        self.assertEqual(self.patch.count('+            restoreWidthBeforeHidden(column);'), 1)
+
+    def test_opening_a_list_saves_nothing(self):
+        self.assertIn('+    if (!pTrackModel || !hasSharedStore() || m_applyingShared || m_settingUpChoices) {',
+                      self.patch)
 
 
 if __name__ == '__main__':

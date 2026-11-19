@@ -7,6 +7,8 @@
 //
 // usage: shared-columns-test MODE DIRECTORY
 //   checks     every check but the kill
+//   widths     build G: a column shown again keeps its saved width, and
+//              opening lists writes nothing
 //   kill       makes a change, prints CHANGED, then waits to be killed
 //   after-kill reads the setup the killed process left in mixxx.cfg
 #include <QApplication>
@@ -615,7 +617,9 @@ int checks(const QString& directory) {
         const QString value = fileValue(path);
         require(sharedShown(value) == QStringList({"filename", "artist", "bpm", "position", "key", "title"}) &&
                         sharedColumn(value, "artist").size == 270 && sharedColumn(value, "key").size == 82 &&
-                        sharedColumn(value, "bpm").size == 160,
+                        // BPM was hidden at 98 and shown again: 98 (build G; build F
+                        // saved the 160 px of acceptance F's FAIL 1 here).
+                        sharedColumn(value, "bpm").size == 98,
                 "fit: a change while narrowed saves the full widths, never the fitted ones");
     }
     full = fileValue(path);
@@ -657,6 +661,212 @@ int checks(const QString& directory) {
 
     autosave.stop();
     require(asserts == 0, "no DEBUG_ASSERT fired");
+    std::cout << "FAILURES " << failures << std::endl;
+    return failures ? 1 : 0;
+}
+
+// Build G (acceptance F, FAIL 1 and note N1). The arrange dialog the header
+// shows now.
+QListWidget* arrangeList(WTrackTableViewHeader* header) {
+    header->showColumnArrangement();
+    QApplication::processEvents();
+    for (auto* dialog : header->findChildren<QDialog*>(QStringLiteral("MixpiColumnArrangement"))) {
+        if (dialog->isVisible()) {
+            return dialog->findChild<QListWidget*>();
+        }
+    }
+    return nullptr;
+}
+
+void closeArrange(QListWidget* list) {
+    if (list) {
+        qobject_cast<QDialog*>(list->window())->close();
+    }
+    spin(20);
+}
+
+bool arrange(QListWidget* list, const QString& label, bool shown) {
+    for (int row = 0; list && row < list->count(); ++row) {
+        if (list->item(row)->text() == label) {
+            list->item(row)->setCheckState(shown ? Qt::Checked : Qt::Unchecked);
+            QApplication::processEvents();
+            return true;
+        }
+    }
+    return false;
+}
+
+void choose(WTrackTableViewHeader* header, const QString& label, bool shown) {
+    if (auto* choice = menuChoice(header, label)) {
+        choice->setChecked(shown);
+    }
+    QApplication::processEvents();
+}
+
+bool savedAs(const QString& path, const char* name, bool hidden, int size) {
+    return waitFor(1000, [&] {
+        const auto column = sharedColumn(fileValue(path), name);
+        return column.hidden == hidden && column.size == size;
+    });
+}
+
+void observeSaved(const char* label, const QString& path) {
+    std::cout << "OBSERVE " << label << " saved:";
+    for (const auto& column : MixpiSharedColumns::parse(fileValue(path))) {
+        std::cout << ' ' << column.name.toStdString() << (column.hidden ? "(hidden)" : "") << '='
+                  << column.size;
+    }
+    std::cout << std::endl;
+}
+
+int widths(const QString& directory) {
+    const QString path = directory + QStringLiteral("/mixxx.cfg");
+    auto db = openDatabase();
+    // The owner's shared setup on the test card: TITLE, ARTIST 200, BPM 100,
+    // KEY 50; # hidden at 30; ALBUM and PREVIEW never shown (0); DURATION
+    // never shown (20, after build F's start-up write).
+    const QString preset = MixpiSharedColumns::serialize({{"title", false, 160}, {"artist", false, 200},
+            {"bpm", false, 100}, {"key", false, 50}, {"position", true, 30}, {"album", true, 0},
+            {"preview", true, 0}, {"duration", true, 20}});
+    {
+        QFile file(path);
+        file.open(QIODevice::WriteOnly);
+        file.write("\n[Library]\nSharedColumns " + preset.toLatin1() + "\n\n[Test]\nexisting 1\n");
+    }
+    UserSettingsPointer pConfig = makeConfig(directory);
+    mixxx::ConfigAutosave autosave(pConfig);
+    autosave.start();
+
+    TrackCollectionManager manager;
+    Library library(&manager);
+    RecordingManager recording;
+    BrowseTableModel browse(nullptr, &manager, &recording);
+    ProxyTrackModel folder(&browse, true);
+    NamedModel tracks(db, "mixxx.db.model.library", kLibraryNames, kLibraryLabels);
+    NamedModel playlist(db, "mixxx.db.model.playlist", kPlaylistNames, kPlaylistLabels);
+
+    QWidget window;
+    window.resize(800, 480);
+    window.show();
+    auto view = std::make_unique<View>(pConfig, &library, &window);
+    view->resize(700, 300);
+    view->show();
+    setViewport(view.get(), 776);
+
+    // N1: opening lists, as at a start, is no change by the user.
+    view->loadTrackModel(&tracks);
+    view->loadTrackModel(&playlist);
+    view->loadTrackModel(&folder);
+    view->loadTrackModel(&tracks);
+    spin(1500);
+    observeSaved("after the lists opened", path);
+    require(saves == 0 && fileValue(path) == preset,
+            "start: opening lists writes nothing to the shared setup (note N1)");
+    auto* header = view->header();
+    observe("This Pi > Tracks", header);
+    require(widthOf(header, "bpm") == 100 && widthOf(header, "key") == 50,
+            "start: This Pi > Tracks shows BPM 100 and KEY 50");
+
+    // Repro A: KEY hidden in Arrange columns, then shown again 1.5 s later.
+    QListWidget* list = arrangeList(header);
+    require(arrange(list, "Key", false) && savedAs(path, "key", true, 50),
+            "repro A: KEY hidden in Arrange columns is saved hidden at 50 px");
+    spin(1500);
+    arrange(list, "Key", true);
+    closeArrange(list);
+    observe("KEY shown again in Arrange columns", header);
+    require(widthOf(header, "key") == 50, "repro A: KEY shown again in Arrange columns is 50 px, not 160");
+    require(savedAs(path, "key", false, 50), "repro A: the saved line has KEY shown at 50 px");
+
+    // The same in one list, through the header menu: BPM.
+    choose(header, "BPM", false);
+    require(savedAs(path, "bpm", true, 100), "BPM hidden from the header menu is saved hidden at 100 px");
+    choose(header, "BPM", true);
+    observe("BPM shown again from the header menu", header);
+    require(widthOf(header, "bpm") == 100, "BPM shown again from the header menu is 100 px, not 160");
+    require(savedAs(path, "bpm", false, 100), "the saved line has BPM shown at 100 px");
+
+    // # in the playlist: its saved 30 px, shown, hidden and shown again.
+    view->loadTrackModel(&playlist);
+    header = view->header();
+    choose(header, "#", true);
+    const int numberFirst = widthOf(header, "position");
+    choose(header, "#", false);
+    require(savedAs(path, "position", true, 30), "# hidden again is saved hidden at 30 px");
+    list = arrangeList(header);
+    arrange(list, "#", true);
+    closeArrange(list);
+    observe("# shown again", header);
+    require(numberFirst == 30 && widthOf(header, "position") == 30,
+            "# shown from the header menu and from Arrange columns is 30 px, not 160");
+    require(savedAs(path, "position", false, 30), "the saved line has # shown at 30 px");
+
+    // Repro B: hidden in one list, shown in another.
+    view->loadTrackModel(&tracks);
+    header = view->header();
+    list = arrangeList(header);
+    arrange(list, "BPM", false);
+    closeArrange(list);
+    require(savedAs(path, "bpm", true, 100), "repro B: BPM hidden in This Pi > Tracks, saved at 100 px");
+    view->loadTrackModel(&playlist);
+    header = view->header();
+    require(header->isSectionHidden(columnNamed(header, "bpm")), "repro B: BPM is hidden in the playlist");
+    list = arrangeList(header);
+    arrange(list, "BPM", true);
+    closeArrange(list);
+    observe("BPM shown in the playlist", header);
+    require(widthOf(header, "bpm") == 100, "repro B: BPM shown in the playlist is 100 px, not 160");
+    require(savedAs(path, "bpm", false, 100), "repro B: the saved line has BPM shown at 100 px");
+    choose(header, "Key", false);
+    require(savedAs(path, "key", true, 50), "repro B: KEY hidden in the playlist, saved at 50 px");
+    view->loadTrackModel(&folder);
+    header = view->header();
+    QCheckBox* folderKey = nullptr;
+    for (auto* choice : header->findChildren<QCheckBox*>()) {
+        if (choice->text().compare(QStringLiteral("Key"), Qt::CaseInsensitive) == 0) {
+            folderKey = choice;
+        }
+    }
+    if (folderKey) {
+        folderKey->setChecked(true);
+        QApplication::processEvents();
+    }
+    observe("KEY shown in a folder", header);
+    require(folderKey && widthOf(header, "key") == 50,
+            "repro B: KEY shown from a folder's header menu is 50 px, not 160");
+    view->loadTrackModel(&tracks);
+    header = view->header();
+    observe("This Pi > Tracks after repro B", header);
+    require(widthOf(header, "bpm") == 100 && widthOf(header, "key") == 50,
+            "repro B: This Pi > Tracks has BPM 100 and KEY 50 again");
+    {
+        // The autosave writes within a second of the last change.
+        const bool saved = waitFor(1000, [&] {
+            const QString value = fileValue(path);
+            const auto bpm = sharedColumn(value, "bpm");
+            const auto key = sharedColumn(value, "key");
+            const auto number = sharedColumn(value, "position");
+            return !bpm.hidden && bpm.size == 100 && !key.hidden && key.size == 50 && !number.hidden &&
+                    number.size == 30;
+        });
+        observeSaved("after repro B", path);
+        require(saved, "the saved line keeps the old widths after every show (BPM 100, KEY 50, # 30)");
+    }
+
+    // A column never shown keeps build B's readable width.
+    choose(header, "Album", true);
+    list = arrangeList(header);
+    arrange(list, "Duration", true);
+    closeArrange(list);
+    observe("ALBUM and DURATION shown for the first time", header);
+    require(widthOf(header, "album") == 160 && widthOf(header, "duration") == 160,
+            "a column never shown (saved 0 or 20 px) gets build B's 160 px");
+    require(savedAs(path, "album", false, 160) && savedAs(path, "duration", false, 160),
+            "... and that width is saved");
+
+    view.reset();
+    autosave.stop();
+    require(asserts == 0, "widths: no DEBUG_ASSERT fired");
     std::cout << "FAILURES " << failures << std::endl;
     return failures ? 1 : 0;
 }
@@ -728,6 +938,9 @@ int main(int argc, char** argv) {
     const QString directory = QString::fromLocal8Bit(argv[2]);
     if (mode == QStringLiteral("checks")) {
         return checks(directory);
+    }
+    if (mode == QStringLiteral("widths")) {
+        return widths(directory);
     }
     if (mode == QStringLiteral("kill")) {
         return killMode(directory);

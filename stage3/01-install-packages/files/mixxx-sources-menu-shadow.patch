@@ -1,0 +1,41 @@
+diff --git a/src/widget/wrightoverlaylayout.h b/src/widget/wrightoverlaylayout.h
+--- a/src/widget/wrightoverlaylayout.h
++++ b/src/widget/wrightoverlaylayout.h
+@@ -18,6 +18,14 @@
+             m_sidebarWidth = qMax(item->widget()->minimumWidth(), item->sizeHint().width());
+             item->widget()->setMinimumWidth(0);
+         }
++        // A third child is the menu's shadow (agreed UI 2d): a fixed-width
++        // strip against the menu's left edge, over the base. Touches pass
++        // through it to the base under it.
++        if (m_items.size() == 3 && item->widget()) {
++            m_shadowWidth = qMax(item->widget()->minimumWidth(), item->sizeHint().width());
++            item->widget()->setMinimumWidth(0);
++            item->widget()->setAttribute(Qt::WA_TransparentForMouseEvents);
++        }
+         invalidate();
+     }
+ 
+@@ -50,8 +58,14 @@
+         if (auto* item = itemAt(1)) {
+             if (auto* sidebar = item->widget()) {
+                 const int width = qMin(m_sidebarWidth, qMax(0, content.width()));
+-                sidebar->setGeometry(content.right() - width + 1,
+-                        content.top(), width, qMax(0, content.height()));
++                const int left = content.right() - width + 1;
++                if (auto* shadow = itemAt(2) ? itemAt(2)->widget() : nullptr) {
++                    const int shadowLeft = qMax(content.left(), left - m_shadowWidth);
++                    shadow->setGeometry(shadowLeft, content.top(), left - shadowLeft,
++                            qMax(0, content.height()));
++                    shadow->raise();
++                }
++                sidebar->setGeometry(left, content.top(), width, qMax(0, content.height()));
+                 sidebar->raise();
+             }
+         }
+@@ -67,4 +81,5 @@
+ 
+     QList<QLayoutItem*> m_items;
+     int m_sidebarWidth = 290;
++    int m_shadowWidth = 0;
+ };

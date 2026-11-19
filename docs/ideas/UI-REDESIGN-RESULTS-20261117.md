@@ -18,6 +18,11 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Wave C1 integrated | `dda4966` | 732 run; 1 error in `test_chroot_runtime` (5 s timeout while the native gate ran), then 3 of 3 OK alone | 206/206, 0 skips | S1 skin (U-1, U-2, U-3, U-6, U-7 skin, Settings header), N-A Sources side menu and edit list, N-B Media page and `drive_insert` |
 | Wave C2 integrated | `85dc076` | 761 run, OK (146 platform skips) | 227/227, 0 skips (at `123b5e6`; `85dc076` adds only a generator change and its unit test) | 48 patches. S2 skin, N-C controls and saving, N-A2 Sources repairs; the backlight udev rule |
 | Wave D1 integrated | `335a75b` | 786 run, OK (150 platform skips) | 236/236, 0 skips | 50 patches. S4 fonts back to build B and shorter loop rows at 800×444; N-D1 ★ for the saved start, current-row edge, Edit sources child rows; N-D2 narrowed table fits, OPEN and BROWSE switch to Tracks; C3 skin repairs |
+| Wave E1 integrated | `ee024dd` | OK (150 platform skips) | 242/242, 0 skips | 52 patches. S6 REC dot, loop buttons at rest, table row colours; N-E Sources edge after OPEN/BROWSE, stop-then-clear for a playing pad |
+| Wave F1 integrated | `86d14a9` | 799 run, OK (151 platform skips) | 247/247, 0 skips | 53 patches. N-F one shared column setup, saved on change |
+| Wave G1 integrated | `7d0042b` | 804 run, OK (153 platform skips) | 252/252, 0 skips (builder's run with the registration applied) | 54 patches. Upstream overview `playposition` fix `bef0af3172` |
+| Wave G2 integrated | `6ca8740` | 807 run, OK (153 platform skips); 1 load-flake error on the first run, clean on the rerun | 255/255, 0 skips (builder's run) | 55 patches. A re-shown column keeps its width; no start-up write |
+| Wave G3 integrated | `9bf9e5d` | 809 run; 1 error in `test_chroot_runtime` (5 s timeout), then 3 of 3 OK alone; 809 OK on 20 Nov after the bare-repo repair | 257/257, 0 skips (builder's run) | 56 patches. TITLE's stretched width is never saved |
 
 ## Wave 0 on the test card (build 2)
 
@@ -455,3 +460,12 @@ Reports: `deploy/ui-redesign-20261117/council/round2-*.md`. All three are real s
     - CPU 4.00 % with 0 underruns and `throttled=0x0`.
   - **Note:** dragging TITLE's edge narrower saves nothing, as required. But it leaves a blank light-grey strip at the right end of the header until the edge is dragged back (`shots/c4-c-title-drag-left.png`).
   - **Pairs for the council:** `acceptance-H/pairs/m-tracks.png` and `m-loadsample.png`.
+
+## Infrastructure note (2026-11-20)
+
+At 00:00 macOS's daily `/tmp` cleanup deleted files idle for 3 days or more. It took the pinned bare repo's `HEAD`, `config`, `refs` and `shallow` (the object pack survived) and VM b's `lima.yaml` and Lima `_config`, including the SSH key. The VM kept running. The council's Fable seat noticed it.
+
+- **Bare repo:** rebuilt with one ref, `3ebac449e7e5…`, as `main` and `shallow`. The Mac suite then ran 809 tests, OK.
+- **VM b:** reachable through a durable key in `~/.config/mixpi-lima-b/`.
+
+The native gate logs for waves G1-G3 are the builders' runs on VM b. They are kept in the session scratchpad, not in the repo.

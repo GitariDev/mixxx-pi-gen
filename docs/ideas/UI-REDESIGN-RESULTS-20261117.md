@@ -555,3 +555,18 @@ Both go into build J with the J1 crash fix.
   - Should opening the Media page restart the ping's 15 s timer (X1)?
   - After an eject, the Tracks table keeps the ejected drive's rows until another list is picked.
   - The orchestrator ruled acceptance I FAIL 1 a PASS under spec 2b while the owner was away; the owner may want to confirm it.
+
+## Waves J2 and J3, and the build J head (2026-11-20)
+
+- **J2, S9 (skin):** `text-transform: none` on the Sources menu's scoped rule in `mixpi-sources-menu.qss`. Pioneered's sidebar upper case had been reaching the rows inside a source through the row delegate.
+  - The top-level rows, BACK and EDIT, the place label and Edit sources already matched the mockups, and they are unchanged. Other sidebars keep Pioneered's upper case.
+  - An offscreen render shows "Tracks" and "Afro house".
+  - Mac suite 834 OK; native gate 280/280, 0 skips.
+- **J3, S10 (skin):** with the Media page open, the USB chip is `is-live` (plain `#1d222a` fill and a 1 px `#a3c45e` border). READY is `#5fae6e` and IN USE is `#5aa4c4`; the other states already matched and are unchanged.
+  - An offscreen render matches the mockup pixels.
+  - Native gate 280/280, 0 skips.
+- **The build J head `bd95609`** (60 patches: J1 plus the J2 and J3 skin):
+  - **Native gate:** 280/280, 0 skips. Log: `deploy/ui-redesign-20261117/gates/uiJ-int-20261120--…`.
+  - **Mac suite:** 835 run. The one error is the `test_chroot_runtime` 5 s timeout, which now trips on every full run under load and passes 3 of 3 on its own. It is a test-harness timing issue, not a product fault.
+- **Briefs are ready:** `BUILD-J-operator.md` and `ACCEPTANCE-J-tester.md`. Acceptance J includes 10 clean quits after eject cycles, plus one reboot.
+- **Build J (the 11th pi-gen run) waits for the owner's yes.**

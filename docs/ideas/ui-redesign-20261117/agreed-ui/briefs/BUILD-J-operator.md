@@ -21,7 +21,7 @@ Read `BUILD-C-operator.md` to `BUILD-I-operator.md` (same folder) first. Every r
   - Regenerate the skin from the originals (step 7) and check the tree against image I's.
   - MANTACORE's port rule stays lifted, and MANTACORE stays read-only.
 - **VM b's Lima files were lost to the macOS `/tmp` cleanup** (memory: tmp-cleanup-breaks-lima-b).
-  - Reach VM b only with `ssh -F ~/.config/mixpi-lima-b/ssh.config lima-b-durable`. Adapt every `limactl shell b` in build H's scripts to that.
+  - Reach VM b only with `ssh -F ~/.config/mixpi-lima-b/ssh.config lima-b-durable`. Build I's scripts already do this.
   - Never run `limactl stop` or `limactl start`.
   - Copy files in and out with `scp -F ~/.config/mixpi-lima-b/ssh.config`, or with tar over ssh.
   - `LIMA_HOME` is not needed.

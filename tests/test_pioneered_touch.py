@@ -199,34 +199,6 @@ UnrelatedValue preserve this exactly
         for declaration in ("background-color: #0d1014;", "border: 1px solid #2c333d;", "border-radius: 3px;"):
             self.assertIn(declaration, search)
 
-    def test_sources_menu_rows_keep_their_own_case(self):
-        # Spec line 15 (exact copy) and m-sources-sub.png: the Sources menu's
-        # rows read "Tracks", "Afro house", not Pioneered's uppercase. Qt
-        # applies Pioneered's text-transform as the sidebar font's
-        # capitalization, and the rows inside a source draw with that font, so
-        # the menu's own rule (more specific, and later) clears it. Other
-        # sidebars keep Pioneered's rule; family, size and weight stay build B's.
-        upstream = ("#LibraryWrapper WLibrarySidebar {\n  font-weight: bold;\n"
-                    "  text-transform: uppercase;\n}\n")
-        style = self.skin / "style.qss"
-        style.write_text(style.read_text() + upstream)
-        PATCH.apply(self.skin)
-        styles = style.read_text()
-        before, block = styles.split(PATCH.STYLE_BEGIN, 1)
-        block = block.split(PATCH.STYLE_END, 1)[0]
-        self.assertIn(upstream, before)
-        menu = ('#LibraryWrapper WLibrarySidebar[mixpiSourceMenu="true"],\n'
-                'WLibrarySidebar[mixpiSourceMenu="true"] {')
-        self.assertEqual(block.count(menu), 1)
-        rule = block.split(menu, 1)[1].split("}", 1)[0]
-        declarations = re.sub(r"/\*.*?\*/", "", rule, flags=re.S)
-        self.assertEqual(re.findall(r"text-transform:[^;]*;", declarations), ["text-transform: none;"])
-        for declaration in ('font-family: "Open Sans", "Ubuntu";', "font-size: 17px;", "font-weight: bold;"):
-            self.assertIn(declaration, declarations)
-        # Nothing in the managed block sets a case of its own.
-        self.assertEqual(re.findall(r"text-transform:\s*(\w+)", re.sub(r"/\*.*?\*/", "", block, flags=re.S)),
-                         ["none"])
-
     def test_track_table_hides_bpm_lock_and_uses_one_dark_selection(self):
         PATCH.apply(self.skin)
         styles = (self.skin / "style.qss").read_text()

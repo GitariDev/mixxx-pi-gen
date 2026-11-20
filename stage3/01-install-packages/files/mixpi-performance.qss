@@ -104,20 +104,19 @@
 #MixpiUsbBody[highlight="4"] { border-color: #5fae6e; }
 #MixpiUsbButton { background: transparent; border: 0px; margin: 0px; }
 #MixpiUsbButton[pressed="true"] { background: rgba(163, 196, 94, 40); }
-/* While the Media page is open the chip is is-live (spec s13, m-media.png;
- * design/layout.css .mxl-usb.is-live): its plain fill and a 1 px accent border
- * over the body's border, on the chip's own box (2 px in from the bar's top and
- * bottom). Not the gear's lit tint: the mockups draw the gear is-on and the
- * chip is-live. No background here, so a press still shows its tint. */
-#MixpiUsbButton[value="1"] { border: 1px solid #a3c45e; border-radius: 3px; margin: 2px 0px; }
+/* Lit while the Media page is open (spec s13, m-media.png), as the gear is on
+ * Settings: the accent tint over the chip and a 2 px accent border, on the
+ * chip's own box (2 px in from the bar's top and bottom). */
+#MixpiUsbButton[value="1"] {
+    background: rgba(163, 196, 94, 66); border: 2px solid #a3c45e; border-radius: 3px; margin: 2px 0px;
+}
 #MixpiUsbName { color: #e4e7ec; font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 15px; font-weight: bold; }
 #MixpiUsbState0, #MixpiUsbState1, #MixpiUsbState2, #MixpiUsbState3, #MixpiUsbState4 {
     font-family: "Ubuntu Condensed", "Ubuntu"; font-size: 13px; font-weight: bold;
 }
 #MixpiUsbState0 { color: #949dab; }
-/* READY --mx-play and IN USE --mx-info (all-mockups.html .mxl-usb-t small). */
-#MixpiUsbState1 { color: #5fae6e; }
-#MixpiUsbState2 { color: #5aa4c4; }
+#MixpiUsbState1 { color: #7cc58a; }
+#MixpiUsbState2 { color: #86c0d8; }
 #MixpiUsbState3 { color: #e8b65c; }
 #MixpiUsbState4 { color: #9bd6a6; }
 /* The scan % is a chip: a pill that cannot be pressed (info tone). */

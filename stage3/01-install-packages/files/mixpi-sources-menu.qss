@@ -28,11 +28,6 @@ WLibrarySidebar[mixpiSourceMenu="true"] {
     font-family: "Open Sans", "Ubuntu";
     font-size: 17px;
     font-weight: bold;
-    /* Each row in its own case, as the mockups draw "Tracks", "Afro house":
-     * clears Pioneered's #LibraryWrapper WLibrarySidebar uppercase, which
-     * Qt applies as the list font's capitalization (the rows inside a
-     * source draw with that font). Family, size and weight stay build B's. */
-    text-transform: none;
     selection-background-color: #1d222a;
     selection-color: #e4e7ec;
     /* The rows inside a source (drawn natively in these colours). */

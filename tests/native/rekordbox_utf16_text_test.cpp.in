@@ -1,0 +1,299 @@
+// Wave J8: drive tracks with accented file names load. The actual rekordbox
+// import (parseDeviceDB, insertTrack, buildPlaylistTree, getText and the
+// actual fromUtf16LeString with QTextCodec) reads a synthetic export.pdb with
+// the actual Kaitai parser and SQLite, and every text field is compared with
+// the text the export was written from: short ASCII, long ASCII and long
+// UTF-16 strings, accented and non-Latin text included. One track's folder
+// and file are stored decomposed (NFD) on the drive, as a Mac can store them,
+// while the export holds the precomposed (NFC) path. The runner builds Kaitai
+// either as Mixxx's CMakeLists.txt does or as the other native fixtures do;
+// BASELINE is the source without mixxx-rekordbox-utf16-text.patch.
+// tests/native/rekordbox_utf16_text_runner.py builds this; EXPORT_MODE lists
+// one playlist of a real export.pdb instead.
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QMap>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QSqlRecord>
+#include <QString>
+#include <QTextCodec>
+#include <QThread>
+#include <QVariant>
+#include <algorithm>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <rekordbox_pdb.h>
+#include "library/treeitem.h"
+#include "library/queryutil.h"
+#include "util/color/rgbcolor.h"
+#include "library/rekordbox/importoperation.h"
+
+int failures = 0;
+void require(bool condition, const char* name) {
+    std::cout << (condition ? "PASS " : "FAIL ") << name << std::endl;
+    failures += !condition;
+}
+
+namespace mixxx {
+using DbConnectionPoolPtr = std::shared_ptr<QString>;
+const QString workerConnection = QStringLiteral("worker");
+struct DbConnectionPooler {
+    explicit DbConnectionPooler(const DbConnectionPoolPtr& path) {
+        auto database = QSqlDatabase::addDatabase("QSQLITE", workerConnection);
+        database.setDatabaseName(*path);
+        if (!database.open()) {
+            throw std::runtime_error("worker SQLite open failed");
+        }
+    }
+    ~DbConnectionPooler() {
+        QSqlDatabase::database(workerConnection).close();
+        QSqlDatabase::removeDatabase(workerConnection);
+    }
+};
+QSqlDatabase DbConnectionPooled(const DbConnectionPoolPtr&) {
+    return QSqlDatabase::database(workerConnection);
+}
+struct FileInfo {
+    explicit FileInfo(const QString&) {
+    }
+};
+} // namespace mixxx
+namespace Sandbox {
+bool askForAccess(mixxx::FileInfo*) {
+    return true;
+}
+} // namespace Sandbox
+
+#define IS_RECORDBOX_DEVICE "::isRecordboxDevice::"
+#define IS_NOT_RECORDBOX_DEVICE "::isNotRecordboxDevice::"
+const QString kRekordboxLibraryTable = "rekordbox_library";
+const QString kRekordboxPlaylistsTable = "rekordbox_playlists";
+const QString kRekordboxPlaylistTracksTable = "rekordbox_playlist_tracks";
+const QString kPdbPath = "PIONEER/rekordbox/export.pdb";
+const QString kPLaylistPathDelimiter = "-->";
+constexpr int kInvalidPlaylistId = -1;
+
+PRODUCTION_PARSER
+
+// The drive is read only: every file's bytes and times before and after.
+QByteArray driveDigest(const QString& drive) {
+    QByteArray digest;
+    QStringList files;
+    std::function<void(const QString&)> walk = [&](const QString& folder) {
+        const auto entries = QDir(folder).entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+        for (const QFileInfo& entry : entries) {
+            files << QString(entry.absoluteFilePath() + "|" + QString::number(entry.size()) + "|" +
+                    QString::number(entry.lastModified().toMSecsSinceEpoch()));
+            if (entry.isDir()) {
+                walk(entry.absoluteFilePath());
+            }
+        }
+    };
+    walk(drive);
+    for (const QString& file : files) {
+        digest += file.toUtf8();
+        digest += "\n";
+        QFile content(file.section('|', 0, 0));
+        if (content.open(QIODevice::ReadOnly)) {
+            digest += content.readAll();
+        }
+    }
+    return digest;
+}
+
+QString importDrive(const QString& home, const QString& drive) {
+    const auto pool = std::make_shared<QString>(home + "/library.sqlite");
+    {
+        auto database = QSqlDatabase::addDatabase("QSQLITE", "main");
+        database.setDatabaseName(*pool);
+        database.open();
+        createLibraryTable(database, kRekordboxLibraryTable);
+        createPlaylistsTable(database, kRekordboxPlaylistsTable);
+        createPlaylistTracksTable(database, kRekordboxPlaylistTracksTable);
+    }
+    TreeItem root;
+    TreeItem* device = root.appendChild(QFileInfo(drive).fileName(),
+            QVariant(QList<QString>{drive, IS_RECORDBOX_DEVICE, "database"}));
+    auto operation = std::make_shared<mixxx::rekordbox::ImportOperation>();
+    try {
+        return parseDeviceDB(pool, device, operation);
+    } catch (const std::exception& error) {
+        std::cout << "IMPORT_ERROR " << error.what() << std::endl;
+        return {};
+    }
+}
+
+QString hex(const QString& text) {
+    return QString::fromLatin1(text.toUtf8().toHex(' '));
+}
+
+void printRow(const char* tag, const QSqlQuery& query, const QString& drive) {
+    std::cout << tag;
+    for (const char* column : {"rb_id", "title", "artist", "album", "genre", "key", "comment", "location"}) {
+        QString value = query.value(column).toString();
+        if (QString(column) == "location") {
+            value = value.mid(drive.size());
+        }
+        std::cout << " | " << column << "=" << value.toStdString();
+    }
+    std::cout << std::endl;
+}
+
+#ifdef EXPORT_MODE
+// One playlist of a real export.pdb, as Mixxx's import stores it.
+int listExport(const QString& home, const QString& wanted) {
+    const QString drive = home + "/media/IXIAN";
+    const QString imported = importDrive(home, drive);
+    QSqlQuery query(QSqlDatabase::database("main"));
+    query.prepare("SELECT p.name AS playlist, t.position, l.* "
+                  "FROM rekordbox_playlists p JOIN rekordbox_playlist_tracks t ON t.playlist_id = p.id "
+                  "LEFT JOIN rekordbox_library l ON l.id = t.track_id "
+                  "WHERE substr(p.name, -length(:wanted)) = :wanted ORDER BY t.position");
+    query.bindValue(":wanted", QString(kPLaylistPathDelimiter + wanted));
+    query.exec();
+    int rows = 0;
+    while (query.next()) {
+        ++rows;
+        std::cout << "ENTRY " << query.value("position").toInt();
+        printRow("", query, drive);
+    }
+    std::cout << "IMPORTED " << !imported.isEmpty() << " COUNT " << rows << std::endl;
+    return imported.isEmpty() ? 1 : 0;
+}
+#endif
+
+int main(int argc, char** argv) {
+    QCoreApplication application(argc, argv);
+    const QString home = QString::fromLocal8Bit(argv[1]);
+#ifdef EXPORT_MODE
+    return listExport(home, QString::fromUtf8(argv[2]));
+#else
+    const QString drive = home + "/media/ACCENTS";
+    // The expected text, as the runner wrote it into the export (UTF-8 file).
+    QFile expectedFile(home + "/expected.tsv");
+    expectedFile.open(QIODevice::ReadOnly);
+    QMap<int, QStringList> expected;
+    QStringList playlists;
+    QMap<int, QString> onDrive;
+    for (const QByteArray& line : expectedFile.readAll().split('\n')) {
+        const QStringList fields = QString::fromUtf8(line).split('\t');
+        if (fields.value(0) == "TRACK") {
+            expected[fields.value(1).toInt()] = fields.mid(2);
+        } else if (fields.value(0) == "PLAYLIST") {
+            playlists << fields.value(1);
+        } else if (fields.value(0) == "ONDRIVE") {
+            onDrive[fields.value(1).toInt()] = fields.value(2);
+        }
+    }
+    const QByteArray before = driveDigest(drive);
+    const QString imported = importDrive(home, drive);
+    require(imported == drive, "the synthetic export is read");
+
+    QSqlQuery query(QSqlDatabase::database("main"));
+    query.exec("SELECT * FROM rekordbox_library ORDER BY rb_id");
+    QMap<int, QStringList> got;
+    QMap<int, QString> locations;
+    while (query.next()) {
+        printRow("ROW", query, drive);
+        const int id = query.value("rb_id").toInt();
+        got[id] = {query.value("title").toString(), query.value("artist").toString(),
+                query.value("album").toString(), query.value("genre").toString(),
+                query.value("key").toString(), query.value("comment").toString(),
+                query.value("location").toString().mid(drive.size())};
+        locations[id] = query.value("location").toString();
+    }
+    require(got.size() == expected.size(), "every track of the export is imported");
+    const char* fields[] = {"title", "artist", "album", "genre", "key", "comment", "file path"};
+    auto fieldDecodes = [&](int field) {
+        bool same = true;
+        for (auto it = expected.cbegin(); it != expected.cend(); ++it) {
+            const QString want = it.value().value(field);
+            const QString have = got.value(it.key()).value(field);
+            if (want != have) {
+                same = false;
+                std::cout << "MISMATCH track " << it.key() << " " << fields[field] << " want ["
+                          << want.toStdString() << "] have [" << have.toStdString() << "] bytes "
+                          << hex(have).toStdString() << std::endl;
+            }
+        }
+        return same;
+    };
+    require(fieldDecodes(0), "every title decodes to the text written");
+    require(fieldDecodes(1), "every artist decodes to the text written");
+    require(fieldDecodes(2), "every album decodes to the text written");
+    require(fieldDecodes(3), "every genre decodes to the text written");
+    require(fieldDecodes(4), "every key decodes to the text written");
+    require(fieldDecodes(5), "every comment decodes to the text written");
+    // The stored path: the export's text, or the form the drive holds when
+    // the drive holds the same name decomposed; it names an existing file.
+    bool pathsRight = true;
+    bool filesExist = true;
+    for (auto it = expected.cbegin(); it != expected.cend(); ++it) {
+        const QString want = onDrive.value(it.key(), it.value().value(6));
+        const QString have = got.value(it.key()).value(6);
+        if (have != want) {
+            pathsRight = false;
+            std::cout << "MISMATCH track " << it.key() << " location want [" << want.toStdString()
+                      << "] have [" << have.toStdString() << "]" << std::endl;
+        }
+        if (!QFileInfo::exists(locations.value(it.key()))) {
+            filesExist = false;
+            std::cout << "MISSING track " << it.key() << " " << locations.value(it.key()).toStdString()
+                      << std::endl;
+        }
+    }
+    require(pathsRight, "every track's location is its file on the drive");
+    require(filesExist, "every track's location names an existing file, so the row loads");
+    bool decomposedFound = !onDrive.isEmpty();
+    for (auto it = onDrive.cbegin(); it != onDrive.cend(); ++it) {
+        const QString have = got.value(it.key()).value(6);
+        decomposedFound = decomposedFound && have == it.value() &&
+                have.normalized(QString::NormalizationForm_C) == expected.value(it.key()).value(6);
+    }
+    require(decomposedFound, "a file stored decomposed (NFD) on the drive is found from the export's NFC path");
+
+    QSqlQuery names(QSqlDatabase::database("main"));
+    names.exec("SELECT name FROM rekordbox_playlists ORDER BY id");
+    QStringList stored;
+    while (names.next()) {
+        stored << names.value(0).toString().mid(drive.size());
+        std::cout << "PLAYLIST " << stored.last().toStdString() << std::endl;
+    }
+    bool listsRight = true;
+    for (const QString& playlist : playlists) {
+        if (!stored.contains(playlist)) {
+            listsRight = false;
+            std::cout << "MISMATCH playlist want [" << playlist.toStdString() << "]" << std::endl;
+        }
+    }
+    require(listsRight, "playlist and folder names decode to the text written");
+
+    QSqlQuery entries(QSqlDatabase::database("main"));
+    entries.prepare("SELECT l.title FROM rekordbox_playlists p JOIN rekordbox_playlist_tracks t "
+                    "ON t.playlist_id = p.id JOIN rekordbox_library l ON l.id = t.track_id "
+                    "WHERE p.name = :name ORDER BY t.position");
+    entries.bindValue(":name", QString(drive + playlists.value(1)));
+    entries.exec();
+    QStringList titles;
+    while (entries.next()) {
+        titles << entries.value(0).toString();
+    }
+    QStringList wanted;
+    for (int id : {3, 6, 9}) {
+        wanted << expected.value(id).value(0);
+    }
+    require(titles == wanted, "the accented playlist lists its three tracks with their titles");
+    require(driveDigest(drive) == before, "nothing on the drive is written or changed");
+
+    std::cout << (failures ? "FAILED " : "OK ") << failures << std::endl;
+    return failures ? 1 : 0;
+#endif
+}

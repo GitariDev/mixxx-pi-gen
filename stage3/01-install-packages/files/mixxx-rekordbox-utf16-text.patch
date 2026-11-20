@@ -1,0 +1,126 @@
+diff --git a/lib/rekordbox-metadata/rekordbox_pdb.cpp b/lib/rekordbox-metadata/rekordbox_pdb.cpp
+index 94b8777..4e91997 100644
+--- a/lib/rekordbox-metadata/rekordbox_pdb.cpp
++++ b/lib/rekordbox-metadata/rekordbox_pdb.cpp
+@@ -259,7 +259,7 @@ rekordbox_pdb_t::device_sql_long_ascii_t::device_sql_long_ascii_t(kaitai::kstrea
+ void rekordbox_pdb_t::device_sql_long_ascii_t::_read() {
+     m_length = m__io->read_u2le();
+     m__unnamed1 = m__io->read_u1();
+-    m_text = kaitai::kstream::bytes_to_str(m__io->read_bytes(length() - 4), "ASCII");
++    m_text = m__io->read_bytes(length() - 4);
+ }
+ 
+ rekordbox_pdb_t::device_sql_long_ascii_t::~device_sql_long_ascii_t() {
+@@ -284,7 +284,7 @@ rekordbox_pdb_t::device_sql_long_utf16le_t::device_sql_long_utf16le_t(kaitai::ks
+ void rekordbox_pdb_t::device_sql_long_utf16le_t::_read() {
+     m_length = m__io->read_u2le();
+     m__unnamed1 = m__io->read_u1();
+-    m_text = kaitai::kstream::bytes_to_str(m__io->read_bytes(length() - 4), "UTF-16LE");
++    m_text = m__io->read_bytes(length() - 4);
+ }
+ 
+ rekordbox_pdb_t::device_sql_long_utf16le_t::~device_sql_long_utf16le_t() {
+@@ -309,7 +309,7 @@ rekordbox_pdb_t::device_sql_short_ascii_t::device_sql_short_ascii_t(uint8_t p_le
+ }
+ 
+ void rekordbox_pdb_t::device_sql_short_ascii_t::_read() {
+-    m_text = kaitai::kstream::bytes_to_str(m__io->read_bytes(length() - 1), "ASCII");
++    m_text = m__io->read_bytes(length() - 1);
+ }
+ 
+ rekordbox_pdb_t::device_sql_short_ascii_t::~device_sql_short_ascii_t() {
+diff --git a/lib/rekordbox-metadata/rekordbox_pdb.ksy b/lib/rekordbox-metadata/rekordbox_pdb.ksy
+index 691412a..5729f70 100644
+--- a/lib/rekordbox-metadata/rekordbox_pdb.ksy
++++ b/lib/rekordbox-metadata/rekordbox_pdb.ksy
+@@ -885,11 +885,11 @@ types:
+           incremented again. Go figure.
+     seq:
+       - id: text
+-        type: str
+         size: length - 1
+-        encoding: ASCII
+         doc: |
+-          The content of the string.
++          The content of the string, as the bytes stored in the
++          file (decoded by the reader, so the result does not depend
++          on the string mode the Kaitai runtime is built with).
+     instances:
+       length:
+         value: '(length_and_kind >> 1)'
+@@ -907,11 +907,11 @@ types:
+           Contains the length of the string in bytes.
+       - type: u1
+       - id: text
+-        type: str
+         size: length - 4
+-        encoding: ASCII
+         doc: |
+-          The content of the string.
++          The content of the string, as the bytes stored in the
++          file (decoded by the reader, so the result does not depend
++          on the string mode the Kaitai runtime is built with).
+ 
+   device_sql_long_utf16le:
+     doc: |
+@@ -920,14 +920,15 @@ types:
+       - id: length
+         type: u2
+         doc: |
+-          Contains the length of the string in bytes, plus four trailing bytes that must be ignored.
++          Contains the length of the whole string in bytes, its four-byte
++          header (the kind byte, this field and one pad byte) included.
+       - type: u1
+       - id: text
+-        type: str
+         size: length - 4
+-        encoding: UTF-16LE
+         doc: |
+-          The content of the string.
++          The content of the string, UTF-16LE, as the bytes stored in
++          the file (decoded by the reader, so the result does not depend
++          on the string mode the Kaitai runtime is built with).
+ 
+ enums:
+   page_type:
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+index 1ef6c01..17ab625 100644
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -310,6 +310,27 @@ QString getText(rekordbox_pdb_t::device_sql_string_t* deviceString) {
+     return text.remove(QChar('\x0'));
+ }
+ 
++// rekordbox stores a path with its accented letters precomposed (NFC). A drive
++// filled on a Mac can hold the same file name decomposed (NFD), and Linux finds
++// names byte for byte, so the stored path would miss the file. Use the form the
++// drive holds. This only looks at the drive; nothing is written.
++QString driveFileLocation(const QString& devicePath, const QString& filePath) {
++    const QString location = devicePath + filePath;
++    const bool ascii = std::all_of(filePath.cbegin(), filePath.cend(), [](QChar character) {
++        return character.unicode() < 0x80;
++    });
++    if (ascii || QFileInfo::exists(location)) {
++        return location;
++    }
++    for (const auto form : {QString::NormalizationForm_C, QString::NormalizationForm_D}) {
++        const QString candidate = devicePath + filePath.normalized(form);
++        if (candidate != location && QFileInfo::exists(candidate)) {
++            return candidate;
++        }
++    }
++    return location;
++}
++
+ int createDevicePlaylist(QSqlDatabase& database, const QString& devicePath) {
+     int playlistID = kInvalidPlaylistId;
+ 
+@@ -384,7 +405,7 @@ void insertTrack(
+     QString album = albumsMap[track->album_id()];
+     QString year = QString::number(track->year());
+     QString genre = genresMap[track->genre_id()];
+-    QString location = devicePath + getText(track->file_path());
++    QString location = driveFileLocation(devicePath, getText(track->file_path()));
+     float bpm = static_cast<float>(track->tempo() / 100.0);
+     int bitrate = static_cast<int>(track->bitrate());
+     QString key = keysMap[track->key_id()];

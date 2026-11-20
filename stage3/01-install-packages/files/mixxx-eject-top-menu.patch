@@ -1,0 +1,181 @@
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+index 7c6fca4..4573e07 100644
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -1160,6 +1160,14 @@ std::unique_ptr<TreeItem> driveTracksRow(const TreeItem& device) {
+     return row;
+ }
+ 
++// Spec 2e (build J): the list shown (RekordboxPlaylistModel::playlist) is one
++// of this drive's: its Tracks row (the drive's path) or a playlist below it.
++bool showsDriveList(const QString& shown, const TreeItem& device) {
++    const QString path = device.getData().toList().value(0).toString();
++    return !path.isEmpty() && !shown.isEmpty() &&
++            (shown == path || shown.startsWith(path + kPLaylistPathDelimiter));
++}
++
+ } // anonymous namespace
+ 
+ RekordboxPlaylistModel::RekordboxPlaylistModel(QObject* parent,
+@@ -1457,6 +1465,12 @@ RekordboxFeature::RekordboxFeature(
+             [this] {
+                 QTimer::singleShot(0, this, &RekordboxFeature::selectShownDriveTracks);
+             });
++    // A drive's row about to go (an eject, or pulled out): the list in
++    // Tracks, if it is that drive's, goes too (spec 2e).
++    connect(m_pSidebarModel,
++            &QAbstractItemModel::rowsAboutToBeRemoved,
++            this,
++            &RekordboxFeature::releaseRemovedDrives);
+     // initialize the model
+     m_pSidebarModel->setRootItem(TreeItem::newRoot(this));
+ #ifdef __LINUX__
+@@ -1860,6 +1874,24 @@ void RekordboxFeature::selectShownDriveTracks() {
+     }
+ }
+ 
++void RekordboxFeature::releaseRemovedDrives(const QModelIndex& parent, int first, int last) {
++    // Spec 2e (owner: "Let just land on the top menu instead"): a drive's row
++    // goes (an eject, or pulled out; onRekordboxDevicesFound). When the list
++    // in Tracks is one of that drive's, the table stops showing its rows; the
++    // menu lands on its top level (WLibrarySidebar::rowsAboutToBeRemoved).
++    // Another drive's list, or a list of This Pi in Tracks, stays. Nothing is
++    // read from or written to the drive.
++    if (parent.isValid()) {
++        return;
++    }
++    const TreeItem* root = m_pSidebarModel->getRootItem();
++    for (int row = first; row <= last && row < root->childRows(); ++row) {
++        if (showsDriveList(m_pRekordboxPlaylistModel->playlist(), *root->child(row))) {
++            m_pRekordboxPlaylistModel->releasePlaylist();
++        }
++    }
++}
++
+ void RekordboxFeature::onRekordboxDevicesFound() {
+     // Probing does not touch live TreeItems, so a user import may start while
+     // it runs. Hold completed probe results until that import releases its node.
+diff --git a/src/library/rekordbox/rekordboxfeature.h b/src/library/rekordbox/rekordboxfeature.h
+index b662e3c..4389259 100644
+--- a/src/library/rekordbox/rekordboxfeature.h
++++ b/src/library/rekordbox/rekordboxfeature.h
+@@ -65,6 +65,15 @@ class RekordboxPlaylistModel : public BaseExternalPlaylistModel {
+     const QString& playlist() const {
+         return m_playlist;
+     }
++    // Spec 2e (build J): the drive of the list shown went away (an eject, or
++    // pulled out). The table shows no list: no rows from that drive, also
++    // after another import reuses its list ids (SQLite never gives a row the
++    // id 0).
++    void releasePlaylist() {
++        m_playlist.clear();
++        setPlaylistById(0);
++        select();
++    }
+ 
+   protected:
+     void initSortColumnMapping() override;
+@@ -107,6 +116,7 @@ class RekordboxFeature : public BaseExternalLibraryFeature {
+     void finishDeviceRefresh();
+     void addDriveTracksRows();
+     void selectShownDriveTracks();
++    void releaseRemovedDrives(const QModelIndex& parent, int first, int last);
+     QMap<QString, QString> m_requestedMounts;
+     QPointer<mixxx::rekordbox::PendingSelection> m_pendingSelection;
+ #ifdef __LINUX__
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index 067cd9c..61325e8 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -613,6 +613,10 @@ const LibraryInterface::SourceTile* WLibrarySidebar::selectedTile() const {
+ 
+ QString WLibrarySidebar::shownSourceTile() const {
+     const QString shown = tileOf(currentIndex());
++    if (shown.isEmpty() && m_shownSourceGone) {
++        // Tracks shows no list (its drive went away): no edge.
++        return {};
++    }
+     return shown.isEmpty() ? m_selectedTile : shown;
+ }
+ 
+@@ -641,6 +645,10 @@ void WLibrarySidebar::followShownSource() {
+ 
+ void WLibrarySidebar::currentChanged(const QModelIndex& current, const QModelIndex& previous) {
+     QTreeView::currentChanged(current, previous);
++    if (current.isValid()) {
++        // A list was picked or opened again: the edge follows it.
++        m_shownSourceGone = false;
++    }
+     // The current row follows what Tracks shows (a drive opened from the
+     // Media page, the start source).
+     if (m_sourceScreen && groupedTiles) {
+@@ -648,6 +656,44 @@ void WLibrarySidebar::currentChanged(const QModelIndex& current, const QModelInd
+     }
+ }
+ 
++void WLibrarySidebar::rowsAboutToBeRemoved(const QModelIndex& parent, int start, int end) {
++    // Spec 2e (owner: "Let just land on the top menu instead"): the drive
++    // whose list Tracks shows is ejected or pulled out. Its row is a drive
++    // tile's row; the current row (the list in Tracks) is that row or below
++    // it. RekordboxFeature empties the table; here the menu lands on the top
++    // level with nothing current, so the next ☰ opens there and no row has
++    // the edge. Another drive going, a list of This Pi in Tracks, or a
++    // drive's lists released while it stays (refreshMediaLifecycle removes
++    // rows below a drive, not the drive's row): nothing changes.
++    bool shownGoes = false;
++    if (m_sourceScreen && groupedTiles && m_touchNavigation) {
++        for (const auto& tile : std::as_const(m_groupedTiles)) {
++            if (!tile.id.startsWith(QStringLiteral("drive:")) || !tile.node.isValid() ||
++                    tile.node.parent() != parent || tile.node.row() < start ||
++                    tile.node.row() > end) {
++                continue;
++            }
++            for (QModelIndex step = currentIndex(); step.isValid(); step = step.parent()) {
++                shownGoes = shownGoes || step == tile.node;
++            }
++        }
++    }
++    QTreeView::rowsAboutToBeRemoved(parent, start, end);
++    if (!shownGoes) {
++        return;
++    }
++    m_shownSourceGone = true;
++    // Nothing is selected: not the row the view (single selection) or the
++    // selection model would move to (a neighbouring drive, or Rekordbox).
++    if (selectionModel()) {
++        selectionModel()->clear();
++    }
++    m_menuInside = false;
++    m_touchNavigation->setFloor({});
++    m_touchNavigation->home();
++    updateSourceChrome();
++}
++
+ QString WLibrarySidebar::tileOf(const QModelIndex& index) const {
+     // The tile that holds a row: a node tile's row or a row below it (the
+     // deepest such node), else a set tile with the row's top-level source.
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index a425d2f..42fc47c 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -165,6 +165,10 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     bool eventFilter(QObject* pObject, QEvent* pEvent) override;
+     // The Sources menu's current row follows the row shown in Tracks.
+     void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
++    // Spec 2e (build J): the drive whose list Tracks shows goes away (an
++    // eject, or pulled out). Before the view or the selection moves the
++    // current row to a neighbour.
++    void rowsAboutToBeRemoved(const QModelIndex& parent, int start, int end) override;
+ 
+   private:
+     void fitTouchColumn();
+@@ -211,6 +215,9 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     bool m_menuInside = false;
+     // The last tap opened a list and closed Sources.
+     bool m_closedByTap = false;
++    // Spec 2e: the drive whose list was in Tracks went away, and no list has
++    // been picked since: no source row has the current-row edge.
++    bool m_shownSourceGone = false;
+     QFrame::Shape m_frameShape = QFrame::StyledPanel;
+     bool m_sourcesEditing = false;
+     bool m_sourceRailPending = false;

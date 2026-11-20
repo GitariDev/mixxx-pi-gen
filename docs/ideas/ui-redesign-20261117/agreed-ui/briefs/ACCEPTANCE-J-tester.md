@@ -7,10 +7,13 @@ Read `ACCEPTANCE-H-tester.md` and `ACCEPTANCE-I-tester.md` (same folder) first. 
 - The owner's pads 1 and 2 stay as they are.
 - **The owner uses the card between tests.** Start only when the orchestrator says the owner has handed it over, and record what you find on screen at the start.
 
-Build J is installed in place. It changes three things from build I (results: waves J1, J4 and J5):
+Build J is installed in place. It changes six things from build I (results: waves J1 and J4 to J8):
 - the quit crash is fixed (J1);
 - after an eject of the drive whose list is in the Tracks table, the table drops that drive's rows and ☰ opens at the top level (J4);
-- after OPEN, BROWSE or the ping's LOAD, ☰ opens inside "DRIVE › rekordbox" with the edge on Tracks (J5).
+- after OPEN, BROWSE or the ping's LOAD, ☰ opens inside "DRIVE › rekordbox" with the edge on Tracks (J5);
+- sorting a drive's list by any column, KEY included, never empties the table (J6);
+- after a drive leaves and another is plugged in, each drive's lists show only that drive's tracks (J7);
+- tracks with accented file names on a drive load (J8).
 
 The Sources menu's capitals, build I's USB chip and the ping's 15 s are kept by the owner's decision (spec 2e); they are not findings.
 
@@ -35,7 +38,11 @@ Write your evidence in `deploy/ui-redesign-20261117/acceptance-J/` (`ACCEPTANCE.
    - the same with the ping's LOAD (tap within 15 s of the plug-in);
    - BACK goes to the top level with the edge on GANDER1.
    - Make the pair `acceptance-J/pairs/m-sources-sub.png` (mockup on the left).
-4. **Build I's items still hold:**
+4. **Drive lists (J6, J7, J8).** IXIAN is the owner's drive: read only, browse it only when the owner has plugged it in, and never eject it unless the orchestrator says so.
+   - **Sort (J6):** IXIAN › Smarties › Jazz: tap every header, KEY included, twice each (up and down). The row count never drops to 0, and KEY's order follows This Pi's KEY order. Then put the list's sort back as found.
+   - **Rows (J7):** with GANDER1 and IXIAN both plugged in, open a GANDER1 list, then an IXIAN list: each shows only its own drive's tracks (check the paths in the log on load). Then eject GANDER1 with no other change and open IXIAN's Sunny Day Vibes: it shows 42 rows (the export holds 42), none from GANDER1. Have the owner re-plug GANDER1 and check its list again.
+   - **Accented names (J8):** in Sunny Day Vibes, load "Technicolor", "El Hijo De Mamá" and "Anbessa" to a deck one at a time: each loads and plays, with its title and artist readable. Unload them after.
+5. **Build I's items still hold:**
    - the header empty area;
    - the menu shadow pixels and the taps through it;
    - the Tracks row inside a drive;
@@ -44,13 +51,13 @@ Write your evidence in `deploy/ui-redesign-20261117/acceptance-J/` (`ACCEPTANCE.
    - TITLE stays 160, and there is no start-up write;
    - the overview strip moves;
    - the ★ start works.
-5. **Smoke:**
+6. **Smoke:**
    - a setting and an effect each saved within 1 s;
    - two decks plus one effect for 2 minutes: the CPU readout and the underrun counter (build I: 4.08 %, 0);
    - `throttled=0x0`.
 
 ## Restore at the end
-Put back what you found at the start (the owner may have changed it while playing): the decks' tracks, paused, SYNC as found, the screen as found, the owner's settings, pads and FX, and GANDER1's list sort. Every USB port enabled.
+Put back what you found at the start (the owner may have changed it while playing): the decks' tracks, paused, SYNC as found, the screen as found, the owner's settings, pads and FX, GANDER1's and IXIAN's list sorts. Every USB port enabled.
 
 ## Report
 Write `acceptance-J/ACCEPTANCE.md`. Reply with:

@@ -2,9 +2,9 @@
 
 Read `BUILD-C-operator.md` to `BUILD-I-operator.md` (same folder) first. Every rule there holds. Build I's kit is your method: `deploy/test-image-20261120i/` (`BUILD.md`, `UPDATE.md`, `DEPLOY-FILES.txt`, `logs/`, including `mac-space-watch.sh`). Only these change:
 
-- **One pi-gen run only, the 11th**, and only after the owner's yes. It ships the quit-crash fix (wave J1) and the eject and ☰-after-OPEN fixes (waves J4-J5). The owner said no to the J2 and J3 skin changes (spec 2e); they are reverted. If the run fails in the export step with the loop-device race build I hit, finish it with an export-only resume through pi-gen's `SKIP` files. That counts as the same run. Any other failure: stop and report.
+- **One pi-gen run only, the 11th**, and only after the owner's yes. It ships the quit-crash fix (wave J1), the eject and ☰-after-OPEN fixes (waves J4-J5), the drive-list sort fix (J6), the drive-rows cache fix (J7) and the accented file-name fix (J8). The owner said no to the J2 and J3 skin changes (spec 2e); they are reverted. If the run fails in the export step with the loop-device race build I hit, finish it with an export-only resume through pi-gen's `SKIP` files. That counts as the same run. Any other failure: stop and report.
 - **Commit:** the one the orchestrator names.
-- **Patches:** build I's 59 plus `mixxx-quit-library-widget.patch` and the J4-J5 patches. The orchestrator names the count with the commit.
+- **Patches:** build I's 59 plus `mixxx-quit-library-widget.patch`, `mixxx-eject-top-menu.patch`, `mixxx-media-open-inside.patch`, `mixxx-external-sort.patch`, `mixxx-drive-track-cache.patch` and `mixxx-rekordbox-utf16-text.patch` (65). The orchestrator names the commit and confirms the count.
 - **No skin changes this time:** the skin tools and stylesheets are byte-identical to build I's. Check that, and check that the image's generated skin matches build I's.
 - **Names:**
   - workspace `/srv/uiJ-<date>`;

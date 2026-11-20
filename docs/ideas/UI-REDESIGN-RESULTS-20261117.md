@@ -525,7 +525,7 @@ All three are the real seats; there are no stand-ins. **Owner (spec 2d, plan 12.
 ## Investigation of X1 and X2, and wave J1 (2026-11-20)
 
 - **X2, the quit crash, new in build I** (`acceptance-I/INVESTIGATION-X1-X2.md`):
-  - **Cause:** `mixxx-media-chip-ping.patch` made every deck or pad track change call `MixpiMedia::refresh()`. At Ctrl+Q, Mixxx deletes the skin before the players. `refresh()` then reached the deleted `WLibrary` through the raw `Library::m_pLibraryWidget`, a use-after-free. On the card it crashed once in 3 quits.
+  - **Most likely cause** (the card left no backtrace or core file; a VM fixture with Mixxx's quit order reproduces it 20/20): `mixxx-media-chip-ping.patch` made every deck or pad track change call `MixpiMedia::refresh()`. At Ctrl+Q, Mixxx deletes the skin before the players. `refresh()` then reached the deleted `WLibrary` through the raw `Library::m_pLibraryWidget`, a use-after-free. On the card it crashed once in 3 quits.
   - **Builds G and H:** every quit in their logs ended cleanly.
 - **X1 is not a code fault.** LOAD was tapped 19.2 s after the plug-in, and the ping removes itself after 15 s (an older patch). Opening the Media page does not restart that timer. This is an owner question.
 - **Wave J1** (builder N-J1, Claude Opus 5.5 medium):
@@ -533,4 +533,5 @@ All three are the real seats; there are no stand-ins. **Owner (spec 2d, plan 12.
   - **Fixture:** without the patch, 20/20 runs report a use-after-free and 20/20 crash with SIGSEGV. With it, 40/40 runs are clean.
   - **Gates:** native gate 280/280, 0 skips. Mac suite 833 run; the one error was the `test_chroot_runtime` load flake, which then passed 3 of 3 on its own.
   - **Registered:** 60 patches.
+  - **Confirmation on the card** needs build J, then 10 clean quits after eject cycles with a deck and pads loaded.
   - **The card still runs build I.** Shipping the fix needs a build J (the 11th pi-gen run), which needs the owner's yes. The owner is away and asked for no questions overnight.

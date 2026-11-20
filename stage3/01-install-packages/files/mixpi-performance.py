@@ -1311,8 +1311,9 @@ def usb_chip():
     from native code to the drive name; SCAN NN% shows while a hidden scan runs."""
     # Screen 2 (Media) first: the skin hides every waveform row before the native
     # page shows, so no GL surface is ever above it (build B, R-2/R-4).
-    # Lit while the Media page is open, as the gear is on Settings (spec s13,
-    # m-media.png): the button reads screen == 2.
+    # Marked while the Media page is open, as m-media.png draws it (is-live: the
+    # plain chip fill with a 1 px accent border, wave J3): the button reads
+    # screen == 2.
     tap = button('', SCREEN, size=f'{USB_CHIP}f,48f', push=True, name='MixpiUsbButton',
                  transform=f'<IsEqual>{SCREEN_MEDIA}</IsEqual>')
     write(tap, '[MixPi],media_load', 1)

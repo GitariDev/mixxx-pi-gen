@@ -1,0 +1,16 @@
+diff --git a/src/library/library.h b/src/library/library.h
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -251,7 +251,11 @@ class Library: public QObject {
+     QList<LibraryFeature*> m_features;
+     const static QString m_sTrackViewName;
+     const static QString m_sAutoDJViewName;
+-    WLibrary* m_pLibraryWidget;
++    // The skin's WLibrary. Quit deletes the skin before the decks and pads,
++    // whose unloads still reach the Media page owner (MixpiMedia::refresh()
++    // looks up the skin root through this widget): a QPointer reads null
++    // once the skin is gone, instead of the freed widget.
++    QPointer<WLibrary> m_pLibraryWidget;
+     MixxxLibraryFeature* m_pMixxxLibraryFeature;
+     PlaylistFeature* m_pPlaylistFeature;
+     CrateFeature* m_pCrateFeature;

@@ -231,6 +231,18 @@ The owner read council round 2 (all three seats at 6) and decided the following.
     - The plug-in ping (ASK: LOAD and DISMISS) also shows while the Media page is open.
 - **Also fixed** (skin, all three seats): the table header's empty area takes the agreed header colour, so a TITLE edge dragged narrower no longer shows a light-grey strip.
 
+## 2e. Owner decisions after council round 4 (2026-11-20)
+
+- **Kept as they are on the card** (the owner saw the mockup-against-card crops and said no to changing them):
+  - **The Sources menu rows** stay in Pioneered's capitals ("TRACKS", playlist names in capitals). The mockups' mixed case is not built.
+  - **The USB chip** keeps build I's look: the lit fill and 2 px border while the Media page is open, and READY `#7cc58a`, IN USE `#86c0d8`.
+  - **The plug-in ping** keeps its 15 s from the plug-in. Opening the Media page does not restart it. Owner: "Keep as is."
+- **Build J (the 11th pi-gen run), for:**
+  - **The quit crash** (wave J1). Owner: "Fix this only" (of the three build J items first proposed).
+  - **After an eject, the stale table goes.** The Tracks table stops showing the ejected drive's rows, and ☰ opens at the top level. Owner: "Let just land on the top menu instead" (instead of This Pi › Tracks).
+  - **☰ after OPEN opens inside the drive,** with the current-row edge on Tracks, as `m-sources-sub.png` draws it. Owner: "Open the drive." This replaces 2b's top-level case.
+- **USB ports are never switched off** by tests or tools. Re-plugs in tests are done by hand.
+
 ## 3. Not part of build C
 
 - **G5 extras:** the owner suggested an outline in the fill colour when active and thinner outlines on inactive buttons, then said "What we have now is acceptable". This is noted only.

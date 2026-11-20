@@ -1,8 +1,8 @@
 diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
-index 7c6fca4..a41a361 100644
+index 4573e07..1ef6c01 100644
 --- a/src/library/rekordbox/rekordboxfeature.cpp
 +++ b/src/library/rekordbox/rekordboxfeature.cpp
-@@ -1439,6 +1439,27 @@ RekordboxFeature::RekordboxFeature(
+@@ -1447,6 +1447,27 @@ RekordboxFeature::RekordboxFeature(
              &QFutureWatcher<QList<TreeItem*>>::finished,
              this,
              &RekordboxFeature::onRekordboxDevicesFound);
@@ -30,7 +30,7 @@ index 7c6fca4..a41a361 100644
      connect(&m_tracksFutureWatcher,
              &QFutureWatcher<QString>::finished,
              this,
-@@ -1860,6 +1881,31 @@ void RekordboxFeature::selectShownDriveTracks() {
+@@ -1892,6 +1913,31 @@ void RekordboxFeature::releaseRemovedDrives(const QModelIndex& parent, int first
      }
  }
  
@@ -63,15 +63,15 @@ index 7c6fca4..a41a361 100644
      // Probing does not touch live TreeItems, so a user import may start while
      // it runs. Hold completed probe results until that import releases its node.
 diff --git a/src/library/rekordbox/rekordboxfeature.h b/src/library/rekordbox/rekordboxfeature.h
-index b662e3c..6ef637e 100644
+index 4389259..ccfa5c5 100644
 --- a/src/library/rekordbox/rekordboxfeature.h
 +++ b/src/library/rekordbox/rekordboxfeature.h
-@@ -107,6 +107,8 @@ class RekordboxFeature : public BaseExternalLibraryFeature {
-     void finishDeviceRefresh();
-     void addDriveTracksRows();
-     void selectShownDriveTracks();
+@@ -111,6 +111,8 @@ class RekordboxFeature : public BaseExternalLibraryFeature {
+     void htmlLinkClicked(const QUrl& link);
+ 
+   private:
 +    void resetTrackCache();
 +    void dropRemovedList();
-     QMap<QString, QString> m_requestedMounts;
-     QPointer<mixxx::rekordbox::PendingSelection> m_pendingSelection;
- #ifdef __LINUX__
+     void requestDeviceRefresh();
+     void refreshDevices();
+     void finishDeviceRefresh();

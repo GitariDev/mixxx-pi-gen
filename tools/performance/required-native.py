@@ -52,6 +52,7 @@ REQUIRED_TESTS = (
     'test_sources_menu_shadow',
     'test_quit_library_widget',
     'test_eject_top_menu',
+    'test_external_sort',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

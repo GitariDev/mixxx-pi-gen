@@ -89,6 +89,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-quit-library-widget.patch",
             "mixxx-eject-top-menu.patch",
             "mixxx-media-open-inside.patch",
+            "mixxx-external-sort.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():

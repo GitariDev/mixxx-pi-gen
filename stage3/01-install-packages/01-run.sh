@@ -64,6 +64,7 @@ MIXXX_PATCHES=(
     mixxx-quit-library-widget.patch
     mixxx-eject-top-menu.patch
     mixxx-media-open-inside.patch
+    mixxx-external-sort.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

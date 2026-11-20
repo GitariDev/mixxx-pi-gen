@@ -535,3 +535,23 @@ All three are the real seats; there are no stand-ins. **Owner (spec 2d, plan 12.
   - **Registered:** 60 patches.
   - **Confirmation on the card** needs build J, then 10 clean quits after eject cycles with a deck and pads loaded.
   - **The card still runs build I.** Shipping the fix needs a build J (the 11th pi-gen run), which needs the owner's yes. The owner is away and asked for no questions overnight.
+
+## Council round 4 (2026-11-20, at `db24396`, build I)
+
+| Seat | Score | Blockers |
+|---|---|---|
+| Claude Fable 5.2 high | 8 | The quit crash (listed item 6). It needs build J and then 10 clean quits. |
+| GPT-6.1 Sol xhigh | 6, capped | The quit crash; and an unlisted deviation: the Sources menu draws "TRACKS", where the mockup has "Tracks". Every menu row is upper-cased by Pioneered's inherited `text-transform`. |
+| Claude Opus 5.5 xhigh | 6, capped (8 without the cap and with the chip fixed; 9 with build J too) | An unlisted deviation: the USB chip's colours. With the Media page open the card draws the lit tint where `m-media.png` draws `is-live`, and the state words use the `-text` tokens instead of `#5fae6e` and `#5aa4c4`. Also the quit crash, and gate logs not in `deploy/`. |
+
+All three are the real seats; there are no stand-ins. Both caps are skin-only gaps that earlier rounds missed:
+- **J2 (S9):** the menu rows in the mockups' case;
+- **J3 (S10):** the chip colours.
+
+Both go into build J with the J1 crash fix.
+
+- **Gate logs:** the native gate logs for waves G2, G3, H1, I1, I2, I3, the I integration and J1 are copied to `deploy/ui-redesign-20261117/gates/`. G1's run folder was already cleaned on VM b.
+- **Owner questions raised by the seats:**
+  - Should opening the Media page restart the ping's 15 s timer (X1)?
+  - After an eject, the Tracks table keeps the ejected drive's rows until another list is picked.
+  - The orchestrator ruled acceptance I FAIL 1 a PASS under spec 2b while the owner was away; the owner may want to confirm it.

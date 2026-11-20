@@ -1,0 +1,77 @@
+diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
+index 7c6fca4..a41a361 100644
+--- a/src/library/rekordbox/rekordboxfeature.cpp
++++ b/src/library/rekordbox/rekordboxfeature.cpp
+@@ -1439,6 +1439,27 @@ RekordboxFeature::RekordboxFeature(
+             &QFutureWatcher<QList<TreeItem*>>::finished,
+             this,
+             &RekordboxFeature::onRekordboxDevicesFound);
++    // The track cache mirrors the tables. A rekordbox row draws its columns
++    // (title, artist, location, ...) and LOAD reads its file from
++    // m_trackSource by the row's id, and with no drive left the tables are
++    // dropped and made again, so ids restart at 1: a cache kept from an
++    // ejected drive would show its tracks, and load its files, in another
++    // drive's lists. So the cache is built again whenever a drive's export
++    // has been read (connected before onTracksFound, which shows the list)
++    // and whenever drives leave the menu (after their tables are cleared).
++    connect(&m_tracksFutureWatcher,
++            &QFutureWatcher<QString>::finished,
++            this,
++            &RekordboxFeature::resetTrackCache);
++    connect(m_pSidebarModel,
++            &QAbstractItemModel::rowsRemoved,
++            this,
++            [this](const QModelIndex& parent) {
++                if (!parent.isValid()) {
++                    resetTrackCache();
++                    dropRemovedList();
++                }
++            });
+     connect(&m_tracksFutureWatcher,
+             &QFutureWatcher<QString>::finished,
+             this,
+@@ -1860,6 +1881,31 @@ void RekordboxFeature::selectShownDriveTracks() {
+     }
+ }
+ 
++void RekordboxFeature::resetTrackCache() {
++    // Reads the tables as they are now: the drives still in the menu.
++    m_trackSource->buildIndex();
++}
++
++void RekordboxFeature::dropRemovedList() {
++    // A list of a drive that left holds the ids of rows that are gone, and
++    // those ids may come back for the next drive. Select it again from the
++    // tables: it is empty now, so it never draws another drive's rows.
++    const QString shown = m_pRekordboxPlaylistModel->playlist();
++    if (shown.isEmpty()) {
++        return;
++    }
++    QSqlQuery query(m_pTrackCollection->database());
++    query.prepare("SELECT 1 FROM " + kRekordboxPlaylistsTable + " WHERE name=:name");
++    query.bindValue(":name", shown);
++    if (!query.exec()) {
++        LOG_FAILED_QUERY(query);
++        return;
++    }
++    if (!query.next()) {
++        m_pRekordboxPlaylistModel->select();
++    }
++}
++
+ void RekordboxFeature::onRekordboxDevicesFound() {
+     // Probing does not touch live TreeItems, so a user import may start while
+     // it runs. Hold completed probe results until that import releases its node.
+diff --git a/src/library/rekordbox/rekordboxfeature.h b/src/library/rekordbox/rekordboxfeature.h
+index b662e3c..6ef637e 100644
+--- a/src/library/rekordbox/rekordboxfeature.h
++++ b/src/library/rekordbox/rekordboxfeature.h
+@@ -107,6 +107,8 @@ class RekordboxFeature : public BaseExternalLibraryFeature {
+     void finishDeviceRefresh();
+     void addDriveTracksRows();
+     void selectShownDriveTracks();
++    void resetTrackCache();
++    void dropRemovedList();
+     QMap<QString, QString> m_requestedMounts;
+     QPointer<mixxx::rekordbox::PendingSelection> m_pendingSelection;
+ #ifdef __LINUX__

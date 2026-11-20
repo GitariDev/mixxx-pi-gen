@@ -1,0 +1,723 @@
+// Wave J7: a drive's lists show that drive's tracks, after any eject, pull
+// or re-plug. The actual import (parseDeviceDB with Kaitai and SQLite) reads
+// fake exports of two drives, GANDER1 (5 tracks) and IXIAN (7 tracks). The
+// actual RekordboxFeature methods (activateChild, onTracksFound,
+// onRekordboxDevicesFound, addDriveTracksRows, selectShownDriveTracks and,
+// with the patch, resetTrackCache and dropRemovedList) and the actual
+// constructor wiring between the devices and the tracks watchers run on
+// stand-ins. The track cache runs the actual BaseTrackCache methods that
+// fill and read it (buildIndex, updateIndexWithQuery, updateTracksInIndex,
+// isCached, ensureCached, data) on a stand-in holding its members. The table
+// stands in for RekordboxPlaylistModel: setPlaylist finds the playlist id by
+// name, select() reads the playlist's track ids as BaseSqlTableModel::select
+// does (building the cache index first, as filterAndSort does), and each cell
+// is read as BaseSqlTableModel::data reads it (ensureCached when the id is not
+// cached, then BaseTrackCache::data). LOAD reads the row's location
+// (BaseExternalPlaylistModel::getTrack). tests/native/drive_track_cache_runner.py
+// builds this; BASELINE is the source without mixxx-drive-track-cache.patch.
+// EXPORT_MODE lists one playlist of a real export.pdb (fault 2).
+#include <QAbstractItemModel>
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QDir>
+#include <QDirIterator>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
+#include <QFutureWatcher>
+#include <QGuiApplication>
+#include <QHash>
+#include <QIcon>
+#include <QMap>
+#include <QPersistentModelIndex>
+#include <QPointer>
+#include <QSharedPointer>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QSqlRecord>
+#include <QStringDecoder>
+#include <QThread>
+#include <QTimer>
+#include <QVector>
+#include <QtConcurrentRun>
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <rekordbox_pdb.h>
+#include "library/treeitem.h"
+#include "library/queryutil.h"
+#include "track/trackid.h"
+#include "util/color/rgbcolor.h"
+#include "library/media/mediauseregistry.h"
+#include "library/rekordbox/importoperation.h"
+
+int failures = 0;
+void require(bool condition, const char* name) {
+    std::cout << (condition ? "PASS " : "FAIL ") << name << std::endl;
+    failures += !condition;
+}
+void events(int milliseconds = 60) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < milliseconds) {
+        QCoreApplication::processEvents();
+        QThread::msleep(1);
+    }
+}
+template<typename Predicate>
+bool until(Predicate predicate) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!predicate() && timer.elapsed() < 10000) {
+        events(2);
+    }
+    return predicate();
+}
+
+namespace mixxx {
+using DbConnectionPoolPtr = std::shared_ptr<QString>;
+thread_local QString workerConnection;
+struct DbConnectionPooler {
+    explicit DbConnectionPooler(const DbConnectionPoolPtr& path) {
+        workerConnection = QStringLiteral("worker-%1").arg(quintptr(QThread::currentThreadId()));
+        auto database = QSqlDatabase::addDatabase("QSQLITE", workerConnection);
+        database.setDatabaseName(*path);
+        if (!database.open()) {
+            throw std::runtime_error("worker SQLite open failed");
+        }
+    }
+    ~DbConnectionPooler() {
+        QSqlDatabase::database(workerConnection).close();
+        QSqlDatabase::removeDatabase(workerConnection);
+    }
+};
+QSqlDatabase DbConnectionPooled(const DbConnectionPoolPtr&) {
+    return QSqlDatabase::database(workerConnection);
+}
+struct FileInfo {
+    explicit FileInfo(const QString&) {
+    }
+};
+} // namespace mixxx
+namespace Sandbox {
+bool askForAccess(mixxx::FileInfo*) {
+    return true;
+}
+} // namespace Sandbox
+QString fromUtf16LeString(const std::string& text) {
+    QStringDecoder decoder(QStringDecoder::Utf16LE);
+    return decoder(QByteArray::fromStdString(text));
+}
+QString fromUtf16BeString(const std::string& text) {
+    QStringDecoder decoder(QStringDecoder::Utf16BE);
+    return decoder(QByteArray::fromStdString(text));
+}
+
+#define IS_RECORDBOX_DEVICE "::isRecordboxDevice::"
+#define IS_NOT_RECORDBOX_DEVICE "::isNotRecordboxDevice::"
+const QString kRekordboxLibraryTable = "rekordbox_library";
+const QString kRekordboxPlaylistsTable = "rekordbox_playlists";
+const QString kRekordboxPlaylistTracksTable = "rekordbox_playlist_tracks";
+const QString kPdbPath = "PIONEER/rekordbox/export.pdb";
+const QString kPLaylistPathDelimiter = "-->";
+constexpr int kInvalidPlaylistId = -1;
+const QString kIconPath = QStringLiteral(":/images/library/ic_library_%1.svg");
+
+namespace mixxx::rekordbox {
+struct Observation {
+    std::string revision;
+    std::string database;
+};
+QMap<QString, Observation> observations;
+Observation inspectSource(const std::string& path) {
+    return observations.value(QString::fromStdString(path));
+}
+PRODUCTION_MATCHERS
+} // namespace mixxx::rekordbox
+namespace mixxx::media {
+Lease acquirePath(const std::string& path, Producer producer) {
+    return registry().acquire({path, path, {}}, producer);
+}
+} // namespace mixxx::media
+
+PRODUCTION_PARSER
+
+// BaseTrackCache's members, as basetrackcache.h declares them, for its actual
+// methods below. The feature's cache is not caching (isCaching false), so the
+// global track cache is never asked.
+namespace ColumnCache {
+enum Column {
+    COLUMN_LIBRARYTABLE_TITLE,
+    COLUMN_TRACKLOCATIONSTABLE_LOCATION,
+    COLUMN_LIBRARYTABLE_KEY,
+    COLUMN_LIBRARYTABLE_KEY_ID,
+};
+}
+namespace KeyUtils {
+QVariant keyFromKeyTextAndIdFields(const QVariant& text, const QVariant&) {
+    return text;
+}
+} // namespace KeyUtils
+struct Elapsed {
+    QString debugMillisWithUnit() const {
+        return QStringLiteral("0 ms");
+    }
+};
+struct PerformanceTimer {
+    void start() {
+    }
+    Elapsed elapsed() const {
+        return {};
+    }
+};
+using TrackPointer = std::shared_ptr<int>;
+constexpr bool sDebug = false;
+struct BaseTrackCache {
+    BaseTrackCache(const QString& connection)
+            : m_tableName(kRekordboxLibraryTable),
+              m_idColumn("id"),
+              m_columnsJoined("id,title,location,key"),
+              m_bIndexBuilt(false),
+              m_bIsCaching(false),
+              m_database(QSqlDatabase::database(connection)) {
+    }
+    const QString m_tableName;
+    const QString m_idColumn;
+    const QString m_columnsJoined;
+    mutable TrackId m_recentTrackId;
+    mutable TrackPointer m_recentTrackPtr;
+    mutable QSet<TrackId> m_dirtyTracks;
+    bool m_bIndexBuilt;
+    bool m_bIsCaching;
+    QHash<TrackId, QVector<QVariant>> m_trackInfo;
+    QSqlDatabase m_database;
+    int builds = 0;
+
+    int columnCount() const {
+        return 4;
+    }
+    int fieldIndex(ColumnCache::Column column) const {
+        switch (column) {
+        case ColumnCache::COLUMN_LIBRARYTABLE_TITLE:
+            return 1;
+        case ColumnCache::COLUMN_TRACKLOCATIONSTABLE_LOCATION:
+            return 2;
+        case ColumnCache::COLUMN_LIBRARYTABLE_KEY:
+            return 3;
+        default:
+            return -1;
+        }
+    }
+    const TrackPointer& getCachedTrack(TrackId) const {
+        return m_recentTrackPtr;
+    }
+    QVariant getTrackValueForColumn(TrackPointer, int) const {
+        return {};
+    }
+    void resetRecentTrack() const {
+        m_recentTrackId = TrackId();
+        m_recentTrackPtr.reset();
+    }
+    void tracksChanged(const QSet<TrackId>&) {
+    }
+    void buildIndex();
+    bool updateIndexWithQuery(const QString& query);
+    void updateTrackInIndex(TrackId trackId);
+    void updateTracksInIndex(const QSet<TrackId>& trackIds);
+    bool isCached(TrackId trackId) const;
+    void ensureCached(TrackId trackId);
+    QVariant data(TrackId trackId, int column) const;
+};
+PRODUCTION_CACHE
+
+// The sidebar model: TreeItemModel's index, insert and remove over the real
+// TreeItems (removeRows announces the removal, as TreeItemModel's does).
+struct Sidebar : QAbstractItemModel {
+    TreeItem root;
+    TreeItem* getRootItem() const {
+        return const_cast<TreeItem*>(&root);
+    }
+    TreeItem* item(const QModelIndex& index) const {
+        return index.isValid() ? static_cast<TreeItem*>(index.internalPointer()) : getRootItem();
+    }
+    QModelIndex index(int row, int column, const QModelIndex& parent = {}) const override {
+        TreeItem* owner = item(parent);
+        if (row < 0 || row >= owner->childRows()) {
+            return {};
+        }
+        return createIndex(row, column, owner->child(row));
+    }
+    QModelIndex parent(const QModelIndex& index) const override {
+        TreeItem* owner = index.isValid() ? item(index)->parent() : nullptr;
+        if (!owner || owner == &root) {
+            return {};
+        }
+        return createIndex(owner->parentRow(), 0, owner);
+    }
+    int rowCount(const QModelIndex& parent = {}) const override {
+        return item(parent)->childRows();
+    }
+    int columnCount(const QModelIndex& = {}) const override {
+        return 1;
+    }
+    QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override {
+        return index.isValid() && role == Qt::DisplayRole ? QVariant(item(index)->getLabel()) : QVariant();
+    }
+    void triggerRepaint() {
+    }
+    void insertTreeItemRows(std::vector<std::unique_ptr<TreeItem>>&& rows, int position,
+            const QModelIndex& parent = QModelIndex()) {
+        if (rows.empty()) {
+            return;
+        }
+        beginInsertRows(parent, position, position + static_cast<int>(rows.size()) - 1);
+        item(parent)->insertChildren(position, std::move(rows));
+        endInsertRows();
+    }
+    bool removeRows(int position, int count, const QModelIndex& parent = QModelIndex()) override {
+        if (count == 0) {
+            return true;
+        }
+        beginRemoveRows(parent, position, position + count - 1);
+        item(parent)->removeChildren(position, count);
+        endRemoveRows();
+        return true;
+    }
+};
+struct Collection {
+    QString name;
+    QSqlDatabase database() {
+        return QSqlDatabase::database(name);
+    }
+};
+struct Row {
+    QString title;
+    QString location;
+};
+// RekordboxPlaylistModel: the list shown, its rows by track id, its cells
+// read through the shared track cache.
+struct PlaylistModel {
+    QString name;
+    QSharedPointer<BaseTrackCache> cache;
+    QString m_playlist;
+    int playlistId = kInvalidPlaylistId;
+    QVector<TrackId> rowIds;
+    void setPlaylist(const QString& path) {
+        m_playlist = path;
+        QSqlQuery query(QSqlDatabase::database(name));
+        query.prepare("SELECT id FROM rekordbox_playlists WHERE name=:name");
+        query.bindValue(":name", path);
+        if (query.exec() && query.next()) {
+            playlistId = query.value(0).toInt();
+        }
+    }
+    const QString& playlist() const {
+        return m_playlist;
+    }
+    void select() {
+        rowIds.clear();
+        if (playlistId == kInvalidPlaylistId) {
+            return;
+        }
+        QSqlQuery query(QSqlDatabase::database(name));
+        query.prepare("SELECT track_id FROM rekordbox_playlist_tracks WHERE playlist_id=:id ORDER BY position");
+        query.bindValue(":id", playlistId);
+        if (query.exec()) {
+            while (query.next()) {
+                rowIds.append(TrackId(query.value(0)));
+            }
+        }
+        if (!rowIds.isEmpty() && !cache->m_bIndexBuilt) {
+            cache->buildIndex();
+        }
+    }
+    QVariant cell(TrackId id, ColumnCache::Column column) const {
+        if (!cache->isCached(id)) {
+            cache->ensureCached(id);
+        }
+        return cache->data(id, cache->fieldIndex(column));
+    }
+    QList<Row> rows() const {
+        QList<Row> result;
+        for (const auto& id : rowIds) {
+            result.append({cell(id, ColumnCache::COLUMN_LIBRARYTABLE_TITLE).toString(),
+                    QDir::fromNativeSeparators(
+                            cell(id, ColumnCache::COLUMN_TRACKLOCATIONSTABLE_LOCATION).toString())});
+        }
+        return result;
+    }
+};
+struct Library : QObject {
+    mixxx::DbConnectionPoolPtr pool;
+    explicit Library(QString path)
+            : pool(std::make_shared<QString>(path)) {
+    }
+    mixxx::DbConnectionPoolPtr dbConnectionPool() {
+        return pool;
+    }
+};
+struct DevicesFuture {
+    QList<TreeItem*> found;
+    QList<TreeItem*> result() const {
+        return found;
+    }
+};
+struct RekordboxFeature : QObject {
+    explicit RekordboxFeature(Library* library, const QString& name)
+            : QObject(library) {
+        collection.name = name;
+        playlist.name = name;
+        m_trackSource = QSharedPointer<BaseTrackCache>::create(name);
+        playlist.cache = m_trackSource;
+        // The RekordboxFeature constructor's lines between the devices
+        // watcher's connection and the tracks watcher's onTracksFound.
+        PRODUCTION_WIRING
+        connect(&m_tracksFutureWatcher, &QFutureWatcher<QString>::finished, this, [this] { onTracksFound(); });
+        connect(&m_tracksFutureWatcher, &QFutureWatcher<QString>::finished, this, [this] {
+            addDriveTracksRows();
+        });
+    }
+    Sidebar sidebar;
+    Collection collection;
+    PlaylistModel playlist;
+    Sidebar* m_pSidebarModel = &sidebar;
+    Collection* m_pTrackCollection = &collection;
+    PlaylistModel* m_pRekordboxPlaylistModel = &playlist;
+    QSharedPointer<BaseTrackCache> m_trackSource;
+    std::shared_ptr<mixxx::rekordbox::ImportOperation> m_importOperation;
+    mixxx::media::Lease m_importMediaUse;
+    TreeItem* m_pImportingDevice = nullptr;
+    bool m_trackImportActive = false;
+    bool m_deviceResultsDeferred = false;
+    QFuture<QString> m_tracksFuture;
+    QFutureWatcher<QString> m_tracksFutureWatcher;
+    DevicesFuture m_devicesFuture;
+    int displays = 0;
+    QPersistentModelIndex selected;
+    void requestDeviceRefresh() {
+    }
+    void refreshDevices() {
+    }
+    void finishDeviceRefresh() {
+    }
+    void clearLastRightClickedIndex() {
+    }
+    void featureSelect(RekordboxFeature*, const QModelIndex& index) {
+        selected = index;
+    }
+    // The library shows the model: the table view selects it.
+    void showTrackModel(PlaylistModel* model) {
+        ++displays;
+        model->select();
+        QTimer::singleShot(0, this, [this] { selectShownDriveTracks(); });
+    }
+    void activateChild(const QModelIndex&);
+    void onTracksFound();
+    void onRekordboxDevicesFound();
+    void addDriveTracksRows();
+    void selectShownDriveTracks();
+#ifndef BASELINE
+    void resetTrackCache();
+    void dropRemovedList();
+#endif
+};
+
+PRODUCTION_METHODS
+
+QByteArray driveDigest(const QString& path) {
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    QDirIterator files(path, QDir::Files | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+    QStringList names;
+    while (files.hasNext()) {
+        names.append(files.next());
+    }
+    names.sort();
+    for (const auto& name : names) {
+        QFile file(name);
+        file.open(QIODevice::ReadOnly);
+        const QFileInfo info(name);
+        hash.addData(name.toUtf8());
+        hash.addData(QByteArray::number(info.lastModified().toMSecsSinceEpoch()));
+        hash.addData(file.readAll());
+    }
+    return hash.result();
+}
+
+QString deviceRevision(const QString& drive) {
+    return QString("db:" + drive);
+}
+
+TreeItem* findDevice(RekordboxFeature& feature, const QString& drive) {
+    for (int row = 0; row < feature.sidebar.root.childRows(); ++row) {
+        if (feature.sidebar.root.child(row)->getData().toList().value(0).toString() == drive) {
+            return feature.sidebar.root.child(row);
+        }
+    }
+    return nullptr;
+}
+
+QModelIndex indexOf(RekordboxFeature& feature, TreeItem* item) {
+    if (!item) {
+        return {};
+    }
+    if (item->parent() == &feature.sidebar.root) {
+        return feature.sidebar.index(item->parentRow(), 0);
+    }
+    return feature.sidebar.index(item->parentRow(), 0, indexOf(feature, item->parent()));
+}
+
+// Discovery: the drives in `drives` are mounted, every other is gone.
+void discover(RekordboxFeature& feature, const QStringList& drives) {
+    mixxx::rekordbox::observations.clear();
+    feature.m_devicesFuture.found.clear();
+    for (const auto& drive : drives) {
+        mixxx::rekordbox::observations[drive] = {"mount:" + drive.toStdString(), "db:" + drive.toStdString()};
+        feature.m_devicesFuture.found.append(new TreeItem(QFileInfo(drive).fileName(),
+                QVariantList{drive, IS_RECORDBOX_DEVICE, deviceRevision(drive)}));
+    }
+    feature.onRekordboxDevicesFound();
+    events();
+}
+
+// A tap on the drive (OPEN): the import, then the drive's whole list.
+bool open(RekordboxFeature& feature, const QString& drive) {
+    TreeItem* device = findDevice(feature, drive);
+    if (!device) {
+        return false;
+    }
+    feature.activateChild(indexOf(feature, device));
+    const bool imported = until([&] { return !feature.m_trackImportActive; });
+    events();
+    return imported;
+}
+
+void show(RekordboxFeature& feature, TreeItem* item) {
+    require(item != nullptr, "every list the fixture opens is in the menu");
+    feature.activateChild(indexOf(feature, item));
+    events();
+}
+
+TreeItem* childLabelled(TreeItem* parent, const QString& prefix) {
+    // Depth first, into folders (Practice Lists › Sunny).
+    for (int row = 0; parent && row < parent->childRows(); ++row) {
+        if (parent->child(row)->getLabel().startsWith(prefix)) {
+            return parent->child(row);
+        }
+        if (TreeItem* found = childLabelled(parent->child(row), prefix)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+QStringList titles(const QList<Row>& rows) {
+    QStringList result;
+    for (const auto& row : rows) {
+        result.append(row.title);
+    }
+    return result;
+}
+
+// Every row of the list is the drive's: its title is the drive's, its
+// location is a file on the drive (what LOAD loads).
+bool onlyDrive(const QList<Row>& rows, const QString& drive, const QString& label) {
+    if (rows.isEmpty()) {
+        return false;
+    }
+    for (const auto& row : rows) {
+        if (!row.title.startsWith(label + " ") || !row.location.startsWith(drive + "/Contents/") ||
+                !QFileInfo(row.location).isFile()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void observe(const char* what, const QList<Row>& rows) {
+    std::cout << "OBSERVE " << what << ": " << titles(rows).join(" | ").toStdString() << std::endl;
+}
+
+QStringList expected(const QString& label, std::initializer_list<int> numbers) {
+    QStringList result;
+    for (int number : numbers) {
+        result.append(QStringLiteral("%1 %2").arg(label).arg(number));
+    }
+    return result;
+}
+
+int count(const QString& connection, const QString& table) {
+    QSqlQuery query(QSqlDatabase::database(connection));
+    return query.exec("SELECT count(*) FROM " + table) && query.next() ? query.value(0).toInt() : -1;
+}
+
+void createTables(const QString& name) {
+    auto database = QSqlDatabase::database(name);
+    createLibraryTable(database, kRekordboxLibraryTable);
+    createPlaylistsTable(database, kRekordboxPlaylistsTable);
+    createPlaylistTracksTable(database, kRekordboxPlaylistTracksTable);
+}
+
+#ifdef EXPORT_MODE
+// Fault 2: one playlist of a real export.pdb, as Mixxx's import reads it.
+int listExport(const QString& home, const QString& wanted) {
+    const QString name = QStringLiteral("main");
+    Library library(QString(home + "/library.sqlite"));
+    auto database = QSqlDatabase::addDatabase("QSQLITE", name);
+    database.setDatabaseName(*library.pool);
+    database.open();
+    createTables(name);
+    RekordboxFeature feature(&library, name);
+    const QString drive = home + "/media/IXIAN";
+    discover(feature, {drive});
+    const bool imported = open(feature, drive);
+    std::cout << "IMPORTED " << imported << " tracks " << count(name, kRekordboxLibraryTable)
+              << " playlists " << count(name, kRekordboxPlaylistsTable) << std::endl;
+    QSqlQuery query(database);
+    query.prepare("SELECT p.name, t.position, t.track_id, l.rb_id, l.title, l.location "
+                  "FROM rekordbox_playlists p JOIN rekordbox_playlist_tracks t ON t.playlist_id = p.id "
+                  "LEFT JOIN rekordbox_library l ON l.id = t.track_id "
+                  "WHERE instr(p.name, :wanted) > 0 ORDER BY p.name, t.position");
+    query.bindValue(":wanted", wanted);
+    query.exec();
+    int rows = 0;
+    int missing = 0;
+    while (query.next()) {
+        ++rows;
+        missing += query.value(3).isNull();
+        std::cout << "ENTRY " << query.value(1).toInt() << " track_id " << query.value(2).toInt() << " rb_id "
+                  << query.value(3).toString().toStdString() << " title "
+                  << query.value(4).toString().toStdString() << " file "
+                  << query.value(5).toString().mid(drive.size()).toStdString() << std::endl;
+    }
+    std::function<void(TreeItem*)> labels = [&](TreeItem* item) {
+        for (int row = 0; row < item->childRows(); ++row) {
+            if (item->child(row)->getLabel().contains(wanted)) {
+                std::cout << "LABEL " << item->child(row)->getLabel().toStdString() << std::endl;
+            }
+            labels(item->child(row));
+        }
+    };
+    labels(&feature.sidebar.root);
+    std::cout << "COUNT " << rows << " without a track row " << missing << std::endl;
+    return imported ? 0 : 1;
+}
+#endif
+
+int main(int argc, char** argv) {
+    QGuiApplication application(argc, argv);
+    const QString home = QString::fromLocal8Bit(argv[1]);
+#ifdef EXPORT_MODE
+    return listExport(home, QString::fromLocal8Bit(argv[2]));
+#else
+    const QString gander = home + "/media/GANDER1";
+    const QString ixian = home + "/media/IXIAN";
+    const QString name = QStringLiteral("main");
+    Library library(QString(home + "/library.sqlite"));
+    {
+        auto database = QSqlDatabase::addDatabase("QSQLITE", name);
+        database.setDatabaseName(*library.pool);
+        database.open();
+        createTables(name);
+    }
+    const QByteArray ganderBefore = driveDigest(gander);
+    const QByteArray ixianBefore = driveDigest(ixian);
+    auto feature = std::make_unique<RekordboxFeature>(&library, name);
+    RekordboxFeature& f = *feature;
+
+    // 1. GANDER1 is the only drive: opened, its lists viewed.
+    discover(f, {gander});
+    require(open(f, gander) && f.playlist.playlist() == gander,
+            "GANDER1's export is read and Tracks shows its whole list");
+    observe("GANDER1 Tracks", f.playlist.rows());
+    require(onlyDrive(f.playlist.rows(), gander, "Gander") &&
+                    titles(f.playlist.rows()) == expected("Gander", {1, 2, 3, 4, 5}),
+            "GANDER1's Tracks lists its 5 tracks, each with its file on GANDER1");
+    show(f, childLabelled(findDevice(f, gander), "Warm-up"));
+    require(titles(f.playlist.rows()) == expected("Gander", {1, 2, 3}) &&
+                    onlyDrive(f.playlist.rows(), gander, "Gander"),
+            "GANDER1's playlist Warm-up shows its 3 tracks");
+
+    // 2. GANDER1 is ejected; no drive is left, so the tables are dropped and
+    // made again (their ids start at 1 again).
+    discover(f, {});
+    require(f.sidebar.root.childRows() == 0 && count(name, kRekordboxLibraryTable) == 0,
+            "with GANDER1 ejected and no drive left, its rows and lists are gone");
+    observe("after the eject, the list in view", f.playlist.rows());
+    require(f.m_trackSource->m_trackInfo.isEmpty(),
+            "after the eject the track cache holds no row of GANDER1");
+    require(f.playlist.rows().isEmpty(),
+            "after the eject the list in view shows no row of GANDER1");
+
+    // 3. IXIAN is plugged and opened: its ids reuse GANDER1's.
+    discover(f, {ixian});
+    require(open(f, ixian) && f.playlist.playlist() == ixian,
+            "IXIAN's export is read and Tracks shows its whole list");
+    observe("IXIAN Tracks", f.playlist.rows());
+    require(titles(f.playlist.rows()) == expected("Ixian", {1, 2, 3, 4, 5, 6, 7}),
+            "IXIAN's Tracks lists its 7 tracks, not GANDER1's songs");
+    require(onlyDrive(f.playlist.rows(), ixian, "Ixian"),
+            "each IXIAN row loads IXIAN's file, never a GANDER1 path");
+    show(f, childLabelled(findDevice(f, ixian), "Sunny"));
+    observe("IXIAN Sunny", f.playlist.rows());
+    require(titles(f.playlist.rows()) == expected("Ixian", {2, 4, 6}) && onlyDrive(f.playlist.rows(), ixian, "Ixian"),
+            "IXIAN's playlist Sunny shows its own 3 tracks and paths");
+    TreeItem* tracksRow = findDevice(f, ixian) ? findDevice(f, ixian)->child(0) : nullptr;
+    require(tracksRow && tracksRow->getLabel() == "Tracks", "IXIAN's first row is Tracks");
+    show(f, tracksRow);
+    require(f.playlist.playlist() == ixian && titles(f.playlist.rows()) == expected("Ixian", {1, 2, 3, 4, 5, 6, 7}) &&
+                    onlyDrive(f.playlist.rows(), ixian, "Ixian"),
+            "IXIAN's Tracks row lists only IXIAN's tracks and paths");
+
+    // 4. A second drive: GANDER1 plugged again next to IXIAN, then IXIAN
+    // pulled with GANDER1 left, then both pulled and IXIAN plugged alone.
+    discover(f, {ixian, gander});
+    require(open(f, gander), "GANDER1 plugged again next to IXIAN is read");
+    require(titles(f.playlist.rows()) == expected("Gander", {1, 2, 3, 4, 5}) &&
+                    onlyDrive(f.playlist.rows(), gander, "Gander"),
+            "with two drives, GANDER1's Tracks shows only GANDER1's tracks");
+    show(f, childLabelled(findDevice(f, ixian), "Sunny"));
+    require(titles(f.playlist.rows()) == expected("Ixian", {2, 4, 6}) && onlyDrive(f.playlist.rows(), ixian, "Ixian"),
+            "with two drives, IXIAN's Sunny shows only IXIAN's tracks");
+    show(f, childLabelled(findDevice(f, gander), "Warm-up"));
+    discover(f, {gander});
+    require(findDevice(f, gander) && !findDevice(f, ixian),
+            "IXIAN pulled: GANDER1 stays in the menu");
+    require(titles(f.playlist.rows()) == expected("Gander", {1, 2, 3}) && onlyDrive(f.playlist.rows(), gander, "Gander"),
+            "GANDER1's list in view keeps its rows when IXIAN is pulled");
+    show(f, childLabelled(findDevice(f, gander), "Warm-up"));
+    discover(f, {});
+    discover(f, {ixian});
+    require(open(f, ixian), "IXIAN plugged alone again is read");
+    require(titles(f.playlist.rows()) == expected("Ixian", {1, 2, 3, 4, 5, 6, 7}) &&
+                    onlyDrive(f.playlist.rows(), ixian, "Ixian"),
+            "after both drives left, IXIAN's Tracks shows only IXIAN's tracks");
+    show(f, childLabelled(findDevice(f, ixian), "Sunny"));
+    require(titles(f.playlist.rows()) == expected("Ixian", {2, 4, 6}) && onlyDrive(f.playlist.rows(), ixian, "Ixian"),
+            "after both drives left, IXIAN's Sunny shows only IXIAN's tracks");
+    {
+        bool cacheMatches = true;
+        QSqlQuery query(QSqlDatabase::database(name));
+        query.exec("SELECT id, title FROM rekordbox_library");
+        int rows = 0;
+        while (query.next()) {
+            ++rows;
+            cacheMatches = cacheMatches &&
+                    f.m_trackSource->m_trackInfo.value(TrackId(query.value(0))).value(1).toString() ==
+                            query.value(1).toString();
+        }
+        require(cacheMatches && rows == f.m_trackSource->m_trackInfo.size(),
+                "after the re-plug the track cache holds exactly the tables' rows");
+    }
+
+    require(driveDigest(gander) == ganderBefore && driveDigest(ixian) == ixianBefore,
+            "nothing on either drive was written (read only)");
+    feature.reset();
+    QSqlDatabase::database(name).close();
+    QSqlDatabase::removeDatabase(name);
+    std::cout << "OK " << failures << std::endl;
+    return failures ? 1 : 0;
+#endif
+}

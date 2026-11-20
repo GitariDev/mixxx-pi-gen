@@ -555,13 +555,20 @@ int main(int argc, char** argv) {
     for (int tile = 0; tile < sidebar.sourceTiles().size(); ++tile) {
         valid &= !sidebar.sourceTiles().at(tile)->accessibleName().isEmpty();
     }
-    require(sidebar.selectedSourceTile() == LibraryInterface::SourceGroups::kThisPi &&
-                    tileNamed(sidebar, "This Pi")->isChecked() && !tileNamed(sidebar, "MANTACORE"),
-            "unplugged while selected: This Pi is selected and the drive's row is gone");
+    // Spec 2e (build J, "Let just land on the top menu instead"): the drive's
+    // list was in Tracks (the tap opened it), so no row has the edge now;
+    // before build J the edge fell back to This Pi (acceptance I, c5-r).
+    int edgesAfterUnplug = 0;
+    for (auto* tile : sidebar.sourceTiles()) {
+        edgesAfterUnplug += tile->isChecked() ? 1 : 0;
+    }
+    require(sidebar.selectedSourceTile() == LibraryInterface::SourceGroups::kThisPi && edgesAfterUnplug == 0 &&
+                    !tileNamed(sidebar, "MANTACORE"),
+            "unplugged while its list is in Tracks: the drive's row is gone and no row has the edge");
     require(valid && !sidebar.rootIndex().isValid() && !sidebar.isSourceMenuInside() &&
                     sidebar.sourceCrumb() == "This Pi" && edit->isVisible() &&
                     shownRows(sidebar) == QStringList({"Tracks", "Auto DJ", "Playlists"}),
-            "nothing dangles: the top level, This Pi current, its rows below");
+            "nothing dangles: the top level, This Pi's rows below");
     QDir(stick).removeRecursively();
     sidebar.sourcesChanged();
     settle();
@@ -1029,7 +1036,11 @@ int main(int argc, char** argv) {
             // Library::bindSidebarWidget's second selectIndex connect.
             library.applySidebarSourceVisibility();
             settle();
-#ifdef MIXPI_SOURCES_OPEN_EDGE
+#if defined(MIXPI_MEDIA_OPEN_INSIDE)
+            // mixxx-media-open-inside.patch: Library's OPEN, BROWSE and LOAD
+            // paths call openShownSource (the ★ start keeps followShownSource).
+            sidebar.openShownSource();
+#elif defined(MIXPI_SOURCES_OPEN_EDGE)
             sidebar.followShownSource();
 #endif
             settle();
@@ -1122,6 +1133,280 @@ int main(int argc, char** argv) {
         }
         require(tileNamed(sidebar, "This Pi")->isChecked() && !tileNamed(sidebar, "MANTACORE")->isChecked(),
                 "a pick in the menu after OPEN: the edge is on This Pi again");
+        {
+            // Build J (spec 2e). J4, owner: "Let just land on the top menu
+            // instead": when the drive whose list is in Tracks is ejected or
+            // pulled out, the menu lands on its top level with no current row
+            // (RekordboxFeature empties the table: tests/test_eject_top_menu.py).
+            // J5, owner: "Open the drive.": after OPEN, BROWSE or the ping's LOAD
+            // the next ☰ opens inside "DRIVE › rekordbox" with the edge on Tracks
+            // (m-sources-sub.png), wherever the menu was left (acceptance I,
+            // repro 1). The drive opens as Library::openRemovableSourceAsync opens
+            // it: activateChild, featureSelect with the drive's row, the menu
+            // (openShownSource; the runner defines MIXPI_MEDIA_OPEN_INSIDE when
+            // the patched sidebar has it), then RekordboxFeature's
+            // selectShownDriveTracks selects the drive's Tracks row.
+            const QString gander = QDir(home.path()).filePath("media/GANDER1");
+            QDir().mkpath(gander);
+            const QModelIndex rekordboxRow = library.sourceRow("RekordboxFeature");
+            auto driveRowOf = [&](const QString& name) {
+                for (int row = 0; row < rekordbox.children.rowCount(); ++row) {
+                    if (rekordbox.children.index(row, 0).data().toString() == name) {
+                        return row;
+                    }
+                }
+                return -1;
+            };
+            auto sidebarDrive = [&](const QString& name) {
+                return model.index(driveRowOf(name), 0, rekordboxRow);
+            };
+            auto plug = [&](const QString& path, const char* revision) {
+                std::vector<std::unique_ptr<TreeItem>> rows;
+                rows.push_back(rekordboxDrive(path, QString::fromLatin1(revision)));
+                rekordbox.children.insertTreeItemRows(std::move(rows), 0);
+                settle();
+            };
+            auto pull = [&](const QString& name) {
+                // An eject from the Media page and a drive pulled out both end in
+                // discovery removing the drive's row (onRekordboxDevicesFound).
+                const int row = driveRowOf(name);
+                if (row >= 0) {
+                    rekordbox.children.removeRows(row, 1);
+                }
+                settle();
+            };
+            auto closeMenu = [&] {
+                sidebar.hide();
+                screenControl.setAndConfirm(0);
+                sidebarVisible.setAndConfirm(0);
+                settle();
+            };
+            auto openMenu = [&] {
+                screenControl.setAndConfirm(1);
+                sidebarVisible.setAndConfirm(1);
+                sidebar.show();
+                settle();
+            };
+            auto edges = [&] {
+                int count = 0;
+                for (auto* tile : sidebar.sourceTiles()) {
+                    count += tile->isChecked() ? 1 : 0;
+                }
+                return count;
+            };
+            auto edgeDrawnOn = [&](const QModelIndex& index) {
+                const QImage image = sidebar.viewport()->grab().toImage();
+                const QRect row = sidebar.visualRect(index);
+                return row.isValid() && image.pixelColor(row.left() + 1, row.center().y()) == sidebar.menuAccentColor();
+            };
+            auto openDrive = [&](const QString& name) {
+                const QModelIndex featureDrive = rekordbox.children.index(driveRowOf(name), 0);
+                rekordbox.activateChild(featureDrive);
+                emit rekordbox.featureSelect(&rekordbox, featureDrive);
+                library.applySidebarSourceVisibility();
+                settle();
+#if defined(MIXPI_MEDIA_OPEN_INSIDE)
+                sidebar.openShownSource();
+#elif defined(MIXPI_SOURCES_OPEN_EDGE)
+                sidebar.followShownSource();
+#endif
+                settle();
+                emit rekordbox.featureSelect(&rekordbox, rekordbox.children.index(0, 0, featureDrive));
+                settle();
+            };
+            // ☰ (menu closed before): inside "NAME › rekordbox", the edge on
+            // Tracks only.
+            auto insideOnTracks = [&](const QString& name) {
+                openMenu();
+                const QModelIndex driveNode = sidebarDrive(name);
+                const QModelIndex tracksRow = model.index(0, 0, driveNode);
+                const QString crumb = name + QString::fromUtf8(" › rekordbox");
+                const bool inside = sidebar.isSourceMenuInside() && sidebar.rootIndex() == driveNode &&
+                        sidebar.sourceCrumb() == crumb && place->isVisible() && place->text() == crumb &&
+                        !edit->isVisible() && shownRows(sidebar).value(0) == "Tracks";
+                const bool edge = sidebar.currentIndex() == tracksRow && edgeDrawnOn(tracksRow) &&
+                        !edgeDrawnOn(model.index(2, 0, driveNode));
+                std::cout << "OBSERVE inside " << sidebar.isSourceMenuInside() << " place '"
+                          << sidebar.sourceCrumb().toStdString() << "' current '"
+                          << sidebar.currentIndex().data().toString().toStdString() << "'" << std::endl;
+                return inside && edge;
+            };
+            auto toTop = [&] {
+                while (sidebar.isSourceMenuInside()) {
+                    back->click();
+                    settle();
+                }
+            };
+            auto leaveInsideThisPi = [&] {
+                openMenu();
+                toTop();
+                tileNamed(sidebar, "This Pi")->click();
+                settle();
+                const bool left = sidebar.isSourceMenuInside() && sidebar.sourceCrumb() == "This Pi";
+                closeMenu();
+                return left;
+            };
+            auto leaveInsideDrive = [&](const QString& name) {
+                openMenu();
+                toTop();
+                tileNamed(sidebar, name)->click();
+                settle();
+                const bool left = sidebar.isSourceMenuInside() &&
+                        sidebar.sourceCrumb() == name + QString::fromUtf8(" › rekordbox");
+                closeMenu();
+                return left;
+            };
+            auto topWithoutEdge = [&] {
+                openMenu();
+                const bool top = !sidebar.isSourceMenuInside() && edit->isVisible() && !place->isVisible();
+                const bool none = edges() == 0 && !sidebar.currentIndex().isValid();
+                std::cout << "OBSERVE top " << !sidebar.isSourceMenuInside() << " edges " << edges() << " current '"
+                          << sidebar.currentIndex().data().toString().toStdString() << "'" << std::endl;
+                closeMenu();
+                return top && none;
+            };
+            const QString savedStart = settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource"));
+            closeMenu();
+
+            // J5: from a menu left inside This Pi.
+            require(leaveInsideThisPi(), "J5 OPEN: the menu is left inside This Pi");
+            openDrive("MANTACORE");
+            require(insideOnTracks("MANTACORE"),
+                    "J5 OPEN from a menu left inside This Pi: ☰ opens inside MANTACORE › rekordbox, the edge on Tracks");
+            closeMenu();
+            if (const QString directory = qEnvironmentVariable("MIXPI_SOURCES_GRAB_DIR"); !directory.isEmpty()) {
+                // m-sources-sub.png: inside the drive, the edge on Tracks.
+                openMenu();
+                screen.grab().save(directory + "/j5-open-inside-tracks.png");
+                closeMenu();
+            }
+            require(leaveInsideThisPi(), "J5 BROWSE: the menu is left inside This Pi");
+            openDrive("MANTACORE");
+            require(insideOnTracks("MANTACORE"),
+                    "J5 BROWSE from a menu left inside This Pi: ☰ opens inside MANTACORE › rekordbox, the edge on Tracks");
+            closeMenu();
+            require(leaveInsideThisPi(), "J5 LOAD: the menu is left inside This Pi");
+            openDrive("MANTACORE");
+            require(insideOnTracks("MANTACORE"),
+                    "J5 ping LOAD from a menu left inside This Pi: ☰ opens inside MANTACORE › rekordbox, the edge on Tracks");
+            // BACK from inside still goes to the top level with the edge on the
+            // drive (build E, kept).
+            back->click();
+            settle();
+            require(!sidebar.isSourceMenuInside() && tileNamed(sidebar, "MANTACORE")->isChecked() && edges() == 1,
+                    "J5: BACK from inside goes to the top level with the edge on the drive only");
+            closeMenu();
+            // From a menu left at the top level (acceptance I, c4o-e-menu.png:
+            // OPEN from DECKS).
+            openDrive("MANTACORE");
+            require(insideOnTracks("MANTACORE"),
+                    "J5 OPEN from a menu left at the top level: ☰ opens inside MANTACORE › rekordbox, the edge on Tracks");
+            closeMenu();
+
+            // J5: from a menu left inside the same drive, then an eject and a
+            // re-plug (acceptance I repro 1).
+            require(leaveInsideDrive("MANTACORE"), "J5 OPEN: the menu is left inside MANTACORE › rekordbox");
+            pull("MANTACORE");
+            require(topWithoutEdge(), "J4: the eject with the drive's list in Tracks lands on the top level, no edge");
+            plug(mantacore, "rev-j5-1");
+            openDrive("MANTACORE");
+            require(insideOnTracks("MANTACORE"),
+                    "J5 OPEN after an eject and re-plug (menu left inside the drive): ☰ opens inside MANTACORE › rekordbox, the edge on Tracks");
+            closeMenu();
+            require(leaveInsideDrive("MANTACORE"), "J5 BROWSE: the menu is left inside MANTACORE › rekordbox");
+            pull("MANTACORE");
+            plug(mantacore, "rev-j5-2");
+            openDrive("MANTACORE");
+            require(insideOnTracks("MANTACORE"),
+                    "J5 BROWSE after an eject and re-plug (menu left inside the drive): ☰ opens inside MANTACORE › rekordbox, the edge on Tracks");
+            closeMenu();
+            require(leaveInsideDrive("MANTACORE"), "J5 LOAD: the menu is left inside MANTACORE › rekordbox");
+            pull("MANTACORE");
+            plug(mantacore, "rev-j5-3");
+            openDrive("MANTACORE");
+            require(insideOnTracks("MANTACORE"),
+                    "J5 ping LOAD after an eject and re-plug (menu left inside the drive): ☰ opens inside MANTACORE › rekordbox, the edge on Tracks");
+            closeMenu();
+            require(settings.getValueString(ConfigKey(kConfigGroup, "SidebarDefaultSource")) == savedStart,
+                    "J4 and J5 do not change the saved start (★)");
+
+            // The ★ start (build I, kept): the drive opens in Tracks and the
+            // menu keeps its level, the top level after an eject.
+            require(leaveInsideDrive("MANTACORE"), "★: the menu is left inside the drive");
+            pull("MANTACORE");
+            plug(mantacore, "rev-j5-start");
+            {
+                const QModelIndex featureDrive = rekordbox.children.index(driveRowOf("MANTACORE"), 0);
+                rekordbox.activateChild(featureDrive);
+                emit rekordbox.featureSelect(&rekordbox, featureDrive);
+                settle();
+                sidebar.followShownSource();
+                settle();
+                emit rekordbox.featureSelect(&rekordbox, rekordbox.children.index(0, 0, featureDrive));
+                settle();
+            }
+            openMenu();
+            require(!sidebar.isSourceMenuInside() && tileNamed(sidebar, "MANTACORE")->isChecked() && edges() == 1,
+                    "★ start (followShownSource) keeps build I's menu: the top level, the edge on the drive");
+            closeMenu();
+
+            // J4: the drive's list in Tracks, the menu left inside This Pi, then
+            // the eject: the top level, nothing current.
+            openDrive("MANTACORE");
+            require(leaveInsideThisPi(), "J4: the drive's list in Tracks, the menu left inside This Pi");
+            pull("MANTACORE");
+            require(topWithoutEdge() && !tileNamed(sidebar, "MANTACORE"),
+                    "J4 eject (menu left inside This Pi): the top level, no edge, the drive's row gone");
+            if (const QString directory = qEnvironmentVariable("MIXPI_SOURCES_GRAB_DIR"); !directory.isEmpty()) {
+                openMenu();
+                screen.grab().save(directory + "/j4-eject-top-menu.png");
+                closeMenu();
+            }
+
+            // J4 pulled out with a second drive in: the current row was the
+            // drive's own row, which Qt would move to the neighbouring drive.
+            plug(mantacore, "rev-j4-1");
+            plug(gander, "rev-g1");
+            openMenu();
+            toTop();
+            tileNamed(sidebar, "MANTACORE")->click();
+            settle();
+            const bool onDriveRow = sidebar.currentIndex() == sidebarDrive("MANTACORE") && shown == "Rekordbox/MANTACORE";
+            closeMenu();
+            pull("MANTACORE");
+            require(onDriveRow && topWithoutEdge() && tileNamed(sidebar, "GANDER1") &&
+                            !tileNamed(sidebar, "GANDER1")->isChecked(),
+                    "J4 pulled out (another drive in): the top level, no edge, not even on the other drive");
+
+            // J4: another drive ejected leaves the menu alone.
+            plug(mantacore, "rev-j4-2");
+            openDrive("MANTACORE");
+            const QPersistentModelIndex mantacoreTracks = model.index(0, 0, sidebarDrive("MANTACORE"));
+            pull("GANDER1");
+            openMenu();
+            require(sidebar.isSourceMenuInside() && mantacoreTracks.isValid() &&
+                            sidebar.currentIndex() == QModelIndex(mantacoreTracks) &&
+                            sidebar.sourceCrumb() == QString::fromUtf8("MANTACORE › rekordbox") &&
+                            edgeDrawnOn(mantacoreTracks),
+                    "J4: ejecting another drive leaves the menu inside the shown drive, the edge on its Tracks");
+            closeMenu();
+
+            // J4: the list in Tracks is This Pi's: an eject changes nothing.
+            plug(gander, "rev-g2");
+            require(pickThisPiTracks(), "J4: This Pi › TRACKS picked");
+            const QModelIndex thisPiTracks = library.sourceRow("MixxxLibraryFeature");
+            pull("GANDER1");
+            openMenu();
+            const bool stayedInside = sidebar.isSourceMenuInside() && sidebar.sourceCrumb() == "This Pi" &&
+                    sidebar.currentIndex() == thisPiTracks;
+            toTop();
+            require(stayedInside && tileNamed(sidebar, "This Pi")->isChecked() && edges() == 1,
+                    "J4: with This Pi's list in Tracks an eject changes nothing (place and edge on This Pi)");
+            closeMenu();
+            QDir(gander).removeRecursively();
+            // The menu shows again, as the build E checks left it.
+            openMenu();
+        }
     }
     settings.setValue(ConfigKey(kConfigGroup, "SourceGroupDrives"), false);
     library.applySidebarSourceVisibility();

@@ -1,0 +1,90 @@
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+index a813297..47b00c8 100644
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -730,11 +730,14 @@ QString Library::openRemovableSource(const QJsonObject& volume) {
+         ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
+         // The drive now shows in Tracks: sample mode ends where it is.
+         leaveSampleMode(false);
+-        // The menu's current source and place follow the drive (build E).
+-        m_pSidebarWidget->followShownSource();
+         // The drive Tracks starts at (★) opens in Tracks without showing it.
+         if (!volume.value(QStringLiteral("mixpiStart")).toBool()) {
++            // OPEN, BROWSE or LOAD: ☰ opens inside the drive (spec 2e).
++            m_pSidebarWidget->openShownSource();
+             ControlObject::set(ConfigKey("[Tab]", "library"), 1);
++        } else {
++            // The menu's current source and place follow the drive (build E).
++            m_pSidebarWidget->followShownSource();
+         }
+     }
+     return error;
+@@ -789,9 +792,13 @@ std::function<void()> Library::openRemovableSourceAsync(const QJsonObject& volum
+                     ControlObject::set(ConfigKey("[MixPi]", "loop_deck"), 0);
+                     // The drive now shows in Tracks: sample mode ends where it is.
+                     owner->leaveSampleMode(false);
+-                    // The menu's current source and place follow the drive (build E).
+-                    if (owner->m_pSidebarWidget) {
++                    // The menu's current source and place follow the drive
++                    // (build E); after OPEN, BROWSE or LOAD ☰ opens inside
++                    // it (spec 2e). The ★ start keeps the menu's level.
++                    if (owner->m_pSidebarWidget && start) {
+                         owner->m_pSidebarWidget->followShownSource();
++                    } else if (owner->m_pSidebarWidget) {
++                        owner->m_pSidebarWidget->openShownSource();
+                     }
+                     // The drive Tracks starts at (★) opens in Tracks without showing it.
+                     if (!start) {
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index 61325e8..a7e6cb7 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -643,6 +643,32 @@ void WLibrarySidebar::followShownSource() {
+     updateSourceChrome();
+ }
+ 
++void WLibrarySidebar::openShownSource() {
++    // followShownSource makes the drive the menu's source and its rows the
++    // place, but kept the menu's level: m_menuInside, which picks the top
++    // level or the rows when ☰ opens, was only set by a tap on a source row.
++    // After an eject (the top level, spec 2e) or with the menu left at the
++    // top level, ☰ showed the top level with the edge on the drive (acceptance
++    // I, 3f). Now the place is inside the drive, so ☰ opens there; the
++    // feature then makes the drive's Tracks row current (the edge).
++    followShownSource();
++    if (!m_sourceScreen || !groupedTiles || !m_touchNavigation || m_sourcesEditing) {
++        return;
++    }
++    const auto* pTile = selectedTile();
++    if (!pTile || !pTile->id.startsWith(QStringLiteral("drive:")) || !pTile->node.isValid()) {
++        return;
++    }
++    // Only once the drive's rows show (its row or below it is the place).
++    for (QModelIndex step = rootIndex(); step.isValid(); step = step.parent()) {
++        if (step == pTile->node) {
++            m_menuInside = true;
++            updateSourceChrome();
++            return;
++        }
++    }
++}
++
+ void WLibrarySidebar::currentChanged(const QModelIndex& current, const QModelIndex& previous) {
+     QTreeView::currentChanged(current, previous);
+     if (current.isValid()) {
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index 42fc47c..cb6ac4d 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -96,6 +96,11 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     // Build E (spec 2b): a source opened from outside the menu (OPEN or
+     // BROWSE on the Media page) becomes the menu's current source and place.
+     void followShownSource();
++    // Spec 2e (build J, owner: "Open the drive."): a drive opened by OPEN,
++    // BROWSE or the plug-in ping's LOAD. As followShownSource, and the next
++    // ☰ opens inside the drive ("DRIVE › rekordbox"), wherever the menu was
++    // left. The ★ start keeps followShownSource.
++    void openShownSource();
+ 
+     QColor menuBackgroundColor() const {
+         return m_menuBackground;

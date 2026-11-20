@@ -262,5 +262,87 @@ class SourcesOpenEdgePatchTests(unittest.TestCase):
         self.assertIn('sidebar.followShownSource();', test)
 
 
+OPEN_INSIDE = RUNNER.PATCH_DIR / 'mixxx-media-open-inside.patch'
+
+
+def open_inside_added(path):
+    """The lines mixxx-media-open-inside.patch adds to one file."""
+    text = OPEN_INSIDE.read_text()
+    start = text.index('diff --git a/' + path + ' ')
+    end = text.find('\ndiff --git', start + 1)
+    return '\n'.join(line[1:] for line in text[start:end if end > 0 else None].splitlines()
+                     if line.startswith('+') and not line.startswith('+++'))
+
+
+class MediaOpenInsidePatchTests(unittest.TestCase):
+    """mixxx-media-open-inside.patch (build J, wave J5; spec 2e, owner: "Open
+    the drive."): after OPEN, BROWSE or the plug-in ping's LOAD (all through
+    MixpiMedia::openVolume and Library::openRemovableSource*), the next ☰ opens
+    inside "DRIVE › rekordbox" with the current-row edge on Tracks
+    (m-sources-sub.png), wherever the menu was left, also after an eject and
+    a re-plug (acceptance I repro 1). Cause: followShownSource (build E) made
+    the drive the menu's source and place but kept m_menuInside, which picks
+    the top level or the rows when ☰ opens and was only set by a tap on a
+    source row; after an eject (or with the menu at the top level) ☰ showed
+    the top level with the edge on the drive. The ★ start keeps
+    followShownSource. The native checks are in source_groups_test.cpp."""
+
+    def test_patch_changes_only_its_files(self):
+        text = OPEN_INSIDE.read_text()
+        self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) b/\S+$', text, re.MULTILINE)),
+                         ['src/library/library.cpp', 'src/widget/wlibrarysidebar.cpp',
+                          'src/widget/wlibrarysidebar.h'])
+
+    def test_patch_is_registered_after_the_eject_fix(self):
+        names = subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
+                                         '--mixxx-print-patches'], text=True).split()
+        if OPEN_INSIDE.name not in names:
+            self.skipTest(OPEN_INSIDE.name + ' is not registered yet')
+        self.assertLess(names.index('mixxx-eject-top-menu.patch'), names.index(OPEN_INSIDE.name))
+
+    def test_open_paths_open_inside_and_the_start_keeps_its_level(self):
+        library = open_inside_added('src/library/library.cpp')
+        # The sync path (folders, or a rekordbox drive already read) and the
+        # async one (rekordbox): OPEN, BROWSE and LOAD open inside; the ★
+        # start (mixpiStart) keeps build E's followShownSource.
+        self.assertIn('            m_pSidebarWidget->openShownSource();', library)
+        self.assertIn('            m_pSidebarWidget->followShownSource();', library)
+        self.assertIn('                    if (owner->m_pSidebarWidget && start) {', library)
+        self.assertIn('                        owner->m_pSidebarWidget->openShownSource();', library)
+        sidebar = open_inside_added('src/widget/wlibrarysidebar.cpp')
+        self.assertIn('void WLibrarySidebar::openShownSource() {', sidebar)
+        self.assertIn('            m_menuInside = true;', sidebar)
+        for added in (library, sidebar):
+            self.assertNotIn('setValue', added)
+            self.assertNotIn('SidebarDefaultSource', added)
+        # LOAD (the ping) opens through the same openVolume as OPEN and BROWSE.
+        media = (ROOT / 'stage3/01-install-packages/files/mixxx-media-agreed.patch').read_text()
+        self.assertIn('openVolume(', media)
+
+    @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
+    def test_build_j_checks_fail_without_the_patches(self):
+        environment = dict(os.environ, MIXPI_QSS_DIR=str(RUNNER.PATCH_DIR))
+        result = subprocess.run(['python3', str(ROOT / 'tests/native/source_groups_runner.py'), '--baseline'],
+                                capture_output=True, text=True, timeout=300, env=environment)
+        print(result.stdout[-5000:], result.stderr[-2000:], flush=True)
+        self.assertNotEqual(result.returncode, 0)
+        for check in (
+                "unplugged while its list is in Tracks: the drive's row is gone and no row has the edge",
+                'J4: the eject with the drive\'s list in Tracks lands on the top level, no edge',
+                'J4 eject (menu left inside This Pi): the top level, no edge, the drive\'s row gone',
+                'J4 pulled out (another drive in): the top level, no edge, not even on the other drive',
+                'J5 OPEN from a menu left at the top level: ☰ opens inside MANTACORE › rekordbox, the edge on Tracks',
+                'J5 OPEN after an eject and re-plug (menu left inside the drive): ☰ opens inside '
+                'MANTACORE › rekordbox, the edge on Tracks',
+                'J5 BROWSE after an eject and re-plug (menu left inside the drive): ☰ opens inside '
+                'MANTACORE › rekordbox, the edge on Tracks',
+                'J5 ping LOAD after an eject and re-plug (menu left inside the drive): ☰ opens inside '
+                'MANTACORE › rekordbox, the edge on Tracks'):
+            self.assertIn('FAIL ' + check, result.stdout)
+        for check in ("J4: with This Pi's list in Tracks an eject changes nothing (place and edge on This Pi)",
+                      "★ start (followShownSource) keeps build I's menu: the top level, the edge on the drive"):
+            self.assertIn('PASS ' + check, result.stdout)
+
+
 if __name__ == '__main__':
     unittest.main()

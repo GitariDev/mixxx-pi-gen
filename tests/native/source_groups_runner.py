@@ -47,12 +47,22 @@ def rekordbox_tree(target):
     (target / 'rekordbox_playlist_tree.inc').write_text('\n'.join(parts) + '\n')
 
 
+# Build J (spec 2e): --baseline leaves these out, to show the J4 and J5
+# checks fail without them.
+BUILD_J = ('mixxx-eject-top-menu.patch', 'mixxx-media-open-inside.patch')
+
+
 def main():
+    import argparse
     import tempfile
     import subprocess
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--baseline', action='store_true')
+    arguments = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-source-groups-') as temporary:
         target = Path(temporary)
-        reconstruct(target)
+        names, _ = reconstruct(target, exclude=BUILD_J if arguments.baseline else ())
+        print('PATCHES', len(names), 'BASELINE' if arguments.baseline else 'ALL', flush=True)
         rekordbox_tree(target)
         # The fixture also links QtSql (the tree builder's database).
         SAMPLE.qt_flags = lambda modules: qt_flags(tuple(modules) + ('QtSql',))
@@ -64,10 +74,14 @@ def main():
         # makes it (else the fixture's stand-in row).
         if 'driveTracksRow(' in (target / 'rekordbox_playlist_tree.inc').read_text():
             defines += ('-DMIXPI_DRIVE_TRACKS_ROW',)
+        # mixxx-media-open-inside.patch (build J): OPEN, BROWSE and LOAD open
+        # the menu inside the drive.
+        if 'void openShownSource();' in sidebar:
+            defines += ('-DMIXPI_MEDIA_OPEN_INSIDE',)
         program = SAMPLE.build(target, ROOT / 'tests/native/source_groups_test.cpp', METHODS,
                                defines=defines, sidebar=True)
-        subprocess.run([str(program)], env=qt_environment(), check=True, timeout=60)
+        return subprocess.run([str(program)], env=qt_environment(), timeout=60).returncode
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

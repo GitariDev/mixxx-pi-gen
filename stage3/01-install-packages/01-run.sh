@@ -65,6 +65,7 @@ MIXXX_PATCHES=(
     mixxx-eject-top-menu.patch
     mixxx-media-open-inside.patch
     mixxx-external-sort.patch
+    mixxx-drive-track-cache.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

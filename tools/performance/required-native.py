@@ -51,6 +51,7 @@ REQUIRED_TESTS = (
     'test_media_chip_ping',
     'test_sources_menu_shadow',
     'test_quit_library_widget',
+    'test_eject_top_menu',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

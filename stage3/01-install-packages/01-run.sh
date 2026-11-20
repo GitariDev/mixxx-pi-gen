@@ -62,6 +62,8 @@ MIXXX_PATCHES=(
     mixxx-media-chip-ping.patch
     mixxx-sources-menu-shadow.patch
     mixxx-quit-library-widget.patch
+    mixxx-eject-top-menu.patch
+    mixxx-media-open-inside.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

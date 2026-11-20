@@ -87,6 +87,8 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-media-chip-ping.patch",
             "mixxx-sources-menu-shadow.patch",
             "mixxx-quit-library-widget.patch",
+            "mixxx-eject-top-menu.patch",
+            "mixxx-media-open-inside.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -114,6 +116,8 @@ PREREQUISITES = {
     "mixxx-drive-tracks-row.patch": ["mixxx-media-continuation.patch"],
     "mixxx-media-chip-ping.patch": ["mixxx-media-agreed.patch"],
     "mixxx-sources-menu-shadow.patch": ["mixxx-right-overlay.patch"],
+    "mixxx-eject-top-menu.patch": ["mixxx-sources-open-edge.patch", "mixxx-drive-tracks-row.patch"],
+    "mixxx-media-open-inside.patch": ["mixxx-eject-top-menu.patch"],
     "mixxx-scan-strip-fixes.patch": ["mixxx-scan-progress.patch"],
     "mixxx-sources-edit-done.patch": ["mixxx-source-groups.patch"],
     "mixxx-settings-fixes.patch": ["mixxx-performance-settings.patch", "mixxx-acceptance-fixes.patch"],

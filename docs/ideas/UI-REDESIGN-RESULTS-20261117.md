@@ -521,3 +521,16 @@ All three are the real seats; there are no stand-ins. **Owner (spec 2d, plan 12.
   - **X1 (once in 4):** with the ping raised over Tracks and then the Media page opened, LOAD removed the ping but did not open the drive.
   - **X2 (once):** Ctrl+Q ended in SIGSEGV after 7 eject and re-plug cycles. `mixxx.cfg` and `samplers.xml` were saved first. Two later quits were clean. Both faults are under a read-only investigation (`acceptance-I/INVESTIGATION-X1-X2.md`).
   - **Pairs for the council:** `acceptance-I/pairs/` (Sources top, Sources inside a drive, Media, Tracks).
+
+## Investigation of X1 and X2, and wave J1 (2026-11-20)
+
+- **X2, the quit crash, new in build I** (`acceptance-I/INVESTIGATION-X1-X2.md`):
+  - **Cause:** `mixxx-media-chip-ping.patch` made every deck or pad track change call `MixpiMedia::refresh()`. At Ctrl+Q, Mixxx deletes the skin before the players. `refresh()` then reached the deleted `WLibrary` through the raw `Library::m_pLibraryWidget`, a use-after-free. On the card it crashed once in 3 quits.
+  - **Builds G and H:** every quit in their logs ended cleanly.
+- **X1 is not a code fault.** LOAD was tapped 19.2 s after the plug-in, and the ping removes itself after 15 s (an older patch). Opening the Media page does not restart that timer. This is an owner question.
+- **Wave J1** (builder N-J1, Claude Opus 5.5 medium):
+  - `mixxx-quit-library-widget.patch` makes `m_pLibraryWidget` a `QPointer<WLibrary>` (`library.h:254`), with no change while Mixxx runs. Every other pointer that `refresh()` and the strip reach at quit was checked and needs no guard.
+  - **Fixture:** without the patch, 20/20 runs report a use-after-free and 20/20 crash with SIGSEGV. With it, 40/40 runs are clean.
+  - **Gates:** native gate 280/280, 0 skips. Mac suite 833 run; the one error was the `test_chroot_runtime` load flake, which then passed 3 of 3 on its own.
+  - **Registered:** 60 patches.
+  - **The card still runs build I.** Shipping the fix needs a build J (the 11th pi-gen run), which needs the owner's yes. The owner is away and asked for no questions overnight.

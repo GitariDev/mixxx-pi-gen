@@ -1,0 +1,394 @@
+// Wave J6: sorting a drive's list never empties the table.
+//
+// The shipped ColumnCache, KeyUtils, DbConnection (with its SQLite collation)
+// and BaseTrackCache (every method that does not need a Track object) run on
+// an in-memory SQLite database. Each external track table Mixxx can show is
+// made with its own production schema and column list (pasted in by
+// external_sort_runner.py from the patched source), filled with 14 rows, and
+// sorted by every column, the way BaseSqlTableModel::setSort() builds its
+// ORDER BY. BaseSqlTableModel shows a row only when filterAndSort() gives it
+// an index, so "rows" below is the size of that index.
+#include <QCoreApplication>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QSqlRecord>
+#include <QStringList>
+#include <QtDebug>
+#include <cstdio>
+#include <functional>
+
+#include "control/controlobject.h"
+#include "library/basetrackcache.h"
+#include "library/dao/trackschema.h"
+#include "library/library_prefs.h"
+#include "library/queryutil.h"
+#include "library/trackcollection.h"
+#include "track/keyutils.h"
+#include "util/db/dbconnection.h"
+
+namespace {
+
+int failures = 0;
+
+void check(const QString& name, bool ok, const QString& detail = QString()) {
+    std::printf("%s %s\n", ok ? "PASS" : "FAIL", qPrintable(name));
+    if (!ok && !detail.isEmpty()) {
+        std::printf("  %s\n", qPrintable(detail));
+    }
+    std::fflush(stdout);
+    if (!ok) {
+        ++failures;
+    }
+}
+
+struct Table {
+    QString label;
+    QString name;
+    QString idColumn;
+    QStringList columns;
+    std::function<bool(QSqlDatabase&)> create;
+};
+
+} // namespace
+
+PRODUCTION_TABLES
+
+namespace {
+
+// 14 key texts: rekordbox's, Serato's and Traktor's spellings, no key, NULL,
+// a text that is no key, and texts with quotes.
+const QStringList kKeyTexts = {
+        QStringLiteral("Am"),
+        QStringLiteral("8A"),
+        QStringLiteral("C"),
+        QStringLiteral("F#m"),
+        QStringLiteral("Dbm"),
+        QStringLiteral("5d"),
+        QString(),
+        QStringLiteral("NULL"),
+        QStringLiteral("Ebm"),
+        QStringLiteral("1A"),
+        QStringLiteral("G"),
+        QStringLiteral("xyz"),
+        QStringLiteral("A'm"),
+        QStringLiteral("8A'); DROP TABLE mixpi_canary; --")};
+constexpr int kRows = 14;
+
+QVariant keyValue(int row) {
+    const QString text = kKeyTexts.at(row);
+    return text == QStringLiteral("NULL") ? QVariant() : QVariant(text);
+}
+
+bool fill(QSqlDatabase& database, const Table& table) {
+    QStringList names;
+    QStringList places;
+    for (const auto& column : table.columns) {
+        names << column;
+        places << QStringLiteral("?");
+    }
+    for (int row = 0; row < kRows; ++row) {
+        QSqlQuery query(database);
+        query.prepare(QStringLiteral("INSERT INTO %1 (%2) VALUES (%3)")
+                              .arg(table.name, names.join(','), places.join(',')));
+        for (const auto& column : table.columns) {
+            if (column == table.idColumn) {
+                query.addBindValue(row + 1);
+            } else if (column == LIBRARYTABLE_KEY) {
+                query.addBindValue(keyValue(row));
+            } else if (row % 5 == 3) {
+                query.addBindValue(QVariant()); // some NULLs in every column
+            } else if (row % 2) {
+                query.addBindValue((row * 5) % kRows);
+            } else {
+                query.addBindValue(QStringLiteral("%1 %2").arg(column).arg((row * 3) % kRows));
+            }
+        }
+        if (!query.exec()) {
+            LOG_FAILED_QUERY(query);
+            return false;
+        }
+    }
+    return true;
+}
+
+QString contents(QSqlDatabase& database, const QString& table, const QString& idColumn) {
+    QSqlQuery query(database);
+    query.exec(QStringLiteral("SELECT * FROM %1 ORDER BY %2").arg(table, idColumn));
+    QString result;
+    while (query.next()) {
+        for (int i = 0; i < query.record().count(); ++i) {
+            result += query.value(i).toString() + QChar('|');
+        }
+        result += QChar('\n');
+    }
+    return result;
+}
+
+QSet<TrackId> allIds() {
+    QSet<TrackId> ids;
+    for (int row = 1; row <= kRows; ++row) {
+        ids.insert(TrackId(QVariant(row)));
+    }
+    return ids;
+}
+
+// BaseSqlTableModel::setSort(): "ORDER BY " + each sort column's
+// columnSortForFieldIndex() + " ASC"/" DESC", newest first.
+QString orderBy(const BaseTrackCache& cache, const QList<SortColumn>& sortColumns) {
+    QString clause;
+    for (const auto& sortColumn : sortColumns) {
+        clause += clause.isEmpty() ? QStringLiteral("ORDER BY ") : QStringLiteral(", ");
+        clause += cache.columnSortForFieldIndex(sortColumn.m_column);
+        clause += sortColumn.m_order == Qt::AscendingOrder ? QStringLiteral(" ASC")
+                                                           : QStringLiteral(" DESC");
+    }
+    return clause;
+}
+
+QVector<TrackId> sorted(BaseTrackCache& cache, const QList<SortColumn>& sortColumns,
+        const QString& clause = QString()) {
+    QHash<TrackId, int> index;
+    cache.filterAndSort(allIds(),
+            QString(),
+            QString(),
+            clause.isNull() ? orderBy(cache, sortColumns) : clause,
+            sortColumns,
+            0,
+            &index);
+    QVector<TrackId> order(index.size());
+    for (auto it = index.constBegin(); it != index.constEnd(); ++it) {
+        if (it.value() >= 0 && it.value() < order.size()) {
+            order[it.value()] = it.key();
+        }
+    }
+    return order;
+}
+
+QList<int> keysInOrder(const QVector<TrackId>& order, const std::function<int(int)>& keyOfRow) {
+    QList<int> keys;
+    for (const auto& trackId : order) {
+        keys << keyOfRow(trackId.toVariant().toInt() - 1);
+    }
+    return keys;
+}
+
+QString text(const QList<int>& values) {
+    QStringList parts;
+    for (int value : values) {
+        parts << QString::number(value);
+    }
+    return parts.join(',');
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    QCoreApplication app(argc, argv);
+    ControlObject notation(mixxx::library::prefs::kKeyNotationConfigKey);
+    notation.set(static_cast<double>(KeyUtils::KeyNotation::OpenKey));
+
+    mixxx::DbConnection connection(
+            mixxx::DbConnection::Params{QStringLiteral("QSQLITE"),
+                    QString(),
+                    QString(),
+                    QStringLiteral(":memory:"),
+                    QString(),
+                    QString()},
+            QStringLiteral("mixpi-external-sort"));
+    if (!connection.open()) {
+        std::printf("FAIL the database opens\n");
+        return 1;
+    }
+    QSqlDatabase database = connection;
+    TrackCollection collection(database);
+    QSqlQuery(database).exec(QStringLiteral("CREATE TABLE mixpi_canary (id INTEGER)"));
+
+    const QList<Table> tables = productionTables();
+    QHash<QString, QString> before;
+    QList<std::shared_ptr<BaseTrackCache>> caches;
+    for (const auto& table : tables) {
+        if (!table.create(database) || !fill(database, table)) {
+            std::printf("FAIL %s: the table is made and filled\n", qPrintable(table.label));
+            return 1;
+        }
+        before.insert(table.name, contents(database, table.name, table.idColumn));
+        caches << std::make_shared<BaseTrackCache>(
+                &collection, table.name, table.idColumn, table.columns, QStringList(), false);
+    }
+
+    // This Pi's library: key text and key_id, as Mixxx stores a key tag
+    // (key_id from KeyUtils::guessKeyFromText(), 0 for no key).
+    const Table thisPi{QStringLiteral("This Pi"),
+            QStringLiteral("mixpi_this_pi"),
+            LIBRARYTABLE_ID,
+            {LIBRARYTABLE_ID, LIBRARYTABLE_ARTIST, LIBRARYTABLE_KEY, LIBRARYTABLE_KEY_ID},
+            [](QSqlDatabase& db) {
+                return QSqlQuery(db).exec(QStringLiteral(
+                        "CREATE TABLE mixpi_this_pi (id INTEGER PRIMARY KEY, "
+                        "artist TEXT, key TEXT, key_id INTEGER DEFAULT 0)"));
+            }};
+    thisPi.create(database);
+    for (int row = 0; row < kRows; ++row) {
+        QSqlQuery query(database);
+        query.prepare(QStringLiteral("INSERT INTO mixpi_this_pi VALUES (?, ?, ?, ?)"));
+        query.addBindValue(row + 1);
+        query.addBindValue(QStringLiteral("artist %1").arg(row));
+        query.addBindValue(keyValue(row));
+        query.addBindValue(static_cast<int>(KeyUtils::guessKeyFromText(keyValue(row).toString())));
+        query.exec();
+    }
+    BaseTrackCache thisPiCache(&collection, thisPi.name, thisPi.idColumn, thisPi.columns,
+            QStringList(), false);
+
+    // Every column, ascending and descending, alone.
+    for (int t = 0; t < tables.size(); ++t) {
+        auto& cache = *caches[t];
+        QStringList failed;
+        for (int column = 1; column < cache.columnCount(); ++column) {
+            for (const auto order : {Qt::AscendingOrder, Qt::DescendingOrder}) {
+                const int rows = sorted(cache, {SortColumn(column, order)}).size();
+                if (rows != kRows) {
+                    failed << QStringLiteral("%1 %2: %3 rows")
+                                      .arg(cache.columnNameForFieldIndex(column),
+                                              order == Qt::AscendingOrder ? "ASC" : "DESC")
+                                      .arg(rows);
+                }
+            }
+        }
+        check(QStringLiteral("%1: every column sorts ascending and descending with all 14 rows")
+                        .arg(tables[t].label),
+                failed.isEmpty(),
+                failed.join("; "));
+    }
+
+    // Every header tapped in turn, twice (ascending, then descending), with
+    // BaseSqlTableModel's sort history of 3: the newest first, a column
+    // tapped again moves to the front.
+    for (int t = 0; t < tables.size(); ++t) {
+        auto& cache = *caches[t];
+        QList<SortColumn> history;
+        QStringList failed;
+        for (const auto order : {Qt::AscendingOrder, Qt::DescendingOrder}) {
+            for (int column = 1; column < cache.columnCount(); ++column) {
+                for (int i = history.size() - 1; i >= 0; --i) {
+                    if (history[i].m_column == column) {
+                        history.removeAt(i);
+                    }
+                }
+                history.prepend(SortColumn(column, order));
+                while (history.size() > 3) {
+                    history.removeLast();
+                }
+                const int rows = sorted(cache, history).size();
+                if (rows != kRows) {
+                    failed << QStringLiteral("%1: %2 rows").arg(orderBy(cache, history)).arg(rows);
+                }
+            }
+        }
+        check(QStringLiteral("%1: tapping every header in turn (sort history of 3) keeps all 14 rows")
+                        .arg(tables[t].label),
+                failed.isEmpty(),
+                failed.join("; ").left(1500));
+    }
+
+    // KEY's order on each table with a key column against This Pi's, for the
+    // same keys, in three notations, both ways.
+    const int thisPiKey = thisPiCache.fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_KEY);
+    const auto chromaticOfRow = [](int row) {
+        return static_cast<int>(KeyUtils::guessKeyFromText(keyValue(row).toString()));
+    };
+    for (const auto keyNotation : {KeyUtils::KeyNotation::OpenKey,
+                 KeyUtils::KeyNotation::Lancelot,
+                 KeyUtils::KeyNotation::Traditional}) {
+        notation.set(static_cast<double>(keyNotation));
+        const QString notationName = keyNotation == KeyUtils::KeyNotation::OpenKey
+                ? QStringLiteral("OpenKey")
+                : keyNotation == KeyUtils::KeyNotation::Lancelot ? QStringLiteral("Lancelot")
+                                                                 : QStringLiteral("Traditional");
+        for (int t = 0; t < tables.size(); ++t) {
+            auto& cache = *caches[t];
+            const int keyColumn = cache.fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_KEY);
+            if (keyColumn < 0) {
+                continue;
+            }
+            bool same = true;
+            QString detail;
+            for (const auto order : {Qt::AscendingOrder, Qt::DescendingOrder}) {
+                const auto expected = keysInOrder(
+                        sorted(thisPiCache, {SortColumn(thisPiKey, order)}), chromaticOfRow);
+                const auto actual = keysInOrder(
+                        sorted(cache, {SortColumn(keyColumn, order)}), chromaticOfRow);
+                if (actual != expected) {
+                    same = false;
+                    detail += QStringLiteral("%1 This Pi [%2] %3 [%4] ")
+                                      .arg(order == Qt::AscendingOrder ? "ASC" : "DESC",
+                                              text(expected),
+                                              tables[t].label,
+                                              text(actual));
+                }
+            }
+            check(QStringLiteral("%1: KEY sorts in This Pi's order (circle of fifths, %2), both ways")
+                            .arg(tables[t].label, notationName),
+                    same,
+                    detail);
+        }
+    }
+    notation.set(static_cast<double>(KeyUtils::KeyNotation::OpenKey));
+
+    // This Pi's own KEY sort is the stock key_id CASE, unchanged.
+    {
+        QString stock = QStringLiteral("CASE key_id WHEN NULL THEN 0");
+        for (int i = 0; i <= 24; ++i) {
+            stock += QStringLiteral(" WHEN %1 THEN %2")
+                             .arg(i)
+                             .arg(KeyUtils::keyToCircleOfFifthsOrder(
+                                     static_cast<mixxx::track::io::key::ChromaticKey>(i),
+                                     KeyUtils::KeyNotation::OpenKey));
+        }
+        stock += QStringLiteral(" END");
+        const QString actual = thisPiCache.columnSortForFieldIndex(thisPiKey);
+        check(QStringLiteral("This Pi: KEY still sorts by Mixxx's own key_id CASE"),
+                actual == stock,
+                actual);
+    }
+
+    // A sort that fails keeps the rows, in the previous order.
+    {
+        auto& cache = *caches[0];
+        const int artist = cache.fieldIndex(ColumnCache::COLUMN_LIBRARYTABLE_ARTIST);
+        const auto previous = sorted(cache, {SortColumn(artist, Qt::DescendingOrder)});
+        const auto after = sorted(cache,
+                {SortColumn(artist, Qt::AscendingOrder)},
+                QStringLiteral("ORDER BY mixpi_no_such_column ASC"));
+        check(QStringLiteral("%1: a sort query that fails keeps all 14 rows, in the previous order")
+                        .arg(tables[0].label),
+                previous.size() == kRows && after == previous,
+                QStringLiteral("rows before %1, after %2").arg(previous.size()).arg(after.size()));
+        BaseTrackCache fresh(&collection, tables[0].name, tables[0].idColumn, tables[0].columns,
+                QStringList(), false);
+        const auto first = sorted(fresh,
+                {SortColumn(artist, Qt::AscendingOrder)},
+                QStringLiteral("ORDER BY mixpi_no_such_column ASC"));
+        check(QStringLiteral("%1: a first sort that fails still shows all 14 rows")
+                        .arg(tables[0].label),
+                first.size() == kRows,
+                QStringLiteral("rows %1").arg(first.size()));
+    }
+
+    // Read only: the tables are as they were filled, and the key texts with
+    // quotes stayed texts.
+    {
+        bool same = true;
+        for (const auto& table : tables) {
+            same = same && contents(database, table.name, table.idColumn) == before.value(table.name);
+        }
+        QSqlQuery canary(database);
+        const bool canaryThere = canary.exec(QStringLiteral("SELECT count(*) FROM mixpi_canary"));
+        check(QStringLiteral("sorting writes nothing: every table keeps its rows and values"),
+                same && canaryThere);
+    }
+
+    std::printf("OK %d\n", failures);
+    return failures ? 1 : 0;
+}

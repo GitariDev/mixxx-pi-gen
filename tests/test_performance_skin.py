@@ -1121,8 +1121,8 @@ class PerformanceSkinTests(unittest.TestCase):
 
     def test_media_page_lights_only_the_usb_chip(self):
         # Spec s13, m-media.png: while the Media page is open (screen 2) no tab
-        # is lit and the USB chip is, as the gear is on Settings (k19); card
-        # shot k20 showed FX lit and the chip not.
+        # is lit and the USB chip is marked (k19); card shot k20 showed FX lit
+        # and the chip not.
         tap = self.model.one('MixpiUsbButton')
         read = tap.find('Connection')
         self.assertEqual((read.findtext('ConfigKey'), read.findtext('ConnectValueToWidget')), (SCREEN, 'true'))
@@ -1142,11 +1142,41 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertEqual(transform(read, 0.0), 0)
         style = (self.skin/'style.qss').read_text()
         rule = style.split('#MixpiUsbButton[value="1"] {', 1)[1].split('}', 1)[0]
-        # The gear's lit look: accent tint at 26% and a 2 px accent border.
+        # J3 S10: the chip is is-live as m-media.png draws it (layout.css
+        # .mxl-usb.is-live): its plain fill with a 1 px accent border on the
+        # chip's own box, not the gear's lit tint (the gear is is-on).
+        self.assertEqual(rule.strip(), 'border: 1px solid #a3c45e; border-radius: 3px; margin: 2px 0px;')
+        body = style.split('#MixpiUsbBody {', 1)[1].split('}', 1)[0]
+        for part in ('background: #1d222a;', 'border: 1px solid #2c333d;', 'border-radius: 3px;', 'margin: 2px 0px;'):
+            self.assertIn(part, body)
+        self.assertIn('#MixpiUsbButton { background: transparent; border: 0px; margin: 0px; }', style)
         gear = style.split('#MixpiIconButton[value="1"] {', 1)[1].split('}', 1)[0]
         for part in ('background: rgba(163, 196, 94, 66);', 'border: 2px solid #a3c45e;'):
-            self.assertIn(part, rule)
             self.assertIn(part, gear)
+            self.assertNotIn(part, rule)
+        # A press on the open page still shows its tint: is-live sets no background.
+        self.assertNotIn('background', rule)
+        self.assertIn('#MixpiUsbButton[pressed="true"] { background: rgba(163, 196, 94, 40); }', style)
+
+    def test_usb_chip_state_words_take_the_mockup_colours(self):
+        # J3 S10: all-mockups.html .mxl-usb-t small: NO USB --mx-text-dim, READY
+        # --mx-play, IN USE --mx-info. EJECTING and SAFE TO REMOVE are not drawn
+        # in the top bar: build C's tokens stay (caution text, play lit).
+        style = (FILES/'mixpi-performance.qss').read_text()
+        colours = {0: '#949dab', 1: '#5fae6e', 2: '#5aa4c4', 3: '#e8b65c', 4: '#9bd6a6'}
+        for value, colour in colours.items():
+            self.assertIn(f'#MixpiUsbState{value} {{ color: {colour}; }}', style)
+            self.assertEqual(len(re.findall(rf'#MixpiUsbState{value} \{{ color:', style)), 1)
+        for old in ('#MixpiUsbState1 { color: #7cc58a; }', '#MixpiUsbState2 { color: #86c0d8; }'):
+            self.assertNotIn(old, style)
+        # The borders follow the state as before (READY keeps the plain line).
+        self.assertNotIn('#MixpiUsbBody[highlight="1"]', style)
+        for value, colour in {2: '#5aa4c4', 3: '#dfa33a', 4: '#5fae6e'}.items():
+            self.assertIn(f'#MixpiUsbBody[highlight="{value}"] {{ border-color: {colour}; }}', style)
+        # The scan % stays an info pill (primitives .mx-chip--sync tones).
+        scan = style.split('#MixpiUsbScan {', 1)[1].split('}', 1)[0]
+        for part in ('color: #86c0d8;', 'background: #1d222a;', 'border: 1px solid #5aa4c4;', 'border-radius: 9px;'):
+            self.assertIn(part, scan)
 
     def test_gear_opens_the_full_screen_settings(self):
         gear = self.gear()

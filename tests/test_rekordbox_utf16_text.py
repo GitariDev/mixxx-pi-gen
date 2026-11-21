@@ -81,7 +81,7 @@ class RekordboxTextPatchTests(unittest.TestCase):
         feature = added(FEATURE)
         self.assertIn('QString location = driveFileLocation(devicePath, getText(track->file_path()));', feature)
         self.assertIn('QString::NormalizationForm_D', feature)
-        self.assertIn('QFileInfo::exists(', feature)
+        self.assertIn('QFile::exists(', feature)
 
     def test_read_only(self):
         feature = added(FEATURE)

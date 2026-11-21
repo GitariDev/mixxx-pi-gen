@@ -84,7 +84,7 @@ index 691412a..5729f70 100644
  enums:
    page_type:
 diff --git a/src/library/rekordbox/rekordboxfeature.cpp b/src/library/rekordbox/rekordboxfeature.cpp
-index 1ef6c01..17ab625 100644
+index 1ef6c01..17396fb 100644
 --- a/src/library/rekordbox/rekordboxfeature.cpp
 +++ b/src/library/rekordbox/rekordboxfeature.cpp
 @@ -310,6 +310,27 @@ QString getText(rekordbox_pdb_t::device_sql_string_t* deviceString) {
@@ -100,12 +100,12 @@ index 1ef6c01..17ab625 100644
 +    const bool ascii = std::all_of(filePath.cbegin(), filePath.cend(), [](QChar character) {
 +        return character.unicode() < 0x80;
 +    });
-+    if (ascii || QFileInfo::exists(location)) {
++    if (ascii || QFile::exists(location)) {
 +        return location;
 +    }
 +    for (const auto form : {QString::NormalizationForm_C, QString::NormalizationForm_D}) {
 +        const QString candidate = devicePath + filePath.normalized(form);
-+        if (candidate != location && QFileInfo::exists(candidate)) {
++        if (candidate != location && QFile::exists(candidate)) {
 +            return candidate;
 +        }
 +    }

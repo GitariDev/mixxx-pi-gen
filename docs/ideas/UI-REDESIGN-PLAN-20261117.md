@@ -939,3 +939,9 @@ The owner's answers (spec 2b):
 - **Sideways scroll with many columns is accepted** (spec 2g). Owner: "Sideways scroll is fine."
 - **Build K (the 12th pi-gen run):** the owner said "sure thing. Go ahead!" for J10, the Folders eject case of spec 2e. After the DNS failure the owner chose "Resume from stage 3", and gave "Go ahead" for the card update.
 - **Port toggles in acceptance K only:** the owner said "Just try turning the port off and on again to simulate it." The orchestrator switched GANDER1's port (1-1-port1) off and on twice, IXIAN untouched, and all ports were back on. The default "never switch a USB port off" still holds for later tests.
+
+### 12.12 Owner decisions after council round 6 (2026-11-21, night)
+
+- **Build L (the 13th pi-gen run), the card update and acceptance L tonight.** The owner, going to bed: "do that last round fix have everything ready for the morning. Do all the proof and give me a visual timeline in the pr so I can go through all these rounds changes in the morning."
+- **The timeline:** the orchestrator chose the "climb tuner local app style" option. It is a standalone `tools/climb-timeline/` page built from one JSON file, in its own thread. No PR was opened.
+- **No port toggles and no physical re-plugs tonight.** GANDER1 is mounted and unmounted in software (`udisksctl`), and IXIAN is never ejected.

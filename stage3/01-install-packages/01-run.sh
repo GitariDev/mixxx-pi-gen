@@ -69,6 +69,7 @@ MIXXX_PATCHES=(
     mixxx-rekordbox-utf16-text.patch
     mixxx-zoom-setting.patch
     mixxx-eject-folders-view.patch
+    mixxx-removable-rows-fix.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

@@ -94,6 +94,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-rekordbox-utf16-text.patch",
             "mixxx-zoom-setting.patch",
             "mixxx-eject-folders-view.patch",
+            "mixxx-removable-rows-fix.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -126,6 +127,7 @@ PREREQUISITES = {
     "mixxx-drive-track-cache.patch": ["mixxx-drive-tracks-row.patch"],
     "mixxx-zoom-setting.patch": ["mixxx-agreed-controls.patch"],
     "mixxx-eject-folders-view.patch": ["mixxx-media-open-inside.patch"],
+    "mixxx-removable-rows-fix.patch": ["mixxx-eject-folders-view.patch"],
     "mixxx-scan-strip-fixes.patch": ["mixxx-scan-progress.patch"],
     "mixxx-sources-edit-done.patch": ["mixxx-source-groups.patch"],
     "mixxx-settings-fixes.patch": ["mixxx-performance-settings.patch", "mixxx-acceptance-fixes.patch"],

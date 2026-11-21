@@ -674,7 +674,7 @@ All three are the real seats.
 - **Build L, the 13th pi-gen run, at `baa25f2`** (68 patches): one run, exit 0, in 13 m 15 s, with no resume.
   - The `.deb` is `13aa9d2f…`.
   - The skin is byte-identical to K's, and there is no package drift from K.
-  - Installed in place at about 23:15. The owner approved it before going to bed: "do that last round fix have everything ready for the morning. Do all the proof".
+  - Installed in place 23:04–23:11:32 (record: `deploy/ui-redesign-20261117/buildL-update/UPDATE-LOG.md`). The owner approved it before going to bed: "do that last round fix have everything ready for the morning. Do all the proof".
 
 ## Acceptance L (2026-11-21, night, `deploy/ui-redesign-20261117/acceptance-L/ACCEPTANCE.md`)
 
@@ -686,7 +686,7 @@ All three are the real seats.
 - **No USB port was switched off.** GANDER1 was mounted and unmounted in software (`udisksctl` through the user session).
 - **Notes, not failures:**
   - After its own eject, the Media page doesn't see a software remount until Mixxx restarts; a real re-plug wasn't possible tonight.
-  - SD-BACKUP shows a › arrow after the first eject.
+  - SD-BACKUP shows a › arrow after the first eject. **Cause (council round 7, Opus):** build B's folder-children check in `mixxx-media-selection.patch` (`deferDirectoryProbes`) stops probing after the first eject, so an empty folder is drawn as if it might have children. Opening it shows it's empty. This is build B behaviour, not a J10/J11 change.
   - The first Folders browse of a new folder showed thin tags until a restart (artist "43", no BPM). **Correction (council round 7, Fable): this is not stock Mixxx.**
     - It is MixPi's eject rule in `mixxx-media-selection.patch` (:883, :910, :2258). After a Media-page eject, the drive's read generation is retired, so Mixxx refuses reads from it (`m_mediaUse` false, "No SoundSourceProvider", `acceptance-L/card-files/logs/r1/prestart/mixxx.log:551`) until the drive is pulled out or Mixxx restarts. Browse then falls back to the file name.
     - This is the same rule as the Media-page note above: a software remount isn't a re-plug.

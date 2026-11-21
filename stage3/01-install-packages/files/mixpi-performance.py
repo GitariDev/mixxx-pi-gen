@@ -109,6 +109,12 @@ SETTINGS_RAIL = 200
 # Spec s11/s12: rail rows are 52 px menu rows; the Desktop bar button is 180 px;
 # the Brightness slider runs to the 56 px "80%" readout at the right.
 RAIL_ROW, DESKTOP_BAR_WIDTH, BRIGHTNESS_SLIDER = 52, 180, 316
+# Spec 2f: Settings › Interface gets a sixth row, Zoom. The page has 376 px
+# (480 - the 48 px top bar - the 48 px Settings header - the pane's 4 px
+# padding above and below); five 66 px rows leave 46, short of a 48 px
+# button. So the five rows give up 1 px each (65, the 48 px controls still
+# centred) and Zoom, with no subtext, takes the 51 px left: 5 x 65 + 51 = 376.
+INTERFACE_ROW, ZOOM_ROW = 65, 51
 # Load sample source row (spec s7, m-loadsample.png): 8 + SAMPLES 124 + 8 + SOURCES… 124.
 SOURCE_ROW = {'SAMPLES': 124, 'SOURCES…': 124}
 # Segments (LOOP / JUMP / CUES, FX 1 / FX 2, routes) are one joined control.
@@ -703,15 +709,30 @@ def preferences_button():
     return b
 
 
-def setting_row(title, sub, controls):
+def setting_row(title, sub, controls, height=66):
     """A Settings row: a 190 px label column, then 48 px choices."""
-    labels = group('MixpiSettingText', size='190f,66f', children=[
+    labels = group('MixpiSettingText', size=f'190f,{height}f', children=[
         gap('0me,0me'), label(title, '0me,24f', 'MixpiSettingTitle', elide='right')] +
         # Sub-lines wrap to two lines (QSS word wrap on #MixpiSettingLabel).
         ([label(sub, '0me,34f', 'MixpiSettingLabel')] if sub else []) +
         [gap('0me,0me')])
-    return group('MixpiSetting', 'horizontal', '0me,66f',
-                 [gap('14f,66f'), labels, gap('10f,66f')] + list(controls) + [gap('0me,66f')])
+    return group('MixpiSetting', 'horizontal', f'0me,{height}f',
+                 [gap(f'14f,{height}f'), labels, gap(f'10f,{height}f')] + list(controls) +
+                 [gap(f'0me,{height}f')])
+
+
+def zoom_buttons():
+    """Settings › Interface, Zoom (spec 2f): + then −, neutral 96 x 48 buttons
+    like the page's other two-button rows, apart like Quantize's DECK 1 and
+    DECK 2. Each tap writes 1, then 0 on release, as the Loop panel's − and +
+    do; [MixPi],waveform_zoom_in/_out (mixxx-zoom-setting.patch) step the saved
+    zoom and both decks' waveforms. They show no state."""
+    buttons = []
+    for text, key in (('+', '[MixPi],waveform_zoom_in'), ('−', '[MixPi],waveform_zoom_out')):
+        b = button(text, key, size='96f,48f', momentary=True)
+        b.find('Connection/ConnectValueToWidget').text = 'false'
+        buttons.append(b)
+    return [buttons[0], gap('6f,48f'), buttons[1]]
 
 
 def choices(key, items, width=96):
@@ -807,15 +828,17 @@ def settings():
                                'TOP BAR UNAVAILABLE'), size=f'{DESKTOP_BAR_WIDTH}f,48f')
     connection(bar, '[MixPi],desktop_bar_available', bind='enabled')
     interface = group('MixpiInterfaceSettings', children=[
-        setting_row('Desktop bar', 'Desktop · Mixxx · Speaker · Settings', [bar]),
+        setting_row('Desktop bar', 'Desktop · Mixxx · Speaker · Settings', [bar], height=INTERFACE_ROW),
         setting_row('Deck time', 'Tap the time on a deck to switch',
                     segments(choices('[Controls],ShowDurationRemaining',
-                                     [('ELAPSED', 0), ('REMAINING', 1)], (96, 104)))),
-        setting_row('Brightness', 'Screen backlight', brightness()),
+                                     [('ELAPSED', 0), ('REMAINING', 1)], (96, 104))), height=INTERFACE_ROW),
+        setting_row('Brightness', 'Screen backlight', brightness(), height=INTERFACE_ROW),
         setting_row('Night dim', 'Drops the screen to a low level for dark rooms',
-                    segments(choices('[MixPi],night_dim', [('OFF', 0), ('ON', 1)]))),
+                    segments(choices('[MixPi],night_dim', [('OFF', 0), ('ON', 1)])), height=INTERFACE_ROW),
         setting_row('CPU readout', 'The CPU % at the top right',
-                    segments(choices('[MixPi],show_cpu', [('SHOW', 1), ('HIDE', 0)]))),
+                    segments(choices('[MixPi],show_cpu', [('SHOW', 1), ('HIDE', 0)])), height=INTERFACE_ROW),
+        # Spec 2f: the last row, no subtext.
+        setting_row('Zoom', '', zoom_buttons(), height=ZOOM_ROW),
         gap('0me,0me')])
     media = group('MixpiMediaSettings', children=[
         # N2: [MixPi],scan_bar_hidden 0/1 (also saved as ScanBarHidden).

@@ -2657,7 +2657,9 @@ class PerformanceSkinTests(unittest.TestCase):
 
     def test_interface_settings_follow_the_mockup(self):
         interface = self.pane(1)
-        rows = self.setting_rows(interface)
+        # The five rows of m-settings-interface.png; spec 2f's Zoom row
+        # follows them (test_interface_zoom_row_is_last_with_plus_then_minus).
+        rows = self.setting_rows(interface)[:5]
         self.assertEqual([next(r.iter('Label')).findtext('Text') for r in rows],
                          ['Desktop bar', 'Deck time', 'Brightness', 'Night dim', 'CPU readout'])
         subs = [[t.text for t in r.iter('Text')][1] for r in rows]
@@ -2709,6 +2711,110 @@ class PerformanceSkinTests(unittest.TestCase):
         self.assertTrue(self.model.visible(readout, {'[MixPi],show_cpu': 1}))
         self.assertFalse(self.model.visible(readout, {'[MixPi],show_cpu': 0}))
         self.assertIn(self.model.one('MixpiCpu'), list(readout.iter()))
+
+    # ---------- Spec 2f (wave J9): Settings › Interface, Zoom ----------
+
+    def zoom_row(self):
+        rows = self.setting_rows(self.pane(1))
+        self.assertEqual([next(r.iter('Label')).findtext('Text') for r in rows],
+                         ['Desktop bar', 'Deck time', 'Brightness', 'Night dim', 'CPU readout', 'Zoom'])
+        return rows[-1]
+
+    def test_interface_zoom_row_is_last_with_plus_then_minus(self):
+        row = self.zoom_row()
+        # "Zoom", then +, then −; no subtext and no readout.
+        self.assertEqual([label.findtext('Text') for label in row.iter('Label')], ['Zoom'])
+        self.assertEqual(next(row.iter('Label')).findtext('ObjectName'), 'MixpiSettingTitle')
+        self.assertEqual([c.tag for c in row.find('Children')],
+                         ['WidgetGroup', 'WidgetGroup', 'WidgetGroup', 'PushButton', 'WidgetGroup',
+                          'PushButton', 'WidgetGroup'])
+        plus, minus = row.iter('PushButton')
+        self.assertEqual([[t.text for t in b.iter('Text')] for b in (plus, minus)], [['+', '+'], ['−', '−']])
+        self.assertEqual(minus.findtext('State/Text'), '−')
+        # Neutral (Navigate) buttons, 48 px tall, 96 px like the page's other
+        # two-button rows, 6 px apart like Quantize's.
+        for b in (plus, minus):
+            self.assertEqual((b.findtext('ObjectName'), b.findtext('Size')), ('MixpiButton', '96f,48f'))
+            # They show no state: never the Choose tint, only the pressed look.
+            self.assertEqual(b.findtext('Connection/ConnectValueToWidget'), 'false')
+        children = list(row.find('Children'))
+        self.assertEqual(children.index(minus) - children.index(plus), 2)
+        self.assertEqual(children[children.index(plus) + 1].findtext('Size'), '6f,48f')
+        # The last row of the page, before the closing stretch.
+        pane = list(self.pane(1).find('Children'))
+        self.assertIs(pane[-2], row)
+        self.assertEqual(pane[-1].findtext('Size'), '0me,0me')
+
+    def test_interface_zoom_buttons_write_the_native_steps(self):
+        row = self.zoom_row()
+        plus, minus = row.iter('PushButton')
+        # Press 1 and release 0, as the Loop panel's − and + write theirs.
+        self.assertEqual(self.model.writes(plus, 'press'), [('[MixPi],waveform_zoom_in', 1.0)])
+        self.assertEqual(self.model.writes(plus, 'release'), [('[MixPi],waveform_zoom_in', 0.0)])
+        self.assertEqual(self.model.writes(minus, 'press'), [('[MixPi],waveform_zoom_out', 1.0)])
+        self.assertEqual(self.model.writes(minus, 'release'), [('[MixPi],waveform_zoom_out', 0.0)])
+        # Only the Zoom row writes them.
+        keys = [c.findtext('ConfigKey') for c in self.root.iter('Connection')]
+        self.assertEqual(keys.count('[MixPi],waveform_zoom_in'), 1)
+        self.assertEqual(keys.count('[MixPi],waveform_zoom_out'), 1)
+        # Shown only on Settings › Interface.
+        state = self.model.state(5, **{'[MixPi]__settings_page': 1})
+        self.assertTrue(self.model.visible(plus, state))
+        state['[MixPi],settings_page'] = 0
+        self.assertFalse(self.model.visible(plus, state))
+
+    def test_interface_zoom_row_fits_800_by_480_and_keeps_the_five_rows(self):
+        rows = self.setting_rows(self.pane(1))
+        heights = [size(r)[1] for r in rows]
+        # 480 - the 48 px top bar - the 48 px Settings header - the pane's
+        # 4 px padding above and below = 376. Five 66 px rows would leave 46,
+        # short of the 48 px buttons: they give up 1 px each, Zoom takes 51.
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn('#MixpiPlaybackSettings, #MixpiInterfaceSettings { padding: 4px; }', style)
+        self.assertEqual(heights, [65] * 5 + [51])
+        self.assertEqual(sum(heights), 480 - 48 - 48 - 2 * 4)
+        self.assertGreater(5 * 66 + 48, sum(heights))
+        self.assertGreaterEqual(min(heights), 48)
+        # The other panes keep their 66 px rows.
+        for page in (0, 2, 3):
+            self.assertEqual({size(r)[1] for r in self.setting_rows(self.pane(page))
+                              if r.findtext('ObjectName') == 'MixpiSetting'}, {66})
+        row = rows[-1]
+        self.assertEqual((SKIN.INTERFACE_ROW, SKIN.ZOOM_ROW), (65, 51))
+        self.assertEqual([c.findtext('Size') for c in row.find('Children') if c.tag == 'WidgetGroup'],
+                         ['14f,51f', '190f,51f', '10f,51f', '6f,48f', '0me,51f'])
+        # Each of the five rows keeps its content, its label column and its
+        # 48 px controls; only its height is 1 px less.
+        for r in rows[:5]:
+            self.assertEqual(r.findtext('Size'), '0me,65f')
+            self.assertEqual(r.find('Children')[1].findtext('Size'), '190f,65f')
+        # Width: 14 + 190 + 10 + 96 + 6 + 96 within the 600 px pane.
+        self.assertLessEqual(14 + 190 + 10 + 96 + 6 + 96, 600)
+        # The neutral button rule: surface-2, line-strong border, radius 3, the pressed look.
+        style = (FILES/'mixpi-performance.qss').read_text()
+        self.assertIn('color: #e4e7ec; background: #1d222a; border: 1px solid #3a424e;', style)
+        self.assertIn('#MixpiButton[pressed="true"]', style)
+
+    def test_loop_panel_zoom_buttons_are_unchanged(self):
+        # Spec 2f: "Keep loop as is." Byte for byte as at 1d67a42.
+        def flat(element):
+            return re.sub(r'>\s+<', '><', ET.tostring(element, encoding='unicode')).strip()
+        focused = self.model.by_name('MixpiFocusedOverview')
+        self.assertEqual(len(focused), 2)
+        for channel, group in zip((1, 2), focused):
+            minus, plus = group.iter('PushButton')
+            for b, text, item in ((minus, '−', 'up'), (plus, '+', 'down')):
+                self.assertEqual(flat(b), (
+                    '<PushButton><ObjectName>MixpiButton</ObjectName><Size>48f,48f</Size>'
+                    '<NumberStates>2</NumberStates><LeftClickIsPushButton>true</LeftClickIsPushButton>'
+                    f'<State><Number>0</Number><Text>{text}</Text></State>'
+                    f'<State><Number>1</Number><Text>{text}</Text></State>'
+                    f'<Connection><ConfigKey>[Channel{channel}],waveform_zoom_{item}</ConfigKey>'
+                    '<ConnectValueFromWidget>true</ConnectValueFromWidget>'
+                    '<ConnectValueToWidget>true</ConnectValueToWidget>'
+                    '<EmitOnPressAndRelease>true</EmitOnPressAndRelease></Connection></PushButton>'))
+            children = list(group.find('Children'))
+            self.assertEqual([c.tag for c in children], ['PushButton', 'Visual', 'PushButton'])
 
     @unittest.skipUnless(os.environ.get('PIONEERED_TEST_SKIN'),'pinned upstream checkout optional')
     def test_build_on_pinned_pioneered_preserves_visual_and_overview(self):

@@ -61,13 +61,14 @@ class EjectFoldersViewPatchTests(unittest.TestCase):
         self.assertEqual([line for line in text.splitlines() if line.startswith('-') and not line.startswith('---')],
                          [])
 
-    def test_patch_is_registered_last_after_j4_and_j5(self):
+    def test_patch_is_registered_last_after_j4_j5_and_zoom(self):
         names = subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
                                          '--mixxx-print-patches'], text=True).split()
         if PATCH.name not in names:
             self.skipTest(PATCH.name + ' is not registered yet')
         self.assertEqual(names[-1], PATCH.name)
         self.assertLess(names.index('mixxx-media-open-inside.patch'), names.index(PATCH.name))
+        self.assertLess(names.index('mixxx-zoom-setting.patch'), names.index(PATCH.name))
 
     def test_the_table_goes_only_when_the_folders_mount_went(self):
         feature = added(FEATURE)

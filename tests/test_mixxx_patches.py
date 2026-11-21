@@ -91,6 +91,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-media-open-inside.patch",
             "mixxx-external-sort.patch",
             "mixxx-drive-track-cache.patch",
+            "mixxx-rekordbox-utf16-text.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():

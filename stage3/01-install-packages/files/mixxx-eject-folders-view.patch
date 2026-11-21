@@ -1,0 +1,317 @@
+diff --git a/src/library/browse/browsefeature.cpp b/src/library/browse/browsefeature.cpp
+index bc95527..8a6156a 100644
+--- a/src/library/browse/browsefeature.cpp
++++ b/src/library/browse/browsefeature.cpp
+@@ -1,6 +1,8 @@
+ #include "library/browse/browsefeature.h"
+ 
+ #include <QAction>
++#include <QDir>
++#include <QFile>
+ #include <QFileInfo>
+ #include <QMenu>
+ #include <QPushButton>
+@@ -26,6 +28,55 @@ const QString kQuickLinksSeparator = QStringLiteral("-+-");
+ 
+ const ConfigKey kQuickLinksCfgKey = ConfigKey("[Browse]", "QuickLinks");
+ 
++// Spec 2e, as 2g applies it: the mount table. The mount point is the fifth
++// field, with a space written \040 (octal).
++const QString kMountTable = QStringLiteral("/proc/self/mountinfo");
++
++QStringList mountPoints() {
++    QStringList points;
++    QFile table(kMountTable);
++    if (!table.open(QIODevice::ReadOnly)) {
++        return points;
++    }
++    const QList<QByteArray> lines = table.readAll().split('\n');
++    for (const QByteArray& line : lines) {
++        const QList<QByteArray> fields = line.split(' ');
++        if (fields.size() < 5) {
++            continue;
++        }
++        const QByteArray& escaped = fields.at(4);
++        QByteArray point;
++        for (int at = 0; at < escaped.size(); ++at) {
++            bool octal = false;
++            const int value = escaped.at(at) == '\\' && at + 3 < escaped.size()
++                    ? escaped.mid(at + 1, 3).toInt(&octal, 8)
++                    : 0;
++            if (octal) {
++                point.append(static_cast<char>(value));
++                at += 3;
++            } else {
++                point.append(escaped.at(at));
++            }
++        }
++        points.append(QFile::decodeName(point));
++    }
++    return points;
++}
++
++// The mount that holds a folder: the longest mount point it lies in.
++QString mountOf(const QString& folder) {
++    const QString path = QDir::cleanPath(folder);
++    QString found;
++    for (const QString& point : mountPoints()) {
++        const bool holds = path == point ||
++                path.startsWith(point.endsWith(QChar('/')) ? point : point + QChar('/'));
++        if (holds && point.size() > found.size()) {
++            found = point;
++        }
++    }
++    return found;
++}
++
+ #if defined(__LINUX__)
+ const QStringList removableDriveRootPaths() {
+     QStringList paths;
+@@ -274,6 +325,43 @@ void BrowseFeature::pruneRemovableDirectories() {
+     }
+ }
+ 
++QString BrowseFeature::releaseGoneFolder() {
++    // Spec 2e, as 2g applies it (owner: "Let just land on the top menu
++    // instead"): a drive whose folder Tracks shows through Folders
++    // (Removable Devices, a Quick Link or /) is ejected or pulled out, so
++    // its mount left the mount table. The table stops showing that folder's
++    // rows. Another drive's mount going, or a folder of the Pi (/ never
++    // goes): nothing changes. Only the mount table is read, nothing on a
++    // drive.
++    const QStringList points = mountPoints();
++    QString folder;
++    if (!m_shownMount.isEmpty() && m_shownMount != QDir::rootPath() &&
++            !points.isEmpty() && !points.contains(m_shownMount)) {
++        folder = m_shownFolder;
++        m_shownFolder.clear();
++        m_shownMount.clear();
++        m_browseModel.releasePath();
++    }
++#if defined(__LINUX__)
++    // Removable Devices drops a drive that is no longer mounted, as the
++    // Media page does (its rows were read when it was opened).
++    auto* root = m_pSidebarModel->getRootItem();
++    for (int row = 0; !points.isEmpty() && row < root->childRows(); ++row) {
++        const TreeItem* pDevices = root->child(row);
++        if (pDevices->getData().toString() != DEVICE_NODE) {
++            continue;
++        }
++        const QModelIndex devices = m_pSidebarModel->index(row, 0);
++        for (int device = pDevices->childRows() - 1; device >= 0; --device) {
++            if (!points.contains(QDir::cleanPath(pDevices->child(device)->getData().toString()))) {
++                m_pSidebarModel->removeRows(device, 1, devices);
++            }
++        }
++    }
++#endif
++    return folder;
++}
++
+ void BrowseFeature::refreshMediaLifecycle() {
+ #if defined(__LINUX__)
+     m_pSidebarModel->deferDirectoryProbes();
+@@ -374,6 +462,8 @@ void BrowseFeature::activateChild(const QModelIndex& index) {
+         emit saveModelState();
+         // Clear the tracks view
+         m_browseModel.setPath({});
++        m_shownFolder.clear();
++        m_shownMount.clear();
+     } else {
+         // Open a security token for this path and if we do not have access, ask
+         // for it.
+@@ -390,6 +480,9 @@ void BrowseFeature::activateChild(const QModelIndex& index) {
+         }
+         emit saveModelState();
+         m_browseModel.setPath(std::move(dirAccess));
++        // Spec 2e: the folder and its mount, while it is there.
++        m_shownFolder = path;
++        m_shownMount = mountOf(path);
+     }
+     emit showTrackModel(&m_proxyModel);
+     // Search is restored in Library::slotShowTrackModel, disable it where it's useless
+diff --git a/src/library/browse/browsefeature.h b/src/library/browse/browsefeature.h
+index 8f260fb..0c8c6b6 100644
+--- a/src/library/browse/browsefeature.h
++++ b/src/library/browse/browsefeature.h
+@@ -45,6 +45,11 @@ class BrowseFeature : public LibraryFeature {
+     static QString samplesDirectory();
+     // Removes the rows of opened drive folders that are gone.
+     void pruneRemovableDirectories();
++    // Spec 2e, as 2g applies it: the mount that held the folder shown in
++    // Tracks left the mount table (an eject, or the drive pulled out). The
++    // table shows no rows; returns that folder (empty: nothing went).
++    // Removable Devices drops the drives no longer mounted.
++    QString releaseGoneFolder();
+ 
+   public slots:
+     void slotAddQuickLink();
+@@ -91,4 +96,8 @@ class BrowseFeature : public LibraryFeature {
+     QPointer<WLibrarySidebar> m_pSidebarWidget;
+     // Drive folders opened by openRemovableDirectory(), each a top-level row.
+     QStringList m_removableDirectories;
++    // Spec 2e: the folder activateChild showed, and the mount point that
++    // held it then.
++    QString m_shownFolder;
++    QString m_shownMount;
+ };
+diff --git a/src/library/browse/browsetablemodel.h b/src/library/browse/browsetablemodel.h
+index ca92c9d..5470b88 100644
+--- a/src/library/browse/browsetablemodel.h
++++ b/src/library/browse/browsetablemodel.h
+@@ -64,6 +64,14 @@ class BrowseTableModel final : public QStandardItemModel, public virtual TrackMo
+         setPath({});
+     };
+ 
++    /// Spec 2e, as 2g applies it: the folder's drive went away (an eject,
++    /// or pulled out). No folder and no rows: setPath({}) alone keeps the
++    /// rows, as BrowseThread skips an empty path before it clears the model.
++    void releasePath() {
++        setPath({});
++        removeRows(0, rowCount());
++    }
++
+     TrackPointer getTrack(const QModelIndex& index) const override;
+     TrackPointer getTrackByRef(const TrackRef& trackRef) const override;
+     TrackModel::Capabilities getCapabilities() const override;
+diff --git a/src/library/library.cpp b/src/library/library.cpp
+index 47b00c8..458e2db 100644
+--- a/src/library/library.cpp
++++ b/src/library/library.cpp
+@@ -233,6 +233,11 @@ Library::Library(
+                     }
+                 }
+             });
++    // Spec 2e, as 2g applies it: after an eject, or a drive pulled out, its
++    // folder in Tracks goes too.
++    m_pMixpiMedia->mountsChanged = [this] {
++        releaseGoneFolder();
++    };
+ 
+     for (const auto& externalTrackCollection : m_pTrackCollectionManager->externalCollections()) {
+         auto* feature = externalTrackCollection->newLibraryFeature(this, m_pConfig);
+@@ -1214,6 +1219,27 @@ void Library::showBrowsePlace(const LibraryInterface::BrowsePlace& place) {
+     QTimer::singleShot(0, this, [this, scroll] { setBrowseScroll(scroll); });
+ }
+ 
++void Library::releaseGoneFolder() {
++    // Spec 2e, as 2g applies it (owner: "Let just land on the top menu
++    // instead"): BrowseFeature empties the table when the mount of its
++    // folder went. When that folder is the place Tracks shows (through
++    // Folders: Removable Devices, a Quick Link or /), the Sources menu lands
++    // on its top level with nothing current, as for a rekordbox drive (J4).
++    // A list of This Pi or another drive in Tracks: the menu stays. The
++    // saved start (★) is not touched.
++    const QString folder = m_pBrowseFeature->releaseGoneFolder();
++    const QModelIndex computer = sourceRow(QStringLiteral("BrowseFeature"));
++    if (folder.isEmpty() || !m_pSidebarWidget || !m_pShownPlace || !computer.isValid()) {
++        return;
++    }
++    const QVariantList& place = m_pShownPlace->path;
++    if (place.size() > 1 &&
++            place.first() == LibraryInterface::sourcePathStep(computer, SidebarModel::DataRole) &&
++            QDir::cleanPath(place.last().toString()) == QDir::cleanPath(folder)) {
++        m_pSidebarWidget->releaseShownSource();
++    }
++}
++
+ QString Library::browseSearch() const {
+     auto* pView = m_pLibraryWidget ? m_pLibraryWidget->getCurrentTrackTableView() : nullptr;
+     auto* pModel = pView ? dynamic_cast<TrackModel*>(pView->model()) : nullptr;
+diff --git a/src/library/library.h b/src/library/library.h
+index 5db3330..d8ac05c 100644
+--- a/src/library/library.h
++++ b/src/library/library.h
+@@ -198,6 +198,8 @@ class Library: public QObject {
+     void noteBrowsePlaceShown();
+     LibraryInterface::BrowsePlace sampleSourcePlace(int source);
+     void showBrowsePlace(const LibraryInterface::BrowsePlace& place);
++    // Spec 2e, as 2g applies it: a mount went; a folder of it in Tracks goes.
++    void releaseGoneFolder();
+     QString browseSearch() const;
+     int browseScroll() const;
+     void setBrowseScroll(int scroll);
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+index aaa995c..0390ee8 100644
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -131,6 +131,11 @@ class MixpiMedia final : public QObject {
+         QTimer::singleShot(0, this, [this] { tick(); });
+     }
+ 
++    // Spec 2e, as 2g applies it: the mount table changed (a drive's mount
++    // went or came, an eject finished). Library releases a Folders view of a
++    // mount that went.
++    std::function<void()> mountsChanged;
++
+     ~MixpiMedia() override {
+         if (m_dialog) {
+             m_dialog->close();
+@@ -593,6 +598,10 @@ class MixpiMedia final : public QObject {
+             m_strip->showSafe(identity, m_safeName);
+         }
+         observeNow();
++        // The drive is unmounted: a folder of it in Tracks goes now.
++        if (mountsChanged) {
++            mountsChanged();
++        }
+         refresh();
+     }
+ 
+@@ -662,6 +671,9 @@ class MixpiMedia final : public QObject {
+             if (mounts != m_mounts) {
+                 m_mounts = mounts;
+                 observeNow();
++                if (mountsChanged) {
++                    mountsChanged();
++                }
+             }
+         }
+         if (!m_safeIdentity.isEmpty() && !m_safeSysfs.isEmpty() && driveGone(m_safeSysfs, m_safeDiskseq)) {
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index a7e6cb7..3d7bd0b 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -720,6 +720,27 @@ void WLibrarySidebar::rowsAboutToBeRemoved(const QModelIndex& parent, int start,
+     updateSourceChrome();
+ }
+ 
++void WLibrarySidebar::releaseShownSource() {
++    // Spec 2e, as 2g applies it (owner: "Let just land on the top menu
++    // instead"): a drive's folder in Tracks, opened through Folders
++    // (Removable Devices, a Quick Link or /), went with the drive. Its rows
++    // below Removable Devices went earlier, or the row stays (a Quick Link),
++    // so rowsAboutToBeRemoved did not see a drive's own row go. As there:
++    // the top level, nothing current, so the next ☰ opens there and no row
++    // has the edge.
++    if (!m_sourceScreen || !groupedTiles || !m_touchNavigation) {
++        return;
++    }
++    m_shownSourceGone = true;
++    if (selectionModel()) {
++        selectionModel()->clear();
++    }
++    m_menuInside = false;
++    m_touchNavigation->setFloor({});
++    m_touchNavigation->home();
++    updateSourceChrome();
++}
++
+ QString WLibrarySidebar::tileOf(const QModelIndex& index) const {
+     // The tile that holds a row: a node tile's row or a row below it (the
+     // deepest such node), else a set tile with the row's top-level source.
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index cb6ac4d..d19f162 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -101,6 +101,10 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     // ☰ opens inside the drive ("DRIVE › rekordbox"), wherever the menu was
+     // left. The ★ start keeps followShownSource.
+     void openShownSource();
++    // Spec 2e, as 2g applies it: the folder Tracks showed went with its
++    // drive (Library::releaseGoneFolder). The menu lands on its top level
++    // with nothing current, as when a drive's own row goes.
++    void releaseShownSource();
+ 
+     QColor menuBackgroundColor() const {
+         return m_menuBackground;

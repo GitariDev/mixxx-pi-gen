@@ -7,13 +7,14 @@ Read `ACCEPTANCE-H-tester.md` and `ACCEPTANCE-I-tester.md` (same folder) first. 
 - The owner's pads 1 and 2 stay as they are.
 - **The owner uses the card between tests.** Start only when the orchestrator says the owner has handed it over, and record what you find on screen at the start.
 
-Build J is installed in place. It changes six things from build I (results: waves J1 and J4 to J8):
+Build J is installed in place. It changes seven things from build I (results: waves J1 and J4 to J9):
 - the quit crash is fixed (J1);
 - after an eject of the drive whose list is in the Tracks table, the table drops that drive's rows and ☰ opens at the top level (J4);
 - after OPEN, BROWSE or the ping's LOAD, ☰ opens inside "DRIVE › rekordbox" with the edge on Tracks (J5);
 - sorting a drive's list by any column, KEY included, never empties the table (J6);
 - after a drive leaves and another is plugged in, each drive's lists show only that drive's tracks (J7);
-- tracks with accented file names on a drive load (J8).
+- tracks with accented file names on a drive load (J8);
+- Settings › Interface has a last row "Zoom" with + then −, which zooms both decks' main waveforms (J9, spec 2f).
 
 The Sources menu's capitals, build I's USB chip and the ping's 15 s are kept by the owner's decision (spec 2e); they are not findings.
 
@@ -42,7 +43,8 @@ Write your evidence in `deploy/ui-redesign-20261117/acceptance-J/` (`ACCEPTANCE.
    - **Sort (J6):** IXIAN › Smarties › Jazz: tap every header, KEY included, twice each (up and down). The row count never drops to 0, and KEY's order follows This Pi's KEY order. Then put the list's sort back as found.
    - **Rows (J7):** with GANDER1 and IXIAN both plugged in, open a GANDER1 list, then an IXIAN list: each shows only its own drive's tracks (check the paths in the log on load). Then eject GANDER1 with no other change and open IXIAN's Sunny Day Vibes: it shows 42 rows (the export holds 42), none from GANDER1. Have the owner re-plug GANDER1 and check its list again.
    - **Accented names (J8):** in Sunny Day Vibes, load "Technicolor", "El Hijo De Mamá" and "Anbessa" to a deck one at a time: each loads and plays, with its title and artist readable. Unload them after.
-5. **Build I's items still hold:**
+5. **Zoom (J9).** Settings › INTERFACE › Zoom: tap + three times, then the Decks page: both main waveforms are zoomed in by the same steps. Tap − back to the starting zoom. Change it once more, wait 2 s, quit with Ctrl+Q and start Mixxx: both decks come back at the saved zoom. The Loop panel's − and + work as on build I. Put the zoom back as found. Make the pair `acceptance-J/pairs/m-settings-interface.png` (mockup on the left; the Zoom row is the spec 2f addition).
+6. **Build I's items still hold:**
    - the header empty area;
    - the menu shadow pixels and the taps through it;
    - the Tracks row inside a drive;
@@ -51,7 +53,7 @@ Write your evidence in `deploy/ui-redesign-20261117/acceptance-J/` (`ACCEPTANCE.
    - TITLE stays 160, and there is no start-up write;
    - the overview strip moves;
    - the ★ start works.
-6. **Smoke:**
+7. **Smoke:**
    - a setting and an effect each saved within 1 s;
    - two decks plus one effect for 2 minutes: the CPU readout and the underrun counter (build I: 4.08 %, 0);
    - `throttled=0x0`.

@@ -687,5 +687,8 @@ All three are the real seats.
 - **Notes, not failures:**
   - After its own eject, the Media page doesn't see a software remount until Mixxx restarts; a real re-plug wasn't possible tonight.
   - SD-BACKUP shows a › arrow after the first eject.
-  - The first Folders browse of a new folder showed thin tags until a restart (stock Browse tag loading).
+  - The first Folders browse of a new folder showed thin tags until a restart (artist "43", no BPM). **Correction (council round 7, Fable): this is not stock Mixxx.**
+    - It is MixPi's eject rule in `mixxx-media-selection.patch` (:883, :910, :2258). After a Media-page eject, the drive's read generation is retired, so Mixxx refuses reads from it (`m_mediaUse` false, "No SoundSourceProvider", `acceptance-L/card-files/logs/r1/prestart/mixxx.log:551`) until the drive is pulled out or Mixxx restarts. Browse then falls back to the file name.
+    - This is the same rule as the Media-page note above: a software remount isn't a re-plug.
+    - A real pull and re-plug resets it, as acceptance K showed.
   - GANDER1's file system was already marked "not properly unmounted" before tonight. Nothing was written to repair it.

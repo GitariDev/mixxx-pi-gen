@@ -86,7 +86,7 @@ Repo: `/Users/gitaritirima/Documents/Workspace/Personal Projects/mixxx-pi-gen`, 
    - A Media-page eject clears the open folder list until it is opened again. That comes from build B's `mixxx-media-selection.patch`.
    - Plain folders such as SD-BACKUP now always stay. Round 6's cause note was corrected in the results.
    - SD-BACKUP shows a › arrow after the first eject (acceptance L note).
-   - The first Folders browse of a new folder can show thin tags until a restart (stock Browse tag loading).
+   - The first Folders browse of a drive mounted again in software after its eject shows thin tags until a restart. **Not stock Mixxx:** it is the eject rule in `mixxx-media-selection.patch` (:883, :910, :2258), which refuses reads from an ejected drive until it is pulled out or Mixxx restarts; the same rule as item 10. A real pull and re-plug resets it (acceptance K).
 10. **The Media page and a software remount (acceptance L):** after the page's own eject, a drive mounted again in software (not re-plugged) stays "SAFE TO REMOVE" until Mixxx restarts. A real re-plug was not possible that night, and port toggles are not allowed. The real-world path (pull and re-plug) was tested in acceptance K.
 11. **J8 fixes no fault seen on the card.** The garbled names were a test-harness artefact. The patch stays by the owner's word (spec 2f).
 

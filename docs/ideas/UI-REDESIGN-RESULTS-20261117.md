@@ -584,6 +584,11 @@ Both go into build J with the J1 crash fix.
   - It steps the saved `DefaultZoom` and sets both decks; % = 3 ÷ zoom, from 30 to 300.
   - The rows are 65 px at 800×480 and 58 px with the top bar shown. The Loop panel is unchanged.
   - The Starlight quick zoom and the indicator were dropped by the owner (spec 2f).
+- **File overlap between J4 and J7 (process note):** these builders ran in parallel, and both patched `src/library/rekordbox/rekordboxfeature.{h,cpp}`. That breaks the plan's file-ownership rule (plan §ownership): the orchestrator's J7 brief allowed `src/library/rekordbox/*` while J4 owned rekordbox only "to release a view".
+  - **The result:** J7's patch no longer applied after J4's. The combined gate caught it.
+  - **The repair:** the J7 builder regenerated its patch on the whole stack (`5c96f5a`).
+  - **The joint gates:** 305/305 at `5c96f5a` (`gates/uiJ-int-final-20261120--…`), then 323/323 at `220012e` with J8 and J9 (`gates/uiJ-int3-20261121--…`), 0 skips each.
+  - **For future waves,** parallel briefs must not share a source file.
 - **Integration head `220012e` / build head `325cb70`** (66 patches): native gate 323/323, 0 skips (`gates/uiJ-int3-20261121--…`); Mac suite 882 OK.
 
 ## Build J (2026-11-21)

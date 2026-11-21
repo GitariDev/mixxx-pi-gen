@@ -41,3 +41,8 @@ The owner accepted the row and the 65 px rows, and asked for four more things, a
 4. **The indicator:** on the Decks page, a small pill "ZOOM 150%" over the left (already played) part of the main waveforms, centred on the line between Deck 1's and Deck 2's waveforms, never over the playhead. It shows while the saved zoom changes (Starlight, or the Zoom row when the Decks page is in view) and hides 1 s after the last change. Neutral surface (`--mx-surface-2`, `--mx-line-strong` border), build B's font, text 13 px or more, no animation beyond show and hide. The Loop panel's − and + do not show it.
 
 Also, keep the files you own, plus: the Starlight mapping files in the Mixxx source (only through a new patch), and the Decks page's waveform area in `mixpi-performance.py` for the pill. Add fixtures for 1-4 (each failing without the change), renders at 800×480 and 800×444 of the Interface page and of the Decks page with the pill showing, and run the Mac suite and the full native gate again (`uiJ9b-nj9-20261121`). Give updated registration lines and the Pi checks (the owner's hands are needed for the Starlight check; say so).
+
+## Amendment 2 (2026-11-21): items 3 and 4 dropped by the owner
+- Item 3 (Starlight): "No Starlight zoom". Item 4 (indicator): "Drop it".
+- Remove the controls you added only for them (`[MixPi],waveform_zoom_position`, `[MixPi],waveform_zoom_changing`) and their fixtures and tests. Keep the stock-mapping test only if it guards something J9 still ships; otherwise remove it. Keep items 1 and 2 as built and accepted.
+- Run the Mac suite and the full native gate again (`uiJ9c-nj9-20261121`), clean up and fstrim.

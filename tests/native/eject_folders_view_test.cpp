@@ -183,6 +183,8 @@ class BrowseFeature : public LibraryFeature {
     QStringList m_removableDirectories;
     QString m_shownFolder;
     QString m_shownMount;
+    // J11 (mixxx-removable-rows-fix.patch): the mount points last seen.
+    QStringList m_seenMounts;
     // Library::slotShowTrackModel / slotSwitchToView.
     std::function<void()> trackModelShown;
     void saveModelState() {

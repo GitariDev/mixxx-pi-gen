@@ -1,0 +1,167 @@
+diff --git a/src/coreservices.cpp b/src/coreservices.cpp
+index 7d4b90b..df674eb 100644
+--- a/src/coreservices.cpp
++++ b/src/coreservices.cpp
+@@ -41,12 +41,14 @@
+ #include "util/font.h"
+ #include "util/logger.h"
+ #include "util/mixpidisplaycontrols.h"
++#include "util/mixpizoomsetting.h"
+ #include "util/screensavermanager.h"
+ #include "util/statsmanager.h"
+ #include "util/time.h"
+ #include "util/translations.h"
+ #include "util/versionstore.h"
+ #include "vinylcontrol/vinylcontrolmanager.h"
++#include "waveform/waveformwidgetfactory.h"
+ 
+ #ifdef __APPLE__
+ #include "util/sandbox.h"
+@@ -713,6 +715,14 @@ void CoreServices::initialize(QApplication* pApp) {
+     // Brightness, Night dim and CPU readout (spec s12).
+     m_pSamplerClear = std::make_unique<MixpiSamplerClear>();
+     m_pDisplayControls = std::make_unique<MixpiDisplayControls>(pConfig);
++    // Zoom (spec 2f): steps [Waveform],DefaultZoom and both decks' waveforms.
++    m_pZoomSetting = std::make_unique<MixpiZoomSetting>(pConfig, [](double zoom) {
++        // The factory is made with the main window, before the skin that
++        // holds the buttons.
++        if (WaveformWidgetFactory* pFactory = WaveformWidgetFactory::instance()) {
++            pFactory->setDefaultZoom(zoom);
++        }
++    });
+ 
+     // Load tracks in args.qlMusicFiles (command line arguments) into player
+     // 1 and 2:
+@@ -928,6 +938,7 @@ void CoreServices::finalize() {
+ 
+     m_pSamplerClear.reset();
+     m_pDisplayControls.reset();
++    m_pZoomSetting.reset();
+ 
+     m_pConfigAutosave.reset();
+ 
+diff --git a/src/coreservices.h b/src/coreservices.h
+index eb24b88..c1aa877 100644
+--- a/src/coreservices.h
++++ b/src/coreservices.h
+@@ -24,6 +24,7 @@ class SkinControls;
+ class ControlPushButton;
+ class MixpiSamplerClear;
+ class MixpiDisplayControls;
++class MixpiZoomSetting;
+ 
+ namespace mixxx {
+ 
+@@ -155,6 +156,8 @@ class CoreServices : public QObject {
+     // MixPi Clear samples popover, and Brightness, Night dim and CPU readout.
+     std::unique_ptr<MixpiSamplerClear> m_pSamplerClear;
+     std::unique_ptr<MixpiDisplayControls> m_pDisplayControls;
++    // Settings › Interface, Zoom (spec 2f).
++    std::unique_ptr<MixpiZoomSetting> m_pZoomSetting;
+ 
+     Timer m_runtime_timer;
+     const CmdlineArgs& m_cmdlineArgs;
+diff --git a/src/util/mixpizoomsetting.h b/src/util/mixpizoomsetting.h
+new file mode 100644
+index 0000000..17b0b99
+--- /dev/null
++++ b/src/util/mixpizoomsetting.h
+@@ -0,0 +1,98 @@
++#pragma once
++
++#include <QObject>
++#include <QString>
++#include <algorithm>
++#include <cmath>
++#include <functional>
++#include <utility>
++
++#include "control/controlobject.h"
++#include "control/controlpushbutton.h"
++#include "preferences/usersettings.h"
++
++/// MixPi Settings › Interface, Zoom (spec 2f): the + and − of the row.
++///
++/// - [MixPi],waveform_zoom_in (+) and [MixPi],waveform_zoom_out (−) are push
++///   buttons; a press steps the saved zoom by one and sets both decks' main
++///   waveforms to it. The step and its ends are those of the Loop panel's −
++///   and + ([ChannelN],waveform_zoom_up/_down: ±1 between 1 and 10). A
++///   smaller number is a closer view, so + takes one off.
++/// - The setting is Mixxx's own [Waveform],DefaultZoom: the zoom every deck
++///   waveform starts at (WaveformWidgetFactory reads it at start). It is
++///   written to mixxx.cfg by the save on change (R-13), within a second.
++/// - Each press sets both decks to the new setting, so a deck zoomed on its
++///   own with the Loop panel joins the other again. The Loop panel's buttons
++///   stay per deck and are not saved, as in stock Mixxx.
++/// - applyDefault, when given, is called with the new setting after the
++///   decks: Mixxx passes WaveformWidgetFactory::setDefaultZoom, which keeps
++///   the factory's copy (new waveforms, the Preferences dialog) in step.
++class MixpiZoomSetting : public QObject {
++  public:
++    // WaveformWidgetRenderer::s_waveformMinZoom, s_waveformMaxZoom and
++    // s_waveformDefaultZoom; BaseTrackPlayerImpl::slotWaveformZoomUp/Down.
++    static constexpr double kMinZoom = 1.0;
++    static constexpr double kMaxZoom = 10.0;
++    static constexpr double kDefaultZoom = 3.0;
++    static constexpr double kStep = 1.0;
++
++    explicit MixpiZoomSetting(UserSettingsPointer pSettings,
++            std::function<void(double)> applyDefault = {},
++            QObject* pParent = nullptr)
++            : QObject(pParent),
++              m_pSettings(std::move(pSettings)),
++              m_applyDefault(std::move(applyDefault)) {
++        m_pZoomIn = button("waveform_zoom_in");
++        connect(m_pZoomIn, &ControlObject::valueChanged, this, [this](double value) {
++            if (value > 0) {
++                step(-kStep);
++            }
++        });
++        m_pZoomOut = button("waveform_zoom_out");
++        connect(m_pZoomOut, &ControlObject::valueChanged, this, [this](double value) {
++            if (value > 0) {
++                step(kStep);
++            }
++        });
++    }
++
++    /// The saved zoom, read as WaveformWidgetFactory::setConfig reads it.
++    double zoom() const {
++        bool ok = false;
++        const double value = m_pSettings->getValueString(kDefaultZoomKey).toDouble(&ok);
++        if (!ok || !std::isfinite(value)) {
++            return kDefaultZoom;
++        }
++        return std::clamp(value, kMinZoom, kMaxZoom);
++    }
++
++  private:
++    static inline const ConfigKey kDefaultZoomKey =
++            ConfigKey(QStringLiteral("[Waveform]"), QStringLiteral("DefaultZoom"));
++
++    ControlPushButton* button(const char* item) {
++        auto* pButton = new ControlPushButton(
++                ConfigKey(QStringLiteral("[MixPi]"), QString::fromLatin1(item)));
++        pButton->setParent(this);
++        return pButton;
++    }
++
++    void step(double delta) {
++        const double zoom = std::clamp(this->zoom() + delta, kMinZoom, kMaxZoom);
++        m_pSettings->setValue(kDefaultZoomKey, zoom);
++        for (const auto* group : {"[Channel1]", "[Channel2]"}) {
++            const ConfigKey key(QString::fromLatin1(group), QStringLiteral("waveform_zoom"));
++            if (ControlObject::exists(key)) {
++                ControlObject::set(key, zoom);
++            }
++        }
++        if (m_applyDefault) {
++            m_applyDefault(zoom);
++        }
++    }
++
++    UserSettingsPointer m_pSettings;
++    std::function<void(double)> m_applyDefault;
++    ControlPushButton* m_pZoomIn;
++    ControlPushButton* m_pZoomOut;
++};

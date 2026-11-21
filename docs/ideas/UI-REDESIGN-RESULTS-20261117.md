@@ -24,6 +24,10 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Wave G2 integrated | `6ca8740` | 807 run, OK (153 platform skips); 1 load-flake error on the first run, clean on the rerun | 255/255, 0 skips (builder's run) | 55 patches. A re-shown column keeps its width; no start-up write |
 | Wave G3 integrated | `9bf9e5d` | 809 run; 1 error in `test_chroot_runtime` (5 s timeout), then 3 of 3 OK alone; 809 OK on 20 Nov after the bare-repo repair | 257/257, 0 skips (builder's run) | 56 patches. TITLE's stretched width is never saved |
 | Waves H1 + I1-I3 integrated | `fd6b16c` | 822 run; 1 `test_chroot_runtime` 5 s timeout under load (passes alone) | 274/274, 0 skips (orchestrator's run on the combined stack) | 59 patches. Header empty area; Tracks row in a drive; IN USE timing and ping on Media; menu shadow |
+| Waves J1, J4–J7 integrated | `5c96f5a` | 858 run, OK (168 platform skips) | 305/305, 0 skips (`gates/uiJ-int-final-20261120--…`) | 64 patches. Quit crash; eject and ☰ after OPEN; external sort; drive track cache |
+| Waves J8 + J9 integrated (build J) | `220012e` / `325cb70` | 882 run, OK (173 platform skips) | 323/323, 0 skips (`gates/uiJ-int3-20261121--…`) | 66 patches. rekordbox text; the Zoom row |
+| Wave J10 (build K) | `1000eaf` / `941bfd0` | 888 run, OK (175 platform skips) | 329/329, 0 skips (builder's run on the same tree; `gates/uiJ10-nj10-20261121--…`) | 67 patches. Folders eject |
+| Wave J11 (build L) | `baa25f2` | 893 run, OK (178 platform skips) | 334/334, 0 skips (builder's run on the same tree; `gates/uiJ11-nj11-20261121--…`) | 68 patches. Removable devices keeps plain folders |
 
 ## Wave 0 on the test card (build 2)
 
@@ -674,7 +678,7 @@ All three are the real seats.
 - **Build L, the 13th pi-gen run, at `baa25f2`** (68 patches): one run, exit 0, in 13 m 15 s, with no resume.
   - The `.deb` is `13aa9d2f…`.
   - The skin is byte-identical to K's, and there is no package drift from K.
-  - Installed in place 23:04–23:11:32 (record: `deploy/ui-redesign-20261117/buildL-update/UPDATE-LOG.md`). The owner approved it before going to bed: "do that last round fix have everything ready for the morning. Do all the proof".
+  - Installed in place 23:09:55–23:11:32 (record: `deploy/ui-redesign-20261117/buildL-update/UPDATE-LOG.md`). The owner approved it before going to bed: "do that last round fix have everything ready for the morning. Do all the proof".
 
 ## Acceptance L (2026-11-21, night, `deploy/ui-redesign-20261117/acceptance-L/ACCEPTANCE.md`)
 

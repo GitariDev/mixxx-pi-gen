@@ -67,6 +67,7 @@ MIXXX_PATCHES=(
     mixxx-external-sort.patch
     mixxx-drive-track-cache.patch
     mixxx-rekordbox-utf16-text.patch
+    mixxx-zoom-setting.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

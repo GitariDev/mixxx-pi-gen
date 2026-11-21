@@ -55,6 +55,7 @@ REQUIRED_TESTS = (
     'test_external_sort',
     'test_drive_track_cache',
     'test_rekordbox_utf16_text',
+    'test_zoom_setting',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

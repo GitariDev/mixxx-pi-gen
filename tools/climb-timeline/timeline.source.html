@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Climb Timeline</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f6f4;
+  --surface: #fcfcfb;
+  --surface-2: #f0f0ed;
+  --line: #dcdcd7;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #75746f;
+  --accent: #2a78d6;
+  --accent-soft: #e3eefb;
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --good: #0b7f0b;
+  --good-soft: #e1f3e1;
+  --warn: #8a5a00;
+  --warn-soft: #fdf1d6;
+  --bad: #c02f2f;
+  --bad-soft: #fbe4e4;
+  --serious: #b4501f;
+  --target: #c02f2f;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211;
+    --surface: #1a1a19;
+    --surface-2: #232321;
+    --line: #34332f;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --ink-3: #9a998f;
+    --accent: #5f9ff0;
+    --accent-soft: #1c2c40;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --good: #4cc24c;
+    --good-soft: #17301a;
+    --warn: #fab219;
+    --warn-soft: #34290f;
+    --bad: #ef6b6b;
+    --bad-soft: #3a1b1b;
+    --serious: #ec835a;
+    --target: #ef6b6b;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211;
+  --surface: #1a1a19;
+  --surface-2: #232321;
+  --line: #34332f;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --ink-3: #9a998f;
+  --accent: #5f9ff0;
+  --accent-soft: #1c2c40;
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --good: #4cc24c;
+  --good-soft: #17301a;
+  --warn: #fab219;
+  --warn-soft: #34290f;
+  --bad: #ef6b6b;
+  --bad-soft: #3a1b1b;
+  --serious: #ec835a;
+  --target: #ef6b6b;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.35);
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  overflow-x: hidden;
+}
+a { color: var(--accent); }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; }
+code { background: var(--surface-2); padding: 0 .3em; border-radius: 3px; overflow-wrap: anywhere; }
+h1, h2, h3 { line-height: 1.2; margin: 0; }
+h2 { font-size: 1.25rem; margin-bottom: .75rem; }
+h3 { font-size: 1rem; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+header.top { padding: 20px 0 12px; }
+header.top .row { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+header.top p { color: var(--ink-2); margin: .4rem 0 0; max-width: 70ch; }
+.tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+button, .btn, select, input[type="text"], input[type="search"] {
+  font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 10px; min-height: 36px;
+}
+button, .btn { cursor: pointer; }
+button:hover, .btn:hover { border-color: var(--accent); }
+button:focus-visible, .btn:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.btn input[type="file"] { display: none; }
+.banner { margin: 8px 0; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); }
+.banner.error { border-color: var(--bad); background: var(--bad-soft); }
+.banner.ok { border-color: var(--good); background: var(--good-soft); }
+.banner ul { margin: .3rem 0 0; padding-left: 1.2rem; max-height: 12rem; overflow: auto; }
+nav.sections {
+  position: sticky; top: 0; z-index: 5; background: var(--bg); background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(6px); border-bottom: 1px solid var(--line);
+}
+nav.sections .wrap { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+nav.sections a { padding: 10px 10px; text-decoration: none; color: var(--ink-2); white-space: nowrap; font-weight: 500; }
+nav.sections a:hover { color: var(--ink); }
+section { padding: 24px 0 8px; scroll-margin-top: 48px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.tile .k { color: var(--ink-2); font-size: .8rem; }
+.tile .v { font-size: 1.5rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .v small { font-size: .85rem; font-weight: 500; color: var(--ink-2); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.muted { color: var(--ink-2); }
+.small { font-size: .85rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface-2); font-size: .8rem; color: var(--ink-2); white-space: nowrap;
+}
+.chip b { color: var(--ink); font-weight: 600; }
+/* Timeline */
+.track { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.track button { display: inline-flex; gap: 6px; align-items: center; padding: 4px 10px; min-height: 32px; border-radius: 999px; }
+.track button.council { border-style: dashed; }
+.track button.pending { opacity: .6; }
+.track .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); flex: none; }
+.track .council .dot { background: transparent; border: 2px solid var(--ink-2); }
+.track .session .dot { background: var(--s3); }
+.days { position: relative; }
+.day { display: grid; grid-template-columns: 92px 1fr; gap: 12px; }
+.day > .date { color: var(--ink-2); font-size: .85rem; padding-top: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.day > .events { border-left: 2px solid var(--line); padding: 4px 0 12px 16px; display: grid; gap: 10px; }
+.ev { position: relative; cursor: pointer; text-align: left; width: 100%; display: block; padding: 10px 12px; border-radius: 8px; background: var(--surface); }
+.ev::before { content: ""; position: absolute; left: -24px; top: 16px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+.ev.council::before { background: var(--surface); border: 2px solid var(--ink-2); }
+.ev.session::before { background: var(--s3); }
+.ev.pending { opacity: .7; border-style: dashed; }
+.ev .head { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.ev .head h3 { margin-right: auto; }
+.ev p { margin: .35rem 0 0; color: var(--ink-2); }
+.ev .chips { margin-top: 8px; }
+.score-pill { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.score-pill i { width: 9px; height: 9px; display: inline-block; flex: none; }
+/* Chart */
+.chart-card { padding: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 2px 0 8px; font-size: .85rem; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chart { position: relative; width: 100%; }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.chart .grid line { stroke: var(--line); stroke-width: 1; }
+.chart .axis text { fill: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chart .xlabel { cursor: pointer; }
+.chart .xlabel:hover text { fill: var(--ink); text-decoration: underline; }
+.chart .target line { stroke: var(--target); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.chart .target text { fill: var(--target); font-size: 12px; font-weight: 600; }
+.chart .series path.line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .mark { stroke: var(--surface); stroke-width: 2; }
+.chart .uncapped { fill: var(--surface); stroke-width: 2; }
+.chart .capline { stroke-width: 1.5; stroke-dasharray: 3 3; fill: none; }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart .dlabel { font-size: 12px; fill: var(--ink); font-weight: 600; paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.chart .pending-band { fill: var(--surface-2); }
+.tooltip {
+  position: absolute; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 8px; font-size: .82rem; box-shadow: var(--shadow); max-width: 260px; z-index: 3; display: none;
+}
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--ink-2); font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll-x { overflow-x: auto; }
+details > summary { cursor: pointer; color: var(--accent); margin: 8px 0; }
+/* Findings */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.filters label { display: inline-flex; gap: 6px; align-items: center; font-size: .85rem; color: var(--ink-2); }
+.filters input[type="search"] { min-width: 0; width: 220px; max-width: 100%; }
+.list { display: grid; gap: 8px; }
+.finding .top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.finding h3 { font-size: .98rem; font-weight: 600; margin: 6px 0 4px; }
+.finding .meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: .85rem; color: var(--ink-2); }
+.st { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 999px; font-size: .78rem; font-weight: 600; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.st.fixed { color: var(--good); border-color: var(--good); background: var(--good-soft); }
+.st.pending { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.st.open { color: var(--bad); border-color: var(--bad); background: var(--bad-soft); }
+.st.owner-accepted { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.sev { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); font-weight: 600; }
+.sev.critical { color: var(--bad); }
+.sev.major { color: var(--serious); }
+.idtag { font-family: ui-monospace, Menlo, monospace; font-size: .78rem; color: var(--ink-3); }
+.linkbtn { background: none; border: none; padding: 0; min-height: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font: inherit; }
+/* Waves and decisions */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+.wave h3 { margin: 4px 0; }
+.wave dl, .detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; margin: 8px 0 0; font-size: .88rem; }
+.wave dt, .detail dt { color: var(--ink-2); }
+.wave dd, .detail dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.wave.reverted { opacity: .75; }
+.decision ul { margin: 8px 0 0; padding-left: 1.1rem; }
+.decision li { margin: 4px 0; }
+blockquote { margin: 4px 0 0; padding: 4px 10px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 4px 4px 0; font-style: italic; }
+/* Detail panel */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 20; display: none; }
+.detail {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(720px, 100%); z-index: 21; background: var(--bg);
+  border-left: 1px solid var(--line); box-shadow: var(--shadow); overflow-y: auto; display: none; padding: 0 0 32px;
+}
+.detail.open, .scrim.open { display: block; }
+.detail .bar { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 8px; align-items: center; z-index: 1; }
+.detail .bar h2 { margin: 0; font-size: 1.1rem; margin-right: auto; }
+.detail .body { padding: 12px 16px; display: grid; gap: 14px; }
+.detail .body h3 { margin-bottom: 6px; }
+.seat-row { border-top: 1px solid var(--line); padding-top: 8px; }
+.seat-row:first-child { border-top: 0; padding-top: 0; }
+.seat-row ul { margin: 4px 0 0; padding-left: 1.1rem; }
+.pairs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.pairs figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+.pairs img { width: 100%; height: auto; display: block; border-radius: 3px; background: var(--surface-2); }
+.pairs figcaption { font-size: .78rem; margin-top: 4px; overflow-wrap: anywhere; }
+.missing { display: block; padding: 10px; border: 1px dashed var(--line); border-radius: 4px; color: var(--ink-2); font-size: .8rem; overflow-wrap: anywhere; }
+.links { margin: 0; padding-left: 1.1rem; }
+.links li { overflow-wrap: anywhere; }
+footer { margin: 32px 0 24px; color: var(--ink-3); font-size: .82rem; }
+footer .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+footer input[type="text"] { width: 280px; max-width: 100%; }
+.empty { color: var(--ink-2); font-style: italic; }
+@media (max-width: 640px) {
+  .day { grid-template-columns: 1fr; gap: 0; }
+  .day > .date { text-align: left; padding: 8px 0 4px 18px; }
+  .day > .events { margin-left: 4px; }
+  .grid2 { grid-template-columns: 1fr; }
+  .pairs { grid-template-columns: 1fr; }
+  .filters input[type="search"] { width: 100%; }
+}
+@media (forced-colors: active) {
+  .chart .mark, .chart .uncapped { forced-color-adjust: none; }
+}
+@media print {
+  nav.sections, .tools, footer .row { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="top wrap">
+  <div class="row">
+    <div>
+      <h1 id="title">Climb timeline</h1>
+      <p id="summary"></p>
+      <p class="small muted" id="updated"></p>
+    </div>
+    <div class="tools">
+      <label class="btn" title="View an updated climb.json without rebuilding">Load JSON…<input type="file" id="load" accept=".json,application/json"></label>
+      <button type="button" id="download" title="Save the data shown here as climb.json">Download JSON</button>
+      <button type="button" id="theme" aria-label="Switch light or dark theme">Theme</button>
+    </div>
+  </div>
+  <div id="banner" role="status" aria-live="polite"></div>
+  <div class="tiles" id="tiles"></div>
+</header>
+<nav class="sections" aria-label="Sections">
+  <div class="wrap">
+    <a href="#timeline">Timeline</a>
+    <a href="#scores">Scores</a>
+    <a href="#findings">Findings</a>
+    <a href="#waves">Waves</a>
+    <a href="#decisions">Owner decisions</a>
+  </div>
+</nav>
+<main class="wrap">
+  <section id="timeline" aria-labelledby="h-timeline">
+    <h2 id="h-timeline">Timeline</h2>
+    <p class="small muted">Builds (filled dot), council rounds (ring) and the owner session, in time order. Select one for its scores, blockers, what changed after it and its evidence.</p>
+    <div class="track" id="track"></div>
+    <div class="days" id="days"></div>
+  </section>
+  <section id="scores" aria-labelledby="h-scores">
+    <h2 id="h-scores">Council scores</h2>
+    <div class="card chart-card">
+      <div class="legend" id="legend"></div>
+      <div class="chart" id="chart"></div>
+      <p class="small muted" id="chart-note"></p>
+      <details><summary>Show the scores as a table</summary><div class="scroll-x" id="score-table"></div></details>
+    </div>
+  </section>
+  <section id="findings" aria-labelledby="h-findings">
+    <h2 id="h-findings">Findings and bugs</h2>
+    <div class="filters">
+      <label>Status <select id="f-state"></select></label>
+      <label>Found in <select id="f-event"></select></label>
+      <label>Severity <select id="f-sev"></select></label>
+      <input type="search" id="f-text" placeholder="Search findings" aria-label="Search findings">
+      <span class="small muted" id="f-count"></span>
+    </div>
+    <div class="list" id="finding-list"></div>
+  </section>
+  <section id="waves" aria-labelledby="h-waves">
+    <h2 id="h-waves">Waves (changes)</h2>
+    <div class="grid2" id="wave-list"></div>
+  </section>
+  <section id="decisions" aria-labelledby="h-decisions">
+    <h2 id="h-decisions">Owner decisions</h2>
+    <div class="grid2" id="decision-list"></div>
+  </section>
+  <footer>
+    <div class="row">
+      <label for="base">Evidence folder (repo root, relative to this page):</label>
+      <input type="text" id="base" spellcheck="false">
+      <button type="button" id="base-reset">Reset</button>
+    </div>
+    <p>Standalone page: the data is embedded by <code>tools/climb-timeline/build.py</code> from <code>climb.json</code>. Images and documents are linked from the untracked <code>deploy/</code> folder; when it is absent the path is shown as text. Nothing here is sent anywhere.</p>
+  </footer>
+</main>
+<div class="scrim" id="scrim"></div>
+<aside class="detail" id="detail" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
+  <div class="bar"><h2 id="detail-title"></h2><button type="button" id="prev" aria-label="Previous event">‹</button><button type="button" id="next" aria-label="Next event">›</button><button type="button" id="close" aria-label="Close">✕</button></div>
+  <div class="body" id="detail-body"></div>
+</aside>
+<script id="climb-data" type="application/json">__CLIMB_JSON__</script>
+<script>
+(function () {
+  'use strict';
+  var DEFAULT_BASE = '../../';
+  var BASE_KEY = 'climb-timeline-base';
+  var THEME_KEY = 'climb-timeline-theme';
+  var STATE_LABEL = {'fixed': 'Fixed', 'pending': 'Fix pending', 'owner-accepted': 'Owner-accepted', 'listed': 'Listed', 'open': 'Open', 'closed': 'Closed'};
+  var STATE_ICON = {'fixed': '✓', 'pending': '◷', 'owner-accepted': '✎', 'listed': '≡', 'open': '!', 'closed': '•'};
+  var SEVERITIES = ['critical', 'major', 'minor', 'info'];
+  var SEAT_SHAPES = ['circle', 'square', 'diamond'];
+  var data = null;
+  var base = DEFAULT_BASE;
+
+  function store(key, value) { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch (e) {} }
+  function recall(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function esc(value) {
+    return String(value === null || value === undefined ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function $(id) { return document.getElementById(id); }
+  function href(path) { return base + String(path).split('/').map(encodeURIComponent).join('/'); }
+  function fileLink(path, label) { return '<a href="' + esc(href(path)) + '">' + esc(label || path) + '</a>'; }
+  function byId(list) { var map = {}; list.forEach(function (item) { map[item.id] = item; }); return map; }
+  function fmtDate(value) {
+    if (!value) return 'pending';
+    var parts = value.split('-');
+    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return Number(parts[2]) + ' ' + months[Number(parts[1]) - 1] + ' ' + parts[0];
+  }
+
+  /* ---------- Validation (mirrors build.py's main checks) ---------- */
+  function validate(d) {
+    var p = [];
+    if (!d || typeof d !== 'object') return ['The file is not a JSON object.'];
+    if (d.schemaVersion !== 1) p.push('schemaVersion must be 1.');
+    ['seats', 'events', 'waves', 'findings', 'decisions'].forEach(function (k) { if (!Array.isArray(d[k])) p.push('"' + k + '" must be a list.'); });
+    if (!d.project || typeof d.project !== 'object') p.push('"project" is missing.');
+    if (p.length) return p;
+    function ids(list, kind) {
+      var seen = {};
+      list.forEach(function (item, i) {
+        if (!item || typeof item.id !== 'string' || !item.id) { p.push(kind + '[' + i + '] needs an id.'); return; }
+        if (seen[item.id]) p.push(kind + ': duplicate id "' + item.id + '".');
+        seen[item.id] = item;
+      });
+      return seen;
+    }
+    var seats = ids(d.seats, 'seats'), events = ids(d.events, 'events'), waves = ids(d.waves, 'waves');
+    var findings = ids(d.findings, 'findings'), decisions = ids(d.decisions, 'decisions');
+    var order = {}; d.events.forEach(function (e, i) { order[e.id] = i; });
+    var last = null, lastId = null;
+    function badScore(v) { return !(Number.isInteger(v) && v >= 1 && v <= 10); }
+    d.events.forEach(function (e) {
+      ['kind', 'title', 'status', 'evidence'].forEach(function (k) { if (!(k in e)) p.push('event ' + e.id + ': missing "' + k + '".'); });
+      if (e.date !== null && e.date !== undefined) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date)) p.push('event ' + e.id + ': bad date.');
+        else { if (last && e.date < last) p.push('event ' + e.id + ': date is before ' + lastId + '.'); last = e.date; lastId = e.id; }
+      } else if (e.status === 'done') p.push('event ' + e.id + ': a done event needs a date.');
+      if (!e.evidence || !Array.isArray(e.evidence.pairs) || !Array.isArray(e.evidence.shots) || !Array.isArray(e.evidence.docs)) p.push('event ' + e.id + ': evidence needs pairs, shots and docs lists.');
+      if (e.kind === 'council') {
+        if (!(e.build in events)) p.push('event ' + e.id + ': unknown build "' + e.build + '".');
+        if (!Array.isArray(e.scores)) { p.push('event ' + e.id + ': scores must be a list.'); return; }
+        if (e.status === 'done' && e.scores.length !== d.seats.length) p.push('event ' + e.id + ': needs one score per seat.');
+        e.scores.forEach(function (s) {
+          if (!(s.seat in seats)) p.push('event ' + e.id + ': unknown seat "' + s.seat + '".');
+          if (badScore(s.score)) p.push('event ' + e.id + ': score for ' + s.seat + ' must be 1-10.');
+          if (s.uncapped !== null && s.uncapped !== undefined && badScore(s.uncapped)) p.push('event ' + e.id + ': uncapped score for ' + s.seat + ' must be 1-10.');
+          if (s.cap && badScore(s.cap.limit)) p.push('event ' + e.id + ': cap for ' + s.seat + ' must be 1-10.');
+        });
+      }
+    });
+    d.waves.forEach(function (w) {
+      if (!(w.after in events)) p.push('wave ' + w.id + ': unknown event "' + w.after + '".');
+      if (w.shippedIn !== null && !(w.shippedIn in events)) p.push('wave ' + w.id + ': unknown build "' + w.shippedIn + '".');
+      if (!Array.isArray(w.commits) || !Array.isArray(w.patches) || !Array.isArray(w.tests)) p.push('wave ' + w.id + ': patches, tests and commits must be lists.');
+    });
+    d.findings.forEach(function (f) {
+      if (!f.found || !(f.found.event in events)) p.push('finding ' + f.id + ': unknown event.');
+      (f.also || []).forEach(function (a) { if (!(a.event in events)) p.push('finding ' + f.id + ': unknown event "' + a.event + '".'); });
+      if (SEVERITIES.indexOf(f.severity) < 0) p.push('finding ' + f.id + ': bad severity.');
+      var s = f.status || {};
+      if (!(s.state in STATE_LABEL)) p.push('finding ' + f.id + ': bad status.');
+      if (s.wave !== undefined && !(s.wave in waves)) p.push('finding ' + f.id + ': unknown wave "' + s.wave + '".');
+      if (s.decision !== undefined && !(s.decision in decisions)) p.push('finding ' + f.id + ': unknown decision "' + s.decision + '".');
+      if ((s.state === 'fixed' || s.state === 'pending') && s.wave === undefined) p.push('finding ' + f.id + ': needs a wave.');
+      if (s.state === 'owner-accepted' && s.decision === undefined) p.push('finding ' + f.id + ': needs a decision.');
+      if (!Array.isArray(f.evidence)) p.push('finding ' + f.id + ': evidence must be a list.');
+    });
+    d.decisions.forEach(function (x) {
+      if (!(x.after in events)) p.push('decision ' + x.id + ': unknown event "' + x.after + '".');
+      if (!Array.isArray(x.items) || !x.items.length) p.push('decision ' + x.id + ': needs items.');
+    });
+    var text = JSON.stringify(d);
+    if (/\b(?:https?|ftp):\/\//i.test(text)) p.push('The data contains a URL; only repo-relative paths are allowed.');
+    if (/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(text)) p.push('The data contains an email address.');
+    return p;
+  }
+
+  /* ---------- Helpers over the data ---------- */
+  var idx = {};
+  function index() {
+    idx.events = byId(data.events); idx.waves = byId(data.waves); idx.findings = byId(data.findings);
+    idx.decisions = byId(data.decisions); idx.seats = byId(data.seats);
+    idx.seatOrder = {}; data.seats.forEach(function (s, i) { idx.seatOrder[s.id] = i; });
+    idx.order = {}; data.events.forEach(function (e, i) { idx.order[e.id] = i; });
+  }
+  function seatColor(seat) { return 'var(--s' + (idx.seatOrder[seat] + 1) + ')'; }
+  function seatShort(seat) { var n = idx.seats[seat] ? idx.seats[seat].name : seat; return n.replace(/^Claude /, '').replace(/^GPT-6\.1 /, ''); }
+  function findingsIn(eventId) {
+    return data.findings.filter(function (f) {
+      return f.found.event === eventId || (f.also || []).some(function (a) { return a.event === eventId; });
+    });
+  }
+  function wavesFixing(findingId) { var f = idx.findings[findingId]; return f && f.status.wave ? [f.status.wave] : []; }
+  function findingsForWave(waveId) { return data.findings.filter(function (f) { return f.status.wave === waveId; }); }
+  function eventLink(id) {
+    var e = idx.events[id];
+    return e ? '<button type="button" class="linkbtn" data-open="' + esc(id) + '">' + esc(e.title) + '</button>' : esc(id);
+  }
+  function waveLink(id) { return '<a href="#wave-' + esc(id) + '" data-wave="' + esc(id) + '">' + esc(id) + '</a>'; }
+  function decisionLink(id) { return '<a href="#decision-' + esc(id) + '" data-decision="' + esc(id) + '">' + esc(decisionLabel(id)) + '</a>'; }
+  function decisionLabel(id) { var x = idx.decisions[id]; return x ? (x.kind === 'spec' ? 'spec ' + id : x.kind === 'plan' ? 'plan ' + id : id) : id; }
+  function findingLink(id) { return '<a href="#finding-' + esc(id) + '" data-finding="' + esc(id) + '">' + esc(id) + '</a>'; }
+  function stateBadge(state) { return '<span class="st ' + esc(state) + '"><span aria-hidden="true">' + (STATE_ICON[state] || '') + '</span>' + esc(STATE_LABEL[state] || state) + '</span>'; }
+  function shapeSvg(shape, color, size) {
+    var h = size / 2;
+    if (shape === 'square') return '<svg width="' + size + '" height="' + size + '" aria-hidden="true"><rect x="1" y="1" width="' + (size - 2) + '" height="' + (size - 2) + '" fill="' + color + '"/></svg>';
+    if (shape === 'diamond') return '<svg width="' + size + '" height="' + size + '" aria-hidden="true"><path d="M' + h + ' 0L' + size + ' ' + h + 'L' + h + ' ' + size + 'L0 ' + h + 'Z" fill="' + color + '"/></svg>';
+    return '<svg width="' + size + '" height="' + size + '" aria-hidden="true"><circle cx="' + h + '" cy="' + h + '" r="' + (h - 1) + '" fill="' + color + '"/></svg>';
+  }
+  function seatShape(seat) { return SEAT_SHAPES[idx.seatOrder[seat] % SEAT_SHAPES.length]; }
+  function scoreText(s) {
+    var t = String(s.score);
+    if (s.cap) t += ' (cap ' + s.cap.limit + (s.uncapped ? ', ' + s.uncapped + ' without' : '') + ')';
+    return t;
+  }
+  function councilBefore(eventId) {
+    var i = idx.order[eventId];
+    for (var j = i - 1; j >= 0; j--) if (data.events[j].kind === 'council') return data.events[j];
+    return null;
+  }
+  function nextCouncil(eventId) {
+    var i = idx.order[eventId];
+    for (var j = i + 1; j < data.events.length; j++) if (data.events[j].kind === 'council') return data.events[j];
+    return null;
+  }
+
+  /* ---------- Header ---------- */
+  function renderHeader() {
+    var p = data.project;
+    document.title = 'Climb Timeline';
+    $('title').textContent = p.title || 'Climb timeline';
+    $('summary').textContent = p.summary || '';
+    $('updated').innerHTML = 'Updated ' + esc(fmtDate(p.updated)) + (p.record ? ' · record <code>' + esc(p.record) + '</code>' : '') +
+      (p.sources && p.sources.length ? ' · sources: ' + p.sources.map(function (s) { return fileLink(s.path, s.label); }).join(', ') : '');
+    var builds = data.events.filter(function (e) { return e.kind === 'build'; });
+    var done = builds.filter(function (e) { return e.status === 'done'; });
+    var runs = 0; done.forEach(function (b) { runs = Math.max(runs, Math.max.apply(null, b.pigenRuns)); });
+    var rounds = data.events.filter(function (e) { return e.kind === 'council' && e.status === 'done'; });
+    var latest = rounds[rounds.length - 1];
+    var counts = {}; data.findings.forEach(function (f) { counts[f.status.state] = (counts[f.status.state] || 0) + 1; });
+    var tiles = [];
+    if (latest) {
+      latest.scores.slice().sort(function (a, b) { return idx.seatOrder[a.seat] - idx.seatOrder[b.seat]; }).forEach(function (s) {
+        tiles.push('<div class="tile"><div class="k">' + shapeSvg(seatShape(s.seat), seatColor(s.seat), 10) + ' ' + esc(seatShort(s.seat)) + ' · ' + esc(latest.id) + '</div><div class="v">' + s.score + '<small>/10' + (s.cap ? ' · cap ' + s.cap.limit : '') + '</small></div></div>');
+      });
+    }
+    tiles.push('<div class="tile"><div class="k">Builds done (pi-gen runs)</div><div class="v">' + done.length + ' <small>(' + runs + ')</small></div></div>');
+    tiles.push('<div class="tile"><div class="k">Council rounds done</div><div class="v">' + rounds.length + ' <small>target ' + esc(p.target) + '+ on every seat</small></div></div>');
+    tiles.push('<div class="tile"><div class="k">Findings</div><div class="v">' + data.findings.length + ' <small>' + (counts.fixed || 0) + ' fixed · ' + (counts.pending || 0) + ' pending · ' + (counts.open || 0) + ' open</small></div></div>');
+    $('tiles').innerHTML = tiles.join('');
+  }
+
+  /* ---------- Timeline ---------- */
+  function eventChips(e) {
+    var c = [];
+    if (e.kind === 'build') {
+      if (e.head) c.push('<span class="chip">head <b class="mono">' + esc(e.head) + '</b></span>');
+      c.push('<span class="chip">pi-gen run <b>' + esc(e.pigenRuns.join(', ')) + '</b></span>');
+      if (e.patches !== null && e.patches !== undefined) c.push('<span class="chip"><b>' + esc(e.patches) + '</b> patches</span>');
+      if (e.gate && e.gate.native) c.push('<span class="chip">gate <b>' + e.gate.native.passed + '/' + e.gate.native.total + '</b>, ' + e.gate.native.skips + ' skips</span>');
+      if (e.acceptance && e.acceptance.checks !== null) c.push('<span class="chip">acceptance <b>' + e.acceptance.pass + ' PASS</b> · ' + e.acceptance.fail + ' FAIL' + (e.acceptance.blocked ? ' · ' + e.acceptance.blocked + ' BLOCKED' : '') + '</span>');
+    } else if (e.kind === 'council') {
+      e.scores.slice().sort(function (a, b) { return idx.seatOrder[a.seat] - idx.seatOrder[b.seat]; }).forEach(function (s) {
+        c.push('<span class="chip score-pill">' + shapeSvg(seatShape(s.seat), seatColor(s.seat), 9) + esc(seatShort(s.seat)) + ' <b>' + esc(scoreText(s)) + '</b></span>');
+      });
+      if (e.build) c.push('<span class="chip">scored build <b>' + esc(e.build) + '</b></span>');
+    } else if (e.acceptance) {
+      c.push('<span class="chip"><b>' + e.acceptance.pass + ' PASS</b> · ' + e.acceptance.fail + ' FAIL of ' + e.acceptance.checks + '</span>');
+    }
+    var n = findingsIn(e.id).length;
+    if (n) c.push('<span class="chip"><b>' + n + '</b> finding' + (n === 1 ? '' : 's') + '</span>');
+    if (e.status === 'pending') c.push('<span class="st pending"><span aria-hidden="true">◷</span>Pending</span>');
+    return c.join('');
+  }
+  function renderTimeline() {
+    $('track').innerHTML = data.events.map(function (e) {
+      return '<button type="button" class="' + esc(e.kind) + (e.status === 'pending' ? ' pending' : '') + '" data-open="' + esc(e.id) + '"><span class="dot" aria-hidden="true"></span>' + esc(e.id) + '</button>';
+    }).join('');
+    var groups = [];
+    data.events.forEach(function (e) {
+      var key = e.date || 'pending';
+      if (!groups.length || groups[groups.length - 1].key !== key) groups.push({key: key, events: []});
+      groups[groups.length - 1].events.push(e);
+    });
+    $('days').innerHTML = groups.map(function (g) {
+      return '<div class="day"><div class="date">' + esc(g.key === 'pending' ? 'Pending' : fmtDate(g.key)) + '</div><div class="events">' +
+        g.events.map(function (e) {
+          return '<div class="ev card ' + esc(e.kind) + (e.status === 'pending' ? ' pending' : '') + '" role="button" tabindex="0" data-open="' + esc(e.id) + '" id="event-' + esc(e.id) + '">' +
+            '<div class="head"><h3>' + esc(e.title) + '</h3><span class="idtag">' + esc(e.kind) + ' · ' + esc(e.id) + '</span></div>' +
+            '<p>' + esc(e.summary) + '</p><div class="chips">' + eventChips(e) + '</div></div>';
+        }).join('') + '</div></div>';
+    }).join('');
+  }
+
+  /* ---------- Score chart ---------- */
+  function renderChart() {
+    var rounds = data.events.filter(function (e) { return e.kind === 'council'; });
+    var target = data.project.target;
+    $('legend').innerHTML = data.seats.map(function (s) {
+      return '<span>' + shapeSvg(seatShape(s.id), seatColor(s.id), 12) + esc(s.name) + '</span>';
+    }).join('') + '<span><svg width="22" height="10" aria-hidden="true"><line x1="0" y1="5" x2="22" y2="5" stroke="var(--target)" stroke-width="1.5" stroke-dasharray="6 4"/></svg>Target ' + esc(target) + '</span>' +
+      '<span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="var(--surface)" stroke="var(--ink-2)" stroke-width="2"/></svg>Score without the cap</span>';
+    if (!rounds.length) { $('chart').innerHTML = '<p class="empty">No council rounds yet.</p>'; return; }
+    var W = 720, H = 300, L = 36, R = 92, T = 14, B = 34, PAD = 28;
+    var pw = W - L - R, ph = H - T - B;
+    var lowest = 10;
+    rounds.forEach(function (r) { (r.scores || []).forEach(function (s) { lowest = Math.min(lowest, s.score); }); });
+    var lo = Math.max(0, Math.min(4, Math.floor((lowest - 1) / 2) * 2)), hi = 10;
+    var step = rounds.length > 1 ? (pw - 2 * PAD) / (rounds.length - 1) : 0;
+    function x(i) { return L + PAD + (rounds.length > 1 ? i * step : (pw - 2 * PAD) / 2); }
+    function y(v) { return T + ph - ((v - lo) / (hi - lo)) * ph; }
+    var off = {}; data.seats.forEach(function (s, i) { off[s.id] = (i - (data.seats.length - 1) / 2) * 10; });
+    var out = [];
+    out.push('<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Council scores per seat across rounds (axis ' + lo + ' to ' + hi + '), with the target line at ' + esc(target) + '">');
+    rounds.forEach(function (r, i) {
+      if (r.status === 'pending') out.push('<rect class="pending-band" x="' + (x(i) - Math.min(step, 60) / 2) + '" y="' + T + '" width="' + Math.min(step, 60) + '" height="' + ph + '" rx="4"/>');
+    });
+    out.push('<g class="grid">');
+    for (var v = lo; v <= hi; v += 1) out.push('<line x1="' + L + '" x2="' + (L + pw) + '" y1="' + y(v) + '" y2="' + y(v) + '"/>');
+    out.push('</g><g class="axis">');
+    for (v = lo; v <= hi; v += 1) out.push('<text x="' + (L - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + v + '</text>');
+    rounds.forEach(function (r, i) {
+      out.push('<g class="xlabel" data-open="' + esc(r.id) + '" tabindex="0" role="button" aria-label="Open ' + esc(r.title) + '"><rect x="' + (x(i) - 22) + '" y="' + (T + ph + 4) + '" width="44" height="26" fill="transparent"/><text x="' + x(i) + '" y="' + (T + ph + 22) + '" text-anchor="middle">' + esc(r.id) + '</text>' + (r.status === 'pending' ? '<text x="' + x(i) + '" y="' + (T + ph - 8) + '" text-anchor="middle" font-size="11">pending</text>' : '') + '</g>');
+    });
+    out.push('</g>');
+    out.push('<g class="target"><line x1="' + L + '" x2="' + (L + pw) + '" y1="' + y(target) + '" y2="' + y(target) + '"/><text x="' + (L + pw + 6) + '" y="' + (y(target) - 6) + '">target ' + esc(target) + '</text></g>');
+    var hits = [];
+    data.seats.forEach(function (seat) {
+      var color = seatColor(seat.id), pts = [];
+      rounds.forEach(function (r, i) {
+        (r.scores || []).forEach(function (s) { if (s.seat === seat.id) pts.push({i: i, r: r, s: s}); });
+      });
+      if (!pts.length) return;
+      out.push('<g class="series">');
+      out.push('<path class="line" stroke="' + color + '" d="' + pts.map(function (p, k) { return (k ? 'L' : 'M') + (x(p.i) + off[seat.id]) + ' ' + y(p.s.score); }).join(' ') + '"/>');
+      pts.forEach(function (p) {
+        var cx = x(p.i) + off[seat.id], cy = y(p.s.score);
+        if (p.s.uncapped) {
+          var uy = y(p.s.uncapped);
+          out.push('<line class="capline" stroke="' + color + '" x1="' + cx + '" x2="' + cx + '" y1="' + cy + '" y2="' + uy + '"/>');
+          out.push(marker(seatShape(seat.id), cx, uy, 4.5, 'uncapped', 'stroke="' + color + '"'));
+        }
+        out.push(marker(seatShape(seat.id), cx, cy, 5, 'mark', 'fill="' + color + '"'));
+        hits.push({cx: cx, cy: cy, seat: seat, p: p});
+      });
+      var lastP = pts[pts.length - 1];
+      var labelX = x(lastP.i) + Math.max.apply(null, Object.keys(off).map(function (k) { return off[k]; })) + 12;
+      out.push('<text class="dlabel" x="' + labelX + '" y="' + (y(lastP.s.score) + 4 + labelNudge(seat.id, lastP, pts)) + '">' + esc(seatShort(seat.id).split(' ')[0]) + ' ' + lastP.s.score + '</text>');
+      out.push('</g>');
+    });
+    hits.forEach(function (h, k) {
+      out.push('<circle class="hit" data-hit="' + k + '" cx="' + h.cx + '" cy="' + h.cy + '" r="11" tabindex="0" aria-label="' + esc(h.seat.name + ', ' + h.p.r.title + ': ' + scoreText(h.p.s)) + '"/>');
+    });
+    out.push('</svg><div class="tooltip" id="tip"></div>');
+    $('chart').innerHTML = out.join('');
+    var tip = $('tip'), chart = $('chart');
+    function show(evt) {
+      var k = evt.target.getAttribute('data-hit'); if (k === null) return;
+      var h = hits[Number(k)], s = h.p.s;
+      tip.innerHTML = '<b>' + esc(h.seat.name) + '</b><br>' + esc(h.p.r.title) + ' (build ' + esc(h.p.r.build) + ')<br>Score <b>' + esc(s.score) + '</b>/10' +
+        (s.cap ? '<br>Cap ' + esc(s.cap.limit) + ': ' + esc(s.cap.reason) : '') + (s.uncapped ? '<br>Without the cap: ' + esc(s.uncapped) : '') +
+        (s.standIn ? '<br>Stand-in: ' + esc(s.standIn.model) + ' for ' + esc(s.standIn.replaced) : '');
+      tip.style.display = 'block';
+      var box = chart.getBoundingClientRect(), scale = box.width / W;
+      var left = h.cx * scale + 12, top = h.cy * scale - 10;
+      if (left + 260 > box.width) left = Math.max(0, h.cx * scale - 272);
+      tip.style.left = left + 'px'; tip.style.top = Math.max(0, top) + 'px';
+    }
+    function hide() { tip.style.display = 'none'; }
+    chart.querySelectorAll('.hit').forEach(function (c) {
+      c.addEventListener('pointerenter', show); c.addEventListener('focus', show);
+      c.addEventListener('pointerleave', hide); c.addEventListener('blur', hide);
+      c.addEventListener('click', function () { openEvent(hits[Number(c.getAttribute('data-hit'))].p.r.id); });
+    });
+    var stand = [];
+    rounds.forEach(function (r) { (r.scores || []).forEach(function (s) { if (s.standIn) stand.push(r.id + ': ' + s.standIn.model + ' for ' + s.standIn.replaced + ' (' + s.standIn.reason + ')'); }); });
+    $('chart-note').textContent = 'The axis runs from ' + lo + ' to ' + hi + '. Filled marks are the scores given; a hollow mark joined by a dashed line is the score the seat would give without a hard cap. Marks at the same score sit side by side. ' +
+      (stand.length ? 'Stand-in seats: ' + stand.join('; ') + '.' : 'Every seat in every round was the real seat; no stand-ins.');
+    renderScoreTable(rounds);
+  }
+  function labelNudge(seatId, lastP, pts) {
+    /* Spread direct labels that would sit on the same score. */
+    var same = data.seats.filter(function (s) {
+      var r = lastP.r; var sc = (r.scores || []).filter(function (q) { return q.seat === s.id; })[0];
+      return sc && sc.score === lastP.s.score;
+    }).map(function (s) { return s.id; });
+    var k = same.indexOf(seatId);
+    return k < 0 ? 0 : (k - (same.length - 1) / 2) * 15;
+  }
+  function marker(shape, cx, cy, r, cls, paint) {
+    if (shape === 'square') return '<rect class="' + cls + '" ' + paint + ' x="' + (cx - r) + '" y="' + (cy - r) + '" width="' + (2 * r) + '" height="' + (2 * r) + '"/>';
+    if (shape === 'diamond') { var d = r * 1.3; return '<path class="' + cls + '" ' + paint + ' d="M' + cx + ' ' + (cy - d) + 'L' + (cx + d) + ' ' + cy + 'L' + cx + ' ' + (cy + d) + 'L' + (cx - d) + ' ' + cy + 'Z"/>'; }
+    return '<circle class="' + cls + '" ' + paint + ' cx="' + cx + '" cy="' + cy + '" r="' + r + '"/>';
+  }
+  function renderScoreTable(rounds) {
+    var head = '<tr><th>Round</th><th>Build</th>' + data.seats.map(function (s) { return '<th class="num">' + esc(s.name) + '</th>'; }).join('') + '</tr>';
+    var rows = rounds.map(function (r) {
+      return '<tr><td>' + eventLink(r.id) + '</td><td>' + esc(r.build || '') + '</td>' + data.seats.map(function (seat) {
+        var s = (r.scores || []).filter(function (q) { return q.seat === seat.id; })[0];
+        return '<td class="num">' + (s ? esc(scoreText(s)) : '<span class="muted">pending</span>') + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
+    $('score-table').innerHTML = '<table><thead>' + head + '</thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  /* ---------- Findings ---------- */
+  function fillSelect(el, options, keep) {
+    el.innerHTML = options.map(function (o) { return '<option value="' + esc(o[0]) + '">' + esc(o[1]) + '</option>'; }).join('');
+    if (keep && options.some(function (o) { return o[0] === keep; })) el.value = keep;
+  }
+  function renderFindingFilters() {
+    var counts = {}; data.findings.forEach(function (f) { counts[f.status.state] = (counts[f.status.state] || 0) + 1; });
+    fillSelect($('f-state'), [['', 'All']].concat(Object.keys(STATE_LABEL).filter(function (k) { return counts[k]; }).map(function (k) { return [k, STATE_LABEL[k] + ' (' + counts[k] + ')']; })), $('f-state').value);
+    fillSelect($('f-event'), [['', 'Any round or build']].concat(data.events.filter(function (e) { return findingsIn(e.id).length; }).map(function (e) { return [e.id, e.title + ' (' + findingsIn(e.id).length + ')']; })), $('f-event').value);
+    fillSelect($('f-sev'), [['', 'Any']].concat(SEVERITIES.map(function (s) { return [s, s]; })), $('f-sev').value);
+  }
+  function foundText(found) { return eventLink(found.event) + ' <span class="muted">(' + esc(found.by) + ')</span>'; }
+  function findingCard(f) {
+    var s = f.status, meta = [];
+    meta.push('<span>Found: ' + foundText(f.found) + ((f.also || []).length ? '; also ' + f.also.map(foundText).join(', ') : '') + '</span>');
+    if (s.wave) meta.push('<span>Wave: ' + waveLink(s.wave) + (idx.waves[s.wave] && idx.waves[s.wave].shippedIn ? ' → build ' + eventLink(idx.waves[s.wave].shippedIn) : '') + '</span>');
+    if (s.decision) meta.push('<span>Decision: ' + decisionLink(s.decision) + '</span>');
+    return '<article class="card finding" id="finding-' + esc(f.id) + '"><div class="top">' + stateBadge(s.state) + '<span class="sev ' + esc(f.severity) + '">' + esc(f.severity) + '</span><span class="idtag">' + esc(f.id) + '</span></div>' +
+      '<h3>' + esc(f.title) + '</h3><div class="meta">' + meta.join('') + '</div>' +
+      (s.note ? '<p class="small muted" style="margin:.35rem 0 0">' + esc(s.note) + '</p>' : '') +
+      (f.evidence.length ? '<div class="small" style="margin-top:4px">Evidence: ' + f.evidence.map(function (p) { return fileLink(p); }).join(' · ') + '</div>' : '') + '</article>';
+  }
+  function renderFindings() {
+    var st = $('f-state').value, ev = $('f-event').value, sev = $('f-sev').value, q = $('f-text').value.trim().toLowerCase();
+    var list = data.findings.filter(function (f) {
+      if (st && f.status.state !== st) return false;
+      if (sev && f.severity !== sev) return false;
+      if (ev && f.found.event !== ev && !(f.also || []).some(function (a) { return a.event === ev; })) return false;
+      if (q && (f.id + ' ' + f.title + ' ' + (f.status.note || '') + ' ' + (f.status.wave || '') + ' ' + (f.status.decision || '')).toLowerCase().indexOf(q) < 0) return false;
+      return true;
+    });
+    $('f-count').textContent = list.length + ' of ' + data.findings.length;
+    $('finding-list').innerHTML = list.length ? list.map(findingCard).join('') : '<p class="empty">No finding matches these filters.</p>';
+  }
+
+  /* ---------- Waves ---------- */
+  function waveCard(w) {
+    var fixes = findingsForWave(w.id);
+    var status = w.status === 'reverted' ? '<span class="st">↶ Reverted</span>' : w.status === 'pending' ? '<span class="st pending"><span aria-hidden="true">◷</span>Pending</span>' : '<span class="st fixed"><span aria-hidden="true">✓</span>Shipped</span>';
+    return '<article class="card wave ' + esc(w.status) + '" id="wave-' + esc(w.id) + '"><div class="top" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' + status + '<span class="idtag">' + esc(w.id) + '</span>' + (w.layer ? '<span class="chip">' + esc(w.layer) + '</span>' : '') + '</div>' +
+      '<h3>' + esc(w.id) + ' · ' + esc(w.title) + '</h3><p class="small" style="margin:.2rem 0 0">' + esc(w.fixes) + '</p><dl>' +
+      '<dt>Patch</dt><dd>' + (w.patches.length ? w.patches.map(function (p) { return '<code>' + esc(p) + '</code>'; }).join(' ') : '<span class="muted">skin or record only</span>') + '</dd>' +
+      '<dt>Native test</dt><dd>' + (w.tests.length ? w.tests.map(function (t) { return '<code>' + esc(t) + '</code>'; }).join(' ') : '<span class="muted">none recorded</span>') + '</dd>' +
+      '<dt>Commits</dt><dd class="mono">' + esc(w.commits.join(' ')) + '</dd>' +
+      '<dt>Started after</dt><dd>' + eventLink(w.after) + '</dd>' +
+      '<dt>Shipped in</dt><dd>' + (w.shippedIn ? eventLink(w.shippedIn) : '<span class="muted">not shipped</span>') + '</dd>' +
+      (w.builders && w.builders.length ? '<dt>Builders</dt><dd>' + esc(w.builders.join(', ')) + '</dd>' : '') +
+      '<dt>Findings</dt><dd>' + (fixes.length ? fixes.map(function (f) { return findingLink(f.id); }).join(', ') : '<span class="muted">none linked</span>') + '</dd>' +
+      (w.brief ? '<dt>Brief</dt><dd>' + fileLink(w.brief, w.brief.split('/').pop()) + '</dd>' : '') +
+      (w.note ? '<dt>Note</dt><dd>' + esc(w.note) + '</dd>' : '') + '</dl></article>';
+  }
+  function renderWaves() { $('wave-list').innerHTML = data.waves.map(waveCard).join(''); }
+
+  /* ---------- Decisions ---------- */
+  function decisionCard(x) {
+    var accepted = data.findings.filter(function (f) { return f.status.decision === x.id; });
+    return '<article class="card decision" id="decision-' + esc(x.id) + '"><div class="top" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="chip"><b>' + esc(decisionLabel(x.id)) + '</b></span><span class="small muted">' + esc(fmtDate(x.date)) + ' · after ' + eventLink(x.after) + '</span></div>' +
+      '<h3 style="margin-top:6px">' + esc(x.title) + '</h3><ul>' + x.items.map(function (it) {
+        return '<li>' + esc(it.text) + (it.quote ? '<blockquote>“' + esc(it.quote) + '”</blockquote>' : '') + '</li>';
+      }).join('') + '</ul>' +
+      (accepted.length ? '<p class="small" style="margin:.5rem 0 0">Findings: ' + accepted.map(function (f) { return findingLink(f.id); }).join(', ') + '</p>' : '') +
+      '<p class="small" style="margin:.3rem 0 0">Source: ' + fileLink(x.source, x.source.split('/').pop()) + '</p></article>';
+  }
+  function renderDecisions() { $('decision-list').innerHTML = data.decisions.map(decisionCard).join(''); }
+
+  /* ---------- Detail panel ---------- */
+  var current = null, lastFocus = null;
+  function pairFigure(path) {
+    var name = path.split('/').pop();
+    var label = path.split('/').slice(-3, -2)[0] || '';
+    return '<figure><img loading="lazy" alt="Mockup (left) and card (right): ' + esc(name) + '" src="' + esc(href(path)) + '" data-path="' + esc(path) + '"><figcaption>' + fileLink(path, label + ' › ' + name) + '</figcaption></figure>';
+  }
+  function linkList(paths) { return '<ul class="links">' + paths.map(function (p) { return '<li>' + fileLink(p) + '</li>'; }).join('') + '</ul>'; }
+  function detailHtml(e) {
+    var parts = [];
+    parts.push('<div class="chips">' + eventChips(e) + '</div><p style="margin:0">' + esc(e.summary) + '</p>');
+    if (e.kind === 'build') {
+      var dl = [];
+      dl.push(['Date', esc(fmtDate(e.date))]);
+      dl.push(['Head', e.head ? '<code>' + esc(e.head) + '</code>' : '<span class="muted">pending</span>']);
+      dl.push(['pi-gen run', esc(e.pigenRuns.join(', '))]);
+      dl.push(['Patches', esc(e.patches === null ? 'unknown' : e.patches)]);
+      if (e.deb) dl.push(['.deb', '<code>' + esc(e.deb) + '</code>']);
+      dl.push(['Duration', esc(e.duration || 'not recorded')]);
+      if (e.gate) {
+        var n = e.gate.native, m = e.gate.mac;
+        dl.push(['Native gate', n ? esc(n.passed + '/' + n.total + ', ' + n.skips + ' skips at ') + '<code>' + esc(n.at) + '</code>' + (n.log ? ' · ' + fileLink(n.log, 'log') : '') : '—']);
+        dl.push(['Mac suite', m ? esc((m.run === null ? 'count not recorded' : m.run + ' run') + ', ' + m.result + (m.skips !== null ? ' (' + m.skips + ' platform skips)' : '') + ' at ') + '<code>' + esc(m.at) + '</code>' : '—']);
+        if (e.gate.note) dl.push(['Gate note', esc(e.gate.note)]);
+      } else dl.push(['Gate', '<span class="muted">pending</span>']);
+      if (e.acceptance) {
+        var a = e.acceptance;
+        dl.push(['Acceptance', (a.checks === null ? 'not counted' : esc(a.checks + ' checks: ' + a.pass + ' PASS, ' + a.fail + ' FAIL, ' + a.blocked + ' BLOCKED' + (a.other ? ', ' + a.other + ' other' : ''))) + ' · ' + fileLink(a.path, 'report')]);
+        if (a.note) dl.push(['Acceptance note', esc(a.note)]);
+      } else dl.push(['Acceptance', '<span class="muted">pending</span>']);
+      if (e.kit) dl.push(['Kit', fileLink(e.kit)]);
+      parts.push('<div class="card"><dl>' + dl.map(function (r) { return '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>'; }).join('') + '</dl></div>');
+      var shipped = data.waves.filter(function (w) { return w.shippedIn === e.id; });
+      parts.push('<div><h3>Waves shipped in this build</h3>' + (shipped.length ? '<ul class="links">' + shipped.map(function (w) { return '<li>' + waveLink(w.id) + ' ' + esc(w.title) + (w.status === 'pending' ? ' <span class="muted">(pending)</span>' : '') + '</li>'; }).join('') + '</ul>' : '<p class="empty">None recorded.</p>') + '</div>');
+      var prev = councilBefore(e.id);
+      if (prev) parts.push('<p class="small muted" style="margin:0">Follows ' + eventLink(prev.id) + '.</p>');
+    }
+    if (e.kind === 'session' && e.acceptance) {
+      var s = e.acceptance;
+      parts.push('<div class="card"><dl><dt>Date</dt><dd>' + esc(fmtDate(e.date)) + '</dd><dt>On build</dt><dd>' + eventLink(e.build) + '</dd><dt>Result</dt><dd>' + esc(s.checks + ' items: ' + s.pass + ' PASS, ' + s.fail + ' FAIL' + (s.other ? ', ' + s.other + ' other' : '')) + ' · ' + fileLink(s.path, 'record') + '</dd>' + (s.note ? '<dt>Note</dt><dd>' + esc(s.note) + '</dd>' : '') + '</dl></div>');
+    }
+    if (e.kind === 'council') {
+      parts.push('<div class="card"><dl><dt>Date</dt><dd>' + esc(fmtDate(e.date)) + '</dd><dt>Head</dt><dd>' + (e.head ? '<code>' + esc(e.head) + '</code>' : '<span class="muted">pending</span>') + '</dd><dt>Scored</dt><dd>' + eventLink(e.build) + '</dd></dl></div>');
+      if (e.scores.length) {
+        parts.push('<div class="card"><h3>Scores and blockers</h3>' + e.scores.slice().sort(function (a, b) { return idx.seatOrder[a.seat] - idx.seatOrder[b.seat]; }).map(function (s) {
+          return '<div class="seat-row"><div class="score-pill">' + shapeSvg(seatShape(s.seat), seatColor(s.seat), 11) + ' <b>' + esc(idx.seats[s.seat] ? idx.seats[s.seat].name : s.seat) + '</b>: ' + esc(s.score) + '/10' +
+            (s.cap ? ', capped at ' + esc(s.cap.limit) + (s.uncapped ? ' (' + esc(s.uncapped) + ' without)' : '') : '') + '</div>' +
+            (s.cap ? '<div class="small muted">Cap: ' + esc(s.cap.reason) + '</div>' : '') +
+            '<div class="small muted">' + (s.standIn ? 'Stand-in: ' + esc(s.standIn.model) + ' for ' + esc(s.standIn.replaced) + ' (' + esc(s.standIn.reason) + ')' : 'The real seat, no stand-in.') + ' · ' + fileLink(s.report, 'report') + '</div>' +
+            (s.blockers.length ? '<ul class="small">' + s.blockers.map(function (b) { return '<li>' + esc(b) + '</li>'; }).join('') + '</ul>' : '<div class="small">No blockers.</div>') + '</div>';
+        }).join('') + '</div>');
+      } else parts.push('<p class="empty">Scores pending.</p>');
+      var after = data.waves.filter(function (w) { return w.after === e.id; });
+      var nxt = nextCouncil(e.id);
+      var builds = data.events.filter(function (b) { return b.kind === 'build' && idx.order[b.id] > idx.order[e.id] && (!nxt || idx.order[b.id] < idx.order[nxt.id]); });
+      var decs = data.decisions.filter(function (x) { return x.after === e.id; });
+      parts.push('<div><h3>What changed after it</h3>' +
+        (decs.length ? '<p class="small" style="margin:0 0 4px">Owner decisions: ' + decs.map(function (x) { return decisionLink(x.id); }).join(', ') + '</p>' : '') +
+        (after.length ? '<ul class="links">' + after.map(function (w) { return '<li>' + waveLink(w.id) + ' ' + esc(w.title) + ' <span class="muted">(' + (w.shippedIn ? 'build ' + esc(w.shippedIn) : esc(w.status)) + (w.status === 'reverted' ? ', reverted' : '') + ')</span></li>'; }).join('') + '</ul>' : '<p class="empty">No waves started after this round.</p>') +
+        (builds.length ? '<p class="small" style="margin:4px 0 0">Builds before the next round: ' + builds.map(function (b) { return eventLink(b.id); }).join(', ') + '</p>' : '') + '</div>');
+    }
+    var found = findingsIn(e.id);
+    parts.push('<div><h3>Findings raised here</h3>' + (found.length ? '<div class="list">' + found.map(findingCard).join('') + '</div>' : '<p class="empty">None recorded.</p>') + '</div>');
+    var pairs = e.evidence.pairs.slice();
+    if (!pairs.length && e.kind === 'council' && e.build && idx.events[e.build]) pairs = idx.events[e.build].evidence.pairs.slice();
+    if (pairs.length) parts.push('<div><h3>Mockup / card pairs</h3><div class="pairs">' + pairs.map(pairFigure).join('') + '</div></div>');
+    var docs = [];
+    if (e.kind === 'council') e.scores.forEach(function (s) { docs.push(s.report); });
+    if (e.acceptance) docs.push(e.acceptance.path);
+    docs = docs.concat(e.evidence.docs, e.evidence.shots);
+    if (docs.length) parts.push('<div><h3>Reports, shots and documents</h3>' + linkList(docs) + '</div>');
+    return parts.join('');
+  }
+  function openEvent(id) {
+    var e = idx.events[id]; if (!e) return;
+    if (!current) lastFocus = document.activeElement;
+    current = id;
+    $('detail-title').textContent = e.title + (e.date ? ' · ' + fmtDate(e.date) : ' · pending');
+    $('detail-body').innerHTML = detailHtml(e);
+    $('detail-body').querySelectorAll('img[data-path]').forEach(function (img) {
+      img.addEventListener('error', function () {
+        var span = document.createElement('span');
+        span.className = 'missing';
+        span.textContent = img.getAttribute('data-path') + ' (not found: the deploy/ evidence folder is not next to this checkout)';
+        img.replaceWith(span);
+      }, {once: true});
+    });
+    var i = idx.order[id];
+    $('prev').disabled = i === 0; $('next').disabled = i === data.events.length - 1;
+    $('detail').classList.add('open'); $('scrim').classList.add('open');
+    $('detail').scrollTop = 0; $('detail').focus();
+    try { history.replaceState(null, '', '#event=' + encodeURIComponent(id)); } catch (err) {}
+  }
+  function closeDetail() {
+    current = null;
+    $('detail').classList.remove('open'); $('scrim').classList.remove('open');
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (err) {}
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  function step(delta) { if (!current) return; var i = idx.order[current] + delta; if (i >= 0 && i < data.events.length) openEvent(data.events[i].id); }
+
+  /* ---------- Wiring ---------- */
+  function jumpTo(id) {
+    var el = $(id); if (!el) return;
+    if (current) closeDetail();
+    el.scrollIntoView({behavior: 'smooth', block: 'center'});
+    el.style.outline = '2px solid var(--accent)'; setTimeout(function () { el.style.outline = ''; }, 1600);
+  }
+  document.addEventListener('click', function (evt) {
+    var t = evt.target.closest('[data-open],[data-wave],[data-decision],[data-finding]');
+    if (!t) return;
+    if (t.hasAttribute('data-open')) { evt.preventDefault(); openEvent(t.getAttribute('data-open')); return; }
+    if (t.hasAttribute('data-finding')) {
+      evt.preventDefault();
+      if (!$('finding-' + t.getAttribute('data-finding'))) { $('f-state').value = ''; $('f-event').value = ''; $('f-sev').value = ''; $('f-text').value = ''; renderFindings(); }
+      jumpTo('finding-' + t.getAttribute('data-finding')); return;
+    }
+    evt.preventDefault();
+    jumpTo(t.hasAttribute('data-wave') ? 'wave-' + t.getAttribute('data-wave') : 'decision-' + t.getAttribute('data-decision'));
+  });
+  document.addEventListener('keydown', function (evt) {
+    if ((evt.key === 'Enter' || evt.key === ' ') && evt.target.matches && evt.target.matches('[role="button"][data-open]')) { evt.preventDefault(); openEvent(evt.target.getAttribute('data-open')); }
+    if (!current) return;
+    if (evt.key === 'Escape') closeDetail();
+    if (evt.key === 'ArrowLeft') step(-1);
+    if (evt.key === 'ArrowRight') step(1);
+  });
+  $('close').addEventListener('click', closeDetail);
+  $('scrim').addEventListener('click', closeDetail);
+  $('prev').addEventListener('click', function () { step(-1); });
+  $('next').addEventListener('click', function () { step(1); });
+  ['f-state', 'f-event', 'f-sev'].forEach(function (id) { $(id).addEventListener('change', renderFindings); });
+  $('f-text').addEventListener('input', renderFindings);
+
+  function banner(kind, html) { $('banner').innerHTML = html ? '<div class="banner ' + kind + '">' + html + '</div>' : ''; }
+  $('load').addEventListener('change', function () {
+    var file = this.files && this.files[0]; if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed;
+      try { parsed = JSON.parse(String(reader.result)); } catch (err) { banner('error', 'Could not read <b>' + esc(file.name) + '</b>: not valid JSON (' + esc(err.message) + ').'); return; }
+      var problems = validate(parsed);
+      if (problems.length) { banner('error', '<b>' + esc(file.name) + '</b> was not loaded; ' + problems.length + ' problem' + (problems.length === 1 ? '' : 's') + ':<ul>' + problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul>'); return; }
+      if (current) closeDetail();
+      data = parsed; renderAll();
+      banner('ok', 'Showing <b>' + esc(file.name) + '</b>. It is not saved into this page; run <code>build.py</code> to embed it.');
+    };
+    reader.onerror = function () { banner('error', 'Could not read the file.'); };
+    reader.readAsText(file);
+    this.value = '';
+  });
+  $('download').addEventListener('click', function () {
+    var blob = new Blob([JSON.stringify(data, null, 2) + '\n'], {type: 'application/json'});
+    var url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = 'climb.json'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  });
+  function applyTheme(t) { if (t) document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme'); }
+  $('theme').addEventListener('click', function () {
+    var dark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+      (!document.documentElement.getAttribute('data-theme') && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    var next = dark ? 'light' : 'dark'; applyTheme(next); store(THEME_KEY, next); renderChart();
+  });
+  function setBase(value) {
+    base = value && value.trim() ? value.trim() : DEFAULT_BASE;
+    if (!/\/$/.test(base)) base += '/';
+    $('base').value = base;
+  }
+  $('base').addEventListener('change', function () { setBase(this.value); store(BASE_KEY, base === DEFAULT_BASE ? null : base); renderAll(); });
+  $('base-reset').addEventListener('click', function () { setBase(DEFAULT_BASE); store(BASE_KEY, null); renderAll(); });
+
+  function renderAll() {
+    index(); renderHeader(); renderTimeline(); renderChart(); renderFindingFilters(); renderFindings(); renderWaves(); renderDecisions();
+  }
+  function start() {
+    applyTheme(recall(THEME_KEY));
+    setBase(recall(BASE_KEY));
+    try { data = JSON.parse($('climb-data').textContent); } catch (err) { banner('error', 'The embedded data could not be read.'); return; }
+    var problems = validate(data);
+    if (problems.length) banner('error', 'The embedded data has problems:<ul>' + problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul>');
+    renderAll();
+    var m = /^#event=(.+)$/.exec(location.hash);
+    if (m) openEvent(decodeURIComponent(m[1]));
+  }
+  start();
+}());
+</script>
+</body>
+</html>

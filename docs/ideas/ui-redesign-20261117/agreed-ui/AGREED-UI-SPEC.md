@@ -252,6 +252,11 @@ The owner read council round 2 (all three seats at 6) and decided the following.
   - Like every setting, the zoom is saved within a second and is the same after a restart.
   - **The Loop panel stays as it is,** with its − and + on the focused deck's waveform.
   - The new row is the last one on the page, after CPU readout. Its buttons are neutral Navigate-style buttons, 48 px tall, like the page's other buttons.
+  - **Fit:** at 800×480 the five rows above go from 66 to 65 px so the sixth fits (the owner saw the render). **While the desktop top bar is shown**, the Interface rows get shorter (about 57 px) so all six fit; buttons stay 48 px. Owner: "Shorter rows".
+- **After the owner saw the J9 render (2026-11-21):**
+  - **A % readout.** Owner: "Could we get a % of view so that we know what range we are in. Let the default setting be 100% then we go up and down." The row reads **Zoom [+] [−] 100%**: the readout sits right of the buttons, like Brightness's. 100% is Mixxx's zoom 3 (the shipped default); the % is 3 ÷ zoom: 300, 150, 100, 75, 60, 50, 43, 38, 33, 30 for zoom 1 to 10. + raises the %.
+  - **Starlight quick setting.** Owner: "when we hold shift and move the headphone volume on the startlight it changes the zoom in accordance to the startlight position." On the Hercules DJControl Starlight, SHIFT held + the headphone volume knob sets the zoom from the knob's position (fully left 30%, fully right 300%, in the same ten steps). It changes the same saved setting as the Zoom row, and leaves the headphone volume alone while SHIFT is held. Without SHIFT the knob is the headphone volume as today.
+  - **A brief zoom indicator.** Owner: "Find a place to show the zoom changing that is not too intrusive - only while changes are in progress." Orchestrator's choice (to be shown to the owner): on the Decks page, a small pill reading "ZOOM 150%" over the left (already played) part of the main waveforms, centred on the line between Deck 1's and Deck 2's waveforms, so it never covers the playhead. It shows while the saved zoom is changing (from the Starlight, or from the Zoom row if the Decks page is in view) and hides 1 s after the last change. The Loop panel's own − and + do not show it (that panel covers the main waveforms). Neutral surface, 13 px or more text, no animation beyond show and hide.
 
 ## 3. Not part of build C
 

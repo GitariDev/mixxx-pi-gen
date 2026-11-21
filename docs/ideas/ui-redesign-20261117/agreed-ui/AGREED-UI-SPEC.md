@@ -243,6 +243,16 @@ The owner read council round 2 (all three seats at 6) and decided the following.
   - **☰ after OPEN opens inside the drive,** with the current-row edge on Tracks, as `m-sources-sub.png` draws it. Owner: "Open the drive." This replaces 2b's top-level case.
 - **USB ports are never switched off** by tests or tools. Re-plugs in tests are done by hand.
 
+## 2f. Owner additions to build J (2026-11-21)
+
+- **Drive fixes in build J:** the KEY-sort fix (J6), the drive-rows cache fix (J7) and the rekordbox text fix (J8). Of J8 the owner said "we can drop J8 … if it's already there that's okay"; it was already integrated and tested, so it stays.
+- **New row in Settings › Interface (s12): "Zoom" with two buttons, [+] then [−]** (wave J9). Owner: "I just want to have the setting on the interface settings. Keep loop as is. Just: Zoom [+][-]. This will affect the zoom on the main Deck 1 and Deck 2 just below the top bar and should affect them both."
+  - The row reads "Zoom", then a **+** button and a **−** button, in that order. No level readout, no subtext beyond what the other rows use (none is given, so none).
+  - One tap changes the zoom of **both** decks' main waveforms on the Decks page (the two waveforms just below the top bar) by one step, the same step the Loop panel's − and + use: + zooms in, − zooms out.
+  - Like every setting, the zoom is saved within a second and is the same after a restart.
+  - **The Loop panel stays as it is,** with its − and + on the focused deck's waveform.
+  - The new row is the last one on the page, after CPU readout. Its buttons are neutral Navigate-style buttons, 48 px tall, like the page's other buttons.
+
 ## 3. Not part of build C
 
 - **G5 extras:** the owner suggested an outline in the fill colour when active and thinner outlines on inactive buttons, then said "What we have now is acceptable". This is noted only.

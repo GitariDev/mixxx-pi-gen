@@ -650,3 +650,42 @@ All three are the real seats.
 - **GANDER1 re-plugs** were done by switching its port (1-1-port1) off and on twice, by the orchestrator, with the owner's direct permission for this test only. All ports read 0 at the end.
 - **Correction (council round 6, Fable): the Removable devices note above was wrong.** It is not stock Mixxx. J10's pruning in `BrowseFeature::releaseGoneFolder()` (`mixxx-eject-folders-view.patch` :92-103) drops every row that is not in the mount table. So the card's plain folder `/media/SD-Backup` (on the Pi's own card) disappears from Folders › Removable devices on any plug-in, pull or eject, and returns only when the list is opened again (`acceptance-K/shots/70-now.png`). Wave J11 fixes it: only rows that were drive mounts are dropped.
 - **J10's gate log** is now in `gates/uiJ10-nj10-20261121--repo-20261121-200842.log` (329/329 OK).
+
+## Council round 6 (2026-11-21, at `fa468e1`, build K)
+
+| Seat | Score | Blockers |
+|---|---|---|
+| Claude Fable 5.2 high | 7 (cap: disproved cause) | J10 drops the plain folder `/media/SD-Backup` from Removable devices on any mount change, but the record called it stock Mixxx. |
+| GPT-6.1 Sol xhigh | 9 | None. |
+| Claude Opus 5.5 xhigh | 7 (cap: disproved cause) | The same cause. Minor: J10's gate log was not in `gates/`, and the owner's words for the port toggles were not quoted. |
+
+All three are the real seats.
+- **Record fixed:** the cause is corrected above, J10's gate log is copied, and the owner's words are quoted in plan 12.11.
+- **Wave J11 fixes the behaviour.**
+
+## Wave J11 and build L (2026-11-21, night)
+
+- **J11** (`mixxx-removable-rows-fix.patch`): J10's pruning now drops a Removable devices row only if it was a drive mount seen before and is gone. Plain folders such as `/media/SD-Backup` always stay.
+  - Fixture: 19 checks; 5 fail without the patch.
+  - Native gate 334/334, 0 skips (`gates/uiJ11-nj11-20261121--…`). Mac suite 893 OK.
+  - **Found and left as build B behaviour:**
+    - a drive plugged in while Removable devices is open appears only when the list is opened again;
+    - a Media-page eject clears the open folder list until it is opened again (`mixxx-media-selection.patch`).
+- **Build L, the 13th pi-gen run, at `baa25f2`** (68 patches): one run, exit 0, in 13 m 15 s, with no resume.
+  - The `.deb` is `13aa9d2f…`.
+  - The skin is byte-identical to K's, and there is no package drift from K.
+  - Installed in place at about 23:15. The owner approved it before going to bed: "do that last round fix have everything ready for the morning. Do all the proof".
+
+## Acceptance L (2026-11-21, night, `deploy/ui-redesign-20261117/acceptance-L/ACCEPTANCE.md`)
+
+- **7 checks: 7 PASS, 0 FAIL, 0 BLOCKED.**
+  - **J11:** with Removable devices open, a clean unmount of GANDER1 leaves SD-BACKUP and IXIAN listed (build K dropped SD-BACKUP).
+  - **J10 and J4 still hold.**
+  - **Quits:** 3 clean, with a GANDER1 track loaded, plus 3 more restarts, all clean.
+  - **CPU:** 4.08 %, with 0 underruns, like for like.
+- **No USB port was switched off.** GANDER1 was mounted and unmounted in software (`udisksctl` through the user session).
+- **Notes, not failures:**
+  - After its own eject, the Media page doesn't see a software remount until Mixxx restarts; a real re-plug wasn't possible tonight.
+  - SD-BACKUP shows a › arrow after the first eject.
+  - The first Folders browse of a new folder showed thin tags until a restart (stock Browse tag loading).
+  - GANDER1's file system was already marked "not properly unmounted" before tonight. Nothing was written to repair it.

@@ -2,7 +2,7 @@
 // evaluated from the generated skin, with plain Qt widgets and the generated
 // style.qss, and save an 800x480 PNG (the 48 px top bar left blank).
 //
-// usage: render TREE.json STYLE.qss OUT.png
+// usage: render TREE.json STYLE.qss OUT.png [HEIGHT: 480, or 444 with the top bar]
 #include <QApplication>
 #include <QFile>
 #include <QFrame>
@@ -135,6 +135,18 @@ QWidget* build(const QJsonObject& node) {
         pWidget->setEnabled(node.value(QStringLiteral("enabled")).toBool());
     }
     setupSize(pWidget, node.value(QStringLiteral("size")).toString());
+    // LegacySkinParser: MaximumSize "x,y", -1 leaves that axis alone.
+    const QStringList maximum = node.value(QStringLiteral("max")).toString().split(',');
+    if (maximum.size() == 2) {
+        const int x = maximum[0].toInt();
+        const int y = maximum[1].toInt();
+        if (x >= 0) {
+            pWidget->setMaximumWidth(x);
+        }
+        if (y >= 0) {
+            pWidget->setMaximumHeight(y);
+        }
+    }
     return pWidget;
 }
 
@@ -150,8 +162,8 @@ QString readText(const char* path) {
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
-    if (argc != 4) {
-        std::fprintf(stderr, "usage: %s TREE.json STYLE.qss OUT.png\n", argv[0]);
+    if (argc != 4 && argc != 5) {
+        std::fprintf(stderr, "usage: %s TREE.json STYLE.qss OUT.png [HEIGHT]\n", argv[0]);
         return 2;
     }
     app.setStyleSheet(readText(argv[2]));
@@ -159,7 +171,7 @@ int main(int argc, char** argv) {
     QFrame window;
     window.setObjectName(QStringLiteral("MixpiRenderWindow"));
     window.setStyleSheet(QStringLiteral("#MixpiRenderWindow { background: #0d1014; }"));
-    window.setFixedSize(800, 480);
+    window.setFixedSize(800, argc == 5 ? QString::fromLatin1(argv[4]).toInt() : 480);
     auto* pBox = new QVBoxLayout(&window);
     pBox->setContentsMargins(0, 0, 0, 0);
     pBox->setSpacing(0);

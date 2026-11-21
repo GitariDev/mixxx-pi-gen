@@ -63,14 +63,15 @@ index eb24b88..c1aa877 100644
      const CmdlineArgs& m_cmdlineArgs;
 diff --git a/src/util/mixpizoomsetting.h b/src/util/mixpizoomsetting.h
 new file mode 100644
-index 0000000..17b0b99
+index 0000000..f9e15b4
 --- /dev/null
 +++ b/src/util/mixpizoomsetting.h
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,152 @@
 +#pragma once
 +
 +#include <QObject>
 +#include <QString>
++#include <QTimer>
 +#include <algorithm>
 +#include <cmath>
 +#include <functional>
@@ -80,17 +81,25 @@ index 0000000..17b0b99
 +#include "control/controlpushbutton.h"
 +#include "preferences/usersettings.h"
 +
-+/// MixPi Settings › Interface, Zoom (spec 2f): the + and − of the row.
++/// MixPi Settings › Interface, Zoom (spec 2f).
 +///
 +/// - [MixPi],waveform_zoom_in (+) and [MixPi],waveform_zoom_out (−) are push
 +///   buttons; a press steps the saved zoom by one and sets both decks' main
 +///   waveforms to it. The step and its ends are those of the Loop panel's −
 +///   and + ([ChannelN],waveform_zoom_up/_down: ±1 between 1 and 10). A
 +///   smaller number is a closer view, so + takes one off.
++/// - [MixPi],waveform_zoom_position (0-1) sets the saved zoom from a knob's
++///   position, in the same ten steps: 0 (fully left) is zoom 10 (30%), 1
++///   (fully right) is zoom 1 (300%). For the Starlight's SHIFT + knob.
++/// - [MixPi],waveform_zoom_percent (read-only) is the saved zoom as the row's
++///   readout shows it: 3 ÷ zoom, rounded (zoom 3, the default, is 100%).
++/// - [MixPi],waveform_zoom_changing (read-only) is 1 from a change of the
++///   saved zoom until kChangingMs after the last one (the Decks page's brief
++///   indicator). The Loop panel's own buttons do not touch it.
 +/// - The setting is Mixxx's own [Waveform],DefaultZoom: the zoom every deck
 +///   waveform starts at (WaveformWidgetFactory reads it at start). It is
 +///   written to mixxx.cfg by the save on change (R-13), within a second.
-+/// - Each press sets both decks to the new setting, so a deck zoomed on its
++/// - Each change sets both decks to the new setting, so a deck zoomed on its
 +///   own with the Loop panel joins the other again. The Loop panel's buttons
 +///   stay per deck and are not saved, as in stock Mixxx.
 +/// - applyDefault, when given, is called with the new setting after the
@@ -104,6 +113,7 @@ index 0000000..17b0b99
 +    static constexpr double kMaxZoom = 10.0;
 +    static constexpr double kDefaultZoom = 3.0;
 +    static constexpr double kStep = 1.0;
++    static constexpr int kChangingMs = 1000;
 +
 +    explicit MixpiZoomSetting(UserSettingsPointer pSettings,
 +            std::function<void(double)> applyDefault = {},
@@ -114,14 +124,36 @@ index 0000000..17b0b99
 +        m_pZoomIn = button("waveform_zoom_in");
 +        connect(m_pZoomIn, &ControlObject::valueChanged, this, [this](double value) {
 +            if (value > 0) {
-+                step(-kStep);
++                setZoom(zoom() - kStep);
 +            }
 +        });
 +        m_pZoomOut = button("waveform_zoom_out");
 +        connect(m_pZoomOut, &ControlObject::valueChanged, this, [this](double value) {
 +            if (value > 0) {
-+                step(kStep);
++                setZoom(zoom() + kStep);
 +            }
++        });
++        // Every knob message counts, the same value too (bIgnoreNops false):
++        // the first one may be 0, the control's start value.
++        m_pPosition = new ControlObject(
++                ConfigKey(QStringLiteral("[MixPi]"), QStringLiteral("waveform_zoom_position")), false);
++        m_pPosition->setParent(this);
++        connect(m_pPosition, &ControlObject::valueChanged, this, [this](double value) {
++            if (!std::isfinite(value)) {
++                return;
++            }
++            const double position = std::clamp(value, 0.0, 1.0);
++            setZoom(kMaxZoom - std::round(position * (kMaxZoom - kMinZoom)));
++        });
++        m_pPercent = control("waveform_zoom_percent");
++        m_pPercent->setReadOnly();
++        m_pPercent->forceSet(percent(zoom()));
++        m_pChanging = control("waveform_zoom_changing");
++        m_pChanging->setReadOnly();
++        m_changingTimer.setSingleShot(true);
++        m_changingTimer.setInterval(kChangingMs);
++        connect(&m_changingTimer, &QTimer::timeout, this, [this] {
++            m_pChanging->forceSet(0);
 +        });
 +    }
 +
@@ -135,9 +167,21 @@ index 0000000..17b0b99
 +        return std::clamp(value, kMinZoom, kMaxZoom);
 +    }
 +
++    /// The readout: 3 ÷ zoom as a rounded percentage.
++    static double percent(double zoom) {
++        return static_cast<double>(std::lround(kDefaultZoom / zoom * 100.0));
++    }
++
 +  private:
 +    static inline const ConfigKey kDefaultZoomKey =
 +            ConfigKey(QStringLiteral("[Waveform]"), QStringLiteral("DefaultZoom"));
++
++    ControlObject* control(const char* item) {
++        auto* pControl = new ControlObject(
++                ConfigKey(QStringLiteral("[MixPi]"), QString::fromLatin1(item)));
++        pControl->setParent(this);
++        return pControl;
++    }
 +
 +    ControlPushButton* button(const char* item) {
 +        auto* pButton = new ControlPushButton(
@@ -146,8 +190,9 @@ index 0000000..17b0b99
 +        return pButton;
 +    }
 +
-+    void step(double delta) {
-+        const double zoom = std::clamp(this->zoom() + delta, kMinZoom, kMaxZoom);
++    void setZoom(double value) {
++        const double zoom = std::clamp(value, kMinZoom, kMaxZoom);
++        const bool changed = zoom != this->zoom();
 +        m_pSettings->setValue(kDefaultZoomKey, zoom);
 +        for (const auto* group : {"[Channel1]", "[Channel2]"}) {
 +            const ConfigKey key(QString::fromLatin1(group), QStringLiteral("waveform_zoom"));
@@ -158,10 +203,19 @@ index 0000000..17b0b99
 +        if (m_applyDefault) {
 +            m_applyDefault(zoom);
 +        }
++        m_pPercent->forceSet(percent(zoom));
++        if (changed) {
++            m_pChanging->forceSet(1);
++            m_changingTimer.start();
++        }
 +    }
 +
 +    UserSettingsPointer m_pSettings;
 +    std::function<void(double)> m_applyDefault;
 +    ControlPushButton* m_pZoomIn;
 +    ControlPushButton* m_pZoomOut;
++    ControlObject* m_pPosition;
++    ControlObject* m_pPercent;
++    ControlObject* m_pChanging;
++    QTimer m_changingTimer;
 +};

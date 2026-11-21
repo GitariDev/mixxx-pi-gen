@@ -9,7 +9,7 @@ Qt widgets as Mixxx's WidgetGroup does: no margins or spacing, the Size
 policies of LegacySkinParser, and the generated style.qss applied. The 48 px
 top bar is left blank. Fonts are whatever the machine has.
 
-usage: zoom_setting_render.py OUT.png [--generator PATH]
+usage: zoom_setting_render.py OUT.png [--generator PATH] [--height 480|444]
 --generator renders another copy of mixpi-performance.py (for example the
 base commit's) for a side-by-side of the first five rows.
 """
@@ -29,7 +29,7 @@ from native.library_interface_runner import qt_flags, qt_environment
 STATE = {'[MixPi],screen': 5, '[MixPi],settings_page': 1, '[Controls],ShowDurationRemaining': 0,
          '[MixPi],night_dim': 0, '[MixPi],show_cpu': 1, '[MixPi],backlight': 100,
          '[MixPi],backlight_available': 1, '[MixPi],desktop_bar': 0, '[MixPi],desktop_bar_available': 1,
-         '[MixPi],saved': 0}
+         '[MixPi],saved': 0, '[MixPi],waveform_zoom_percent': 100}
 
 
 def skin(generator, folder):
@@ -50,7 +50,8 @@ def skin(generator, folder):
 
 def tree(T, model, element):
     size = element.findtext('Size', '0me,0me')
-    node = {'name': element.findtext('ObjectName', ''), 'size': size}
+    node = {'name': element.findtext('ObjectName', ''), 'size': size,
+            'max': element.findtext('MaximumSize', '')}
     for c in element.findall('Connection'):
         bind = c.findtext('BindProperty')
         if bind == 'enabled':
@@ -90,6 +91,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('out')
     parser.add_argument('--generator')
+    parser.add_argument('--height', type=int, default=480, help='480, or 444 with the desktop top bar shown')
     options = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='mixpi-zoom-render-') as temporary:
         folder = Path(temporary)
@@ -105,7 +107,7 @@ def main():
                         '-o', str(binary), *qt_flags(('QtCore', 'QtGui', 'QtWidgets'))],
                        check=True, timeout=300)
         subprocess.run([str(binary), str(folder / 'tree.json'), str(folder / 'style.qss'),
-                        str(Path(options.out).resolve())], check=True, env=qt_environment(), timeout=60)
+                        str(Path(options.out).resolve()), str(options.height)], check=True, env=qt_environment(), timeout=60)
         print('RENDER', options.out)
 
 

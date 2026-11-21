@@ -114,7 +114,11 @@ RAIL_ROW, DESKTOP_BAR_WIDTH, BRIGHTNESS_SLIDER = 52, 180, 316
 # padding above and below); five 66 px rows leave 46, short of a 48 px
 # button. So the five rows give up 1 px each (65, the 48 px controls still
 # centred) and Zoom, with no subtext, takes the 51 px left: 5 x 65 + 51 = 376.
+# With the desktop top bar shown (800x444) the page has 340 px; the rows then
+# give way to 58 (the label column's 24 + 34 px) and Zoom to 50, buttons
+# still 48 px: 5 x 58 + 50 = 340 (spec 2f, owner: "Shorter rows").
 INTERFACE_ROW, ZOOM_ROW = 65, 51
+INTERFACE_ROW_SHORT, ZOOM_ROW_SHORT = 58, 50
 # Load sample source row (spec s7, m-loadsample.png): 8 + SAMPLES 124 + 8 + SOURCES… 124.
 SOURCE_ROW = {'SAMPLES': 124, 'SOURCES…': 124}
 # Segments (LOOP / JUMP / CUES, FX 1 / FX 2, routes) are one joined control.
@@ -709,30 +713,41 @@ def preferences_button():
     return b
 
 
-def setting_row(title, sub, controls, height=66):
-    """A Settings row: a 190 px label column, then 48 px choices."""
-    labels = group('MixpiSettingText', size=f'190f,{height}f', children=[
+def setting_row(title, sub, controls, height=66, short=None):
+    """A Settings row: a 190 px label column, then 48 px choices.
+
+    With SHORT, the row is HEIGHT at 800x480 and gives way down to SHORT at
+    800x444 (shrinking_rows); its parts then follow the row's height."""
+    tall = f'{height}f' if short is None else '0me'
+    labels = group('MixpiSettingText', size=f'190f,{tall}', children=[
         gap('0me,0me'), label(title, '0me,24f', 'MixpiSettingTitle', elide='right')] +
         # Sub-lines wrap to two lines (QSS word wrap on #MixpiSettingLabel).
         ([label(sub, '0me,34f', 'MixpiSettingLabel')] if sub else []) +
         [gap('0me,0me')])
-    return group('MixpiSetting', 'horizontal', f'0me,{height}f',
-                 [gap(f'14f,{height}f'), labels, gap(f'10f,{height}f')] + list(controls) +
-                 [gap(f'0me,{height}f')])
+    row = group('MixpiSetting', 'horizontal', f'0me,{height}f',
+                [gap(f'14f,{tall}'), labels, gap(f'10f,{tall}')] + list(controls) +
+                [gap(f'0me,{tall}')])
+    return row if short is None else shrinking_rows(row, short, height)
 
 
-def zoom_buttons():
+def zoom_controls():
     """Settings › Interface, Zoom (spec 2f): + then −, neutral 96 x 48 buttons
     like the page's other two-button rows, apart like Quantize's DECK 1 and
-    DECK 2. Each tap writes 1, then 0 on release, as the Loop panel's − and +
-    do; [MixPi],waveform_zoom_in/_out (mixxx-zoom-setting.patch) step the saved
-    zoom and both decks' waveforms. They show no state."""
+    DECK 2, then the % readout like Brightness's. Each tap writes 1, then 0 on
+    release, as the Loop panel's − and + do; [MixPi],waveform_zoom_in/_out
+    (mixxx-zoom-setting.patch) step the saved zoom and both decks' waveforms.
+    The buttons show no state; [MixPi],waveform_zoom_percent is the saved
+    zoom as 3 ÷ zoom (100% is the default zoom 3)."""
     buttons = []
     for text, key in (('+', '[MixPi],waveform_zoom_in'), ('−', '[MixPi],waveform_zoom_out')):
         b = button(text, key, size='96f,48f', momentary=True)
         b.find('Connection/ConnectValueToWidget').text = 'false'
         buttons.append(b)
-    return [buttons[0], gap('6f,48f'), buttons[1]]
+    readout = node('Number')
+    for k, v in dict(ObjectName='MixpiSettingValue', Size='56f,48f', Text='%1%', NumberOfDigits=0).items():
+        prop(readout, k, v)
+    connection(readout, '[MixPi],waveform_zoom_percent', write=False)
+    return [buttons[0], gap('6f,48f'), buttons[1], readout]
 
 
 def choices(key, items, width=96):
@@ -828,18 +843,20 @@ def settings():
                                'TOP BAR UNAVAILABLE'), size=f'{DESKTOP_BAR_WIDTH}f,48f')
     connection(bar, '[MixPi],desktop_bar_available', bind='enabled')
     interface = group('MixpiInterfaceSettings', children=[
-        setting_row('Desktop bar', 'Desktop · Mixxx · Speaker · Settings', [bar], height=INTERFACE_ROW),
+        setting_row('Desktop bar', 'Desktop · Mixxx · Speaker · Settings', [bar], height=INTERFACE_ROW, short=INTERFACE_ROW_SHORT),
         setting_row('Deck time', 'Tap the time on a deck to switch',
                     segments(choices('[Controls],ShowDurationRemaining',
-                                     [('ELAPSED', 0), ('REMAINING', 1)], (96, 104))), height=INTERFACE_ROW),
-        setting_row('Brightness', 'Screen backlight', brightness(), height=INTERFACE_ROW),
+                                     [('ELAPSED', 0), ('REMAINING', 1)], (96, 104))), height=INTERFACE_ROW, short=INTERFACE_ROW_SHORT),
+        setting_row('Brightness', 'Screen backlight', brightness(), height=INTERFACE_ROW, short=INTERFACE_ROW_SHORT),
         setting_row('Night dim', 'Drops the screen to a low level for dark rooms',
-                    segments(choices('[MixPi],night_dim', [('OFF', 0), ('ON', 1)])), height=INTERFACE_ROW),
+                    segments(choices('[MixPi],night_dim', [('OFF', 0), ('ON', 1)])), height=INTERFACE_ROW, short=INTERFACE_ROW_SHORT),
         setting_row('CPU readout', 'The CPU % at the top right',
-                    segments(choices('[MixPi],show_cpu', [('SHOW', 1), ('HIDE', 0)])), height=INTERFACE_ROW),
-        # Spec 2f: the last row, no subtext.
-        setting_row('Zoom', '', zoom_buttons(), height=ZOOM_ROW),
-        gap('0me,0me')])
+                    segments(choices('[MixPi],show_cpu', [('SHOW', 1), ('HIDE', 0)])), height=INTERFACE_ROW, short=INTERFACE_ROW_SHORT),
+        # Spec 2f: the last row, no subtext; Zoom [+] [−] 100%.
+        setting_row('Zoom', '', zoom_controls(), height=ZOOM_ROW, short=ZOOM_ROW_SHORT)])
+    # No closing stretch on this page: the six rows are its only growing items,
+    # so they reach their full heights at 800x480 (5 x 65 + 51 = 376) and give
+    # way together to their short ones at 800x444 (5 x 58 + 50 = 340).
     media = group('MixpiMediaSettings', children=[
         # N2: [MixPi],scan_bar_hidden 0/1 (also saved as ScanBarHidden).
         setting_row('Scan bar', 'Hidden: the % shows on the USB chip',

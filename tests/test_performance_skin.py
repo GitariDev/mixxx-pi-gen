@@ -1382,7 +1382,10 @@ class PerformanceSkinTests(unittest.TestCase):
         capped = {e.findtext('ObjectName') for e in self.root.iter() if e.find('MaximumSize') is not None}
         self.assertEqual(capped, {'MixpiLoopBody', 'MixpiLoopRow', 'MixpiLoopSizes', 'MixpiLoopTools',
                                   'MixpiButton', 'MixpiSize', 'MixpiDanger', 'MixpiSound',
-                                  'MixpiClearListArea'})
+                                  'MixpiClearListArea', 'MixpiSetting'})
+        # MixpiSetting: only Settings › Interface's six rows (spec 2f, J9).
+        self.assertEqual(len([e for e in self.root.iter() if e.findtext('ObjectName') == 'MixpiSetting'
+                              and e.find('MaximumSize') is not None]), 6)
         buttons = [b for b in self.root.iter('PushButton') if b.find('MaximumSize') is not None]
         self.assertEqual(len(buttons), 2 * (6 + 6 + 2 + 2))
 
@@ -2722,12 +2725,12 @@ class PerformanceSkinTests(unittest.TestCase):
 
     def test_interface_zoom_row_is_last_with_plus_then_minus(self):
         row = self.zoom_row()
-        # "Zoom", then +, then −; no subtext and no readout.
+        # "Zoom", then +, then −, then the % readout (Amendment 1); no subtext.
         self.assertEqual([label.findtext('Text') for label in row.iter('Label')], ['Zoom'])
         self.assertEqual(next(row.iter('Label')).findtext('ObjectName'), 'MixpiSettingTitle')
         self.assertEqual([c.tag for c in row.find('Children')],
                          ['WidgetGroup', 'WidgetGroup', 'WidgetGroup', 'PushButton', 'WidgetGroup',
-                          'PushButton', 'WidgetGroup'])
+                          'PushButton', 'Number', 'WidgetGroup'])
         plus, minus = row.iter('PushButton')
         self.assertEqual([[t.text for t in b.iter('Text')] for b in (plus, minus)], [['+', '+'], ['−', '−']])
         self.assertEqual(minus.findtext('State/Text'), '−')
@@ -2740,10 +2743,25 @@ class PerformanceSkinTests(unittest.TestCase):
         children = list(row.find('Children'))
         self.assertEqual(children.index(minus) - children.index(plus), 2)
         self.assertEqual(children[children.index(plus) + 1].findtext('Size'), '6f,48f')
-        # The last row of the page, before the closing stretch.
+        # The last row of the page; the page has no closing stretch (the rows
+        # are its only growing items).
         pane = list(self.pane(1).find('Children'))
-        self.assertIs(pane[-2], row)
-        self.assertEqual(pane[-1].findtext('Size'), '0me,0me')
+        self.assertIs(pane[-1], row)
+        self.assertEqual(len(pane), 6)
+
+    def test_interface_zoom_readout_is_the_saved_percent_like_brightness(self):
+        row = self.zoom_row()
+        readout = row.find('Children')[6]
+        brightness = next(self.setting_rows(self.pane(1))[2].iter('Number'))
+        # Right of −, as Brightness's sits right of its slider; the same widget.
+        for field in ('ObjectName', 'Size', 'Text', 'NumberOfDigits'):
+            self.assertEqual(readout.findtext(field), brightness.findtext(field), field)
+        self.assertEqual((readout.findtext('Connection/ConfigKey'),
+                          readout.findtext('Connection/ConnectValueFromWidget')),
+                         ('[MixPi],waveform_zoom_percent', 'false'))
+        self.assertEqual(readout.findtext('Text').replace('%1', format(100.0, '.0f')), '100%')
+        # Width: 14 + 190 + 10 + 96 + 6 + 96 + 56 within the 592 px row.
+        self.assertLessEqual(14 + 190 + 10 + 96 + 6 + 96 + 56, 592)
 
     def test_interface_zoom_buttons_write_the_native_steps(self):
         row = self.zoom_row()
@@ -2765,35 +2783,53 @@ class PerformanceSkinTests(unittest.TestCase):
 
     def test_interface_zoom_row_fits_800_by_480_and_keeps_the_five_rows(self):
         rows = self.setting_rows(self.pane(1))
-        heights = [size(r)[1] for r in rows]
+        # Each row is MinimumExpanding: its short height is the minimum, its
+        # full height the maximum (shrinking_rows, as the Loop panel's).
+        full = [int(r.findtext('MaximumSize').split(',')[1]) for r in rows]
+        short = [size(r)[1] for r in rows]
+        self.assertEqual({(r.findtext('Size').split(',')[1][-2:], r.findtext('MaximumSize').split(',')[0])
+                          for r in rows}, {('me', '-1')})
         # 480 - the 48 px top bar - the 48 px Settings header - the pane's
         # 4 px padding above and below = 376. Five 66 px rows would leave 46,
         # short of the 48 px buttons: they give up 1 px each, Zoom takes 51.
         style = (FILES/'mixpi-performance.qss').read_text()
         self.assertIn('#MixpiPlaybackSettings, #MixpiInterfaceSettings { padding: 4px; }', style)
-        self.assertEqual(heights, [65] * 5 + [51])
-        self.assertEqual(sum(heights), 480 - 48 - 48 - 2 * 4)
-        self.assertGreater(5 * 66 + 48, sum(heights))
-        self.assertGreaterEqual(min(heights), 48)
-        # The other panes keep their 66 px rows.
+        self.assertEqual(full, [65] * 5 + [51])
+        self.assertEqual(sum(full), 480 - 48 - 48 - 2 * 4)
+        self.assertGreater(5 * 66 + 48, sum(full))
+        # With the desktop top bar shown the window is 444 tall: 340 px. The
+        # rows give way to 58 (the label column's 24 + 34) and Zoom to 50.
+        self.assertEqual(short, [58] * 5 + [50])
+        self.assertEqual(sum(short), 444 - 48 - 48 - 2 * 4)
+        self.assertGreaterEqual(min(short), 48)
+        self.assertEqual(24 + 34, 58)
+        # The other panes keep their fixed 66 px rows.
         for page in (0, 2, 3):
-            self.assertEqual({size(r)[1] for r in self.setting_rows(self.pane(page))
-                              if r.findtext('ObjectName') == 'MixpiSetting'}, {66})
-        row = rows[-1]
-        self.assertEqual((SKIN.INTERFACE_ROW, SKIN.ZOOM_ROW), (65, 51))
-        self.assertEqual([c.findtext('Size') for c in row.find('Children') if c.tag == 'WidgetGroup'],
-                         ['14f,51f', '190f,51f', '10f,51f', '6f,48f', '0me,51f'])
-        # Each of the five rows keeps its content, its label column and its
-        # 48 px controls; only its height is 1 px less.
-        for r in rows[:5]:
-            self.assertEqual(r.findtext('Size'), '0me,65f')
-            self.assertEqual(r.find('Children')[1].findtext('Size'), '190f,65f')
-        # Width: 14 + 190 + 10 + 96 + 6 + 96 within the 600 px pane.
-        self.assertLessEqual(14 + 190 + 10 + 96 + 6 + 96, 600)
+            self.assertEqual({r.findtext('Size').split(',')[1] for r in self.setting_rows(self.pane(page))
+                              if r.findtext('ObjectName') == 'MixpiSetting'}, {'66f'})
+        self.assertEqual((SKIN.INTERFACE_ROW, SKIN.ZOOM_ROW, SKIN.INTERFACE_ROW_SHORT, SKIN.ZOOM_ROW_SHORT),
+                         (65, 51, 58, 50))
+        # Inside a row nothing is taller than the short height: the parts
+        # follow the row; the controls stay 48 px.
+        for r in rows:
+            parts = [c for c in r.find('Children') if c.tag == 'WidgetGroup']
+            self.assertEqual([p.findtext('Size').split(',')[1] for p in parts if p.findtext('Size') != '6f,48f'],
+                             ['0me'] * 4)
+            for b in r.iter('PushButton'):
+                self.assertEqual(b.findtext('Size').split(',')[1], '48f')
         # The neutral button rule: surface-2, line-strong border, radius 3, the pressed look.
         style = (FILES/'mixpi-performance.qss').read_text()
         self.assertIn('color: #e4e7ec; background: #1d222a; border: 1px solid #3a424e;', style)
         self.assertIn('#MixpiButton[pressed="true"]', style)
+
+    def test_interface_rows_are_65_and_51_at_480_and_58_and_50_with_the_top_bar(self):
+        # As QBoxLayout shares the pane (376 px at 480, 340 at 444).
+        pane = self.pane(1)
+        state = self.model.state(5, **{'[MixPi]__settings_page': 1})
+        for space, expected in ((480 - 48 - 48 - 8, [65] * 5 + [51]), (444 - 48 - 48 - 8, [58] * 5 + [50])):
+            laid = self.box_heights(pane, space, state)
+            self.assertEqual([h for _, h in laid], expected)
+            self.assertEqual(sum(expected), space)
 
     def test_loop_panel_zoom_buttons_are_unchanged(self):
         # Spec 2f: "Keep loop as is." Byte for byte as at 1d67a42.

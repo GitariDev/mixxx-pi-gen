@@ -1,0 +1,56 @@
+diff --git a/src/library/browse/browsefeature.cpp b/src/library/browse/browsefeature.cpp
+index 8a6156a..0983eb9 100644
+--- a/src/library/browse/browsefeature.cpp
++++ b/src/library/browse/browsefeature.cpp
+@@ -345,15 +345,28 @@ QString BrowseFeature::releaseGoneFolder() {
+ #if defined(__LINUX__)
+     // Removable Devices drops a drive that is no longer mounted, as the
+     // Media page does (its rows were read when it was opened).
++    // J11: only a row that was a drive's mount point when the mount table
++    // was last read, and is not one now, goes. A plain folder there (the
++    // card's /media/SD-Backup, a folder of the Pi's own card) was never a
++    // mount point, so it stays, as in build B and stock Mixxx.
++    QStringList gone;
++    for (const QString& point : std::as_const(m_seenMounts)) {
++        if (!points.contains(point)) {
++            gone.append(point);
++        }
++    }
++    if (!points.isEmpty()) {
++        m_seenMounts = points;
++    }
+     auto* root = m_pSidebarModel->getRootItem();
+-    for (int row = 0; !points.isEmpty() && row < root->childRows(); ++row) {
++    for (int row = 0; !gone.isEmpty() && row < root->childRows(); ++row) {
+         const TreeItem* pDevices = root->child(row);
+         if (pDevices->getData().toString() != DEVICE_NODE) {
+             continue;
+         }
+         const QModelIndex devices = m_pSidebarModel->index(row, 0);
+         for (int device = pDevices->childRows() - 1; device >= 0; --device) {
+-            if (!points.contains(QDir::cleanPath(pDevices->child(device)->getData().toString()))) {
++            if (gone.contains(QDir::cleanPath(pDevices->child(device)->getData().toString()))) {
+                 m_pSidebarModel->removeRows(device, 1, devices);
+             }
+         }
+diff --git a/src/library/browse/browsefeature.h b/src/library/browse/browsefeature.h
+index 0c8c6b6..01e4b5c 100644
+--- a/src/library/browse/browsefeature.h
++++ b/src/library/browse/browsefeature.h
+@@ -49,6 +49,7 @@ class BrowseFeature : public LibraryFeature {
+     // Tracks left the mount table (an eject, or the drive pulled out). The
+     // table shows no rows; returns that folder (empty: nothing went).
+     // Removable Devices drops the drives no longer mounted.
++    // J11: only rows that were a drive's mount point; a plain folder stays.
+     QString releaseGoneFolder();
+ 
+   public slots:
+@@ -100,4 +101,8 @@ class BrowseFeature : public LibraryFeature {
+     // held it then.
+     QString m_shownFolder;
+     QString m_shownMount;
++    // J11: the mount points when the mount table was last read
++    // (releaseGoneFolder). Removable Devices drops a row only when it was one
++    // of them and is not mounted now.
++    QStringList m_seenMounts;
+ };

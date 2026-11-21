@@ -259,6 +259,11 @@ The owner read council round 2 (all three seats at 6) and decided the following.
   - **Zoom indicator: dropped.** A pill over the waveforms cannot be drawn (they are GL windows); the owner first chose the left deck column, then, since zoom now changes only on the Settings page (which shows the %), chose "Drop it".
   - **So J9 builds:** the Zoom row with + then −, the % readout, the save, the 65 px rows at 800×480 and the shorter rows (58 px) while the top bar is shown. Nothing else.
 
+## 2g. Owner decisions after council round 5 (2026-11-21)
+
+- **Sideways scroll with many columns is fine.** When the shared column setup has more columns than the narrowed table can show with Sources open (the owner's ten columns), the table scrolls sideways with its bar, as it does at full width. This replaces 2a's "no sideways scroll bar" for that case; with columns that fit, they still fit. Owner: "Sideways scroll is fine" (council round 5, GPT seat's cap). Earlier, of the horizontal bar: "The scroll was okay."
+- **Found on the card after round 5 (Opus seat):** a drive opened through Folders (Sources › Folders › Removable devices › DRIVE) and then ejected keeps its file rows in the table, and ☰ opens in Folders instead of the top level. Spec 2e's eject rule covers this case too: the stale rows go and ☰ opens at the top level. Shots: `acceptance-J/shots/201-…203-…`.
+
 ## 3. Not part of build C
 
 - **G5 extras:** the owner suggested an outline in the fill colour when active and thinner outlines on inactive buttons, then said "What we have now is acceptable". This is noted only.

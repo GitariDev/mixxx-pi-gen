@@ -648,4 +648,5 @@ All three are the real seats.
   - **Zoom** saves in under 0.5 s.
 - **CPU:** 4.17 % like for like (J 4.00 %); with the owner's key lock, 48.9 %.
 - **GANDER1 re-plugs** were done by switching its port (1-1-port1) off and on twice, by the orchestrator, with the owner's direct permission for this test only. All ports read 0 at the end.
-- **Note (stock Mixxx):** with Folders › Removable devices open while a drive is plugged in, the list stays stale until it is opened again.
+- **Correction (council round 6, Fable): the Removable devices note above was wrong.** It is not stock Mixxx. J10's pruning in `BrowseFeature::releaseGoneFolder()` (`mixxx-eject-folders-view.patch` :92-103) drops every row that is not in the mount table. So the card's plain folder `/media/SD-Backup` (on the Pi's own card) disappears from Folders › Removable devices on any plug-in, pull or eject, and returns only when the list is opened again (`acceptance-K/shots/70-now.png`). Wave J11 fixes it: only rows that were drive mounts are dropped.
+- **J10's gate log** is now in `gates/uiJ10-nj10-20261121--repo-20261121-200842.log` (329/329 OK).

@@ -1051,16 +1051,52 @@
       "id": "R7",
       "kind": "council",
       "title": "Council round 7",
-      "date": null,
-      "status": "pending",
-      "head": null,
+      "date": "2026-11-22",
+      "status": "done",
+      "head": "76ee1e8",
       "build": "L",
-      "scores": [],
-      "summary": "Pending: scores build L.",
+      "scores": [
+        {
+          "seat": "fable",
+          "score": 9,
+          "uncapped": null,
+          "cap": null,
+          "standIn": null,
+          "report": "deploy/ui-redesign-20261117/council/round7b-fable-5.2-high.md",
+          "blockers": [],
+          "note": "First pass at 76ee1e8 scored 7 (cap: the thin-tags note blamed stock Mixxx; it is MixPi's eject rule). Re-check at 5b7e505 after record-only corrections (e514e4d, 5b7e505): 9, no blockers. First report: deploy/ui-redesign-20261117/council/round7-fable-5.2-high.md"
+        },
+        {
+          "seat": "sol",
+          "score": 9,
+          "uncapped": null,
+          "cap": null,
+          "standIn": null,
+          "report": "deploy/ui-redesign-20261117/council/round7-gpt-6.1-sol-xhigh.md",
+          "blockers": []
+        },
+        {
+          "seat": "opus",
+          "score": 9,
+          "uncapped": null,
+          "cap": null,
+          "standIn": null,
+          "report": "deploy/ui-redesign-20261117/council/round7b-opus-5.5-xhigh.md",
+          "blockers": [],
+          "note": "First pass at 76ee1e8 scored 7 (same thin-tags cause; for 9, minor defects had to drop to two). Re-check at 5b7e505: 9, no blockers. First report: deploy/ui-redesign-20261117/council/round7-opus-5.5-xhigh.md"
+        }
+      ],
+      "summary": "Build L scored by all three real seats. Sol 9 at once; Fable and Opus 7, capped by a wrong cause in the record (thin tags blamed on stock Mixxx), then 9 on re-check after record-only fixes. Target met: every seat at 9 or more.",
       "evidence": {
         "pairs": [],
         "shots": [],
-        "docs": []
+        "docs": [
+          "deploy/ui-redesign-20261117/council/round7-fable-5.2-high.md",
+          "deploy/ui-redesign-20261117/council/round7-gpt-6.1-sol-xhigh.md",
+          "deploy/ui-redesign-20261117/council/round7-opus-5.5-xhigh.md",
+          "deploy/ui-redesign-20261117/council/round7b-fable-5.2-high.md",
+          "deploy/ui-redesign-20261117/council/round7b-opus-5.5-xhigh.md"
+        ]
       }
     }
   ],

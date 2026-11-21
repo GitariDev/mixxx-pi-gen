@@ -27,7 +27,7 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Waves J1, J4–J7 integrated | `5c96f5a` | 858 run, OK (168 platform skips) | 305/305, 0 skips (`gates/uiJ-int-final-20261120--…`) | 64 patches. Quit crash; eject and ☰ after OPEN; external sort; drive track cache |
 | Waves J8 + J9 integrated (build J) | `220012e` / `325cb70` | 882 run, OK (173 platform skips) | 323/323, 0 skips (`gates/uiJ-int3-20261121--…`) | 66 patches. rekordbox text; the Zoom row |
 | Wave J10 (build K) | `1000eaf` / `941bfd0` | 888 run, OK (175 platform skips) | 329/329, 0 skips (builder's run on the same tree; `gates/uiJ10-nj10-20261121--…`) | 67 patches. Folders eject |
-| Wave J11 (build L) | `baa25f2` | 893 run, OK (178 platform skips) | 334/334, 0 skips (builder's run on the same tree; `gates/uiJ11-nj11-20261121--…`) | 68 patches. Removable devices keeps plain folders |
+| Wave J11 (build L) | `baa25f2` | 893 run, OK (177–178 platform skips, by host) | 334/334, 0 skips (builder's run on the same tree; `gates/uiJ11-nj11-20261121--…`) | 68 patches. Removable devices keeps plain folders |
 
 ## Wave 0 on the test card (build 2)
 
@@ -670,7 +670,7 @@ All three are the real seats.
 ## Wave J11 and build L (2026-11-21, night)
 
 - **J11** (`mixxx-removable-rows-fix.patch`): J10's pruning now drops a Removable devices row only if it was a drive mount seen before and is gone. Plain folders such as `/media/SD-Backup` always stay.
-  - Fixture: 19 checks; 5 fail without the patch.
+  - Fixture: 17 named checks (the builder reported 19); 5 fail without the patch.
   - Native gate 334/334, 0 skips (`gates/uiJ11-nj11-20261121--…`). Mac suite 893 OK.
   - **Found and left as build B behaviour:**
     - a drive plugged in while Removable devices is open appears only when the list is opened again;
@@ -696,3 +696,22 @@ All three are the real seats.
     - This is the same rule as the Media-page note above: a software remount isn't a re-plug.
     - A real pull and re-plug resets it, as acceptance K showed.
   - GANDER1's file system was already marked "not properly unmounted" before tonight. Nothing was written to repair it.
+
+## Council round 7 (2026-11-22, at `76ee1e8`, build L): target met
+
+| Seat | First pass | Re-check at `5b7e505` | Remaining blockers |
+|---|---|---|---|
+| Claude Fable 5.2 high | 7 (cap: the thin-tags note blamed stock Mixxx) | **9** | None |
+| GPT-6.1 Sol xhigh | **9** | — | None |
+| Claude Opus 5.5 xhigh | 7 (the same cap; minor defects had to drop to two) | **9** | None |
+
+All three are the real seats; there are no stand-ins.
+- **What the re-checks covered:** record-only corrections, with no code or build change:
+  - `e514e4d`: the thin-tags cause is MixPi's eject rule;
+  - `5b7e505`: the SD-BACKUP › cause is build B's `deferDirectoryProbes`, plus the build L update record;
+  - `41faf90` and the follow-up: the gates rows and the install times.
+- **Every seat is at 9 or more on build L.**
+- **Minor defects carried (no score effect at 9):**
+  - listed item 4, the header's 1 px bottom line;
+  - the build L update record was written after the fact, without console output.
+- **Owner questions (from the Opus report):** after an eject, should a drive mounted again without a re-plug stay unreadable until Mixxx restarts? Today it does.

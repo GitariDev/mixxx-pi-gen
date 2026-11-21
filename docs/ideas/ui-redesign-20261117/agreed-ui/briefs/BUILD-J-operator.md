@@ -4,7 +4,7 @@ Read `BUILD-C-operator.md` to `BUILD-I-operator.md` (same folder) first. Every r
 
 - **One pi-gen run only, the 11th**, and only after the owner's yes. It ships the quit-crash fix (wave J1), the eject and ☰-after-OPEN fixes (waves J4-J5), the drive-list sort fix (J6), the drive-rows cache fix (J7), the rekordbox text fix (J8) and the Zoom row in Settings › Interface (J9, spec 2f). The owner said no to the J2 and J3 skin changes (spec 2e); they are reverted. If the run fails in the export step with the loop-device race build I hit, finish it with an export-only resume through pi-gen's `SKIP` files. That counts as the same run. Any other failure: stop and report.
 - **Commit:** the one the orchestrator names.
-- **Patches:** build I's 59 plus `mixxx-quit-library-widget.patch`, `mixxx-eject-top-menu.patch`, `mixxx-media-open-inside.patch`, `mixxx-external-sort.patch`, `mixxx-drive-track-cache.patch` and `mixxx-rekordbox-utf16-text.patch` (65), plus J9's patch if it has one. The orchestrator names the commit and confirms the count.
+- **Patches:** build I's 59 plus `mixxx-quit-library-widget.patch`, `mixxx-eject-top-menu.patch`, `mixxx-media-open-inside.patch`, `mixxx-external-sort.patch`, `mixxx-drive-track-cache.patch` `mixxx-rekordbox-utf16-text.patch` and `mixxx-zoom-setting.patch` (66). The orchestrator names the commit and confirms the count.
 - **One skin change this time (J9):** the skin's only change from build I is the Zoom row on the Interface settings page (and any rule J9 names). Check that the image's generated skin differs from build I's only there.
 - **Names:**
   - workspace `/srv/uiJ-<date>`;

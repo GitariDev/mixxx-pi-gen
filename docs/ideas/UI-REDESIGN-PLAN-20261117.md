@@ -918,3 +918,18 @@ The owner's answers (spec 2b):
 - **Accepted:** the cut header letters in every narrowed table, and the disabled ★ on an off row (spec 2d).
 - **Build I (the 10th pi-gen run):** the owner chose to build three items as drawn: the menu shadow, the Tracks row inside a drive, and the chip and ping timing. The header strip fix also goes in.
 - **The owner is away overnight and asked for no more questions.** The orchestrator carries build I through to acceptance and council round 4 on its own judgement, within the spec. Anything that cannot be built as drawn is recorded for the owner, not asked.
+
+
+### 12.10 Owner decisions after council round 4 and during build J (2026-11-20/21)
+
+- **Kept as on the card (spec 2e):** the Sources menu's capitals, build I's USB chip, and the ping's 15 s. J2 and J3 were reverted. Round 4's two caps are owner-accepted items.
+- **Build J (spec 2e, 2f):**
+  - the quit crash (J1);
+  - after an eject, the table drops the drive's rows and ☰ opens at the top level (J4);
+  - ☰ after OPEN opens inside the drive (J5);
+  - the KEY-sort fix (J6);
+  - the drive-rows cache fix (J7);
+  - the rekordbox text fix (J8);
+  - the Zoom row with its % readout, and shorter rows with the top bar (J9).
+- **Dropped by the owner:** the Starlight quick zoom (the headphone knob is hardware) and the zoom indicator.
+- **USB ports are never switched off** by tests or tools; re-plugs are done by the owner's hand.

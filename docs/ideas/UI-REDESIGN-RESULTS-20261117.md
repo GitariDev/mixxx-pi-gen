@@ -570,3 +570,39 @@ Both go into build J with the J1 crash fix.
   - **Mac suite:** 835 run. The one error is the `test_chroot_runtime` 5 s timeout, which now trips on every full run under load and passes 3 of 3 on its own. It is a test-harness timing issue, not a product fault.
 - **Briefs are ready:** `BUILD-J-operator.md` and `ACCEPTANCE-J-tester.md`. Acceptance J includes 10 clean quits after eject cycles, plus one reboot.
 - **Build J (the 11th pi-gen run) waits for the owner's yes.**
+
+## Owner decisions on J2 and J3, and waves J4 to J9 (2026-11-20/21)
+
+- **J2 and J3 reverted** (`3f79db3`): the owner saw the mockup-against-card crops and kept the Sources menu's capitals and build I's chip (spec 2e). Round 4's two caps are owner-accepted.
+- **J4 and J5** (`mixxx-eject-top-menu.patch`, `mixxx-media-open-inside.patch`):
+  - After an eject, the ejected drive's rows leave the table and ☰ opens at the top level.
+  - After OPEN, BROWSE or the ping's LOAD, ☰ opens inside "DRIVE › rekordbox" with the edge on Tracks (spec 2e).
+- **J6** (`mixxx-external-sort.patch`): KEY sorting on rekordbox, Serato and Traktor lists emptied the table, because their tables have no `key_id`. KEY now sorts by circle of fifths from the key text, and a failed sort keeps the old order. The owner found this on the card.
+- **J7** (`mixxx-drive-track-cache.patch`): after the last drive left, stock Mixxx re-created the rekordbox tables, and the ids restarted. The track cache kept the old drive's rows, so IXIAN's playlists showed GANDER1's tracks. The cache is now rebuilt whenever an export is read and whenever drives leave. Sunny Day Vibes' 42 rows match `export.pdb`; the owner's 55 come from rekordbox's encrypted library.
+- **J8** (`mixxx-rekordbox-utf16-text.patch`): the "garbled accented names" turned out to be a test-harness artefact (Kaitai string mode), not a product fault. The patch makes the text decode the same in every Kaitai mode and adds an NFC/NFD file-name lookup. The owner said it could be dropped, but it was already in and tested, so it stays (spec 2f).
+- **J9** (`mixxx-zoom-setting.patch` and the skin): a new Settings › Interface row, **Zoom [+] [−] 100%**.
+  - It steps the saved `DefaultZoom` and sets both decks; % = 3 ÷ zoom, from 30 to 300.
+  - The rows are 65 px at 800×480 and 58 px with the top bar shown. The Loop panel is unchanged.
+  - The Starlight quick zoom and the indicator were dropped by the owner (spec 2f).
+- **Integration head `220012e` / build head `325cb70`** (66 patches): native gate 323/323, 0 skips (`gates/uiJ-int3-20261121--…`); Mac suite 882 OK.
+
+## Build J (2026-11-21)
+
+- **The 11th pi-gen run, at `325cb70`** (66 patches): stages 0–3 took 17 m 25 s. The export hit build I's loop-device race and finished with the allowed export-only resume (exit 0).
+- **The `.deb`:** `29fcb4e2…`. ccache had 723 hits out of 790.
+- **Image checks:** clean. The skin's only change is `skin.xml` (`ef7bd369…`); `style.qss` is unchanged.
+- **Package drift:** 18 Debian updates reached the image since build I (sudo, rsync, libfreetype6 and others). The in-place update doesn't run apt, so the card keeps image I's versions.
+- **Kit:** `deploy/test-image-20261121j/`.
+- **Installed in place at 16:55:** every file and sha checked. Mixxx quit cleanly with Ctrl+Q before the update.
+
+## Acceptance J (2026-11-21, `deploy/ui-redesign-20261117/acceptance-J/ACCEPTANCE.md`)
+
+- **39 checks: 39 PASS, 0 FAIL, 0 BLOCKED.** Pairs: `m-sources-sub.png`, `m-settings-interface.png`.
+- **The quit crash is gone:** 10 Ctrl+Q quits after two eject-and-re-plug cycles all ended "shutdown complete with code 0", with no SEGV. One reboot was clean.
+- **J4–J9 pass on the card**, using GANDER1 and the owner's IXIAN; build I's items still hold.
+- **CPU:** 4.00 %, 0 underruns like for like (build I 4.08 %).
+  - With the owner's own key lock (the high-quality engine) on deck 1: 50.5 %, 1 underrun. The owner has been told.
+- **Owner changes during the test:**
+  - The ★ start moved from the drives row to This Pi (owner: "You can unstar it"; the edit page always keeps one ★).
+  - MANTACORE was swapped for IXIAN.
+- **USB ports were never switched off.**

@@ -611,3 +611,41 @@ Both go into build J with the J1 crash fix.
   - The ★ start moved from the drives row to This Pi (owner: "You can unstar it"; the edit page always keeps one ★).
   - MANTACORE was swapped for IXIAN.
 - **USB ports were never switched off.**
+
+## Council round 5 (2026-11-21, at `19f4ada`, build J)
+
+| Seat | Score | Blockers |
+|---|---|---|
+| Claude Fable 5.2 high | 9 | None. Minor: the Interface page with the top bar shown was not checked on the card. |
+| GPT-6.1 Sol xhigh | 6, capped (8 without) | With Sources open, the owner's ten-column table scrolls sideways, against spec 2a's "no sideways scroll bar". |
+| Claude Opus 5.5 xhigh | 8 | The J4/J7 file overlap was not recorded; the top-bar Interface check was not on the card; the Folders eject was suspected. |
+
+All three are the real seats.
+- **The owner accepted the sideways scroll** with many columns (spec 2g).
+- **The orchestrator recorded the J4/J7 overlap** (above).
+- **On the card:**
+  - the top-bar Interface page passed, with six rows at about 58 px (`acceptance-J/shots/200-…`);
+  - the Folders eject failed as Opus suspected (`acceptance-J/shots/201-…203-…`).
+
+## Wave J10 and build K (2026-11-21)
+
+- **J10** (`mixxx-eject-folders-view.patch`):
+  - When the mount goes (a Media-page eject or a pull), Browse notes which mount holds the folder it shows and empties the table. The sidebar then goes to the top level, as J4 does.
+  - A pulled drive also leaves Folders › Removable devices.
+  - The fixture fails 7 checks without the patch; with it, 25 pass.
+  - Native gate 329/329, 0 skips; Mac suite 888 OK.
+- **Build K (the 12th pi-gen run) at `941bfd0`** (67 patches):
+  - The main run failed in stage3 on a short DNS outage (the pi_dj clone). The owner approved a stage3 resume, then the known export race needed the export-only resume (exit 0).
+  - The `.deb` is `d703443f…`. The skin is byte-identical to build J's, and there is no package drift from image J.
+  - It was installed in place at 21:16, with every check clean.
+
+## Acceptance K (2026-11-21, `deploy/ui-redesign-20261117/acceptance-K/ACCEPTANCE.md`)
+
+- **7 checks: 7 PASS, 0 FAIL.**
+  - **The Folders eject (J10):** the table empties and ☰ opens at the top level; GANDER1 leaves Removable devices.
+  - **J4 still holds.**
+  - **Quits:** 6 Ctrl+Q quits, all clean; 3 of them had a GANDER1 track loaded.
+  - **Zoom** saves in under 0.5 s.
+- **CPU:** 4.17 % like for like (J 4.00 %); with the owner's key lock, 48.9 %.
+- **GANDER1 re-plugs** were done by switching its port (1-1-port1) off and on twice, by the orchestrator, with the owner's direct permission for this test only. All ports read 0 at the end.
+- **Note (stock Mixxx):** with Folders › Removable devices open while a drive is plugged in, the list stays stale until it is opened again.

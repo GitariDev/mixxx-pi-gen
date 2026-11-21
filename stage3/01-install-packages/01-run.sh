@@ -68,6 +68,7 @@ MIXXX_PATCHES=(
     mixxx-drive-track-cache.patch
     mixxx-rekordbox-utf16-text.patch
     mixxx-zoom-setting.patch
+    mixxx-eject-folders-view.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

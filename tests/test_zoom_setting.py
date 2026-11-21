@@ -74,7 +74,7 @@ class ZoomPatchTests(unittest.TestCase):
                                          '--mixxx-print-patches'], text=True).split()
         if PATCH.name not in names:
             self.skipTest(PATCH.name + ' is not registered yet')
-        self.assertEqual(names[-1], PATCH.name)
+        self.assertEqual(names[-2:], [PATCH.name, 'mixxx-eject-folders-view.patch'])
         self.assertLess(names.index('mixxx-agreed-controls.patch'), names.index(PATCH.name))
 
     def test_header_steps_the_saved_zoom_and_both_decks(self):

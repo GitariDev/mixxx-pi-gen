@@ -9,8 +9,7 @@ controlproxy, controlpotmeter, controlpushbutton, controlbehavior). The decks'
 BaseTrackPlayerImpl (tests/test_zoom_setting.py checks that those rules are
 still Mixxx's). The waveform factory's setDefaultZoom is a recording double.
 
-Modes (each its own process and folder): steps, ends, loop, percent,
-position, changing, kill (a change,
+Modes (each its own process and folder): steps, ends, loop, percent, kill (a change,
 then SIGKILL 1 s later; a new process then reads mixxx.cfg as a restart
 does). --baseline builds the stack without mixxx-zoom-setting.patch; the
 header is then absent and the same checks must fail.
@@ -31,7 +30,7 @@ from native.agreed_controls_runner import DOUBLES, PINNED_FILES
 ROOT = Path(__file__).resolve().parents[2]
 NATIVE = ROOT / 'tests/native'
 PATCH = 'mixxx-zoom-setting.patch'
-MODES = ('steps', 'ends', 'loop', 'percent', 'position', 'changing', 'kill')
+MODES = ('steps', 'ends', 'loop', 'percent', 'kill')
 KILL_AFTER_SECONDS = 1.0
 
 

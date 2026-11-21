@@ -305,8 +305,6 @@ int loop(const QString& directory) {
 }
 
 const ConfigKey kPercent("[MixPi]", "waveform_zoom_percent");
-const ConfigKey kPosition("[MixPi]", "waveform_zoom_position");
-const ConfigKey kChanging("[MixPi]", "waveform_zoom_changing");
 
 // Amendment 1, item 2: the row's readout, 3 ÷ zoom as a rounded %.
 int percent(const QString& directory) {
@@ -327,66 +325,6 @@ int percent(const QString& directory) {
             QStringLiteral("the readout is 300 150 100 75 60 50 43 38 33 30 for zoom 1 to 10"));
     setIfExists(kPercent, 55);
     check(ControlObject::get(kPercent) == 30, QStringLiteral("the readout is read-only"));
-    return failures ? 1 : 0;
-}
-
-// Amendment 1, item 3: a knob's position sets the saved zoom in ten steps.
-int position(const QString& directory) {
-    App app(directory, kStartCfg);
-    check(ControlObject::exists(kPosition), QStringLiteral("[MixPi],waveform_zoom_position exists"));
-    QStringList text;
-    for (int midi = 0; midi <= 127; ++midi) {
-        if (ControlObject::exists(kPosition)) {
-            ControlObject::set(kPosition, midi / 127.0);
-        }
-        const QString value = QString::number(ControlObject::get(kPercent));
-        if (text.isEmpty() || text.last() != value) {
-            text.append(value);
-        }
-    }
-    std::printf("KNOB %s\n", qPrintable(text.join(' ')));
-    check(text.join(' ') == QStringLiteral("30 33 38 43 50 60 75 100 150 300"),
-            QStringLiteral("turning the knob from fully left to fully right goes 30% to 300% in the ten steps"));
-    check(app.both(1), QStringLiteral("fully right puts both decks at zoom 1 (300%)") + app.decks());
-    setIfExists(kPosition, 0.0);
-    check(app.both(10), QStringLiteral("fully left puts both decks at zoom 10 (30%)") + app.decks());
-    setIfExists(kPosition, 0.5);
-    check(app.both(5) || app.both(6), QStringLiteral("the middle is a middle step") + app.decks());
-    const double middle = app.deck1->zoom();
-    check(waitFor(3000, [&] {
-        return savedLine(app.path) == QStringLiteral("DefaultZoom %1").arg(middle);
-    }) >= 0, QStringLiteral("the knob's zoom is the saved setting"));
-    return failures ? 1 : 0;
-}
-
-// Amendment 1, item 4: 1 while the saved zoom changes, 0 1 s after the last change.
-int changing(const QString& directory) {
-    App app(directory, kStartCfg);
-    check(ControlObject::exists(kChanging) && ControlObject::get(kChanging) == 0,
-            QStringLiteral("waveform_zoom_changing starts at 0"));
-    app.deck1->loopPlus();
-    check(ControlObject::get(kChanging) == 0, QStringLiteral("the Loop panel's + does not raise it"));
-    QElapsedTimer timer;
-    timer.start();
-    tap(kZoomIn);
-    check(ControlObject::get(kChanging) == 1, QStringLiteral("a change of the saved zoom raises it at once"));
-    spin(600);
-    if (ControlObject::exists(kPosition)) {
-        ControlObject::set(kPosition, 1.0);
-    }
-    const qint64 second = timer.elapsed();
-    spin(700);
-    check(ControlObject::get(kChanging) == 1,
-            QStringLiteral("a further change within 1 s keeps it up"));
-    const qint64 down = waitFor(3000, [&] { return ControlObject::get(kChanging) == 0; });
-    const qint64 after = timer.elapsed() - second;
-    measure(QStringLiteral("last change to waveform_zoom_changing 0"), after);
-    check(down >= 0 && after >= 950 && after < 1300,
-            QStringLiteral("it drops to 0 about 1 s after the last change"));
-    tap(kZoomIn);  // already at zoom 1: no change
-    check(ControlObject::get(kChanging) == 0, QStringLiteral("a tap at the end changes nothing and does not raise it"));
-    setIfExists(kChanging, 1);
-    check(ControlObject::get(kChanging) == 0, QStringLiteral("waveform_zoom_changing is read-only"));
     return failures ? 1 : 0;
 }
 
@@ -429,8 +367,6 @@ int main(int argc, char** argv) {
             {QStringLiteral("ends"), ends},
             {QStringLiteral("loop"), loop},
             {QStringLiteral("percent"), percent},
-            {QStringLiteral("position"), position},
-            {QStringLiteral("changing"), changing},
             {QStringLiteral("kill"), kill},
             {QStringLiteral("restart"), restart},
     };

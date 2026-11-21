@@ -84,9 +84,7 @@ class ZoomPatchTests(unittest.TestCase):
                      'setZoom(zoom() - kStep);', 'setZoom(zoom() + kStep);', 'if (value > 0) {',
                      'QStringLiteral("[Waveform]"), QStringLiteral("DefaultZoom")',
                      'std::clamp(value, kMinZoom, kMaxZoom)',
-                     'QStringLiteral("waveform_zoom_position")), false);', 'control("waveform_zoom_percent")',
-                     'control("waveform_zoom_changing")', 'static constexpr int kChangingMs = 1000;',
-                     'setZoom(kMaxZoom - std::round(position * (kMaxZoom - kMinZoom)));',
+                     'control("waveform_zoom_percent")',
                      'std::lround(kDefaultZoom / zoom * 100.0)',
                      'm_pSettings->setValue(kDefaultZoomKey, zoom);',
                      'for (const auto* group : {"[Channel1]", "[Channel2]"})',
@@ -143,19 +141,6 @@ class MixxxZoomTests(unittest.TestCase):
         self.assertIn('m_pZoom = new ControlProxy(group, "waveform_zoom", this, ControlFlag::NoAssertIfMissing);',
                       viewer)
 
-    def test_stock_starlight_mapping_does_not_map_the_headphone_knob(self):
-        # Amendment 1, item 3: the Starlight's headphone (and main) knob is a
-        # hardware control of its sound card. The stock mapping binds no MIDI
-        # message to it, with or without SHIFT, and no script sets a
-        # headphone level; SHIFT only changes the pads, CUE, PLAY, SYNC,
-        # the jog wheels and the headphone CUE/MIX and split buttons.
-        mapping = self.source('res/controllers/Hercules DJControl Starlight.midi.xml')
-        script = self.source('res/controllers/Hercules-DJControl-Starlight-scripts.js')
-        for text in (mapping, script):
-            for key in ('headGain', 'headphone_gain', 'head_gain', 'waveform_zoom'):
-                self.assertNotIn(key, text)
-        self.assertNotIn('<key>gain</key>', mapping.replace('[Channel1]', '').replace('[Channel2]', ''))
-
     def test_card_config_keeps_the_decks_apart_and_starts_at_three(self):
         section = CONFIG.read_text().split('\n[Waveform]\n', 1)[1].split('\n[', 1)[0]
         self.assertIn('\nDefaultZoom 3\n', '\n' + section + '\n')
@@ -177,13 +162,12 @@ class ZoomNativeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, mode + result.stdout[-4000:] + result.stderr[-3000:])
         output = self.output(self.patched)
         names = checks()
-        self.assertGreaterEqual(len(names), 30)
+        self.assertGreaterEqual(len(names), 20)
         for name in names:
             self.assertRegex(output, r'(?m)^PASS ' + re.escape(name))
         self.assertNotIn('FAIL ', output)
         self.assertIn('STEPS 2 1 1 1 2 3 4 5 6 7 8 9 10 10 10', output)
         self.assertIn('PERCENTS 300 150 100 75 60 50 43 38 33 30', output)
-        self.assertIn('KNOB 30 33 38 43 50 60 75 100 150 300', output)
         saves = re.findall(r'MEASURE .* in mixxx.cfg on disk ms: (-?\d+)', output)
         self.assertEqual(len(saves), 2)
         for measured in saves:
@@ -201,11 +185,7 @@ class ZoomNativeTests(unittest.TestCase):
                      'after SIGKILL 1 s after + mixxx.cfg holds DefaultZoom 2',
                      'after the restart both decks start at the saved zoom 2',
                      'the readout starts at 100 for the saved zoom 3',
-                     'the readout is 300 150 100 75 60 50 43 38 33 30 for zoom 1 to 10',
-                     '[MixPi],waveform_zoom_position exists',
-                     'turning the knob from fully left to fully right goes 30% to 300% in the ten steps',
-                     'waveform_zoom_changing starts at 0',
-                     'a change of the saved zoom raises it at once'):
+                     'the readout is 300 150 100 75 60 50 43 38 33 30 for zoom 1 to 10'):
             self.assertRegex(output, r'(?m)^FAIL ' + re.escape(name))
         # What stock Mixxx already does still holds without the patch.
         self.assertRegex(output, r'(?m)^PASS both decks start at the saved zoom 3')

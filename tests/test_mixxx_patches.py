@@ -96,6 +96,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-eject-folders-view.patch",
             "mixxx-removable-rows-fix.patch",
             "mixxx-open-remount.patch",
+            "mixxx-waveform-height.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():

@@ -71,6 +71,7 @@ MIXXX_PATCHES=(
     mixxx-eject-folders-view.patch
     mixxx-removable-rows-fix.patch
     mixxx-open-remount.patch
+    mixxx-waveform-height.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

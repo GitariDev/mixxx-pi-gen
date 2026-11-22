@@ -735,3 +735,12 @@ All three are the real seats; there are no stand-ins.
 - **Leader's slip:** the J15 registration first broke `tests/test_mixxx_patches.py` (a line inserted inside a two-line dict entry); the Mac suite caught it before the push.
 - **Three-band colours:** an R&D thread on branch `rnd/waveform-three-band-20261122`; nothing from it ships without the owner's choice.
 - **Correction (council round 8, Sol and Fable):** the leader wrote in the round 8 brief (listed item 12) and told the owner that the Starlight's gain knob is the real pregain control. It is not: the stock Starlight mapping at `3ebac449` binds no `pregain`; its deck knobs drive `volume`. Nothing on this rig changes the pregain (default 1.0), so the J13/J15 pregain path is verified by the native fixture only. Spec 2h and the brief are corrected. Also corrected: build B run 1 is "discarded after a successful pi-gen", not "aborted" (Sol).
+
+## Acceptance O (2026-11-22/23, `deploy/ui-redesign-20261117/acceptance-O/ACCEPTANCE.md`)
+
+- **15 PASS, 0 FAIL, 0 BLOCKED** on build O (card updated 23:23-23:27).
+- **J15:** the loud master (ReplayGain 0.24) stops at 0.80 of its row in all 8 shots, 13 px short of both edges, never touching them (acceptance M: top edge 12-31 % of columns, bottom 7-19 %). The quiet master (0.78) is 0.80-0.81 of its build M height (median 0.31-0.36). Swapped decks give the same. The Loop strip and overviews are as in build M. (Acceptance O's summary says "acceptance M: 7-31 % on the top edge"; the top-edge range was 12-31 %, 7 % was the bottom edge's minimum.)
+- **J14:** under the empty part (x 700, 740, 770) y 131 is `#2c333d`; under the sections one line in the same row; header height and section edges equal build M's.
+- **J12, J10, J11, J4** hold; 3 of 3 clean quits; CPU 4.17 % (M 4.00 %, L 4.08 %), 0 underruns; `throttled=0x0`, 68.6-70.6 °C; card packages equal image O's.
+- **Off-brief, put back:** the header check moved the owner's column widths (restored from the owner's `mixxx.cfg` with Mixxx stopped; `SharedColumns` identical); CUE taps moved two This Pi main cues (put back through the UI; the database was only read).
+- **Gate trees:** J12 and J13 were gated on their own trees (J12 on `e771dfe` + J12; J13 on `c84f685` + J13), J14 on `ddcccf3` + J14, and J15 on `17a8688` + J15 with the registration, which is build O's tree.

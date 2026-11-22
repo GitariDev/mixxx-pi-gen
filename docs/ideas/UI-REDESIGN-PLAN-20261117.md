@@ -977,3 +977,8 @@ Recorded only; no work has started. The owner: "You can add these to the note's 
 - In chat: "See comments on loudness. Do a focused change there."
 - **So:** wave J15 scales the decks' main waveforms by 0.80 (J13's height × 0.80); nothing else changes. Mixxx stores levels capped at full scale, so the loudest peaks then stop at 80 % of the half-height, 20 % from the edge; 0.90 would give the 10 %. The owner's number, 0.80, is built; the 10 % note is reported back with the measured result.
 - **The three-band colours** (bass, mids and highs shown apart) go to an R&D thread on its own branch, judged by the owner; nothing from it ships without the owner's choice.
+
+### 12.17 Owner's yes for builds N and O (2026-11-22)
+
+- **Builds N and O and the card updates:** "Alright keep going!" (said after the build M report, with the header line request "Show me this.", then "this" for option B), and for the waveform gain "See comments on loudness. Do a focused change there." with the hub notes in 12.16.
+- Build N (J14) was built and not installed; build O (J14 + J15) was installed on the card on 2026-11-22 at 23:23-23:27.

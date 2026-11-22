@@ -108,4 +108,4 @@ Then list:
 
 ## Report
 
-Write `deploy/ui-redesign-20261117/council/round7-{SEAT}.md`. Start it with `# Council round 8: {SEAT_LONG}, at {HEAD}`, and put `Score: N/10.` on the next line. Reply with the score and the blockers, one line each.
+Write `deploy/ui-redesign-20261117/council/round8-{SEAT}.md`. Start it with `# Council round 8: {SEAT_LONG}, at {HEAD}`, and put `Score: N/10.` on the next line. Reply with the score and the blockers, one line each.

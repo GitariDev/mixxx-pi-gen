@@ -969,3 +969,11 @@ Recorded only; no work has started. The owner: "You can add these to the note's 
 
 - **Add the 1 px line (B).** Shown the comparison (`header-line-choice-20261122/01-…` and `02-header-line-full-screen-A-B.png`), the owner pointed at "add the line (B)" and said: "this". The header's empty part gets the same 1 px `#2c333d` bottom line as the sections, as the mockup draws it, with no change to the header's height (wave J14).
 - **Build M is on the card** (updated 21:27-21:31). J14 is a skin-only wave; it ships in build N, the 15th pi-gen run, after acceptance M.
+
+### 12.16 Owner notes on waveform loudness (2026-11-22, Climb hub)
+
+- On the J13 simulation (hub check oc-4): "Let's set the gain to around .80"
+- On acceptance M's `70-wf-1.png` (hub check oc-2): "A very loud track should be about 10% away from the complete peak." and "Not sure if we can do a 3 band color scheme that separates the Bass Mid's and Highs." and "Fix the sizing and run an RND thread in a separate branch and put it on me."
+- In chat: "See comments on loudness. Do a focused change there."
+- **So:** wave J15 scales the decks' main waveforms by 0.80 (J13's height × 0.80); nothing else changes. Mixxx stores levels capped at full scale, so the loudest peaks then stop at 80 % of the half-height, 20 % from the edge; 0.90 would give the 10 %. The owner's number, 0.80, is built; the 10 % note is reported back with the measured result.
+- **The three-band colours** (bass, mids and highs shown apart) go to an R&D thread on its own branch, judged by the owner; nothing from it ships without the owner's choice.

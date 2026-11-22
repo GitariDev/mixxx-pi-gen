@@ -1,0 +1,176 @@
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index 3d7bd0b..e631b09 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -12,6 +12,7 @@
+ #include <QResizeEvent>
+ #include <QScrollArea>
+ #include <QScrollBar>
++#include <QShowEvent>
+ #include <QStyle>
+ #include <QStyledItemDelegate>
+ #include <QTimer>
+@@ -296,6 +297,22 @@ void WLibrarySidebar::updateSourceScreen() {
+             setFrameShape(QFrame::NoFrame);
+             applySourceMargins();
+             rebuildSourceRail();
++            // Spec 2e (wave J16): an OPEN before ☰ was ever shown. Until now
++            // the sidebar had no width, so openShownSource returned early and
++            // ☰ opened at the top level. Now the menu opens inside that drive,
++            // as if the OPEN came now: only while Tracks still shows a list of
++            // the same source (the row is gone with its drive).
++            if (m_pendingOpen.isValid() && groupedTiles) {
++                const QString pending = tileOf(m_pendingOpen);
++                m_pendingOpen = QPersistentModelIndex();
++                if (!pending.isEmpty() && pending == tileOf(currentIndex())) {
++                    openShownSource();
++                }
++            }
++            m_pendingOpen = QPersistentModelIndex();
++            if (isVisible()) {
++                edgeShownDriveTracks();
++            }
+         } else {
+             setFrameShape(m_frameShape);
+             // QTreeView sets its own (header) margins again.
+@@ -354,6 +371,72 @@ void WLibrarySidebar::resizeEvent(QResizeEvent* pEvent) {
+     updateSourceScreen();
+ }
+ 
++void WLibrarySidebar::showEvent(QShowEvent* pEvent) {
++    QTreeView::showEvent(pEvent);
++    if (!m_sourceScreen) {
++        // Not the menu yet (no width): updateSourceScreen checks the edge
++        // once it is.
++        return;
++    }
++    if (m_sourceRailPending) {
++        // A model change (a reset) is waiting: the tiles' rows first.
++        rebuildSourceRail();
++    }
++    edgeShownDriveTracks();
++}
++
++void WLibrarySidebar::edgeShownDriveTracks() {
++    // Acceptance M 38-menu: ☰ opened inside "GANDER1 › rekordbox" with no row
++    // edged. The place (the root, m_menuInside) is kept apart from the current
++    // row, and the current row can go while the place stays: a focus-in
++    // (clearCurrentIndex), or a model reset (rebuildSourceRail enters the
++    // drive again with nothing current). Only selectShownDriveTracks set it.
++    // Now, on ☰ at the drive's own level, when no row of that level is
++    // current (and no row of another source), the drive's Tracks row is: the
++    // row J5 edges. The table is not changed (nothing is activated).
++    if (!m_sourceScreen || !m_menuInside || !groupedTiles || !m_touchNavigation ||
++            m_sourcesEditing || !model() || !selectionModel()) {
++        return;
++    }
++    const auto* pTile = selectedTile();
++    if (!pTile || !pTile->id.startsWith(QStringLiteral("drive:")) || !pTile->node.isValid() ||
++            rootIndex() != pTile->node) {
++        return;
++    }
++    const QModelIndex current = currentIndex();
++    if (current.isValid() && current.parent() == rootIndex() &&
++            !isRowHidden(current.row(), rootIndex())) {
++        // A row in view has the edge.
++        return;
++    }
++    if (current.isValid() && tileOf(current) != pTile->id) {
++        // Tracks shows another source's list.
++        return;
++    }
++    // The drive's Tracks row: the child with the drive's own path first in
++    // its data list (RekordboxFeature's driveTracksRow). A folder drive's
++    // rows hold a plain path (Qt would read a string as a list of its
++    // characters), and it has no such row.
++    auto pathOf = [](const QModelIndex& index) {
++        const QVariant data = index.data(SidebarModel::DataRole);
++        return data.userType() == QMetaType::QString ? QString() : data.toList().value(0).toString();
++    };
++    const QModelIndex node = pTile->node;
++    const QString path = pathOf(node);
++    if (path.isEmpty()) {
++        return;
++    }
++    for (int row = 0; row < model()->rowCount(node); ++row) {
++        const QModelIndex child = model()->index(row, 0, node);
++        if (!isRowHidden(row, node) && pathOf(child) == path) {
++            selectionModel()->setCurrentIndex(child,
++                    QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
++            updateSourceChrome();
++            return;
++        }
++    }
++}
++
+ void WLibrarySidebar::hideEvent(QHideEvent* pEvent) {
+     // Leaving Sources (its close button) ends Sources edit.
+     if (m_sourcesEditing) {
+@@ -627,6 +710,9 @@ void WLibrarySidebar::followShownSource() {
+     // The source shown in Tracks is now the menu's source and place too; the
+     // menu keeps its level (inside or at the top). The saved start (★) is
+     // not touched.
++    // Spec 2e (wave J16): the ★ start, or a new OPEN (openShownSource sets it
++    // again), replaces an OPEN that waits for the menu.
++    m_pendingOpen = QPersistentModelIndex();
+     if (!m_sourceScreen || !groupedTiles || !m_touchNavigation || m_sourcesEditing) {
+         return;
+     }
+@@ -652,6 +738,13 @@ void WLibrarySidebar::openShownSource() {
+     // I, 3f). Now the place is inside the drive, so ☰ opens there; the
+     // feature then makes the drive's Tracks row current (the edge).
+     followShownSource();
++    if (!m_sourceScreen && groupedTiles && m_touchNavigation && !m_sourcesEditing) {
++        // Spec 2e (wave J16): ☰ was never shown, so the sidebar is not the
++        // menu yet (no width). Remember the OPEN; updateSourceScreen applies
++        // it when the menu turns on.
++        m_pendingOpen = QPersistentModelIndex(currentIndex());
++        return;
++    }
+     if (!m_sourceScreen || !groupedTiles || !m_touchNavigation || m_sourcesEditing) {
+         return;
+     }
+@@ -728,6 +821,8 @@ void WLibrarySidebar::releaseShownSource() {
+     // so rowsAboutToBeRemoved did not see a drive's own row go. As there:
+     // the top level, nothing current, so the next ☰ opens there and no row
+     // has the edge.
++    // Spec 2e (wave J16): an OPEN that waits for the menu went with it.
++    m_pendingOpen = QPersistentModelIndex();
+     if (!m_sourceScreen || !groupedTiles || !m_touchNavigation) {
+         return;
+     }
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index d19f162..0aa4aae 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -171,6 +171,9 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     void updateGeometries() override;
+     void resizeEvent(QResizeEvent* pEvent) override;
+     void hideEvent(QHideEvent* pEvent) override;
++    // Spec 2e (wave J16): ☰ shown inside a drive puts the edge back on its
++    // Tracks row (edgeShownDriveTracks).
++    void showEvent(QShowEvent* pEvent) override;
+     bool eventFilter(QObject* pObject, QEvent* pEvent) override;
+     // The Sources menu's current row follows the row shown in Tracks.
+     void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
+@@ -202,6 +205,9 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     const LibraryInterface::SourceTile* selectedTile() const;
+     QString tileOf(const QModelIndex& index) const;
+     void closeSources();
++    // Spec 2e (wave J16): ☰ shown inside a drive whose level has no current
++    // row: the drive's Tracks row (the row J5 edges) is made current.
++    void edgeShownDriveTracks();
+ 
+     TouchSourceNavigation* m_touchNavigation = nullptr;
+     ControlObject* m_sourceCanGoBack = nullptr;
+@@ -227,6 +233,10 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     // Spec 2e: the drive whose list was in Tracks went away, and no list has
+     // been picked since: no source row has the current-row edge.
+     bool m_shownSourceGone = false;
++    // Spec 2e (wave J16): an OPEN, BROWSE or LOAD (openShownSource) while the
++    // sidebar was not yet the Sources menu (never shown: no width). The row
++    // current then; applied when the menu turns on. Invalid: none.
++    QPersistentModelIndex m_pendingOpen;
+     QFrame::Shape m_frameShape = QFrame::StyledPanel;
+     bool m_sourcesEditing = false;
+     bool m_sourceRailPending = false;

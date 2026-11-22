@@ -70,6 +70,7 @@ MIXXX_PATCHES=(
     mixxx-zoom-setting.patch
     mixxx-eject-folders-view.patch
     mixxx-removable-rows-fix.patch
+    mixxx-open-remount.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

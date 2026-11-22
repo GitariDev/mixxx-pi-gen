@@ -58,6 +58,7 @@ REQUIRED_TESTS = (
     'test_zoom_setting',
     'test_eject_folders_view',
     'test_removable_rows_fix',
+    'test_open_remount',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

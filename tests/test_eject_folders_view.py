@@ -66,7 +66,7 @@ class EjectFoldersViewPatchTests(unittest.TestCase):
                                          '--mixxx-print-patches'], text=True).split()
         if PATCH.name not in names:
             self.skipTest(PATCH.name + ' is not registered yet')
-        self.assertEqual(names[-2:], [PATCH.name, 'mixxx-removable-rows-fix.patch'])
+        self.assertEqual(names[names.index(PATCH.name) + 1], 'mixxx-removable-rows-fix.patch')
         self.assertLess(names.index('mixxx-media-open-inside.patch'), names.index(PATCH.name))
         self.assertLess(names.index('mixxx-zoom-setting.patch'), names.index(PATCH.name))
 

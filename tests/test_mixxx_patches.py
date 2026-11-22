@@ -95,6 +95,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-zoom-setting.patch",
             "mixxx-eject-folders-view.patch",
             "mixxx-removable-rows-fix.patch",
+            "mixxx-open-remount.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -128,6 +129,8 @@ PREREQUISITES = {
     "mixxx-zoom-setting.patch": ["mixxx-agreed-controls.patch"],
     "mixxx-eject-folders-view.patch": ["mixxx-media-open-inside.patch"],
     "mixxx-removable-rows-fix.patch": ["mixxx-eject-folders-view.patch"],
+    "mixxx-open-remount.patch": ["mixxx-removable-rows-fix.patch", "mixxx-media-chip-ping.patch",
+                                 "mixxx-table-fit-media-open.patch"],
     "mixxx-scan-strip-fixes.patch": ["mixxx-scan-progress.patch"],
     "mixxx-sources-edit-done.patch": ["mixxx-source-groups.patch"],
     "mixxx-settings-fixes.patch": ["mixxx-performance-settings.patch", "mixxx-acceptance-fixes.patch"],

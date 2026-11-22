@@ -54,7 +54,7 @@ class RemovableRowsFixPatchTests(unittest.TestCase):
                                          '--mixxx-print-patches'], text=True).split()
         if PATCH.name not in names:
             self.skipTest(PATCH.name + ' is not registered yet')
-        self.assertEqual(names[-2:], ['mixxx-eject-folders-view.patch', PATCH.name])
+        self.assertEqual(names[names.index(PATCH.name) - 1], 'mixxx-eject-folders-view.patch')
 
     def test_only_a_row_that_was_a_mount_point_goes(self):
         removed = changed(FEATURE, '-')

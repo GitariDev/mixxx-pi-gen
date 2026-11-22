@@ -264,6 +264,16 @@ The owner read council round 2 (all three seats at 6) and decided the following.
 - **Sideways scroll with many columns is fine.** When the shared column setup has more columns than the narrowed table can show with Sources open (the owner's ten columns), the table scrolls sideways with its bar, as it does at full width. This replaces 2a's "no sideways scroll bar" for that case; with columns that fit, they still fit. Owner: "Sideways scroll is fine" (council round 5, GPT seat's cap). Earlier, of the horizontal bar: "The scroll was okay."
 - **Found on the card after round 5 (Opus seat):** a drive opened through Folders (Sources › Folders › Removable devices › DRIVE) and then ejected keeps its file rows in the table, and ☰ opens in Folders instead of the top level. Spec 2e's eject rule covers this case too: the stale rows go and ☰ opens at the top level. Shots: `acceptance-J/shots/201-…203-…`.
 
+## 2h. Owner items for build M (2026-11-22)
+
+- **OPEN mounts an ejected drive again.** After an eject (Media page, clean eject: DONE), a drive that is still plugged in stays on the Media page and its row keeps reading **SAFE TO REMOVE**. Pressing **OPEN** on that row mounts it again: the row goes back to **READY**, and the drive's tracks, tags, playlists and folders read as before the eject, with no re-plug and no Mixxx restart. Owner: "No, we should be able to reload it if it is still connected" and "You should be able to press open to mount again so the safe to remove stays, but if you press open it goes back to a ready state". Pulling the drive out still removes it as today.
+- **Bigger main waveforms.** Owner: "The main waveform window on decks seems to be quite compressed you don't see the waveforms get very big especially the bass. Could you see if there is some scaling being done and if so can we increase it. Ideally very loud tracks would end up getting ever so slightly clipped."
+  - This is the two decks' main waveforms on the Decks page (just below the top bar). The overview strips, the Loop panel and every other screen keep their look.
+  - Found (2026-11-22): Mixxx scales the main waveform's height by the deck's total gain, which includes the track's ReplayGain. The card's analysed tracks have a median ReplayGain of −8.5 dB (×0.38), so a typical track is drawn at about 38 % of its real level; tracks not yet analysed get the −6 dB default boost (×0.5). Mixxx also stores the level with a power curve (`pow(x, 0.632)`).
+  - Goal: a typical track fills most of the waveform's height, and only very loud tracks clip, ever so slightly, at the top and bottom edges. The colours (bass, mid, high) are unchanged.
+- **The header's 1 px bottom line** (listed item 4): the owner chooses to add it or leave it, after seeing the comparison `deploy/ui-redesign-20261117/header-line-choice-20261122/01-header-line-A-without-B-with.png`. Owner: "Show me so I can choose to keep or remove it."
+- **Package updates.** Owner: "Absolutely do that. Thanks!" The card got the Debian updates on 2026-11-22 (28 packages; no bootloader change). Build M's image takes the same current packages (stage0 runs `dist-upgrade`).
+
 ## 3. Not part of build C
 
 - **G5 extras:** the owner suggested an outline in the fill colour when active and thinner outlines on inactive buttons, then said "What we have now is acceptable". This is noted only.

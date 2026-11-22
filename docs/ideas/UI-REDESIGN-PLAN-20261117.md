@@ -957,3 +957,10 @@ Recorded only; no work has started. The owner: "You can add these to the note's 
 - **The 1 px line under the empty part of the table header** (carried minor item). The owner: "Show me so I can choose to keep or remove it." Next step: show the owner a before-and-after (a card screenshot with the line and a render without it), then keep or remove it as the owner chooses.
 - **GANDER1's file system** (marked "not properly unmounted" before acceptance L). The owner: "I'll give it a look, but it should be okay." No repair from the Pi.
 - **Debian package updates on the card** (the card still has build I's packages; 18 security updates were out on 2026-11-22). The owner: "Absolutely do that. Thanks!" Apply them on the card when the work starts, and put the same package state in the next image.
+
+### 12.14 Owner request for build M (2026-11-22)
+
+- **Start:** "You can take this in with the rest of the build items and get started." Build M carries the 12.13 items and the waveform item (spec 2h).
+- **Waveforms:** "The main waveform window on decks seems to be quite compressed you don't see the waveforms get very big especially the bass. Could you see if there is some scaling being done and if so can we increase it. Ideally very loud tracks would end up getting ever so slightly clipped."
+- **Correction to the morning report:** the 1 px header item is a line the mockup has and the card lacks (the card shows no line under the header's empty part), not a line to remove. The comparison shows both.
+- **Package updates done on the card** at 19:44-19:47: Mixxx quit cleanly, 28 packages upgraded (Mesa, LightDM, WebKitGTK, sudo, rsync and others; Mixxx unchanged), rebooted, Mixxx back on V3D. The bootloader check skipped its automatic upgrade. Logs: `deploy/ui-redesign-20261117/card-apt-20261122/`.

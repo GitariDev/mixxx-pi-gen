@@ -964,3 +964,8 @@ Recorded only; no work has started. The owner: "You can add these to the note's 
 - **Waveforms:** "The main waveform window on decks seems to be quite compressed you don't see the waveforms get very big especially the bass. Could you see if there is some scaling being done and if so can we increase it. Ideally very loud tracks would end up getting ever so slightly clipped."
 - **Correction to the morning report:** the 1 px header item is a line the mockup has and the card lacks (the card shows no line under the header's empty part), not a line to remove. The comparison shows both.
 - **Package updates done on the card** at 19:44-19:47: Mixxx quit cleanly, 28 packages upgraded (Mesa, LightDM, WebKitGTK, sudo, rsync and others; Mixxx unchanged), rebooted, Mixxx back on V3D. The bootloader check skipped its automatic upgrade. Logs: `deploy/ui-redesign-20261117/card-apt-20261122/`.
+
+### 12.15 Owner choice on the header line (2026-11-22, evening)
+
+- **Add the 1 px line (B).** Shown the comparison (`header-line-choice-20261122/01-…` and `02-header-line-full-screen-A-B.png`), the owner pointed at "add the line (B)" and said: "this". The header's empty part gets the same 1 px `#2c333d` bottom line as the sections, as the mockup draws it, with no change to the header's height (wave J14).
+- **Build M is on the card** (updated 21:27-21:31). J14 is a skin-only wave; it ships in build N, the 15th pi-gen run, after acceptance M.

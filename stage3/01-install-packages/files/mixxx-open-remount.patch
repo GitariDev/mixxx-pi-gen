@@ -1,0 +1,458 @@
+diff --git a/src/library/media/mediauseregistry.h b/src/library/media/mediauseregistry.h
+index eada2aa..7e08ccd 100644
+--- a/src/library/media/mediauseregistry.h
++++ b/src/library/media/mediauseregistry.h
+@@ -25,6 +25,7 @@ class MediaUseRegistry {
+         bool draining = false;
+         std::uint64_t epoch = 0;
+         bool retired = false;
++        std::uint64_t round = 0; // spec 2h: times the drive was mounted again
+     };
+     struct State {
+         std::mutex mutex;
+@@ -174,6 +175,36 @@ class MediaUseRegistry {
+         return Drain(m_state, generation, ++entry.epoch);
+     }
+ 
++    // Spec 2h: OPEN on the drive's SAFE TO REMOVE row mounted the same
++    // physical drive again (no re-plug), so its retired generation takes
++    // reads again, as a new round. Only a retired generation that is not
++    // draining reopens; every other generation is left alone.
++    bool reopen(const std::string& generation) {
++        if (generation.empty()) {
++            return false;
++        }
++        std::lock_guard<std::mutex> lock(m_state->mutex);
++        const auto entry = m_state->entries.find(generation);
++        if (entry == m_state->entries.end() || !entry->second.retired || entry->second.draining) {
++            return false;
++        }
++        entry->second.retired = false;
++        ++entry->second.round;
++        return true;
++    }
++
++    bool retired(const std::string& generation) const {
++        std::lock_guard<std::mutex> lock(m_state->mutex);
++        const auto entry = m_state->entries.find(generation);
++        return entry != m_state->entries.end() && entry->second.retired;
++    }
++
++    std::uint64_t round(const std::string& generation) const {
++        std::lock_guard<std::mutex> lock(m_state->mutex);
++        const auto entry = m_state->entries.find(generation);
++        return entry == m_state->entries.end() ? 0 : entry->second.round;
++    }
++
+   private:
+     std::shared_ptr<State> m_state = std::make_shared<State>();
+ };
+diff --git a/src/library/mixpimedia.h b/src/library/mixpimedia.h
+index 0390ee8..6f161ee 100644
+--- a/src/library/mixpimedia.h
++++ b/src/library/mixpimedia.h
+@@ -35,6 +35,7 @@
+ #include "library/mixpimediadialog.h"
+ #include "library/mixpimediaactivity.h"
+ #include "library/mixpimediapage.h"
++#include "library/mixpimediaremount.h"
+ #include "library/mixpiopentracks.h"
+ #include "library/mixpistartdrive.h"
+ #include "library/media/mediause.h"
+@@ -101,6 +102,7 @@ class MixpiMedia final : public QObject {
+             }
+         };
+         m_engine->finished = [this](bool ok, QString message) { ejectFinished(ok, message); };
++        m_remount = new MixpiRemount(remountHooks(), this);
+         m_load->connectValueChangeRequest(this, [this](double value) {
+             if (value > 0) {
+                 show(false);
+@@ -428,6 +430,7 @@ class MixpiMedia final : public QObject {
+         };
+         hooks.beginDrain = [this] {
+             m_drains.clear();
++            std::vector<std::string> generations;
+ #ifdef __linux__
+             for (const auto& path : std::as_const(m_ejectPaths)) {
+                 // The binding's descriptor is dropped at once; only the key stays.
+@@ -439,8 +442,10 @@ class MixpiMedia final : public QObject {
+                     return false;
+                 }
+                 m_drains.push_back(std::move(drain));
++                generations.push_back(generation);
+             }
+ #endif
++            m_remount->drained(std::move(generations));
+             return !m_drains.empty();
+         };
+         hooks.drainIdle = [this] {
+@@ -458,6 +463,8 @@ class MixpiMedia final : public QObject {
+                 retired = drain->retire() && retired;
+             }
+             m_drains.clear();
++            // Spec 2h: what OPEN on the SAFE TO REMOVE row mounts again.
++            m_remount->retired(m_ejectingIdentity, m_ejectVolumes, retired);
+             return retired;
+         };
+         hooks.releaseViews = [this] {
+@@ -562,6 +569,7 @@ class MixpiMedia final : public QObject {
+         m_ejectingIdentity = identity;
+         m_ejectName = drive->name;
+         m_ejectUsers = drive->users;
++        m_ejectVolumes = volumes;
+         refresh();
+         m_engine->start(volumes);
+     }
+@@ -654,6 +662,7 @@ class MixpiMedia final : public QObject {
+             refresh();
+             runAutoLoads();
+             openStartDriveNow();
++            openRemounted();
+         });
+     }
+ 
+@@ -799,7 +808,7 @@ class MixpiMedia final : public QObject {
+         for (const auto& value : m_snapshot.value("drives").toArray()) {
+             const auto drive = describe(value.toObject());
+             if (drive.volumes.isEmpty() && drive.identity != m_safeIdentity &&
+-                    drive.identity != m_ejectingIdentity) {
++                    drive.identity != m_ejectingIdentity && drive.identity != m_remounted) {
+                 continue; // not mounted: nothing Mixxx can open
+             }
+             drives.append(drive);
+@@ -864,6 +873,10 @@ class MixpiMedia final : public QObject {
+     // start: the drive Tracks starts at (★); it opens without showing Tracks,
+     // and an error waits on the Media page instead of opening it.
+     void openVolume(const QString& identity, const QString& token, bool start = false) {
++        if (!start && !m_safeIdentity.isEmpty() && identity == m_safeIdentity) {
++            remountSafe(identity); // spec 2h: OPEN on the SAFE TO REMOVE row
++            return;
++        }
+         auto volume = findVolume(token);
+         if (volume.isEmpty() || !m_openSource || m_opening) {
+             return;
+@@ -909,6 +922,110 @@ class MixpiMedia final : public QObject {
+         });
+     }
+ 
++    MixpiRemount::Hooks remountHooks() {
++        MixpiRemount::Hooks hooks;
++        hooks.mounted = [](const QString& device) {
++            for (const auto& mount : mounts()) {
++                if (mount.first == device) {
++                    return true;
++                }
++            }
++            return false;
++        };
++        hooks.mount = [this](const QString& source, MixpiRemount::Done done) {
++            mixpiUdisksMount(this, source, std::move(done));
++        };
++        hooks.reopen = [](const std::string& generation) {
++            return mixxx::media::registry().reopen(generation);
++        };
++        return hooks;
++    }
++
++    // Spec 2h: OPEN on the SAFE TO REMOVE row of a drive that is still
++    // plugged in. Its volumes are mounted again and its read generation
++    // reopens; the row goes back to READY, and once the inventory sees the
++    // mount, OPEN reads the drive as it always does (openRemounted).
++    void remountSafe(const QString& identity) {
++        if (m_opening || m_engine->running() || m_remount->running()) {
++            return;
++        }
++        m_opening = true;
++        if (m_page) {
++            m_page->setOpening(identity, QStringLiteral("Opening the drive…"));
++        }
++        const bool pluggedIn = !m_safeSysfs.isEmpty() && !driveGone(m_safeSysfs, m_safeDiskseq);
++        const QPointer<MixpiMedia> guard(this);
++        m_remount->start(identity, pluggedIn, [guard, identity](bool ok) {
++            if (guard) {
++                guard->remountFinished(identity, ok);
++            }
++        });
++    }
++
++    void remountFinished(const QString& identity, bool ok) {
++        if (!ok || identity != m_safeIdentity) {
++            m_opening = false;
++            if (m_page) {
++                m_page->setOpening(identity, QStringLiteral("This drive changed or could not be checked."));
++            }
++            refresh();
++            return;
++        }
++        m_safeIdentity.clear();
++        m_safeSysfs.clear();
++        m_safeDiskseq.clear();
++        if (m_strip) {
++            m_strip->driveGone(identity); // the SAFE TO REMOVE strip goes with the state
++        }
++        m_remounted = identity;
++        m_remountedSince = QDateTime::currentMSecsSinceEpoch();
++        const QPointer<MixpiMedia> guard(this);
++        QTimer::singleShot(10500, this, [guard] {
++            if (guard) {
++                guard->openRemounted(); // the inventory never saw the mount
++            }
++        });
++        observeNow();
++        refresh();
++    }
++
++    // The inventory after the remount: open the drive (one volume) as OPEN
++    // does; with several volumes the row offers one OPEN per volume, as in
++    // build B. Waits for the mount to show in the inventory, 10 s at most.
++    void openRemounted() {
++        if (m_remounted.isEmpty()) {
++            return;
++        }
++        const auto identity = m_remounted;
++        QJsonArray volumes;
++        for (const auto& value : m_snapshot.value("drives").toArray()) {
++            if (value.toObject().value("identity").toString() == identity) {
++                volumes = value.toObject().value("volumes").toArray();
++            }
++        }
++        if (volumes.isEmpty()) {
++            if (QDateTime::currentMSecsSinceEpoch() - m_remountedSince < 10000) {
++                return;
++            }
++            m_remounted.clear();
++            m_opening = false;
++            if (m_page) {
++                m_page->setOpening(identity, QStringLiteral("This drive changed or could not be checked."));
++            }
++            refresh();
++            return;
++        }
++        m_remounted.clear();
++        m_opening = false;
++        if (m_page) {
++            m_page->setOpening({}, {});
++        }
++        if (volumes.size() == 1) {
++            openVolume(identity, volumes.first().toObject().value("token").toString());
++        }
++        refresh();
++    }
++
+     // The ping's LOAD: open the drive and show it.
+     void loadFromPing(const QString& identity) {
+         for (const auto& value : m_snapshot.value("drives").toArray()) {
+@@ -963,6 +1080,10 @@ class MixpiMedia final : public QObject {
+     QString m_ejectName;
+     QStringList m_ejectPaths;
+     QList<MixpiMediaUser> m_ejectUsers;
++    QList<MixpiEjectEngine::Volume> m_ejectVolumes;
++    MixpiRemount* m_remount = nullptr;
++    QString m_remounted; // mounted again; OPEN runs once the inventory sees it
++    qint64 m_remountedSince = 0;
+     QScopedPointer<ControlObject> m_ejectAvailable;
+     QHash<QString, ControlObject*> m_onPi;
+     QHash<QString, ControlObject*> m_fromUsb;
+diff --git a/src/library/mixpimediapage.h b/src/library/mixpimediapage.h
+index 6b90c9d..765d80d 100644
+--- a/src/library/mixpimediapage.h
++++ b/src/library/mixpimediapage.h
+@@ -997,7 +997,9 @@ class MixpiMediaPage : public MixpiPage {
+         open->setObjectName(QStringLiteral("MixpiMediaOpen"));
+         open->setProperty("role", QStringLiteral("navigate"));
+         open->setFixedSize(kActionWidth, kActionHeight);
+-        open->setEnabled(!ending && !drive.volumes.isEmpty() && m_openingIdentity.isEmpty());
++        // Spec 2h: OPEN on a SAFE TO REMOVE row mounts the drive again.
++        const bool remount = drive.state == MixpiMediaState::SafeToRemove;
++        open->setEnabled((remount || (!ending && !drive.volumes.isEmpty())) && m_openingIdentity.isEmpty());
+         connect(open, &QPushButton::clicked, this, [this, identity = drive.identity, token = volume.token] {
+             if (openRequested) {
+                 openRequested(identity, token);
+diff --git a/src/library/mixpimediaremount.h b/src/library/mixpimediaremount.h
+new file mode 100644
+index 0000000..5b06f1a
+--- /dev/null
++++ b/src/library/mixpimediaremount.h
+@@ -0,0 +1,182 @@
++#pragma once
++
++#include <QDebug>
++#include <QList>
++#include <QObject>
++#include <QPointer>
++#include <QProcess>
++#include <QString>
++#include <QTimer>
++#include <algorithm>
++#include <functional>
++#include <memory>
++#include <string>
++#include <vector>
++
++#include "library/mixpimediapage.h"
++
++// Spec 2h (owner: "You should be able to press open to mount again so the
++// safe to remove stays, but if you press open it goes back to a ready
++// state"). After a clean eject the drive's read generation is retired
++// (MediaUseRegistry), keyed by the physical drive (boot, namespace, sysfs
++// node, dev, diskseq), not by its mount: mounting it again by any other
++// means keeps it unreadable until it is pulled out. OPEN on its SAFE TO
++// REMOVE row mounts each volume the eject unmounted through udisks2, as the
++// system's automounter does (never a write to the drive), and only then
++// reopens the generations that eject retired, as a new round. A drive pulled
++// out in between is not mounted (pluggedIn is false); any failure leaves the
++// generations retired.
++class MixpiRemount : public QObject {
++  public:
++    using Volume = MixpiEjectEngine::Volume;
++    using Done = std::function<void(bool)>;
++    struct Hooks {
++        std::function<bool(const QString& device)> mounted;          // major:minor in the mount table
++        std::function<void(const QString& source, Done done)> mount; // udisks2, for one block device
++        std::function<bool(const std::string& generation)> reopen;   // MediaUseRegistry::reopen
++    };
++
++    explicit MixpiRemount(Hooks hooks, QObject* parent = nullptr)
++            : QObject(parent), m_hooks(std::move(hooks)) {}
++
++    // The eject's drain: the generations it will retire.
++    void drained(std::vector<std::string> generations) {
++        m_drained = std::move(generations);
++    }
++
++    // The eject retired them (ok) after unmounting these volumes: the drive
++    // can be mounted again from its SAFE TO REMOVE row. Build B keeps one
++    // safe drive at a time, so one record.
++    void retired(const QString& identity, const QList<Volume>& volumes, bool ok) {
++        if (!ok || identity.isEmpty() || volumes.isEmpty() || m_drained.empty()) {
++            m_drained.clear();
++            return;
++        }
++        m_identity = identity;
++        m_volumes = volumes;
++        m_generations = std::move(m_drained);
++        m_drained.clear();
++    }
++
++    bool remembers(const QString& identity) const {
++        return !identity.isEmpty() && identity == m_identity;
++    }
++
++    bool running() const {
++        return m_running;
++    }
++
++    // OPEN on the SAFE TO REMOVE row. done(true) once every volume is
++    // mounted and its generation reads again; done(false) otherwise.
++    bool start(const QString& identity, bool pluggedIn, Done done) {
++        if (m_running) {
++            return false;
++        }
++        if (!pluggedIn || !remembers(identity) || !m_hooks.mounted || !m_hooks.mount || !m_hooks.reopen) {
++            if (done) {
++                done(false);
++            }
++            return true;
++        }
++        m_running = true;
++        m_done = std::move(done);
++        mountNext(0);
++        return true;
++    }
++
++  private:
++    void mountNext(int index) {
++        if (index >= m_volumes.size()) {
++            finish();
++            return;
++        }
++        const auto& volume = m_volumes[index];
++        if (m_hooks.mounted(volume.device)) {
++            mountNext(index + 1); // mounted already (by hand): only the generation reopens
++            return;
++        }
++        const QPointer<MixpiRemount> guard(this);
++        m_hooks.mount(volume.source, [guard, index](bool ok) {
++            if (!guard || !guard->m_running) {
++                return;
++            }
++            if (!ok) {
++                guard->end(false);
++                return;
++            }
++            guard->mountNext(index + 1);
++        });
++    }
++
++    void finish() {
++        for (const auto& volume : std::as_const(m_volumes)) {
++            if (!m_hooks.mounted(volume.device)) {
++                end(false);
++                return;
++            }
++        }
++        std::vector<std::string> reopened;
++        bool ok = true;
++        for (const auto& generation : m_generations) {
++            if (std::find(reopened.begin(), reopened.end(), generation) != reopened.end()) {
++                continue;
++            }
++            reopened.push_back(generation);
++            ok = m_hooks.reopen(generation) && ok;
++        }
++        if (ok) {
++            m_identity.clear();
++            m_volumes.clear();
++            m_generations.clear();
++        }
++        end(ok);
++    }
++
++    void end(bool ok) {
++        m_running = false;
++        auto done = std::move(m_done);
++        m_done = {};
++        if (done) {
++            done(ok);
++        }
++    }
++
++    Hooks m_hooks;
++    std::vector<std::string> m_drained;
++    QString m_identity;
++    QList<Volume> m_volumes;
++    std::vector<std::string> m_generations;
++    bool m_running = false;
++    Done m_done;
++};
++
++// The system's mount, as udiskie (the automounter) asks udisks2 for it: the
++// block device's default options, no prompt. 10 s at most, as the unmount.
++inline void mixpiUdisksMount(QObject* owner, const QString& source, MixpiRemount::Done done) {
++    auto* process = new QProcess(owner);
++    auto* deadline = new QTimer(process);
++    deadline->setSingleShot(true);
++    auto answered = std::make_shared<bool>(false);
++    auto finish = [process, deadline, answered, done](bool ok) {
++        if (*answered) {
++            return;
++        }
++        *answered = true;
++        deadline->stop();
++        process->deleteLater();
++        done(ok);
++    };
++    QObject::connect(deadline, &QTimer::timeout, process, [process, finish] {
++        process->kill();
++        finish(false);
++    });
++    QObject::connect(process, &QProcess::errorOccurred, process, [finish](QProcess::ProcessError) { finish(false); });
++    QObject::connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), process,
++            [process, finish](int code, QProcess::ExitStatus status) {
++                qInfo() << "MixPi open: mount" << code << process->readAllStandardError().trimmed();
++                finish(status == QProcess::NormalExit && code == 0);
++            });
++    deadline->start(10000);
++    process->start(QStringLiteral("/usr/bin/udisksctl"),
++            {QStringLiteral("mount"), QStringLiteral("-b"), source, QStringLiteral("--no-user-interaction")});
++}

@@ -16,6 +16,9 @@
 // Built with MIXPI_WAVEFORM_HEIGHT_BASELINE (the stack without the patch),
 // every viewer takes total_gain, as stock Mixxx does, and the checks about
 // the main waveforms fail.
+// Wave J15 (mixxx-waveform-height-gain.patch): a main waveform's gain is the
+// pregain knob x MIXPI_EXPECTED_MAIN_GAIN (0.80, given by the runner, not
+// read from the patch), so its checks fail on the stack without that patch.
 #include <QApplication>
 #include <QDomDocument>
 #include <QFile>
@@ -42,8 +45,15 @@ inline double waveformHeightGain(bool, double, double totalGain) {
 } // namespace mixpi
 #endif
 
+#ifndef MIXPI_EXPECTED_MAIN_GAIN
+#error "MIXPI_EXPECTED_MAIN_GAIN (the main waveforms' gain) is required"
+#endif
+
 namespace {
 int failures = 0;
+
+// The owner's gain for the decks' main waveforms (wave J15).
+constexpr double kMainGain = MIXPI_EXPECTED_MAIN_GAIN;
 
 // WaveformWidgetFactory's default VisualGain_0, as on the card.
 constexpr double kVisualGain = 1.0;
@@ -207,13 +217,19 @@ int main(int argc, char** argv) {
         total.set(1.0 * kReplayGain);
         std::printf("HEIGHTS %s deck %d rg %.3f pregain 1 main: %s\n", qPrintable(mode), channel,
                 kReplayGain, qPrintable(heights(*deck, &pregain, &total)));
-        check(heightsAre(*deck, 1.0, &pregain, &total),
+        check(heightsAre(*deck, 1.0 * kMainGain, &pregain, &total),
                 QStringLiteral("%1 deck %2: the main waveform's height is pregain x "
-                               "VisualGain_0 x halfBreadth / 255 x level (ReplayGain left out)")
+                               "VisualGain_0 x %3 x halfBreadth / 255 x level (ReplayGain left out)")
                         .arg(mode)
-                        .arg(channel));
-        check(near(height(*deck, 255, &pregain, &total), kHalfBreadth),
-                QStringLiteral("%1 deck %2: a level of 255 reaches the edge").arg(mode).arg(channel));
+                        .arg(channel)
+                        .arg(kMainGain, 0, 'f', 2));
+        check(near(height(*deck, 255, &pregain, &total), kMainGain * kHalfBreadth) &&
+                        height(*deck, 255, &pregain, &total) < kHalfBreadth,
+                QStringLiteral("%1 deck %2: a level of 255 stops at %3 of the half height, "
+                               "short of the edge")
+                        .arg(mode)
+                        .arg(channel)
+                        .arg(kMainGain, 0, 'f', 2));
         if (loop) {
             std::printf("HEIGHTS %s deck %d rg %.3f pregain 1 loop panel: %s\n", qPrintable(mode),
                     channel, kReplayGain, qPrintable(heights(*loop, &pregain, &total)));
@@ -228,7 +244,7 @@ int main(int argc, char** argv) {
         total.set(2.0 * kReplayGain);
         std::printf("HEIGHTS %s deck %d rg %.3f pregain 2 main: %s\n", qPrintable(mode), channel,
                 kReplayGain, qPrintable(heights(*deck, &pregain, &total)));
-        check(heightsAre(*deck, 2.0, &pregain, &total),
+        check(heightsAre(*deck, 2.0 * kMainGain, &pregain, &total),
                 QStringLiteral("%1 deck %2: the pregain knob still scales the main waveform (x2)")
                         .arg(mode)
                         .arg(channel));
@@ -243,7 +259,7 @@ int main(int argc, char** argv) {
         // The pregain knob at -6 dB.
         pregain.set(0.5);
         total.set(0.5 * kReplayGain);
-        check(heightsAre(*deck, 0.5, &pregain, &total),
+        check(heightsAre(*deck, 0.5 * kMainGain, &pregain, &total),
                 QStringLiteral("%1 deck %2: the pregain knob still scales the main waveform (x0.5)")
                         .arg(mode)
                         .arg(channel));
@@ -251,10 +267,12 @@ int main(int argc, char** argv) {
         // A track with no ReplayGain yet: Mixxx's -6 dB default boost.
         pregain.set(1.0);
         total.set(kDefaultBoost);
-        check(heightsAre(*deck, 1.0, &pregain, &total),
-                QStringLiteral("%1 deck %2: a track with no ReplayGain is drawn at its stored level")
+        check(heightsAre(*deck, 1.0 * kMainGain, &pregain, &total),
+                QStringLiteral("%1 deck %2: a track with no ReplayGain is drawn at %3 of its "
+                               "stored level")
                         .arg(mode)
-                        .arg(channel));
+                        .arg(channel)
+                        .arg(kMainGain, 0, 'f', 2));
         if (loop) {
             check(heightsAre(*loop, kDefaultBoost, &pregain, &total),
                     QStringLiteral("%1 deck %2: the Loop panel's waveform keeps the default boost")

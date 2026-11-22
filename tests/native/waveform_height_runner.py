@@ -12,6 +12,12 @@ displays ("focus", the card's, and "overlay").
 --baseline builds the stack without mixxx-waveform-height.patch; the header is
 then absent, every viewer takes total_gain as in stock Mixxx, and the checks
 about the main waveforms must fail.
+
+Wave J15: mixxx-waveform-height-gain.patch (after mixxx-waveform-height.patch)
+draws the main waveforms at kMainWaveformGain (0.80) x the J13 height. The
+fixture is compiled with the gain the main waveforms are expected to take
+(MIXPI_EXPECTED_MAIN_GAIN, --expected-gain); --without-gain builds the stack
+without the gain patch, so the J15 checks must fail there.
 """
 import argparse
 import importlib.util
@@ -30,6 +36,9 @@ ROOT = Path(__file__).resolve().parents[2]
 NATIVE = ROOT / 'tests/native'
 FILES = ROOT / 'stage3/01-install-packages/files'
 PATCH = 'mixxx-waveform-height.patch'
+GAIN_PATCH = 'mixxx-waveform-height-gain.patch'
+# The owner's main waveform gain (wave J15), the value the fixture expects.
+MAIN_GAIN = 0.80
 MODES = ('focus', 'overlay')
 
 
@@ -65,17 +74,24 @@ def generate_skin(folder, loop_display):
     return skin / 'skin.xml'
 
 
-def stack(target, baseline):
-    names, _ = reconstruct(target, exclude=(PATCH,) if baseline else ())
+def stack(target, baseline, gain=True):
+    """Without the J13 patch (baseline) the gain patch, which needs it, leaves
+    too; gain=False leaves out only the gain patch."""
+    exclude = (PATCH, GAIN_PATCH) if baseline else () if gain else (GAIN_PATCH,)
+    names, _ = reconstruct(target, exclude=exclude)
     if not baseline and PATCH not in names:
         paths = re.findall(r'^diff --git a/(\S+) b/\S+$', (PATCH_DIR / PATCH).read_text(), re.MULTILINE)
         populate_pinned(target, [path for path in paths if not path.endswith('mixpiwaveformgain.h')])
         subprocess.run(['git', 'apply', str(PATCH_DIR / PATCH)], cwd=target, check=True, timeout=15)
+        names.append(PATCH)
+    if not baseline and gain and GAIN_PATCH not in names:
+        subprocess.run(['git', 'apply', str(PATCH_DIR / GAIN_PATCH)], cwd=target, check=True, timeout=15)
+        names.append(GAIN_PATCH)
     populate_pinned(target, ['src/' + name for name in PINNED_FILES])
     return names
 
 
-def build(target, baseline):
+def build(target, baseline, expected_gain):
     support = target / 'interfaces'
     for name, text in DOUBLES.items():
         (support / name).parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +110,7 @@ def build(target, baseline):
     binary = target / 'waveform-height-test'
     command = ['c++', '-std=c++20', '-Wall', '-Wextra', *includes,
                *(['-DMIXPI_WAVEFORM_HEIGHT_BASELINE=1'] if baseline else []),
+               '-DMIXPI_EXPECTED_MAIN_GAIN=%r' % float(expected_gain),
                *[str(source) for source in sources],
                str(NATIVE / 'waveform_height_test.cpp'), '-o', str(binary),
                '-pthread', *qt_flags(('QtCore', 'QtGui', 'QtWidgets', 'QtXml'))]
@@ -102,14 +119,15 @@ def build(target, baseline):
     return binary
 
 
-def run(modes=MODES, baseline=False):
+def run(modes=MODES, baseline=False, gain=True, expected_gain=MAIN_GAIN):
     """One CompletedProcess per loop display, in the order given."""
     with tempfile.TemporaryDirectory(prefix='mixpi-waveform-height-') as temporary:
         target = Path(temporary) / 'build'
         target.mkdir()
-        names = stack(target, baseline)
-        print('PATCHES', len(names), 'BASELINE' if baseline else PATCH, flush=True)
-        binary = build(target, baseline)
+        names = stack(target, baseline, gain)
+        print('PATCHES', len(names), 'BASELINE' if baseline else names[-1],
+              'EXPECTED_MAIN_GAIN', expected_gain, flush=True)
+        binary = build(target, baseline, expected_gain)
         results = []
         for mode in modes:
             skin = generate_skin(Path(temporary) / 'skin' / mode, mode)
@@ -124,6 +142,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('modes', nargs='*')
     parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--without-gain', action='store_true')
+    parser.add_argument('--expected-gain', type=float, default=MAIN_GAIN)
     options = parser.parse_args()
     raise SystemExit(max(result.returncode
-                         for result in run(options.modes or list(MODES), options.baseline)))
+                         for result in run(options.modes or list(MODES), options.baseline,
+                                           not options.without_gain, options.expected_gain)))

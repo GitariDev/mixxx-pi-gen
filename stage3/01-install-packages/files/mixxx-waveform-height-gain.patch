@@ -1,0 +1,31 @@
+diff --git a/src/waveform/mixpiwaveformgain.h b/src/waveform/mixpiwaveformgain.h
+index bffe96b..57c2409 100644
+--- a/src/waveform/mixpiwaveformgain.h
++++ b/src/waveform/mixpiwaveformgain.h
+@@ -13,6 +13,12 @@
+ // keep total_gain.
+ namespace mixpi {
+ 
++/// MixPi (spec 2h, wave J15; owner: "Let's set the gain to around .80"): the
++/// decks' main waveforms draw at this share of the pregain-only height, so the
++/// loudest peaks (the analyser caps levels at 255) stop short of the edge.
++/// The Loop panel's waveform, the overview strips and the sound are unchanged.
++constexpr double kMainWaveformGain = 0.80;
++
+ /// The skin group that holds each deck's main waveform (wave_row in
+ /// mixpi-performance.py); tests/test_waveform_height.py keeps the two names
+ /// the same.
+@@ -34,10 +40,10 @@ inline bool isMainWaveform(const QWidget* pViewer) {
+     return false;
+ }
+ 
+-/// The gain a waveform's height follows: the pregain knob for a main
+-/// waveform, total_gain for every other waveform.
++/// The gain a waveform's height follows: the pregain knob times
++/// kMainWaveformGain for a main waveform, total_gain for every other waveform.
+ inline double waveformHeightGain(bool mainWaveform, double pregain, double totalGain) {
+-    return mainWaveform ? pregain : totalGain;
++    return mainWaveform ? pregain * kMainWaveformGain : totalGain;
+ }
+ 
+ } // namespace mixpi

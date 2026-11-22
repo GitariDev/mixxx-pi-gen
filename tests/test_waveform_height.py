@@ -23,6 +23,12 @@ the skin group MixpiWaveRow (the Decks page's main waveform rows) takes the
 pregain knob only for its height; every other waveform (the Loop panel's,
 in the bottom strip) keeps total_gain. The sound is unchanged.
 
+mixxx-waveform-height-gain.patch (wave J15, owner 2026-11-22: "Let's set
+the gain to around .80"): the main waveforms draw at kMainWaveformGain = 0.80
+x that height, so the loudest peaks (levels are capped at 255) stop at 80 % of
+the half height. The Loop panel's waveform and the overview strips are
+unchanged.
+
 The native checks are in tests/native/waveform_height_test.cpp, built by
 tests/native/waveform_height_runner.py.
 """
@@ -42,6 +48,7 @@ from native import waveform_height_runner as RUNNER
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = RUNNER.PATCH_DIR / RUNNER.PATCH
+GAIN_PATCH = RUNNER.PATCH_DIR / RUNNER.GAIN_PATCH
 HEADER = 'src/waveform/mixpiwaveformgain.h'
 RENDERER = 'src/waveform/renderers/waveformwidgetrenderer.cpp'
 RENDERER_H = 'src/waveform/renderers/waveformwidgetrenderer.h'
@@ -56,16 +63,16 @@ def load_script():
     return module
 
 
-def changed(path, sign):
-    text = PATCH.read_text()
+def changed(path, sign, patch=PATCH):
+    text = patch.read_text()
     start = text.index('diff --git a/' + path + ' ')
     end = text.find('\ndiff --git', start + 1)
     return [line[1:] for line in text[start:end if end > 0 else None].splitlines()
             if line.startswith(sign) and not line.startswith(sign * 3)]
 
 
-def added(path):
-    return '\n'.join(changed(path, '+'))
+def added(path, patch=PATCH):
+    return '\n'.join(changed(path, '+', patch))
 
 
 def main_group():
@@ -86,7 +93,11 @@ class WaveformHeightPatchTests(unittest.TestCase):
                                          '--mixxx-print-patches'], text=True).split()
         if PATCH.name not in names:
             self.skipTest(PATCH.name + ' is not registered yet')
-        self.assertEqual(names[-1], PATCH.name)
+        if GAIN_PATCH.name in names:
+            # Wave J15: the gain patch comes right after it, last.
+            self.assertEqual(names[-2:], [PATCH.name, GAIN_PATCH.name])
+        else:
+            self.assertEqual(names[-1], PATCH.name)
 
     def test_header_tells_main_waveforms_apart_and_picks_their_gain(self):
         header = added(HEADER)
@@ -119,6 +130,32 @@ class WaveformHeightPatchTests(unittest.TestCase):
         # through createWaveformWidget, where the mark is set.
         stock = pinned_bytes(FACTORY).decode()
         self.assertEqual(len(re.findall(r'= createWaveformWidget\(m_type, ', stock)), 2)
+
+
+class WaveformHeightGainPatchTests(unittest.TestCase):
+    """Wave J15: the main waveforms at 0.80 x the J13 height."""
+
+    def test_gain_patch_changes_only_the_header(self):
+        text = GAIN_PATCH.read_text()
+        self.assertEqual(re.findall(r'^diff --git a/(\S+) b/\S+$', text, re.MULTILINE), [HEADER])
+        self.assertNotIn('--- /dev/null', text)
+        self.assertEqual(changed(HEADER, '-', GAIN_PATCH), [
+            '/// The gain a waveform\'s height follows: the pregain knob for a main',
+            '/// waveform, total_gain for every other waveform.',
+            '    return mainWaveform ? pregain : totalGain;'])
+
+    def test_main_waveforms_take_the_owners_gain(self):
+        header = added(HEADER, GAIN_PATCH)
+        self.assertIn('constexpr double kMainWaveformGain = 0.80;', header)
+        self.assertIn('return mainWaveform ? pregain * kMainWaveformGain : totalGain;', header)
+        self.assertEqual(float(re.search(r'kMainWaveformGain = ([0-9.]+);', header)[1]), RUNNER.MAIN_GAIN)
+
+    def test_gain_patch_applies_after_the_height_patch(self):
+        # Its context is the J13 header, so the J13 patch must come first.
+        context = [line[1:] for line in GAIN_PATCH.read_text().splitlines() if line.startswith(' ')]
+        j13 = added(HEADER).splitlines()
+        for line in context:
+            self.assertIn(line, j13)
 
 
 class MainWaveformGroupTests(unittest.TestCase):
@@ -274,6 +311,13 @@ class MeasurementScriptTests(unittest.TestCase):
         self.assertEqual(self.script.signal_all(waveform_file([7, 8], packed=True)), [7, 8])
         self.assertEqual(self.script.pixel_peaks([1, 9, 5, 2, 3, 4, 8, 1, 2, 1, 0, 0]), [5, 9, 8, 1])
 
+    def test_option_a_at_the_owners_gain(self):
+        # Wave J15: --a-gain 0.8 is the build; a level of 255 stops at 0.8.
+        rows = {row['track_id']: row for row in self.script.measure(self.db, self.analysis, 0.8, 2.0)}
+        self.assertAlmostEqual(rows[1]['A']['max'], 0.8)
+        self.assertEqual(rows[1]['A']['edge_pct'], 0.0)
+        self.assertAlmostEqual(rows[2]['A']['max'], 0.8 * 0.4)
+
     def test_today_option_a_and_option_b_heights(self):
         rows = {row['track_id']: row for row in self.script.measure(self.db, self.analysis, 1.0, 2.0)}
         self.assertEqual(sorted(rows), [1, 2])
@@ -303,6 +347,7 @@ class WaveformHeightNativeTests(unittest.TestCase):
     def setUpClass(cls):
         cls.patched = RUNNER.run()
         cls.baseline = RUNNER.run(baseline=True)
+        cls.without_gain = RUNNER.run(gain=False)
 
     def output(self, results):
         return ''.join(result.stdout for result in results)
@@ -315,11 +360,12 @@ class WaveformHeightNativeTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r'(?m)^PASS ', output)), 34)  # focus 4 + 2 x 8, overlay 4 + 2 x 5
         self.assertIn('RESULT focus PASS', output)
         self.assertIn('RESULT overlay PASS', output)
-        # Levels 64 128 200 255 in a 128 px row: the main waveform at the
-        # stored level, the Loop panel's at ReplayGain 0.377 of it.
-        self.assertIn('HEIGHTS focus deck 1 rg 0.377 pregain 1 main: 16.06 32.13 50.20 64.00', output)
+        # Levels 64 128 200 255 in a 128 px row: the main waveform at 0.80
+        # of the stored level (wave J15), the Loop panel's at ReplayGain
+        # 0.377 of it.
+        self.assertIn('HEIGHTS focus deck 1 rg 0.377 pregain 1 main: 12.85 25.70 40.16 51.20', output)
         self.assertIn('HEIGHTS focus deck 1 rg 0.377 pregain 1 loop panel: 6.06 12.11 18.92 24.13', output)
-        self.assertIn('HEIGHTS focus deck 2 rg 0.377 pregain 2 main: 32.13 64.25 100.39 128.00', output)
+        self.assertIn('HEIGHTS focus deck 2 rg 0.377 pregain 2 main: 25.70 51.40 80.31 102.40', output)
         self.assertRegex(output, r'(?m)^VIEWER focus channel 1 main 1 in .*/MixpiWaveforms/MixpiWaveRow$')
         self.assertRegex(output, r'(?m)^VIEWER focus channel 1 main 0 in .*/MixpiFocusedOverview$')
 
@@ -329,11 +375,13 @@ class WaveformHeightNativeTests(unittest.TestCase):
         output = self.output(self.baseline)
         for mode in RUNNER.MODES:
             for name in ('%s: both main waveforms are told apart as main' % mode,
-                         '%s deck 1: the main waveform\'s height is pregain x VisualGain_0 x '
+                         '%s deck 1: the main waveform\'s height is pregain x VisualGain_0 x 0.80 x '
                          'halfBreadth / 255 x level (ReplayGain left out)' % mode,
-                         '%s deck 2: a level of 255 reaches the edge' % mode,
+                         '%s deck 2: a level of 255 stops at 0.80 of the half height, '
+                         'short of the edge' % mode,
                          '%s deck 1: the pregain knob still scales the main waveform (x2)' % mode,
-                         '%s deck 2: a track with no ReplayGain is drawn at its stored level' % mode):
+                         '%s deck 2: a track with no ReplayGain is drawn at 0.80 of its '
+                         'stored level' % mode):
                 self.assertRegex(output, r'(?m)^FAIL ' + re.escape(name))
         # What stock Mixxx already does still holds without the patch.
         for name in ('focus: the Loop panel\'s waveforms are not main',
@@ -341,6 +389,37 @@ class WaveformHeightNativeTests(unittest.TestCase):
                      'focus deck 2: the pregain knob still scales the Loop panel\'s waveform (x2)',
                      'focus: the Decks page has one main waveform per deck'):
             self.assertRegex(output, r'(?m)^PASS ' + re.escape(name))
+
+    def test_the_gain_checks_fail_without_the_gain_patch(self):
+        # Wave J15: the stack with mixxx-waveform-height.patch but without
+        # mixxx-waveform-height-gain.patch draws the main waveforms at the
+        # full J13 height.
+        for mode, result in zip(RUNNER.MODES, self.without_gain):
+            self.assertNotEqual(result.returncode, 0, mode)
+        output = self.output(self.without_gain)
+        self.assertIn('HEIGHTS focus deck 1 rg 0.377 pregain 1 main: 16.06 32.13 50.20 64.00', output)
+        for mode in RUNNER.MODES:
+            for channel in (1, 2):
+                for name in ('the main waveform\'s height is pregain x VisualGain_0 x 0.80 x '
+                             'halfBreadth / 255 x level (ReplayGain left out)',
+                             'a level of 255 stops at 0.80 of the half height, short of the edge',
+                             'the pregain knob still scales the main waveform (x2)',
+                             'the pregain knob still scales the main waveform (x0.5)',
+                             'a track with no ReplayGain is drawn at 0.80 of its stored level'):
+                    self.assertRegex(output, r'(?m)^FAIL ' + re.escape(
+                        '%s deck %d: %s' % (mode, channel, name)))
+            # J13's choice of viewers holds without the gain patch.
+            self.assertRegex(output, r'(?m)^PASS ' + re.escape(
+                '%s: both main waveforms are told apart as main' % mode))
+        # The Loop panel's waveforms are the same with and without it.
+        for channel in (1, 2):
+            for name in ('the Loop panel\'s waveform still follows total_gain',
+                         'the pregain knob still scales the Loop panel\'s waveform (x2)',
+                         'the Loop panel\'s waveform keeps the default boost'):
+                self.assertRegex(output, r'(?m)^PASS ' + re.escape(
+                    'focus deck %d: %s' % (channel, name)))
+        loop = r'(?m)^HEIGHTS focus deck \d rg 0\.377 pregain 1 loop panel: .*$'
+        self.assertEqual(re.findall(loop, output), re.findall(loop, self.output(self.patched)))
 
 
 if __name__ == '__main__':

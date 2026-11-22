@@ -1,0 +1,151 @@
+diff --git a/src/waveform/mixpiwaveformgain.h b/src/waveform/mixpiwaveformgain.h
+new file mode 100644
+index 0000000..bffe96b
+--- /dev/null
++++ b/src/waveform/mixpiwaveformgain.h
+@@ -0,0 +1,43 @@
++#pragma once
++
++#include <QString>
++#include <QWidget>
++
++// MixPi (spec 2h, wave J13): the decks' main waveforms on the Decks page draw
++// their height from the pregain knob only. Stock Mixxx scales every
++// waveform by [ChannelN],total_gain, the pregain knob times the ReplayGain
++// correction, so a loudly mastered track (the smallest ReplayGain) is drawn
++// smallest. The sound is unchanged: EnginePregain still applies the
++// ReplayGain. The EQ knobs and VisualGain_N still scale the height as before.
++// The Loop panel's waveform, the overview strips and every other waveform
++// keep total_gain.
++namespace mixpi {
++
++/// The skin group that holds each deck's main waveform (wave_row in
++/// mixpi-performance.py); tests/test_waveform_height.py keeps the two names
++/// the same.
++inline const QString& mainWaveformGroup() {
++    static const QString kGroup = QStringLiteral("MixpiWaveRow");
++    return kGroup;
++}
++
++/// True for a waveform viewer inside a main waveform row. The skin parser
++/// creates the viewer as a child of its group, after the group's object name
++/// is set, so the answer is final when the factory makes the widget.
++inline bool isMainWaveform(const QWidget* pViewer) {
++    for (const QWidget* pWidget = pViewer; pWidget != nullptr;
++            pWidget = pWidget->parentWidget()) {
++        if (pWidget->objectName() == mainWaveformGroup()) {
++            return true;
++        }
++    }
++    return false;
++}
++
++/// The gain a waveform's height follows: the pregain knob for a main
++/// waveform, total_gain for every other waveform.
++inline double waveformHeightGain(bool mainWaveform, double pregain, double totalGain) {
++    return mainWaveform ? pregain : totalGain;
++}
++
++} // namespace mixpi
+diff --git a/src/waveform/renderers/waveformwidgetrenderer.cpp b/src/waveform/renderers/waveformwidgetrenderer.cpp
+index b4953bb..2bd3a3e 100644
+--- a/src/waveform/renderers/waveformwidgetrenderer.cpp
++++ b/src/waveform/renderers/waveformwidgetrenderer.cpp
+@@ -6,6 +6,7 @@
+ #include "control/controlproxy.h"
+ #include "track/track.h"
+ #include "util/math.h"
++#include "waveform/mixpiwaveformgain.h"
+ #include "waveform/renderers/waveformrendererabstract.h"
+ #include "waveform/visualplayposition.h"
+ #include "waveform/waveform.h"
+@@ -38,6 +39,8 @@ WaveformWidgetRenderer::WaveformWidgetRenderer(const QString& group)
+           m_totalVSamples(0),
+           m_pRateRatioCO(nullptr),
+           m_pGainControlObject(nullptr),
++          m_pPregainControlObject(nullptr),
++          m_mixpiMainWaveform(false),
+           m_gain(1.0),
+           m_pTrackSamplesControlObject(nullptr),
+           m_trackSamples(0),
+@@ -78,6 +81,7 @@ WaveformWidgetRenderer::~WaveformWidgetRenderer() {
+ 
+     delete m_pRateRatioCO;
+     delete m_pGainControlObject;
++    delete m_pPregainControlObject;
+     delete m_pTrackSamplesControlObject;
+ 
+ #ifdef WAVEFORMWIDGETRENDERER_DEBUG
+@@ -94,6 +98,8 @@ bool WaveformWidgetRenderer::init() {
+             m_group, "rate_ratio");
+     m_pGainControlObject = new ControlProxy(
+             m_group, "total_gain");
++    m_pPregainControlObject = new ControlProxy(
++            m_group, "pregain");
+     m_pTrackSamplesControlObject = new ControlProxy(
+             m_group, "track_samples");
+ 
+@@ -126,7 +132,9 @@ void WaveformWidgetRenderer::onPreRender(VSyncThread* vsyncThread) {
+     //Fetch parameters before rendering in order the display all sub-renderers with the same values
+     double rateRatio = m_pRateRatioCO->get();
+ 
+-    m_gain = m_pGainControlObject->get();
++    m_gain = mixpi::waveformHeightGain(m_mixpiMainWaveform,
++            m_pPregainControlObject->get(),
++            m_pGainControlObject->get());
+ 
+     // Compute visual sample to pixel ratio
+     // Allow waveform to spread one visual sample across a hundred pixels
+diff --git a/src/waveform/renderers/waveformwidgetrenderer.h b/src/waveform/renderers/waveformwidgetrenderer.h
+index 47cd21b..fb81a9c 100644
+--- a/src/waveform/renderers/waveformwidgetrenderer.h
++++ b/src/waveform/renderers/waveformwidgetrenderer.h
+@@ -132,6 +132,15 @@ class WaveformWidgetRenderer {
+         return m_trackSamples;
+     }
+ 
++    // MixPi (spec 2h): a deck's main waveform on the Decks page follows the
++    // pregain knob only (waveform/mixpiwaveformgain.h).
++    void setMixpiMainWaveform(bool mainWaveform) {
++        m_mixpiMainWaveform = mainWaveform;
++    }
++    bool isMixpiMainWaveform() const {
++        return m_mixpiMainWaveform;
++    }
++
+     int getBeatGridAlpha() const {
+         return m_alphaBeatGrid;
+     }
+@@ -221,6 +230,8 @@ class WaveformWidgetRenderer {
+     int m_totalVSamples;
+     ControlProxy* m_pRateRatioCO;
+     ControlProxy* m_pGainControlObject;
++    ControlProxy* m_pPregainControlObject;
++    bool m_mixpiMainWaveform;
+     double m_gain;
+     ControlProxy* m_pTrackSamplesControlObject;
+     double m_trackSamples;
+diff --git a/src/waveform/waveformwidgetfactory.cpp b/src/waveform/waveformwidgetfactory.cpp
+index 24cf823..2baa930 100644
+--- a/src/waveform/waveformwidgetfactory.cpp
++++ b/src/waveform/waveformwidgetfactory.cpp
+@@ -20,6 +20,7 @@
+ #include "util/performancetimer.h"
+ #include "util/timer.h"
+ #include "waveform/guitick.h"
++#include "waveform/mixpiwaveformgain.h"
+ #include "waveform/sharedglcontext.h"
+ #include "waveform/visualsmanager.h"
+ #include "waveform/vsyncthread.h"
+@@ -1229,6 +1230,11 @@ WaveformWidgetAbstract* WaveformWidgetFactory::createWaveformWidget(
+                 widget = nullptr;
+             }
+         }
++        if (widget) {
++            // MixPi (spec 2h): only the Decks page's main waveforms leave
++            // the ReplayGain out of their height.
++            widget->setMixpiMainWaveform(mixpi::isMainWaveform(viewer));
++        }
+     }
+     return widget;
+ }

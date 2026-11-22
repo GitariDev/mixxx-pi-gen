@@ -950,7 +950,10 @@ The owner's answers (spec 2b):
 
 Recorded only; no work has started. The owner: "You can add these to the note's for the next build. Don't do any work yet."
 
-- **Reading a drive again after an eject.** Today a drive that is ejected and then mounted again without a physical re-plug stays unreadable until Mixxx restarts (build B's eject rule in `mixxx-media-selection.patch`). The owner: "No, we should be able to reload it if it is still connected." Next build: a drive that is still connected after an eject can be mounted again and read without a re-plug or a restart. This also covers the "thin tags" in Folders and the "SAFE TO REMOVE" that stays after a software remount.
+- **Reading a drive again after an eject.** Today a drive that is ejected and then mounted again without a physical re-plug stays unreadable until Mixxx restarts (build B's eject rule in `mixxx-media-selection.patch`). The owner: "No, we should be able to reload it if it is still connected." Next build: a drive that is still connected after an eject can be mounted again and read without a re-plug or a restart. This also covers the "thin tags" in Folders.
+  - **How (owner, 2026-11-22):** "You should be able to press open to mount again so the safe to remove stays, but if you press open it goes back to a ready state."
+  - After an eject, the drive's row keeps showing "SAFE TO REMOVE" (as today).
+  - Pressing OPEN on that row mounts the drive again; the row goes back to its ready state and the drive's tracks, tags and lists read as before the eject. No re-plug and no restart.
 - **The 1 px line under the empty part of the table header** (carried minor item). The owner: "Show me so I can choose to keep or remove it." Next step: show the owner a before-and-after (a card screenshot with the line and a render without it), then keep or remove it as the owner chooses.
 - **GANDER1's file system** (marked "not properly unmounted" before acceptance L). The owner: "I'll give it a look, but it should be okay." No repair from the Pi.
 - **Debian package updates on the card** (the card still has build I's packages; 18 security updates were out on 2026-11-22). The owner: "Absolutely do that. Thanks!" Apply them on the card when the work starts, and put the same package state in the next image.

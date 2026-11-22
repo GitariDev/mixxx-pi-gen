@@ -32,6 +32,7 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Wave J13 (build M) | `3148ba0` / `7a3adca` | 948 run; 1 `test_chroot_runtime` 5 s timeout (passes alone) | 361/361, 0 skips (builder's run on `c84f685` + J13; `gates/uiJ13-nj13-20261122--repo-20261122-204239.log`) | 70 patches. Main waveforms without the ReplayGain |
 | Wave J14 (builds N, O) | `3ad934b` | 952 run, OK (183 platform skips) | 361/361, 0 skips (builder's run; `gates/uiJ14-sj14-20261122--repo-20261122-214342.log`) | Stylesheet: the header's 1 px line runs the full width |
 | Wave J15 (build O) | `72f2fc1` / `9fd4ca1` | 957 run; 1 `test_chroot_runtime` 5 s timeout (passes alone) | 366/366, 0 skips (builder's run with the registration applied; `gates/uiJ15-nj15-20261122--repo-20261122-223848.log`) | 71 patches. Main waveforms at 0.80 |
+| Wave J16 (build P) | `b3aea1a` / `e3d47a1` | 963 run; `test_chroot_runtime` and `test_shutdown_order` timing errors under load (both pass alone, twice) | 372/372, 0 skips (builder's run with the registration applied; `gates/uiJ16-nj16-20261123--repo-20261123-014323.log`) | 72 patches. ☰ after OPEN: inside with the edge, also for the first OPEN after a start |
 
 ## Wave 0 on the test card (build 2)
 
@@ -744,3 +745,10 @@ All three are the real seats; there are no stand-ins.
 - **J12, J10, J11, J4** hold; 3 of 3 clean quits; CPU 4.17 % (M 4.00 %, L 4.08 %), 0 underruns; `throttled=0x0`, 68.6-70.6 °C; card packages equal image O's.
 - **Off-brief, put back:** the header check moved the owner's column widths (restored from the owner's `mixxx.cfg` with Mixxx stopped; `SharedColumns` identical); CUE taps moved two This Pi main cues (put back through the UI; the database was only read).
 - **Gate trees:** J12 and J13 were gated on their own trees (J12 on `e771dfe` + J12; J13 on `c84f685` + J13), J14 on `ddcccf3` + J14, and J15 on `17a8688` + J15 with the registration, which is build O's tree.
+
+## Council round 8 (2026-11-23, at `295f653`, build O)
+
+- **Scores:** GPT-6.1 Sol xhigh **9** (no blockers); Claude Fable 5.2 high **8** (the brief's false Starlight pregain sentence); Claude Opus 5.5 xhigh **6**, uncapped 8 (an unlisted spec 2e deviation, plus three record gaps). Reports: `deploy/ui-redesign-20261117/council/round8-*.md`.
+- **Record fixes:** `cc63e55` (the pregain correction; build B run 1's wording), `007685e` (acceptance O in the results; plan 12.17; the brief's gate trees).
+- **The 2e deviation:** acceptance M `38-menu.png` showed ☰ inside "GANDER1 › rekordbox" with no row edged. The investigation on build O (`deploy/ui-redesign-20261117/investigation-R8-edge/REPORT.md`) reproduced a related fault 2 of 2: after a start, the first OPEN before ☰ was ever shown makes ☰ open at the top level (J5's guard skips while the hidden sidebar has no width; present since build J). The no-edge case was not reproduced, but the code shows two ways to clear the current row (focus-in, model reset) with nothing to restore it.
+- **Wave J16** (`mixxx-menu-place-fix.patch`): an OPEN made before the menu was ever shown is remembered and applied when the menu first turns on; on every ☰ at a drive's own level with no current row, TRACKS becomes current (nothing activated). Fixtures fail without the patch for both causes; J4, J5, ★, BACK, row taps and folder drives unchanged.

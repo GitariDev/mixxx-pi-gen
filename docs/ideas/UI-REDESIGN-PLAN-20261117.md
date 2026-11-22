@@ -982,3 +982,4 @@ Recorded only; no work has started. The owner: "You can add these to the note's 
 
 - **Builds N and O and the card updates:** "Alright keep going!" (said after the build M report, with the header line request "Show me this.", then "this" for option B), and for the waveform gain "See comments on loudness. Do a focused change there." with the hub notes in 12.16.
 - Build N (J14) was built and not installed; build O (J14 + J15) was installed on the card on 2026-11-22 at 23:23-23:27.
+- **Build P** (J16, the fix for council round 8's spec 2e finding) is made under the same "Alright keep going!" for this round; no new design, and the owner is told in the round report.

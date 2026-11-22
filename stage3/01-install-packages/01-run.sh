@@ -72,6 +72,7 @@ MIXXX_PATCHES=(
     mixxx-removable-rows-fix.patch
     mixxx-open-remount.patch
     mixxx-waveform-height.patch
+    mixxx-waveform-height-gain.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

@@ -945,3 +945,12 @@ The owner's answers (spec 2b):
 - **Build L (the 13th pi-gen run), the card update and acceptance L tonight.** The owner, going to bed: "do that last round fix have everything ready for the morning. Do all the proof and give me a visual timeline in the pr so I can go through all these rounds changes in the morning."
 - **The timeline:** the orchestrator chose the "climb tuner local app style" option. It is a standalone `tools/climb-timeline/` page built from one JSON file, in its own thread. No PR was opened.
 - **No port toggles and no physical re-plugs tonight.** GANDER1 is mounted and unmounted in software (`udisksctl`), and IXIAN is never ejected.
+
+### 12.13 Owner notes for the next build (2026-11-22, morning)
+
+Recorded only; no work has started. The owner: "You can add these to the note's for the next build. Don't do any work yet."
+
+- **Reading a drive again after an eject.** Today a drive that is ejected and then mounted again without a physical re-plug stays unreadable until Mixxx restarts (build B's eject rule in `mixxx-media-selection.patch`). The owner: "No, we should be able to reload it if it is still connected." Next build: a drive that is still connected after an eject can be mounted again and read without a re-plug or a restart. This also covers the "thin tags" in Folders and the "SAFE TO REMOVE" that stays after a software remount.
+- **The 1 px line under the empty part of the table header** (carried minor item). The owner: "Show me so I can choose to keep or remove it." Next step: show the owner a before-and-after (a card screenshot with the line and a render without it), then keep or remove it as the owner chooses.
+- **GANDER1's file system** (marked "not properly unmounted" before acceptance L). The owner: "I'll give it a look, but it should be okay." No repair from the Pi.
+- **Debian package updates on the card** (the card still has build I's packages; 18 security updates were out on 2026-11-22). The owner: "Absolutely do that. Thanks!" Apply them on the card when the work starts, and put the same package state in the next image.

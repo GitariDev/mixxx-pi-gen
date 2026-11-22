@@ -28,6 +28,16 @@
     background-color: #1d222a;
 }
 
+/* ...and the sections' 1 px --mx-line bottom line under that empty area too,
+ * full width to the scroll bar (spec 2h, owner's choice B; wave J14). Qt draws
+ * it in the header's last pixel row, the row the sections' own line is in, so
+ * the header keeps its 35 px (34 px sections plus their line) and the sections
+ * still show one line, not two. A rule of its own, so the H1 background rule
+ * above stays as it is. */
+#LibraryWrapper QTableView > WTrackTableViewHeader {
+    border-bottom: 1px solid #2c333d;
+}
+
 /* The source list without the touch menu property; the Sources side menu
  * (spec s5) is styled by mixpi-sources-menu.qss, whose rules win. */
 #LibraryWrapper WLibrarySidebar {

@@ -73,6 +73,7 @@ MIXXX_PATCHES=(
     mixxx-open-remount.patch
     mixxx-waveform-height.patch
     mixxx-waveform-height-gain.patch
+    mixxx-menu-place-fix.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

@@ -95,7 +95,8 @@ class WaveformHeightPatchTests(unittest.TestCase):
             self.skipTest(PATCH.name + ' is not registered yet')
         if GAIN_PATCH.name in names:
             # Wave J15: the gain patch comes right after it, last.
-            self.assertEqual(names[-2:], [PATCH.name, GAIN_PATCH.name])
+            index = names.index(PATCH.name)
+            self.assertEqual(names[index:index + 2], [PATCH.name, GAIN_PATCH.name])
         else:
             self.assertEqual(names[-1], PATCH.name)
 

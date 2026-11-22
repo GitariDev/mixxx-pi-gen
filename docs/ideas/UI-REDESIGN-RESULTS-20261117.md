@@ -28,6 +28,10 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Waves J8 + J9 integrated (build J) | `220012e` / `325cb70` | 882 run, OK (173 platform skips) | 323/323, 0 skips (`gates/uiJ-int3-20261121--…`) | 66 patches. rekordbox text; the Zoom row |
 | Wave J10 (build K) | `1000eaf` / `941bfd0` | 888 run, OK (175 platform skips) | 329/329, 0 skips (builder's run on the same tree; `gates/uiJ10-nj10-20261121--…`) | 67 patches. Folders eject |
 | Wave J11 (build L) | `baa25f2` | 893 run, OK (177–178 platform skips, by host) | 334/334, 0 skips (builder's run on the same tree; `gates/uiJ11-nj11-20261121--…`) | 68 patches. Removable devices keeps plain folders |
+| Wave J12 (build M) | `8a83f91` / `c84f685` | 930 run, OK (181 platform skips) | 343/343, 0 skips (builder's run; `gates/uiJ12-nj12-20261122--repo-20261122-201623.log`) | 69 patches. OPEN mounts an ejected drive again |
+| Wave J13 (build M) | `3148ba0` / `7a3adca` | 948 run; 1 `test_chroot_runtime` 5 s timeout (passes alone) | 361/361, 0 skips (builder's run on `c84f685` + J13; `gates/uiJ13-nj13-20261122--repo-20261122-204239.log`) | 70 patches. Main waveforms without the ReplayGain |
+| Wave J14 (builds N, O) | `3ad934b` | 952 run, OK (183 platform skips) | 361/361, 0 skips (builder's run; `gates/uiJ14-sj14-20261122--repo-20261122-214342.log`) | Stylesheet: the header's 1 px line runs the full width |
+| Wave J15 (build O) | `72f2fc1` / `9fd4ca1` | 957 run; 1 `test_chroot_runtime` 5 s timeout (passes alone) | 366/366, 0 skips (builder's run with the registration applied; `gates/uiJ15-nj15-20261122--repo-20261122-223848.log`) | 71 patches. Main waveforms at 0.80 |
 
 ## Wave 0 on the test card (build 2)
 
@@ -715,3 +719,18 @@ All three are the real seats; there are no stand-ins.
   - listed item 4, the header's 1 px bottom line;
   - the build L update record was written after the fact, without console output.
 - **Owner questions (from the Opus report):** after an eject, should a drive mounted again without a re-plug stay unreadable until Mixxx restarts? Today it does.
+
+## Owner items after round 7, waves J12-J15 and builds M, N, O (2026-11-22)
+
+- **Owner items** (spec 2h, plan 12.13-12.16): OPEN mounts an ejected drive again; bigger main waveforms ("very loud tracks … ever so slightly clipped"); the header's 1 px line (shown, the owner chose B); Debian updates on the card; after build M, "Let's set the gain to around .80" and a three-band colour R&D thread.
+- **Card packages:** 28 Debian updates on the card at 19:44-19:47 (Mixxx quit cleanly, reboot; no bootloader change). The 4 krb5 updates of 2026-11-22 evening during the build O update. Card and image O package lists are identical. Logs: `deploy/ui-redesign-20261117/card-apt-20261122/`, `buildO-update/UPDATE-LOG.md`.
+- **J12** (`mixxx-open-remount.patch`): OPEN was on the ejected row but disabled, and the eject retired the drive's read key (not its mount), so a remount by hand stayed unreadable. OPEN now mounts through udisks (no write) and reopens the read generation; the row reads READY. Fixture 32/32, 16 fail without.
+- **J13** (`mixxx-waveform-height.patch`): the main waveforms' height took `total_gain`, which includes the ReplayGain (card median −8.5 dB, so a typical track drew at ~38 %). The main waveforms (skin group `MixpiWaveRow`) now take the pregain only; the Loop panel and overviews keep `total_gain`. The image never installs the `mixxx.cfg` template (Mixxx chose type 17 itself), so a config-only fix could not reach the card. Option B (raise `VisualGain_0`) was measured and rejected: under ReplayGain only quiet tracks would clip.
+- **Build M** (14th run, `158fecb`, 70 patches): one clean run; card updated 21:27-21:31. **Acceptance M:** 14 PASS, 0 FAIL, 1 BLOCKED (no on-screen pregain). J12: 4 OPEN/EJECT cycles; J13: loud master flat on the edges in 12-31 % of columns, quiet master median 0.39-0.45; CPU 4.00 %.
+  - **Note on the L-vs-M perf pair:** the colours and deck 2's height differ partly because of the EQ positions during build L's run. The J13 patch changes only the height gain, which the RGB renderer's colour does not use (colour is normalised per column). The clean J13 measure is acceptance M's `70-wf-*`.
+- **J14** (stylesheet): one rule, `#LibraryWrapper QTableView > WTrackTableViewHeader { border-bottom: 1px solid #2c333d; }`, drawn in the same pixel row as the sections' line: header height unchanged, one line.
+- **Build N** (15th run, `251caa8`): J14 only. Built and checked; not installed, because the owner's loudness notes came during the run.
+- **J15** (`mixxx-waveform-height-gain.patch`): main waveforms at 0.80 of J13's height (`kMainWaveformGain`). Measured: typical track median/90th/99th 0.50/0.73/0.79; the loudest-mastered quarter stops at 0.79, never at the edge. The owner also wrote "about 10% away"; 0.90 would give that, and was shown for comparison only.
+- **Build O** (16th run, `7df3f7d`, 71 patches): one clean run; the skin equals build N's. Card updated 23:23-23:27 with the 4 krb5 updates.
+- **Leader's slip:** the J15 registration first broke `tests/test_mixxx_patches.py` (a line inserted inside a two-line dict entry); the Mac suite caught it before the push.
+- **Three-band colours:** an R&D thread on branch `rnd/waveform-three-band-20261122`; nothing from it ships without the owner's choice.

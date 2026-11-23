@@ -39,7 +39,9 @@ class TouchDefaultsTests(unittest.TestCase):
         self.assertEqual(set(line for line in self.config.read_text().splitlines() if line), {
             "[Library]", "RowHeight 34", "Font Sans Serif,-1,17,5,50,0,0,0,0,0",
             "[Config]", "ResizableSkin Pioneered", "hide_menubar 1", "show_menubar_hint 0",
-            "MixPiBootstrapLibrary 1", "[Controls]", "PositionDisplay 0"})
+            "MixPiBootstrapLibrary 1", "[Controls]", "PositionDisplay 0",
+            # Three-band waveforms by default, once (test_waveform_three_band.py).
+            "[Waveform]", "WaveformType 19", "[MixPi]", "ThreeBandDefault 1"})
         self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
 
     def test_position_display_is_seeded_for_new_profiles_only(self):
@@ -61,7 +63,11 @@ class TouchDefaultsTests(unittest.TestCase):
 
     def test_saved_choices_and_unrelated_settings_are_preserved(self):
         self.config.parent.mkdir()
-        source = "[Config]\nResizableSkin Deere\n\n[Library]\nRowHeight 42\nFont Custom,20\n\n[Soundcard]\nSamplerate 48000\n"
+        # [MixPi] ThreeBandDefault 1: the one-time three-band default is done
+        # (test_waveform_three_band.py), so a saved RGB stays.
+        source = ("[Config]\nResizableSkin Deere\n\n[Library]\nRowHeight 42\nFont Custom,20\n\n"
+                  "[Soundcard]\nSamplerate 48000\n\n[Waveform]\nWaveformType 17\n\n"
+                  "[MixPi]\nThreeBandDefault 1\n")
         self.config.write_text(source)
         before = self.config.stat().st_mtime_ns
         DEFAULTS["seed"](self.config)

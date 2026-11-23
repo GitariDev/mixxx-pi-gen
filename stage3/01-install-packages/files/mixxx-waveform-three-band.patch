@@ -1,0 +1,191 @@
+diff --git a/src/coreservices.cpp b/src/coreservices.cpp
+index df674eb..8912974 100644
+--- a/src/coreservices.cpp
++++ b/src/coreservices.cpp
+@@ -41,6 +41,7 @@
+ #include "util/font.h"
+ #include "util/logger.h"
+ #include "util/mixpidisplaycontrols.h"
++#include "util/mixpiwaveformcolours.h"
+ #include "util/mixpizoomsetting.h"
+ #include "util/screensavermanager.h"
+ #include "util/statsmanager.h"
+@@ -723,6 +724,17 @@ void CoreServices::initialize(QApplication* pApp) {
+             pFactory->setDefaultZoom(zoom);
+         }
+     });
++    // Settings › Advanced, Waveform colours: RGB or 3-BAND (Mixxx's waveform
++    // type 17 or 19), switched live and saved as [Waveform],WaveformType.
++    m_pWaveformColours = std::make_unique<MixpiWaveformColours>(pConfig, [](int type) {
++        WaveformWidgetFactory* pFactory = WaveformWidgetFactory::instance();
++        if (!pFactory) {
++            return false;
++        }
++        const int handle = pFactory->findHandleIndexFromType(
++                static_cast<WaveformWidgetType::Type>(type));
++        return handle >= 0 && pFactory->setWidgetTypeFromHandle(handle);
++    });
+ 
+     // Load tracks in args.qlMusicFiles (command line arguments) into player
+     // 1 and 2:
+@@ -939,6 +951,7 @@ void CoreServices::finalize() {
+     m_pSamplerClear.reset();
+     m_pDisplayControls.reset();
+     m_pZoomSetting.reset();
++    m_pWaveformColours.reset();
+ 
+     m_pConfigAutosave.reset();
+ 
+diff --git a/src/coreservices.h b/src/coreservices.h
+index c1aa877..495a9db 100644
+--- a/src/coreservices.h
++++ b/src/coreservices.h
+@@ -25,6 +25,7 @@ class ControlPushButton;
+ class MixpiSamplerClear;
+ class MixpiDisplayControls;
+ class MixpiZoomSetting;
++class MixpiWaveformColours;
+ 
+ namespace mixxx {
+ 
+@@ -158,6 +159,8 @@ class CoreServices : public QObject {
+     std::unique_ptr<MixpiDisplayControls> m_pDisplayControls;
+     // Settings › Interface, Zoom (spec 2f).
+     std::unique_ptr<MixpiZoomSetting> m_pZoomSetting;
++    // Settings › Advanced, Waveform colours (three-band R&D, 2026-11-23).
++    std::unique_ptr<MixpiWaveformColours> m_pWaveformColours;
+ 
+     Timer m_runtime_timer;
+     const CmdlineArgs& m_cmdlineArgs;
+diff --git a/src/util/mixpiwaveformcolours.h b/src/util/mixpiwaveformcolours.h
+new file mode 100644
+index 0000000..b31f8cd
+--- /dev/null
++++ b/src/util/mixpiwaveformcolours.h
+@@ -0,0 +1,84 @@
++#pragma once
++
++#include <QObject>
++#include <QString>
++#include <functional>
++#include <utility>
++
++#include "control/controlobject.h"
++#include "preferences/usersettings.h"
++
++/// MixPi Settings › Advanced, Waveform colours (three-band R&D; owner,
++/// 2026-11-23: direction A Overlay, as a setting, in Advanced).
++///
++/// - [MixPi],waveform_colours is 0 for RGB (Mixxx's all-shader RGB waveform,
++///   type 17: one mixed colour per column) or 1 for 3-BAND (the all-shader
++///   Filtered waveform, type 19: bass, mids and highs drawn over each other in
++///   the skin's SignalLowColor, SignalMidColor and SignalHighColor). Any other
++///   value is refused.
++/// - The setting is Mixxx's own [Waveform],WaveformType. A change asks
++///   applyType to switch every scrolling waveform at once (Mixxx passes
++///   WaveformWidgetFactory::setWidgetTypeFromHandle, which re-creates the
++///   waveforms with their tracks, zoom and play marker); only when that
++///   succeeds is the type written and the new value confirmed. The save on
++///   change (R-13) writes mixxx.cfg within a second. The overview strips have
++///   their own type and do not change.
++/// - At start the control shows the saved type: 19 is 3-BAND, anything else
++///   RGB. A type picked later in Mixxx's own Preferences is not followed.
++class MixpiWaveformColours : public QObject {
++  public:
++    static constexpr int kRgb = 0;
++    static constexpr int kThreeBand = 1;
++    // WaveformWidgetType::AllShaderRGBWaveform and AllShaderFilteredWaveform.
++    static constexpr int kRgbType = 17;
++    static constexpr int kThreeBandType = 19;
++
++    explicit MixpiWaveformColours(UserSettingsPointer pSettings,
++            std::function<bool(int)> applyType = {},
++            QObject* pParent = nullptr)
++            : QObject(pParent),
++              m_pSettings(std::move(pSettings)),
++              m_applyType(std::move(applyType)),
++              m_pColours(new ControlObject(ConfigKey(
++                      QStringLiteral("[MixPi]"), QStringLiteral("waveform_colours")))) {
++        m_pColours->setParent(this);
++        m_pColours->setAndConfirm(valueForType(savedType()));
++        m_pColours->connectValueChangeRequest(
++                this, [this](double value) { request(value); }, Qt::DirectConnection);
++    }
++
++    /// The saved [Waveform],WaveformType, or -1 when there is none.
++    int savedType() const {
++        bool ok = false;
++        const int type = m_pSettings->getValueString(kTypeKey).toInt(&ok);
++        return ok ? type : -1;
++    }
++
++    static int valueForType(int type) {
++        return type == kThreeBandType ? kThreeBand : kRgb;
++    }
++
++    static int typeForValue(int value) {
++        return value == kThreeBand ? kThreeBandType : kRgbType;
++    }
++
++  private:
++    void request(double value) {
++        if (value != kRgb && value != kThreeBand) {
++            return;
++        }
++        const int type = typeForValue(static_cast<int>(value));
++        if (!m_applyType || !m_applyType(type)) {
++            return;
++        }
++        m_pSettings->setValue(kTypeKey, type);
++        m_pColours->setAndConfirm(value);
++    }
++
++    static inline const ConfigKey kTypeKey =
++            ConfigKey(QStringLiteral("[Waveform]"), QStringLiteral("WaveformType"));
++
++    UserSettingsPointer m_pSettings;
++    std::function<bool(int)> m_applyType;
++    ControlObject* m_pColours;
++};
+diff --git a/src/waveform/mixpiwaveformgain.h b/src/waveform/mixpiwaveformgain.h
+index 9228e62..d4be164 100644
+--- a/src/waveform/mixpiwaveformgain.h
++++ b/src/waveform/mixpiwaveformgain.h
+@@ -46,4 +46,15 @@ inline double waveformHeightGain(bool mainWaveform, double pregain, double total
+     return mainWaveform ? pregain * kMainWaveformGain : totalGain;
+ }
+ 
++/// MixPi three-band waveforms (owner, 2026-11-23: A Overlay, the Filtered
++/// renderer): Mixxx doubles the height of the renderers that ask for
++/// WaveformWidgetRenderer::getGain(true) (Filtered and the textured ones).
++/// A main waveform skips that doubling, so the tallest band stops at
++/// kMainWaveformGain of the edge as the RGB outline does; doubled, a band
++/// would sit on the edge in about a quarter of a typical track's columns.
++/// Every other waveform keeps Mixxx's doubling.
++inline double heightCompensation(bool mainWaveform, bool applyCompensation) {
++    return applyCompensation && !mainWaveform ? 2.0 : 1.0;
++}
++
+ } // namespace mixpi
+diff --git a/src/waveform/renderers/waveformwidgetrenderer.h b/src/waveform/renderers/waveformwidgetrenderer.h
+index fb81a9c..cea6e7f 100644
+--- a/src/waveform/renderers/waveformwidgetrenderer.h
++++ b/src/waveform/renderers/waveformwidgetrenderer.h
+@@ -2,6 +2,7 @@
+ 
+ #include "track/track_decl.h"
+ #include "util/class.h"
++#include "waveform/mixpiwaveformgain.h"
+ #include "waveform/renderers/waveformmark.h"
+ #include "waveform/renderers/waveformrendererabstract.h"
+ #include "waveform/renderers/waveformsignalcolors.h"
+@@ -126,7 +127,8 @@ class WaveformWidgetRenderer {
+         // optional we move the decision to each renderer whether to apply the
+         // compensation or not, in order to have a more similar amplitude across
+         // waveform renderers
+-        return applyCompensation ? m_gain * 2.f : m_gain;
++        // MixPi: the main waveforms skip the doubling (mixpiwaveformgain.h).
++        return m_gain * mixpi::heightCompensation(m_mixpiMainWaveform, applyCompensation);
+     }
+     double getTrackSamples() const {
+         return m_trackSamples;

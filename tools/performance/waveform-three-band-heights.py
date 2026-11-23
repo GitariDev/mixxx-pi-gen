@@ -3,12 +3,13 @@
 
 Per analysed track, per pixel column (four visual frames, as on the card),
 the height each style reaches as a share of the space it draws into (1.0 =
-the edge), with J15's m_gain = 0.80 (pregain 1, VisualGain_0 1):
-  today/B  filtered.all x 0.80 (B keeps today's outline exactly)
-  A        each band x 0.80 (getGain(true)'s x2 dropped for the main rows);
+the edge), with the main waveforms' m_gain = pregain x kMainWaveformGain (0.90 since
+2026-11-23, fd1e940; 0.80 before; --gain), pregain 1, VisualGain_0 1:
+  today/B  filtered.all x G (B keeps today's outline exactly)
+  A        each band x G (getGain(true)'s x2 dropped for the main rows);
            A-stock: x 1.60 (stock Filtered with J15)
-  C        top half: low x 0.80; bottom half: max(mid, high) x 0.80
-  D        each lane: its band x 0.80 (bar from the lane floor)
+  C        top half: low x G; bottom half: max(mid, high) x G
+  D        each lane: its band x G (bar from the lane floor)
   A Loop   the Loop panel's waveform under A (type 19 is global): stock
            Filtered at 2 x total_gain (pregain x ReplayGain correction; no
            ReplayGain: the -6 dB default), the tallest band
@@ -18,7 +19,7 @@ and the pixels a frame fills per deck (overdraw counted), from the same
 geometry as waveform-three-band-sim.py. Prints medians across tracks; names
 no track. Needs numpy.
 
-Usage: waveform-three-band-heights.py DB ANALYSIS_DIR
+Usage: waveform-three-band-heights.py DB ANALYSIS_DIR [--gain 0.90]
 """
 import importlib.util
 import sqlite3
@@ -32,7 +33,8 @@ _spec = importlib.util.spec_from_file_location('waveform_bands', HERE / 'wavefor
 wb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(wb)
 
-FPP, G, HALF, LANE = 4, 0.80, 64.0, (128 - 4) / 3.0
+FPP, HALF, LANE = 4, 64.0, (128 - 4) / 3.0
+G = 0.90  # kMainWaveformGain (mixxx-waveform-height-gain.patch); --gain to change
 
 
 def columns(path):
@@ -52,8 +54,8 @@ def styles(c, replaygain=0.0):
     s = np.maximum(l + m + h, 1)
     heights = {
         'today/B outline': a * G / 255,
-        'A outer (bands x0.80)': np.maximum(np.maximum(l, m), h) * G / 255,
-        'A-stock outer (x1.60)': np.maximum(np.maximum(l, m), h) * 2 * G / 255,
+        'A outer (bands xG)': np.maximum(np.maximum(l, m), h) * G / 255,
+        'A-stock outer (x2G)': np.maximum(np.maximum(l, m), h) * 2 * G / 255,
         'C top: low': l1 * G / 255,
         'C bottom: max(mid,high)': np.maximum(m1, h1) * G / 255,
         'D low lane': l1 * G / 255,
@@ -74,7 +76,13 @@ def styles(c, replaygain=0.0):
 
 
 def main(argv):
-    db, analysis = argv[1], Path(argv[2])
+    global G
+    args = list(argv[1:])
+    if '--gain' in args:
+        i = args.index('--gain')
+        G = float(args[i + 1])
+        del args[i:i + 2]
+    db, analysis = args[0], Path(args[1])
     con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
     ids = con.execute('SELECT a.id, IFNULL(l.replaygain, 0) FROM track_analysis a '
                       'JOIN library l ON l.id = a.track_id WHERE a.type = 1').fetchall()
@@ -95,7 +103,7 @@ def main(argv):
             rows.setdefault(k, []).append((np.quantile(v, .5), np.quantile(v, .99), (v >= 0.995).mean() * 100))
         for k, v in fill.items():
             fills.setdefault(k, []).append(v.mean() * 708)
-    print(f'{count} analysed tracks, 4 visual frames per column, m_gain 0.80')
+    print(f'{count} analysed tracks, 4 visual frames per column, m_gain {G:.2f}')
     print('(the ratio row is a ratio, not a height; its edge columns mean ratio >= 0.995)')
     print(f'{"height (share of its space)":30s} {"p50":>6s} {"p99":>6s} {"p99 max":>8s} {"edge% med":>10s} {"edge% p90":>10s}')
     for k, v in rows.items():

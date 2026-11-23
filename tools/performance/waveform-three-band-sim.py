@@ -9,7 +9,8 @@ pixel column (fitted to the acceptance M screenshot 70-wf-1: the simulated
 outline matches the card's best at 4 frames per column and the shown elapsed
 time), the play marker at the centre.
 
-Height: the main waveforms follow J13 and J15: m_gain = pregain x 0.80
+Height: the main waveforms follow J13 and J15: m_gain = pregain x 0.90
+(kMainWaveformGain since fd1e940, 2026-11-23; round 1's images used 0.80)
 (VisualGain_0 1). A renderer that asks for getGain(true) (Filtered, the
 textured ones) gets 2 x m_gain, as stock Mixxx does.
 
@@ -53,7 +54,7 @@ _spec.loader.exec_module(wb)
 ROW_X, ROW_W, ROW_H = 92, 708, 128
 ROW_Y = (48, 176)
 FRAMES_PER_PIXEL = 4  # fitted to the card's screenshot; see the docstring
-MAIN_GAIN = 0.80          # J15 kMainWaveformGain (pregain 1)
+MAIN_GAIN = 0.90          # kMainWaveformGain (pregain 1); 0.80 in round 1
 AUDIO_FRAMES_PER_VISUAL = 100  # 44100 Hz / 441 visual frames per second
 AXES = np.array([245, 245, 245]) / 255.0   # AxesColor default
 BEAT_RGBA = (1.0, 1.0, 1.0, 0.9)  # BeatGridAlpha 90 % (the card's shot: 229 on black)
@@ -336,11 +337,11 @@ def overlay_marks(img, track, play_frame):
 
 
 STYLES = {
-    'today-j15': ('Today with J15: RGB (type 17), stock red/green/blue', lambda cm, s, pf: render_rgb(cm, QT_RGB, MAIN_GAIN)),
+    'today-j15': ('Today (gain 0.90): RGB (type 17), stock red/green/blue', lambda cm, s, pf: render_rgb(cm, QT_RGB, MAIN_GAIN)),
     'build-m': ('Build M (J13, gain 1.0): RGB, stock red/green/blue', lambda cm, s, pf: render_rgb(cm, QT_RGB, 1.0)),
     'A-overlay': ('A Overlay: Filtered (type 19), height-matched', lambda cm, s, pf: render_filtered(cm, TOKENS_3BAND, MAIN_GAIN, compensation=False)),
     'A-overlay-stock-height': ('A Overlay at stock height (x2): clips', lambda cm, s, pf: render_filtered(cm, TOKENS_3BAND, MAIN_GAIN, compensation=True)),
-    'A-overlay-pioneered': ('Filtered with Pioneered colours, height-matched', lambda cm, s, pf: render_filtered(cm, PIONEERED_FILTERED, MAIN_GAIN, compensation=False)),
+    'A-overlay-pioneered': ('A Overlay, Pioneered colours, height-matched (owner pick)', lambda cm, s, pf: render_filtered(cm, PIONEERED_FILTERED, MAIN_GAIN, compensation=False)),
     'B-stack': ('B Stack: today\'s outline split into bands (patch)', lambda cm, s, pf: render_stack(cm, TOKENS_3BAND, MAIN_GAIN)),
     'rgb-recolour': ('Dropped: RGB (type 17) with three-band colours', lambda cm, s, pf: render_rgb(cm, TOKENS_3BAND, MAIN_GAIN)),
     'C-split': ('C Split: bass up, mids and highs down (patch)', lambda cm, s, pf: render_split(cm, TOKENS_3BAND, MAIN_GAIN)),

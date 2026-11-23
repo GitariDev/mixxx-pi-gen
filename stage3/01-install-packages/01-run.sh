@@ -75,6 +75,7 @@ MIXXX_PATCHES=(
     mixxx-waveform-height-gain.patch
     mixxx-menu-place-fix.patch
     mixxx-menu-current-row.patch
+    mixxx-waveform-three-band.patch
 )
 MIXXX_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF

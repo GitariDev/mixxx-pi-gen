@@ -61,7 +61,8 @@ class MenuCurrentRowPatchTests(unittest.TestCase):
                                          '--mixxx-print-patches'], text=True).split()
         if PATCH.name not in names:
             self.skipTest(PATCH.name + ' is not registered yet')
-        self.assertEqual(names[-1], PATCH.name)
+        # Only the three-band waveform patch (test_waveform_three_band.py) comes after it.
+        self.assertEqual(names[names.index(PATCH.name) + 1:], ['mixxx-waveform-three-band.patch'])
         self.assertLess(names.index('mixxx-menu-place-fix.patch'), names.index(PATCH.name))
 
     def test_focus_in_keeps_the_current_row_only_in_the_touch_menu(self):

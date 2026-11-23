@@ -474,6 +474,24 @@ def decks(compact=False, size=None):
                  [deck_info(1, compact), deck_info(2, compact)])
 
 
+# Settings › Advanced, Waveform colours: 3-BAND (Mixxx's Filtered waveform,
+# type 19) draws bass, mids and highs over each other in these colours. The
+# owner chose Pioneered's own (three-band R&D, 2026-11-23: "Those are good
+# colors."); they are set here so the choice holds whatever the base skin says.
+THREE_BAND_COLOURS = (('SignalLowColor', '#004ee4'), ('SignalMidColor', '#c95a00'),
+                      ('SignalHighColor', '#f6e9d3'))
+
+
+def three_band_colours(visual):
+    """Set the three band colours on the waveform template (the decks' main
+    waveforms and the Loop panel's are copies of it)."""
+    for tag, colour in THREE_BAND_COLOURS:
+        for old in visual.findall(tag):
+            visual.remove(old)
+        prop(visual, tag, colour)
+    return visual
+
+
 def wave_row(channel, visual):
     """R-16: a 128 px waveform row with the 92 px deck column (badge, key, MT and Q)."""
     v = concrete(visual, channel)
@@ -872,6 +890,9 @@ def settings():
     advanced = group('MixpiAdvancedSettings', children=[
         setting_row('Waveform FPS', '', choices('[MixPi],waveform_fps', [('30', 30), ('45', 45), ('60', 60)])),
         setting_row('Read ahead', 'Chunks. Next launch.', choices('[MixPi],read_ahead', [('2', 2), ('8', 8), ('24', 24)])),
+        # Three-band R&D (owner, 2026-11-23): [MixPi],waveform_colours 0 RGB, 1 3-BAND
+        # (mixxx-waveform-three-band.patch), the row under Read ahead.
+        setting_row('Waveform colours', '', choices('[MixPi],waveform_colours', [('RGB', 0), ('3-BAND', 1)])),
         setting_row('Mixxx preferences', 'Audio routing, controllers', [preferences_button()]),
         gap('0me,0me')])
     panes = group('MixpiSettingsPanes')
@@ -1518,6 +1539,7 @@ def build(skin, loop_display='focus'):
     library = ET.parse(skin/'library.xml').find('.//WidgetGroup/Children/WidgetGroup')
     if visual is None or overview is None or library is None or library.find('.//LibrarySidebar/TouchNavigation') is None:
         raise ValueError('Expected pinned waveforms and patched touch library')
+    three_band_colours(visual)
     root = node('skin')
     root.append(manifest)
     prop(root,'ObjectName','Mixxx')

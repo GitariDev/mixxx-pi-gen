@@ -100,6 +100,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-waveform-height-gain.patch",
             "mixxx-menu-place-fix.patch",
             "mixxx-menu-current-row.patch",
+            "mixxx-waveform-three-band.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -137,6 +138,7 @@ PREREQUISITES = {
     "mixxx-open-remount.patch": ["mixxx-removable-rows-fix.patch", "mixxx-media-chip-ping.patch",
                                  "mixxx-table-fit-media-open.patch"],
     "mixxx-waveform-height-gain.patch": ["mixxx-waveform-height.patch"],
+    "mixxx-waveform-three-band.patch": ["mixxx-waveform-height-gain.patch", "mixxx-zoom-setting.patch"],
     "mixxx-menu-place-fix.patch": ["mixxx-sources-open-edge.patch", "mixxx-media-open-inside.patch",
                                    "mixxx-eject-folders-view.patch"],
     "mixxx-scan-strip-fixes.patch": ["mixxx-scan-progress.patch"],

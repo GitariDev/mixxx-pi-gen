@@ -62,6 +62,7 @@ REQUIRED_TESTS = (
     'test_waveform_height',
     'test_menu_place_fix',
     'test_menu_current_row',
+    'test_waveform_three_band',
 )
 FORBIDDEN_OVERRIDES = (
     'TRANSFER_REPORTING_BASELINE', 'RECORDING_LIFECYCLE_BASELINE',

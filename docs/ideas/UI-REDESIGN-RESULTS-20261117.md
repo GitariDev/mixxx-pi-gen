@@ -773,10 +773,16 @@ All three are the real seats; there are no stand-ins.
 
 ## Build Q and acceptance Q (2026-11-23, `deploy/test-image-20261123q/`, `deploy/ui-redesign-20261117/acceptance-Q/ACCEPTANCE.md`)
 
-- **Build Q** (18th pi-gen run, `a32feec`, 73 patches): build P plus J17. One clean run, 12 m 19 s; skin byte-equal to build P's; packages identical to the card's. Card updated 04:27-04:29 (`buildQ-update/UPDATE-LOG.md`), Mixxx left freshly started with ☰ never shown.
+- **Build Q** (18th pi-gen run, `a32feec`, 73 patches): build P plus J17. One clean run, 12 m 19 s; skin byte-equal to build P's; packages identical to the card's. Card updated 04:26-04:29 (`buildQ-update/UPDATE-LOG.md`; step 0 at 04:26; an earlier version said 04:27, corrected after round 10 Opus), Mixxx left freshly started with ☰ never shown.
 - **Acceptance Q: 23 PASS, 0 FAIL, 0 BLOCKED.**
   - The round 9 sequence: after A - MAIN PLAYLIST, an empty-area tap keeps the edge on it (x 483, y 226), and ✕/☰ keeps it there, not on TRACKS; the same with a drag, and again after a fresh start (three pixel-identical reopened shots).
   - Folder row: inside DRAKE SHIT the edge is on B - BREATHER TRACKS; after BACK, an empty tap and ✕/☰ it is on DRAKE SHIT, the folder holding the list in view.
   - TRACKS in view stays edged. J16's first ☰ after a fresh start: OPEN 2 of 2, remount 1 of 1, OPEN + LOAD 1 2 of 2, 0 differing pixels against acceptance P's reference. J4, BACK, J5, J10, J11, J12 hold.
   - 3 of 3 clean quits (plus 3 test quits); J15 at 0.80; J14 0 differing pixels; zoom saved in ~0.5 s; CPU 4.25 % (P 4.17 %), 0 underruns; not throttled.
 - **Known, carried (round 9 and 10 Fable, fixture only, not tried on the card):** after a start, OPEN, then EJECT before ☰ was ever opened, the first ☰ opens at the top level (spec 2e) with the top-level rules edging This Pi's tile while the table is empty. Listed here; an owner question, not a build item.
+
+## Council round 10 (2026-11-23, at `03a7095`, build Q): target met
+
+- **Scores:** GPT-6.1 Sol xhigh **9**, Claude Fable 5.2 high **9**, Claude Opus 5.5 xhigh **9**; no blockers, no caps. Reports: `deploy/ui-redesign-20261117/council/round10-*.md`.
+- **Minor record items** (Fable and Opus): build B run 1's wording, the J17 fixture count (27), build Q's yes in plan 12.17, and the eject-before-☰ case listed — fixed in `8d3e922`; build Q's install start 04:26 — fixed here. No build needed.
+- **Open for the owner:** the eject-before-☰ case (This Pi's tile edged with an empty table; fixture only); whether fix builds need a yes each; the 0.80 vs "about 10%" waveform gain; the three-band colour pick in the R&D thread.

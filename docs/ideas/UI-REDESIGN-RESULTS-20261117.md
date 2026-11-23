@@ -761,4 +761,4 @@ All three are the real seats; there are no stand-ins.
   - The edge (`#a3c45e` at x 483) is present in all 11 inside-menu shots, including acceptance M's 1f sequence (load, play, pause, unload, page change).
   - J4 unchanged (top level, no edge after an eject; BACK → edge on GANDER1); J5, J10, J11, J12 hold.
   - 3 of 3 clean quits (plus 4 test quits), J15 at 0.80 (13 px short of the edges), J14 header 0 differing pixels, zoom saved in 0.49 s / 0.41 s, CPU 4.17 % (O 4.17 %), `throttled=0x0`.
-  - `soundconfig.xml`: the investigator's 01:21 quit rewrote it with two lines in another order (same routing); after build P's start it is byte-equal to build O's again.
+  - `soundconfig.xml`: Mixxx rewrites it on quit, and it alternates between two line orders of the same content (`52be287b…` and `99034d59…`; the only difference is where the Headphones `<output>` line sits). The routing is unchanged. Copies, hashes and diffs: `deploy/ui-redesign-20261117/acceptance-P/soundconfig/` (untracked). Corrected after round 9 Fable: an earlier version of this line said it was "byte-equal to build O's again"; that held at 02:29 but not after acceptance P's quits.

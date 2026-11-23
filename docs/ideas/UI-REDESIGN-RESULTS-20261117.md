@@ -752,3 +752,13 @@ All three are the real seats; there are no stand-ins.
 - **Record fixes:** `cc63e55` (the pregain correction; build B run 1's wording), `007685e` (acceptance O in the results; plan 12.17; the brief's gate trees).
 - **The 2e deviation:** acceptance M `38-menu.png` showed ☰ inside "GANDER1 › rekordbox" with no row edged. The investigation on build O (`deploy/ui-redesign-20261117/investigation-R8-edge/REPORT.md`) reproduced a related fault 2 of 2: after a start, the first OPEN before ☰ was ever shown makes ☰ open at the top level (J5's guard skips while the hidden sidebar has no width; present since build J). The no-edge case was not reproduced, but the code shows two ways to clear the current row (focus-in, model reset) with nothing to restore it.
 - **Wave J16** (`mixxx-menu-place-fix.patch`): an OPEN made before the menu was ever shown is remembered and applied when the menu first turns on; on every ☰ at a drive's own level with no current row, TRACKS becomes current (nothing activated). Fixtures fail without the patch for both causes; J4, J5, ★, BACK, row taps and folder drives unchanged.
+
+## Build P and acceptance P (2026-11-23, `deploy/test-image-20261123p/`, `deploy/ui-redesign-20261117/acceptance-P/ACCEPTANCE.md`)
+
+- **Build P** (17th pi-gen run, `62d5cc4`, 72 patches): build O plus J16. One clean run, 13 m 22 s; skin byte-equal to build O's; package lists of image and card identical. Card updated 02:25-02:29 (`buildP-update/UPDATE-LOG.md`), Mixxx left freshly started with ☰ never shown.
+- **Acceptance P: 19 PASS, 0 FAIL, 0 BLOCKED.**
+  - First ☰ after a fresh start opens inside "GANDER1 › rekordbox" with the edge on TRACKS: plain OPEN 2 of 2, BROWSE 1 of 1, remount OPEN 1 of 1, OPEN + LOAD 1 2 of 2 (build O: top level).
+  - The edge (`#a3c45e` at x 483) is present in all 11 inside-menu shots, including acceptance M's 1f sequence (load, play, pause, unload, page change).
+  - J4 unchanged (top level, no edge after an eject; BACK → edge on GANDER1); J5, J10, J11, J12 hold.
+  - 3 of 3 clean quits (plus 4 test quits), J15 at 0.80 (13 px short of the edges), J14 header 0 differing pixels, zoom saved in 0.49 s / 0.41 s, CPU 4.17 % (O 4.17 %), `throttled=0x0`.
+  - `soundconfig.xml`: the investigator's 01:21 quit rewrote it with two lines in another order (same routing); after build P's start it is byte-equal to build O's again.

@@ -54,7 +54,7 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | B, run 1 | `67341f2` | **discarded after a successful pi-gen**: pi-gen exit 0 and the check phase passed, but the file listing failed with I/O errors when the Mac's disk filled (VM b's disk file in /tmp grew to 27 GB). The image was discarded; the owner approved deleting two old images to free space. Counted as a pi-gen run. |
 | B, run 2 | `67341f2` | pi-gen exit 0 in 9 min 29 s; 37 patches; check phase all pass; Mac free space logged (lowest 20 GiB); VM trimmed after; installed in place 10:30 (`deploy/test-image-20261117b/`, `acceptance-B/`) |
 
-**Build count against the plan's ceiling (one build = one pi-gen run):** A, B run 1 (aborted), B run 2 = **3 runs**. A build C for the post-B repairs would be the **4th run**, past the contract's ceiling of 3, so it needs the owner's explicit yes (asked 2026-11-17).
+**Build count against the plan's ceiling (one build = one pi-gen run):** A, B run 1 (discarded after a successful pi-gen), B run 2 = **3 runs**. A build C for the post-B repairs would be the **4th run**, past the contract's ceiling of 3, so it needs the owner's explicit yes (asked 2026-11-17).
 
 ## Build A on the test card (`deploy/ui-redesign-20261117/buildA-checks/`, `wave2-preview/`)
 
@@ -768,7 +768,7 @@ All three are the real seats; there are no stand-ins.
 
 - **Scores:** Claude Fable 5.2 high **9** (no blockers); GPT-6.1 Sol xhigh **9** (no blockers); Claude Opus 5.5 xhigh **8** (one blocker, found in source and not capped). Reports: `deploy/ui-redesign-20261117/council/round9-*.md`.
 - **Opus's blocker, confirmed on the card by the leader** (build P, shots `deploy/ui-redesign-20261117/acceptance-P/shots/o9-*.png`, x 483 samples): GANDER1 BROWSE → ☰ (edge on TRACKS) → A - MAIN PLAYLIST → ☰ (edge on the playlist) → a tap on the empty part of the open menu (**no edge**) → ✕, ☰ (**edge on TRACKS** while the table shows the playlist). The empty-area press clears the current row (upstream focus-in, since the menu was built); J16's restore then picked TRACKS whatever the list. The leader's J16 brief asked for TRACKS: a brief error.
-- **Wave J17** (`mixxx-menu-current-row.patch`): in the touch menu a focus-in keeps the current row; the sidebar remembers the path of the last current row, and J16's restore edges the row whose list is in view (TRACKS only when Tracks is in view; nothing if no row of that level matches). Fixture 31 checks, 10 fail without the patch. J16's focus-in check no longer requires the clear.
+- **Wave J17** (`mixxx-menu-current-row.patch`): in the touch menu a focus-in keeps the current row; the sidebar remembers the path of the last current row, and J16's restore edges the row whose list is in view (TRACKS only when Tracks is in view; nothing if no row of that level matches). Fixture 27 checks (plus 4 Python patch tests), 10 fail without the patch; an earlier version said 31 checks, corrected after round 10 Fable. J16's focus-in check no longer requires the clear.
 - **Record fixes from round 9:** the `soundconfig.xml` sentence (`fb7e225`, Fable). Opus minors: brief item 12 says "after round 9" for a round 8 correction (in the R9 brief only); build P's install began at 02:27 (step 0), not 02:25.
 
 ## Build Q and acceptance Q (2026-11-23, `deploy/test-image-20261123q/`, `deploy/ui-redesign-20261117/acceptance-Q/ACCEPTANCE.md`)
@@ -779,3 +779,4 @@ All three are the real seats; there are no stand-ins.
   - Folder row: inside DRAKE SHIT the edge is on B - BREATHER TRACKS; after BACK, an empty tap and ✕/☰ it is on DRAKE SHIT, the folder holding the list in view.
   - TRACKS in view stays edged. J16's first ☰ after a fresh start: OPEN 2 of 2, remount 1 of 1, OPEN + LOAD 1 2 of 2, 0 differing pixels against acceptance P's reference. J4, BACK, J5, J10, J11, J12 hold.
   - 3 of 3 clean quits (plus 3 test quits); J15 at 0.80; J14 0 differing pixels; zoom saved in ~0.5 s; CPU 4.25 % (P 4.17 %), 0 underruns; not throttled.
+- **Known, carried (round 9 and 10 Fable, fixture only, not tried on the card):** after a start, OPEN, then EJECT before ☰ was ever opened, the first ☰ opens at the top level (spec 2e) with the top-level rules edging This Pi's tile while the table is empty. Listed here; an owner question, not a build item.

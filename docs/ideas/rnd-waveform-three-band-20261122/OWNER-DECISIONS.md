@@ -15,3 +15,9 @@ Asked in the R&D thread; the owner chose from the options given:
 - **Default after the next build:** three-band (A Overlay); RGB is one tap away. Chosen: "Three-band".
 - **The Loop panel's waveform:** follows the setting, as Mixxx's waveform style covers every scrolling waveform; the overview strips stay as they are. Chosen: "Follow the setting".
 - **Wording:** row "Waveform colours", choices RGB and 3-BAND. Chosen: "Waveform colours: RGB / 3-BAND".
+
+## 2026-11-23, the owner's answers to the review questions (R&D thread)
+Asked after the adversarial reviews (Sol, Fable); the owner chose from the options given:
+- **The Loop panel's waveform height in 3-BAND:** the same height as RGB, not Mixxx's doubled Filtered height. Chosen: "Same height as RGB".
+- **A third waveform type picked in Mixxx's Preferences:** the row keeps lighting RGB. Chosen: "Keep lighting RGB".
+- **A start that cannot draw 3-BAND:** the 3-BAND choice looks unavailable (disabled). Chosen: "Show it unavailable".

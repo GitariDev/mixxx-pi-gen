@@ -1,0 +1,102 @@
+diff --git a/src/widget/wlibrarysidebar.cpp b/src/widget/wlibrarysidebar.cpp
+index e631b09..84b34ef 100644
+--- a/src/widget/wlibrarysidebar.cpp
++++ b/src/widget/wlibrarysidebar.cpp
+@@ -426,9 +426,20 @@ void WLibrarySidebar::edgeShownDriveTracks() {
+     if (path.isEmpty()) {
+         return;
+     }
++    // Council round 9 (Opus), wave J17: not the Tracks row whatever the table
++    // shows. The row of this level whose list the table shows (the last row
++    // made current, m_shownList): Tracks (the drive's own path) only while
++    // the drive's Tracks list is in view, else the playlist or the folder.
++    // Matched by path, as RekordboxFeature::selectShownDriveTracks matches
++    // the drive (a model reset leaves no row index). No such row at this
++    // level (a list of another level, or of another source): the current
++    // row stays as it is.
++    if (m_shownList.isEmpty()) {
++        return;
++    }
+     for (int row = 0; row < model()->rowCount(node); ++row) {
+         const QModelIndex child = model()->index(row, 0, node);
+-        if (!isRowHidden(row, node) && pathOf(child) == path) {
++        if (!isRowHidden(row, node) && pathOf(child) == m_shownList) {
+             selectionModel()->setCurrentIndex(child,
+                     QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+             updateSourceChrome();
+@@ -767,6 +778,13 @@ void WLibrarySidebar::currentChanged(const QModelIndex& current, const QModelInd
+     if (current.isValid()) {
+         // A list was picked or opened again: the edge follows it.
+         m_shownSourceGone = false;
++        // Wave J17: the list the table shows, by its path (a rekordbox row's
++        // first data value; none for other rows). Kept when the current row
++        // goes, so ☰ can put the edge back on the row that shows it.
++        const QVariant data = current.data(SidebarModel::DataRole);
++        m_shownList = data.userType() == QMetaType::QString
++                ? QString()
++                : data.toList().value(0).toString();
+     }
+     // The current row follows what Tracks shows (a drive opened from the
+     // Media page, the start source).
+@@ -802,6 +820,8 @@ void WLibrarySidebar::rowsAboutToBeRemoved(const QModelIndex& parent, int start,
+         return;
+     }
+     m_shownSourceGone = true;
++    // Wave J17: its list went with it.
++    m_shownList.clear();
+     // Nothing is selected: not the row the view (single selection) or the
+     // selection model would move to (a neighbouring drive, or Rekordbox).
+     if (selectionModel()) {
+@@ -827,6 +847,8 @@ void WLibrarySidebar::releaseShownSource() {
+         return;
+     }
+     m_shownSourceGone = true;
++    // Wave J17: its list went with it.
++    m_shownList.clear();
+     if (selectionModel()) {
+         selectionModel()->clear();
+     }
+@@ -1520,8 +1542,16 @@ void WLibrarySidebar::mouseDoubleClickEvent(QMouseEvent* event) {
+ }
+ 
+ void WLibrarySidebar::focusInEvent(QFocusEvent* event) {
+-    // Clear the current index, i.e. remove the focus indicator
+-    selectionModel()->clearCurrentIndex();
++    // Council round 9 (Opus), wave J17: in the touch Sources menu the current
++    // row is the edge on the list the table shows, not a focus indicator.
++    // The first press on the open menu that is not a row tap (a drag of its
++    // rows, a tap on its empty part) is a focus-in, and cleared it: no row
++    // had the edge. There it stays; elsewhere (the desktop sidebar) as
++    // before.
++    if (!(m_touchNavigation && m_sourceScreen)) {
++        // Clear the current index, i.e. remove the focus indicator
++        selectionModel()->clearCurrentIndex();
++    }
+     QTreeView::focusInEvent(event);
+ }
+ 
+diff --git a/src/widget/wlibrarysidebar.h b/src/widget/wlibrarysidebar.h
+index 0aa4aae..882901b 100644
+--- a/src/widget/wlibrarysidebar.h
++++ b/src/widget/wlibrarysidebar.h
+@@ -207,6 +207,8 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     void closeSources();
+     // Spec 2e (wave J16): ☰ shown inside a drive whose level has no current
+     // row: the drive's Tracks row (the row J5 edges) is made current.
++    // Wave J17: not the Tracks row whatever is in view, but the row whose
++    // list the table shows (m_shownList); none at that level: unchanged.
+     void edgeShownDriveTracks();
+ 
+     TouchSourceNavigation* m_touchNavigation = nullptr;
+@@ -237,6 +239,11 @@ class WLibrarySidebar : public QTreeView, public WBaseWidget {
+     // sidebar was not yet the Sources menu (never shown: no width). The row
+     // current then; applied when the menu turns on. Invalid: none.
+     QPersistentModelIndex m_pendingOpen;
++    // Wave J17: the path of the list the table shows (the first data value of
++    // the last row made current; empty: none, or not a rekordbox row). Kept
++    // when the current row goes (clearCurrentIndex, a model reset), so ☰
++    // puts the edge back on the row that shows it (edgeShownDriveTracks).
++    QString m_shownList;
+     QFrame::Shape m_frameShape = QFrame::StyledPanel;
+     bool m_sourcesEditing = false;
+     bool m_sourceRailPending = false;

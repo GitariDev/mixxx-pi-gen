@@ -518,9 +518,13 @@ int main(int argc, char** argv) {
         QFocusEvent focus(QEvent::FocusIn, Qt::MouseFocusReason);
         QApplication::sendEvent(menu.get(), &focus);
         settle();
+        // Wave J17 (mixxx-menu-current-row.patch): in the touch menu a
+        // focus-in no longer clears the current row, so TRACKS stays current
+        // and is not restored. Either way ☰ has the edge on TRACKS.
         const bool cleared = !menu->currentIndex().isValid();
+        std::cout << "OBSERVE focus-in cleared the current row " << cleared << std::endl;
         openMenu();
-        require(cleared && insideOnTracks("GANDER1"),
+        require(insideOnTracks("GANDER1"),
                 "J16 (b) a focus-in (clearCurrentIndex at :1429), then ☰: inside GANDER1 › rekordbox, current = TRACKS");
         require(shown == before && activations == count, "J16 (b) focus-in: the table is not changed");
         closeMenu();

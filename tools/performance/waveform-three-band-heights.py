@@ -10,9 +10,11 @@ the edge), with the main waveforms' m_gain = pregain x kMainWaveformGain (0.90 s
            A-stock: x 1.60 (stock Filtered with J15)
   C        top half: low x G; bottom half: max(mid, high) x G
   D        each lane: its band x G (bar from the lane floor)
-  A Loop   the Loop panel's waveform under A (type 19 is global): stock
-           Filtered at 2 x total_gain (pregain x ReplayGain correction; no
-           ReplayGain: the -6 dB default), the tallest band
+  A Loop   the Loop panel's waveform under A (type 19 is global), the
+           tallest band at total_gain (pregain x ReplayGain correction; no
+           ReplayGain: the -6 dB default), the height of RGB there (owner,
+           2026-11-23: "Same height as RGB"); A-stock Loop: stock Filtered at
+           2 x total_gain, which MixPi no longer draws
 and the ratio of the three band levels' sum to filtered.all (how much the
 bands co-occur, which is why an RGB mix turns pastel),
 and the pixels a frame fills per deck (overdraw counted), from the same
@@ -61,7 +63,8 @@ def styles(c, replaygain=0.0):
         'D low lane': l1 * G / 255,
         'D mid lane': m1 * G / 255,
         'D high lane': h1 * G / 255,
-        'A Loop panel (2 x total_gain)': np.maximum(np.maximum(l, m), h) * 2 * replaygain_correction(replaygain) / 255,
+        'A Loop panel (total_gain)': np.maximum(np.maximum(l, m), h) * replaygain_correction(replaygain) / 255,
+        'A-stock Loop (2 x total_gain)': np.maximum(np.maximum(l, m), h) * 2 * replaygain_correction(replaygain) / 255,
         'ratio (low+mid+high)/all': (l + m + h) / np.maximum(a, 1),
     }
     clipped = lambda x: np.minimum(x, 1.0)

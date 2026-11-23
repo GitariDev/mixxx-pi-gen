@@ -897,12 +897,17 @@ def settings():
                     segments(choices('[MixPi],drive_insert', [('ASK', 0), ('AUTO LOAD', 1)], (96, 104)))),
         setting_note('ASK shows a small strip with LOAD and DISMISS. AUTO LOAD opens the drive at once.'),
         gap('0me,0me')])
+    # Three-band R&D (owner, 2026-11-23): [MixPi],waveform_colours 0 RGB, 1 3-BAND
+    # (mixxx-waveform-three-band.patch). 3-BAND is disabled, like an Audio buffer
+    # choice, when this start cannot draw it ([MixPi],waveform_three_band_available
+    # 0: "Show it unavailable"); RGB is always enabled.
+    colours = choices('[MixPi],waveform_colours', [('RGB', 0), ('3-BAND', 1)])
+    connection(colours[1], '[MixPi],waveform_three_band_available', bind='enabled')
     advanced = group('MixpiAdvancedSettings', children=[
         setting_row('Waveform FPS', '', choices('[MixPi],waveform_fps', [('30', 30), ('45', 45), ('60', 60)])),
         setting_row('Read ahead', 'Chunks. Next launch.', choices('[MixPi],read_ahead', [('2', 2), ('8', 8), ('24', 24)])),
-        # Three-band R&D (owner, 2026-11-23): [MixPi],waveform_colours 0 RGB, 1 3-BAND
-        # (mixxx-waveform-three-band.patch), the row under Read ahead.
-        setting_row('Waveform colours', '', choices('[MixPi],waveform_colours', [('RGB', 0), ('3-BAND', 1)])),
+        # The row under Read ahead.
+        setting_row('Waveform colours', '', colours),
         setting_row('Mixxx preferences', 'Audio routing, controllers', [preferences_button()]),
         gap('0me,0me')])
     panes = group('MixpiSettingsPanes')

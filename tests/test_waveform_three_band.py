@@ -8,6 +8,10 @@ The owner's choices (docs/ideas/rnd-waveform-three-band-20261122/OWNER-DECISIONS
   row under Read ahead; three-band by default after the next build; the Loop
   panel's waveform follows the setting (Mixxx's waveform type covers every
   scrolling waveform); the overview strips stay as they are.
+- After the reviews: the Loop panel's three-band waveform draws at the same
+  height as RGB there ("Same height as RGB"); a start that cannot draw 3-BAND
+  shows the choice disabled ("Show it unavailable"); a third waveform type
+  keeps lighting RGB.
 - J13/J15's height: the main waveforms draw at pregain x kMainWaveformGain
   (0.90), so the loudest tracks stop 10 % from the edge.
 
@@ -17,14 +21,19 @@ How Mixxx 2.5.6 draws it, and what mixxx-waveform-three-band.patch changes:
   software ones) do, allshader RGB does not. Doubled at 0.90, a band would
   sit on the edge in about a quarter of a typical track's columns
   (tools/performance/waveform-three-band-heights.py on the card's library).
-  So the all-shader Filtered renderer alone does not ask for the doubling on
-  a main row (mixpi::filteredHeightCompensation); getGain and every other
-  renderer are as in Mixxx.
+  So the all-shader Filtered renderer alone does not ask for the doubling
+  (mixpi::filteredHeightCompensation), on a main row or in the Loop panel:
+  3-BAND draws at RGB's height in both. getGain, the Stacked type and every
+  other renderer are as in Mixxx.
 - [MixPi],waveform_colours (util/mixpiwaveformcolours.h) is owned by the main
   window, made after the waveform factory and deleted before it. A request
   from any thread is applied on the GUI thread, through
   WaveformWidgetFactory::mixpiSwitchTo; the control shows the type the factory
   runs (mixpiAppliedType) and follows mixpiWidgetTypeChanged.
+- [MixPi],waveform_three_band_available is read-only, 1 when the factory has
+  a handle for type 19. Only the 3-BAND button binds its enabled state to it,
+  as the Audio buffer buttons do with [MixPi],buffer_available; the page's
+  #MixpiButton:disabled rule draws it.
 - Three-band by default, once: CoreServices calls
   MixpiWaveformColours::defaultOnce when mixxx.cfg has been read, before the
   factory reads the type; [MixPi],ThreeBandDefault records it once the factory
@@ -58,6 +67,8 @@ FACTORY = 'src/waveform/waveformwidgetfactory.cpp'
 MAIN_WINDOW = 'src/mixxxmainwindow.cpp'
 VIEWER = 'src/widget/wwaveformviewer.cpp'
 SEEDER = ROOT / 'stage3/02-desktop/files/bin/mixpi-touch-defaults'
+QSS = ROOT / 'stage3/01-install-packages/files/mixpi-performance.qss'
+AVAILABLE = '[MixPi],waveform_three_band_available'
 TEST = ROOT / 'tests/native/waveform_three_band_test.cpp'
 COLOURS = {'SignalLowColor': '#004ee4', 'SignalMidColor': '#c95a00', 'SignalHighColor': '#f6e9d3'}
 
@@ -147,6 +158,10 @@ class ThreeBandPatchTests(unittest.TestCase):
         added_window = added(MAIN_WINDOW)
         self.assertIn('return static_cast<int>(pFactory->mixpiAppliedType());', added_window)
         self.assertIn('return pFactory->mixpiSwitchTo(static_cast<WaveformWidgetType::Type>(type));', added_window)
+        # 3-BAND is available when the factory has a handle for the type.
+        self.assertRegex(added_window, r'waveforms\.canDraw = \[pFactory\]\(int type\) \{\s*'
+                                       r'return pFactory->findHandleIndexFromType\(\s*'
+                                       r'static_cast<WaveformWidgetType::Type>\(type\)\) >= 0;')
         # The row follows every change of the type (the skin has loaded,
         # Mixxx's own Preferences).
         self.assertIn('&WaveformWidgetFactory::mixpiWidgetTypeChanged,', added_window)
@@ -183,6 +198,24 @@ class ThreeBandPatchTests(unittest.TestCase):
         # setWidgetType writes [Waveform],WaveformType to mixxx.cfg.
         self.assertIn('ConfigKey("[Waveform]", "WaveformType"), *pCurrentType);', stock)
 
+    def test_three_band_availability_is_a_read_only_control_from_the_factory(self):
+        # Owner, 2026-11-23: "Show it unavailable".
+        header = added(HEADER)
+        self.assertIn('QStringLiteral("waveform_three_band_available")', header)
+        self.assertIn('m_pThreeBandAvailable->setReadOnly();', header)
+        self.assertIn('m_pThreeBandAvailable->setParent(this);', header)
+        # Written with every sync, from the factory's answer for type 19 only.
+        self.assertRegex(header, r'void sync\(\) \{\s*m_pThreeBandAvailable->forceSet\(\s*'
+                                 r'm_waveforms\.canDraw && m_waveforms\.canDraw\(kThreeBandType\) \? 1 : 0\);')
+        self.assertEqual(header.count('m_pThreeBandAvailable->forceSet('), 1)
+        # Stock: a read-only control ignores set(); the handles are found once,
+        # when the factory is made, and a handle index below 0 means no handle.
+        self.assertIn('qWarning() << m_key << "is read-only. Ignoring set of value:" << v;',
+                      pinned_bytes('src/control/controlobject.cpp').decode())
+        stock = pinned_bytes(FACTORY).decode()
+        self.assertEqual(stock.count('    evaluateWidgets();'), 1)
+        self.assertIn('int index = -1;\n    for (int i = 0; i < m_waveformWidgetHandles.size(); i++) {', stock)
+
     def test_the_default_is_set_in_mixxx_before_the_factory_reads_the_type(self):
         text = PATCH.read_text()
         core = text[text.index('diff --git a/src/coreservices.cpp '):text.index('diff --git a/' + MAIN_WINDOW + ' ')]
@@ -199,12 +232,16 @@ class ThreeBandPatchTests(unittest.TestCase):
         for word in ('WaveformType', 'ThreeBandDefault', 'Waveform'):
             self.assertNotIn(word, seeder)
 
-    def test_only_the_filtered_renderer_skips_the_doubled_height_on_main_rows(self):
-        self.assertIn('return rgbStacked || !mainWaveform;', added(GAIN_HEADER))
+    def test_only_the_filtered_renderer_skips_the_doubled_height(self):
+        # On a main row and in the Loop panel alike (owner, 2026-11-23: "Same
+        # height as RGB"); the Stacked type keeps Mixxx's height.
+        gain = added(GAIN_HEADER)
+        self.assertIn('inline bool filteredHeightCompensation(bool rgbStacked) {\n    return rgbStacked;\n}', gain)
+        self.assertNotIn('mainWaveform', gain)
         filtered = added(FILTERED)
         self.assertIn('#include "waveform/mixpiwaveformgain.h"', filtered)
-        self.assertEqual(RUNNER.filtered_choice(filtered),
-                         'mixpi::filteredHeightCompensation( m_waveformRenderer->isMixpiMainWaveform(), m_bRgbStacked)')
+        self.assertEqual(RUNNER.filtered_choice(filtered), 'mixpi::filteredHeightCompensation(m_bRgbStacked)')
+        self.assertNotIn('isMixpiMainWaveform', filtered)
         # getGain is Mixxx's own, and so is what every other renderer asks it.
         self.assertNotIn('diff --git a/' + RENDERER + ' ', PATCH.read_text())
         self.assertIn('return applyCompensation ? m_gain * 2.f : m_gain;', pinned_bytes(RENDERER).decode())
@@ -283,7 +320,8 @@ class ThreeBandSkinTests(unittest.TestCase):
                 continue
             title = next(e.findtext('Text') for e in row.iter('Label')
                          if e.findtext('ObjectName') == 'MixpiSettingTitle')
-            buttons = [(b.findtext('State/Text'), [c.findtext('ConfigKey') for c in b.findall('Connection')],
+            buttons = [(b.findtext('State/Text'),
+                        [c.findtext('ConfigKey') for c in b.findall('Connection') if c.find('BindProperty') is None],
                         [ET.tostring(t).decode() for t in b.iter('Transform')])
                        for b in row.iter('PushButton')]
             rows.append((title, buttons))
@@ -301,6 +339,44 @@ class ThreeBandSkinTests(unittest.TestCase):
             # Each lights when the setting is its value, like the page's other choices.
             self.assertIn('<IsEqual>0</IsEqual>', ''.join(buttons[0][2]))
             self.assertIn('<IsEqual>1</IsEqual>', ''.join(buttons[1][2]))
+
+    def bound(self, button):
+        """A button's property bindings: (property, control, transform)."""
+        return [(c.findtext('BindProperty'), c.findtext('ConfigKey'), c.find('Transform'))
+                for c in button.findall('Connection') if c.find('BindProperty') is not None]
+
+    def test_only_the_three_band_button_is_enabled_by_its_availability(self):
+        # Owner, 2026-11-23: "Show it unavailable".
+        for loop_display, root in self.roots.items():
+            with self.subTest(loop_display=loop_display):
+                guarded = [b for b in root.iter('PushButton')
+                           if AVAILABLE in [c.findtext('ConfigKey') for c in b.findall('Connection')]]
+                self.assertEqual([b.findtext('State/Text') for b in guarded], ['3-BAND'])
+                # No transform: enabled is the control's value, 1 or 0.
+                self.assertEqual(self.bound(guarded[0]), [('enabled', AVAILABLE, None)])
+                pane = next(e for e in root.iter('WidgetGroup')
+                            if e.findtext('ObjectName') == 'MixpiAdvancedSettings')
+                rgb = next(b for b in pane.iter('PushButton') if b.findtext('State/Text') == 'RGB')
+                self.assertEqual(self.bound(rgb), [])
+                # Nothing else in the skin reads or writes the control.
+                self.assertEqual(sum(e.text == AVAILABLE for e in root.iter('ConfigKey')), 1)
+                # The page's own disabled look covers the button; no new rule.
+                self.assertEqual(guarded[0].findtext('ObjectName'), rgb.findtext('ObjectName'))
+                self.assertEqual(guarded[0].findtext('ObjectName'), 'MixpiButton')
+        qss = QSS.read_text()
+        self.assertRegex(qss, r'#MixpiButton:disabled,[^{]*\{\s*'
+                              r'color: #7f8896; background: #13161b; border: 1px dashed #2c333d;')
+        self.assertNotIn('waveform', qss.lower())
+
+    def test_the_audio_buffer_buttons_disable_the_same_way(self):
+        # The pattern the 3-BAND button follows.
+        root = self.roots['focus']
+        buffers = [b for b in root.iter('PushButton')
+                   if b.findtext('Connection/ConfigKey') == '[MixPi],buffer_frames']
+        self.assertEqual(len(buffers), 3)
+        for b in buffers:
+            self.assertEqual(self.bound(b), [('enabled', '[MixPi],buffer_available', None)])
+            self.assertEqual(b.findtext('ObjectName'), 'MixpiButton')
 
 
 @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
@@ -322,7 +398,7 @@ class ThreeBandNativeTests(unittest.TestCase):
         for name in names:
             self.assertRegex(output, r'(?m)^PASS ' + re.escape(name))
         self.assertNotIn('FAIL ', output)
-        self.assertIn('HEIGHTS main-filtered 0.900 main-rgb 0.900 loop-filtered 0.760 loop-rgb 0.380', output)
+        self.assertIn('HEIGHTS main-filtered 0.900 main-rgb 0.900 loop-filtered 0.380 loop-rgb 0.380', output)
         saves = re.findall(r'MEASURE .* in mixxx.cfg on disk ms: (-?\d+)', output)
         self.assertEqual(len(saves), 2)
         for measured in saves:
@@ -345,12 +421,18 @@ class ThreeBandNativeTests(unittest.TestCase):
                      'it reaches the waveform factory on the GUI thread',
                      'rapid opposing writes from a worker thread run in the order written and end in the last value',
                      'a main waveform\'s loudest band stops at kMainWaveformGain (0.90) of the edge in 3-BAND',
-                     'the pregain knob still scales the 3-BAND height (0.5 to 0.45)'):
+                     'the pregain knob still scales the 3-BAND height (0.5 to 0.45)',
+                     '[MixPi],waveform_three_band_available is 1 when the factory has a handle for type 19',
+                     '[MixPi],waveform_three_band_available is 0 when the factory has no handle for type 19',
+                     'the availability follows the factory\'s handle for type 19 (sync)',
+                     'a write to [MixPi],waveform_three_band_available is ignored (read-only)',
+                     'the Loop panel\'s 3-BAND waveform draws at total_gain (0.38), not Mixxx\'s doubled 0.76',
+                     'the Loop panel\'s 3-BAND and RGB waveforms reach the same height'):
             self.assertRegex(output, r'(?m)^FAIL ' + re.escape(name))
         # Stock Mixxx's own getGain, asked what stock Filtered asks: doubled.
         self.assertIn('HEIGHTS main-filtered 1.800 main-rgb 0.900 loop-filtered 0.760 loop-rgb 0.380', output)
         # What stock Mixxx already does still holds without the patch.
-        self.assertRegex(output, r'(?m)^PASS the Loop panel\'s waveform keeps Mixxx\'s doubled Filtered height')
+        self.assertRegex(output, r'(?m)^PASS the Stacked type \(the same renderer class\) keeps Mixxx\'s doubled height')
         self.assertRegex(output, r'(?m)^PASS the Loop panel\'s RGB waveform keeps total_gain, as before')
 
 

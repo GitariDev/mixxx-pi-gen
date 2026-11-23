@@ -2,7 +2,8 @@
 
 Production code, from the patched stack:
 - util/mixpiwaveformcolours.h (Settings › Advanced, Waveform colours:
-  [MixPi],waveform_colours, and the one-time three-band default).
+  [MixPi],waveform_colours, the read-only
+  [MixPi],waveform_three_band_available, and the one-time three-band default).
 - waveform/renderers/waveformwidgetrenderer.h: the real
   WaveformWidgetRenderer::getGain, its main-row flag and m_gain. The class's
   three out-of-line members (constructor, destructor, resizeRenderer) and the
@@ -12,14 +13,16 @@ Production code, from the patched stack:
 - The all-shader Filtered renderer's own argument to getGains, cut out of the
   stack's waveform/renderers/allshader/waveformrendererfiltered.cpp
   (filtered_choice) and compiled into the fixture, so the fixture asks
-  getGain what the shipped renderer asks. In the baseline that argument is
-  Mixxx's `true` and the real getGain doubles the height.
+  getGain what the shipped renderer asks, for a main row and for the Loop
+  panel's waveform. In the baseline that argument is Mixxx's `true` and the
+  real getGain doubles the height (main row 1.80, Loop panel 0.76).
 - preferences/configobject.{h,cpp} (Mixxx's own parser, the save on change and
   its timing) and the control framework (control, controlobject,
   controlproxy, controlpotmeter, controlpushbutton, controlbehavior).
 
-The waveform factory (WaveformWidgetFactory::mixpiAppliedType and
-mixpiSwitchTo) is a recording double; tests/test_waveform_three_band.py
+The waveform factory (WaveformWidgetFactory::mixpiAppliedType,
+mixpiSwitchTo and findHandleIndexFromType, which the availability control
+follows) is a recording double; tests/test_waveform_three_band.py
 checks the main window's wiring to it as text. The real switch of GL widgets
 is checked on the card (HANDOFF.md).
 

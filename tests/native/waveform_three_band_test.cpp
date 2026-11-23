@@ -6,8 +6,8 @@
 // usage: waveform-three-band-test MODE DIRECTORY
 // Each mode runs in its own process and directory. Built with
 // MIXPI_THREE_BAND_BASELINE (the stack without the patch) the setting, the
-// default and the main waveforms' height rule are absent and every check
-// about them fails.
+// default, the availability control and the three-band height rule (main
+// rows and the Loop panel) are absent and every check about them fails.
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -115,6 +115,7 @@ QString savedType(const QString& path) {
 }
 
 const ConfigKey kColours("[MixPi]", "waveform_colours");
+const ConfigKey kAvailable("[MixPi]", "waveform_three_band_available");
 const ConfigKey kTypeKey("[Waveform]", "WaveformType");
 // A type Mixxx picks by itself when the saved one cannot be drawn.
 constexpr int kFallbackType = 6;
@@ -143,6 +144,11 @@ struct Factory {
 
     int appliedType() const {
         return applied;
+    }
+
+    // The main window's third call: findHandleIndexFromType(type) >= 0.
+    bool canDraw(int type) const {
+        return drawable.count(type) > 0;
     }
 
     bool switchTo(int type) {
@@ -180,6 +186,7 @@ struct App {
         MixpiWaveformColours::Waveforms waveforms;
         waveforms.appliedType = [this] { return factory.appliedType(); };
         waveforms.switchTo = [this](int type) { return factory.switchTo(type); };
+        waveforms.canDraw = [this](int type) { return factory.canDraw(type); };
         colours = std::make_unique<MixpiWaveformColours>(pConfig, std::move(waveforms));
 #endif
     }
@@ -199,6 +206,11 @@ struct App {
 
 double colours() {
     return ControlObject::exists(kColours) ? ControlObject::get(kColours) : -100.0;
+}
+
+// [MixPi],waveform_three_band_available, the 3-BAND button's enabled state.
+double available() {
+    return ControlObject::exists(kAvailable) ? ControlObject::get(kAvailable) : -100.0;
 }
 
 void choose(double value) {
@@ -230,11 +242,14 @@ int setting(const QString& directory) {
     App app(directory, kThreeBandCfg);
     check(ControlObject::exists(kColours), QStringLiteral("[MixPi],waveform_colours exists"));
     check(colours() == 1, QStringLiteral("waveforms running type 19 show as 3-BAND (1)"));
+    check(available() == 1,
+            QStringLiteral("[MixPi],waveform_three_band_available is 1 when the factory has a handle for type 19"));
 
     choose(0);
     check(app.factory.calls == std::vector<int>{17},
             QStringLiteral("RGB asks the waveform factory for type 17 (all-shader RGB)"));
     check(colours() == 0, QStringLiteral("RGB is confirmed once the factory runs type 17"));
+    check(available() == 1, QStringLiteral("3-BAND stays available while the waveforms run RGB"));
     const qint64 savedRgb = waitFor(3000, [&] { return savedType(app.path) == "WaveformType 17"; });
     measure(QStringLiteral("RGB to WaveformType 17 in mixxx.cfg on disk"), savedRgb);
     check(savedRgb >= 0 && savedRgb < 1000, QStringLiteral("RGB is saved in mixxx.cfg in under 1 s"));
@@ -261,12 +276,21 @@ int refused(const QString& directory) {
     check(ControlObject::exists(kColours) && app.factory.calls.empty() && colours() == 1,
             QStringLiteral("values other than 0 and 1 are refused and change nothing"));
 
+    // The control is read-only: only the setting writes it.
+    if (ControlObject::exists(kAvailable)) {
+        ControlObject::set(kAvailable, 0);
+    }
+    check(available() == 1 && app.factory.calls.empty(),
+            QStringLiteral("a write to [MixPi],waveform_three_band_available is ignored (read-only)"));
+
     // This start has no handle for the RGB type.
     app.factory.drawable = {19, kFallbackType};
     choose(0);
     check(ControlObject::exists(kColours) && app.factory.calls == std::vector<int>{17} &&
                     colours() == 1 && app.factory.applied == 19,
             QStringLiteral("when the factory cannot draw the type, the setting stays 3-BAND"));
+    check(available() == 1,
+            QStringLiteral("a missing RGB handle does not make 3-BAND unavailable"));
 
     // The type has a handle but its widget falls back to the empty waveform.
     app.factory.drawable = {17, 19, kFallbackType};
@@ -276,6 +300,8 @@ int refused(const QString& directory) {
             QStringLiteral("when a waveform falls back to empty, the type from before is asked for again"));
     check(colours() == 1 && app.factory.applied == 19,
             QStringLiteral("and the setting shows what the waveforms run, 3-BAND, not what was asked"));
+    check(available() == 1,
+            QStringLiteral("a widget that fell back to empty leaves 3-BAND available (it has a handle)"));
     spin(1500);
     check(ControlObject::exists(kColours) && savedType(app.path) == "WaveformType 19",
             QStringLiteral("and mixxx.cfg keeps WaveformType 19"));
@@ -294,6 +320,17 @@ int start(const QString& directory) {
         App app(directory + QStringLiteral("/fallback"), kThreeBandCfg, {17, kFallbackType});
         check(ControlObject::exists(kColours) && app.factory.applied == kFallbackType && colours() == 0,
                 QStringLiteral("a saved 19 the factory could not apply does not show as 3-BAND"));
+        check(available() == 0,
+                QStringLiteral("[MixPi],waveform_three_band_available is 0 when the factory has no handle for type 19"));
+        choose(1);
+        check(ControlObject::exists(kColours) && app.factory.calls == std::vector<int>{19} &&
+                        colours() == 0 && available() == 0 && app.factory.applied == kFallbackType,
+                QStringLiteral("a 3-BAND request is still refused then, and RGB stays lit"));
+        // The control follows the factory's handles at every sync.
+        app.factory.drawable = {17, 19, kFallbackType};
+        app.sync();
+        check(available() == 1,
+                QStringLiteral("the availability follows the factory's handle for type 19 (sync)"));
         // Mixxx's own Preferences picks a type; the factory says so.
         app.factory.applied = 19;
         app.sync();
@@ -417,8 +454,8 @@ int thread(const QString& directory) {
         spin(200);
         check(existed && untouched && pFactory->calls.empty(),
                 QStringLiteral("a write still queued at quit is dropped with the setting"));
-        check(existed && !ControlObject::exists(kColours),
-                QStringLiteral("the control ends with the setting, before the factory"));
+        check(existed && !ControlObject::exists(kColours) && !ControlObject::exists(kAvailable),
+                QStringLiteral("the controls end with the setting, before the factory"));
     }
     return failures ? 1 : 0;
 }
@@ -467,16 +504,22 @@ int height(const QString&) {
             QStringLiteral("3-BAND's loudest band and RGB's loudest outline reach the same height"));
     check(std::abs(filtered(true, 0.5, 0.38) - 0.45) < 1e-9,
             QStringLiteral("the pregain knob still scales the 3-BAND height (0.5 to 0.45)"));
-    check(std::abs(filtered(false, 1.0, 0.38) - 0.76) < 1e-9,
-            QStringLiteral("the Loop panel's waveform keeps Mixxx's doubled Filtered height (2 x total_gain)"));
+    // Owner, 2026-11-23: "Same height as RGB".
+    check(std::abs(filtered(false, 1.0, 0.38) - 0.38) < 1e-9,
+            QStringLiteral("the Loop panel's 3-BAND waveform draws at total_gain (0.38), not Mixxx's doubled 0.76"));
+    check(std::abs(filtered(false, 1.0, 0.38) - rgb(false, 1.0, 0.38)) < 1e-9,
+            QStringLiteral("the Loop panel's 3-BAND and RGB waveforms reach the same height"));
+    check(std::abs(filtered(false, 2.0, 0.19) - 0.19) < 1e-9,
+            QStringLiteral("the Loop panel's 3-BAND height still follows total_gain, not the pregain alone"));
     check(std::abs(rgb(false, 1.0, 0.38) - 0.38) < 1e-9,
             QStringLiteral("the Loop panel's RGB waveform keeps total_gain, as before"));
     // The rule is the Filtered renderer's alone (review, Sol 7).
     check(std::abs(rgb(true, 1.0, 0.38, true) - 1.80) < 1e-9 &&
                     std::abs(rgb(false, 1.0, 0.38, true) - 0.76) < 1e-9,
             QStringLiteral("renderers that ask getGain for the doubled height still get it on a main row"));
-    check(std::abs(filtered(true, 1.0, 0.38, true) - 1.80) < 1e-9,
-            QStringLiteral("the Stacked type (the same renderer class) keeps Mixxx's height on a main row"));
+    check(std::abs(filtered(true, 1.0, 0.38, true) - 1.80) < 1e-9 &&
+                    std::abs(filtered(false, 1.0, 0.38, true) - 0.76) < 1e-9,
+            QStringLiteral("the Stacked type (the same renderer class) keeps Mixxx's doubled height"));
     return failures ? 1 : 0;
 }
 

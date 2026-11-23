@@ -21,7 +21,7 @@ index df674eb..5a40e5d 100644
      Sandbox::setPermissionsFilePath(QDir(pConfig->getSettingsPath()).filePath("sandbox.cfg"));
  
 diff --git a/src/mixxxmainwindow.cpp b/src/mixxxmainwindow.cpp
-index 907ef09..c9e1e61 100644
+index 907ef09..cac17a6 100644
 --- a/src/mixxxmainwindow.cpp
 +++ b/src/mixxxmainwindow.cpp
 @@ -49,6 +49,7 @@
@@ -40,14 +40,15 @@ index 907ef09..c9e1e61 100644
  #ifdef __LINUX__
            m_supportsGlobalMenuBar(supportsGlobalMenu()),
  #endif
-@@ -281,6 +283,27 @@ void MixxxMainWindow::initialize() {
+@@ -281,6 +283,32 @@ void MixxxMainWindow::initialize() {
      WaveformWidgetFactory::instance()->setConfig(m_pCoreServices->getSettings());
      WaveformWidgetFactory::instance()->startVSync(m_pGuiTick, m_pVisualsManager);
  
 +    // MixPi Settings › Advanced, Waveform colours: RGB or 3-BAND (Mixxx's
 +    // waveform type 17 or 19). Made here, on the GUI thread, once the factory
 +    // exists and has checked the saved type, and before the skin binds to
-+    // [MixPi],waveform_colours; deleted before the factory in the destructor.
++    // [MixPi],waveform_colours and [MixPi],waveform_three_band_available;
++    // deleted before the factory in the destructor.
 +    {
 +        WaveformWidgetFactory* pFactory = WaveformWidgetFactory::instance();
 +        MixpiWaveformColours::Waveforms waveforms;
@@ -56,6 +57,10 @@ index 907ef09..c9e1e61 100644
 +        };
 +        waveforms.switchTo = [pFactory](int type) {
 +            return pFactory->mixpiSwitchTo(static_cast<WaveformWidgetType::Type>(type));
++        };
++        waveforms.canDraw = [pFactory](int type) {
++            return pFactory->findHandleIndexFromType(
++                           static_cast<WaveformWidgetType::Type>(type)) >= 0;
 +        };
 +        m_pMixpiWaveformColours = new MixpiWaveformColours(
 +                m_pCoreServices->getSettings(), std::move(waveforms));
@@ -68,7 +73,7 @@ index 907ef09..c9e1e61 100644
      connect(this,
              &MixxxMainWindow::skinLoaded,
              m_pCoreServices->getLibrary().get(),
-@@ -522,6 +545,11 @@ MixxxMainWindow::~MixxxMainWindow() {
+@@ -522,6 +550,11 @@ MixxxMainWindow::~MixxxMainWindow() {
  
      m_pCoreServices->getControlIndicatorTimer()->setLegacyVsyncEnabled(false);
  
@@ -104,10 +109,10 @@ index 4f66e14..494a3c5 100644
      parented_ptr<WMainMenuBar> m_pMenuBar;
 diff --git a/src/util/mixpiwaveformcolours.h b/src/util/mixpiwaveformcolours.h
 new file mode 100644
-index 0000000..aa39e3a
+index 0000000..de4dd01
 --- /dev/null
 +++ b/src/util/mixpiwaveformcolours.h
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,170 @@
 +#pragma once
 +
 +#include <QMetaObject>
@@ -132,7 +137,7 @@ index 0000000..aa39e3a
 +/// - The setting is Mixxx's own [Waveform],WaveformType, and the waveform
 +///   factory is its only writer. This object lives only while the factory
 +///   does: the main window makes it after the factory and deletes it before
-+///   the factory, and hands it the factory as two calls (Waveforms).
++///   the factory, and hands it the factory as three calls (Waveforms).
 +/// - A request may come from any thread (a controller script or a MIDI
 +///   mapping writes from the controller thread). It never touches a widget
 +///   there: Qt queues it to this object's thread, the GUI thread, and the
@@ -144,6 +149,11 @@ index 0000000..aa39e3a
 +///   type from before is asked for again. Either way the control then shows
 +///   what the factory runs. sync() re-reads it whenever the
 +///   factory changes the type (the skin has loaded, Mixxx's own Preferences).
++/// - [MixPi],waveform_three_band_available is read-only: 1 when this start
++///   can draw type 19 (the factory has a handle for it), otherwise 0 (no
++///   shader support). The skin binds the 3-BAND button's enabled state to it,
++///   so the choice looks unavailable instead of doing nothing (owner,
++///   2026-11-23: "Show it unavailable"). RGB is always enabled.
 +/// - The overview strips have their own type and do not change.
 +class MixpiWaveformColours : public QObject {
 +  public:
@@ -163,6 +173,9 @@ index 0000000..aa39e3a
 +        /// Switches every scrolling waveform to the type and saves it. True
 +        /// when they all run it afterwards.
 +        std::function<bool(int)> switchTo;
++        /// True when this start can draw the type (the factory has a handle
++        /// for it).
++        std::function<bool(int)> canDraw;
 +    };
 +
 +    /// Three-band by default, once (owner, 2026-11-23). Called when mixxx.cfg
@@ -184,8 +197,13 @@ index 0000000..aa39e3a
 +              m_pSettings(std::move(pSettings)),
 +              m_waveforms(std::move(waveforms)),
 +              m_pColours(new ControlObject(ConfigKey(
-+                      QStringLiteral("[MixPi]"), QStringLiteral("waveform_colours")))) {
++                      QStringLiteral("[MixPi]"), QStringLiteral("waveform_colours")))),
++              m_pThreeBandAvailable(new ControlObject(ConfigKey(
++                      QStringLiteral("[MixPi]"),
++                      QStringLiteral("waveform_three_band_available")))) {
 +        m_pColours->setParent(this);
++        m_pThreeBandAvailable->setParent(this);
++        m_pThreeBandAvailable->setReadOnly();
 +        if (!m_pSettings->exists(defaultDoneKey())) {
 +            if (appliedType() == kThreeBandType) {
 +                m_pSettings->setValue(defaultDoneKey(), 1);
@@ -201,8 +219,10 @@ index 0000000..aa39e3a
 +                this, [this](double value) { request(value); });
 +    }
 +
-+    /// Shows what the factory runs.
++    /// Shows what the factory runs, and whether it can draw 3-BAND.
 +    void sync() {
++        m_pThreeBandAvailable->forceSet(
++                m_waveforms.canDraw && m_waveforms.canDraw(kThreeBandType) ? 1 : 0);
 +        m_pColours->setAndConfirm(valueForType(appliedType()));
 +    }
 +
@@ -261,30 +281,33 @@ index 0000000..aa39e3a
 +    UserSettingsPointer m_pSettings;
 +    Waveforms m_waveforms;
 +    ControlObject* m_pColours;
++    ControlObject* m_pThreeBandAvailable;
 +};
 diff --git a/src/waveform/mixpiwaveformgain.h b/src/waveform/mixpiwaveformgain.h
-index 9228e62..ea7309e 100644
+index 9228e62..159b283 100644
 --- a/src/waveform/mixpiwaveformgain.h
 +++ b/src/waveform/mixpiwaveformgain.h
-@@ -46,4 +46,16 @@ inline double waveformHeightGain(bool mainWaveform, double pregain, double total
+@@ -46,4 +46,18 @@ inline double waveformHeightGain(bool mainWaveform, double pregain, double total
      return mainWaveform ? pregain * kMainWaveformGain : totalGain;
  }
  
 +/// MixPi three-band waveforms (owner, 2026-11-23: A Overlay, Mixxx's
 +/// all-shader Filtered renderer): whether that renderer asks
 +/// WaveformWidgetRenderer::getGain for Mixxx's doubled height. Mixxx always
-+/// does. A deck's main waveform does not, so its tallest band stops at
-+/// kMainWaveformGain of the edge as the RGB outline does; doubled, a band
-+/// would sit on the edge in about a quarter of a typical track's columns.
-+/// The Loop panel's waveform, the Stacked type (the same renderer class) and
-+/// every other renderer are as in Mixxx.
-+inline bool filteredHeightCompensation(bool mainWaveform, bool rgbStacked) {
-+    return rgbStacked || !mainWaveform;
++/// does. On MixPi the three-band waveform does not, on a main row or in the
++/// Loop panel (owner, 2026-11-23: "Same height as RGB"): its tallest band
++/// draws at the height of the RGB outline there, kMainWaveformGain of the
++/// edge on a main row and total_gain in the Loop panel. Doubled, a band would
++/// sit on the edge in about a quarter of a typical track's columns on a main
++/// row. The Stacked type (the same renderer class) and every other renderer
++/// are as in Mixxx.
++inline bool filteredHeightCompensation(bool rgbStacked) {
++    return rgbStacked;
 +}
 +
  } // namespace mixpi
 diff --git a/src/waveform/renderers/allshader/waveformrendererfiltered.cpp b/src/waveform/renderers/allshader/waveformrendererfiltered.cpp
-index 32fce65..1312112 100644
+index 32fce65..a6c787f 100644
 --- a/src/waveform/renderers/allshader/waveformrendererfiltered.cpp
 +++ b/src/waveform/renderers/allshader/waveformrendererfiltered.cpp
 @@ -2,6 +2,7 @@
@@ -295,16 +318,15 @@ index 32fce65..1312112 100644
  #include "waveform/renderers/allshader/matrixforwidgetgeometry.h"
  #include "waveform/renderers/waveformwidgetrenderer.h"
  #include "waveform/waveform.h"
-@@ -61,7 +62,14 @@ void WaveformRendererFiltered::paintGL() {
+@@ -61,7 +62,13 @@ void WaveformRendererFiltered::paintGL() {
      // Per-band gain from the EQ knobs.
      float allGain{1.0};
      float bandGain[3] = {1.0, 1.0, 1.0};
 -    getGains(&allGain, true, &bandGain[0], &bandGain[1], &bandGain[2]);
-+    // MixPi three-band waveforms: a deck's main waveform does not ask for
-+    // Mixxx's doubled height (waveform/mixpiwaveformgain.h).
++    // MixPi three-band waveforms: drawn at the RGB waveform's height, without
++    // Mixxx's doubling (waveform/mixpiwaveformgain.h).
 +    getGains(&allGain,
-+            mixpi::filteredHeightCompensation(
-+                    m_waveformRenderer->isMixpiMainWaveform(), m_bRgbStacked),
++            mixpi::filteredHeightCompensation(m_bRgbStacked),
 +            &bandGain[0],
 +            &bandGain[1],
 +            &bandGain[2]);

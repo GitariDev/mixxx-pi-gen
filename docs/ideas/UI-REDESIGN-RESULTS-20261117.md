@@ -33,6 +33,7 @@ Plan: `docs/ideas/UI-REDESIGN-PLAN-20261117.md` (owner answers in 10.1). Tuner r
 | Wave J14 (builds N, O) | `3ad934b` | 952 run, OK (183 platform skips) | 361/361, 0 skips (builder's run; `gates/uiJ14-sj14-20261122--repo-20261122-214342.log`) | Stylesheet: the header's 1 px line runs the full width |
 | Wave J15 (build O) | `72f2fc1` / `9fd4ca1` | 957 run; 1 `test_chroot_runtime` 5 s timeout (passes alone) | 366/366, 0 skips (builder's run with the registration applied; `gates/uiJ15-nj15-20261122--repo-20261122-223848.log`) | 71 patches. Main waveforms at 0.80 |
 | Wave J16 (build P) | `b3aea1a` / `e3d47a1` | 963 run; `test_chroot_runtime` and `test_shutdown_order` timing errors under load (both pass alone, twice) | 372/372, 0 skips (builder's run with the registration applied; `gates/uiJ16-nj16-20261123--repo-20261123-014323.log`) | 72 patches. ☰ after OPEN: inside with the edge, also for the first OPEN after a start |
+| Wave J17 (build Q) | `70a9b14` / `eb0aa5d` | 969 run; 1 `test_chroot_runtime` timing error under load (load average ~8; passes alone 3 of 3) | 378/378, 0 skips (builder's run with the registration applied; `gates/uiJ17-nj17-20261123--repo-20261123-034351.log`) | 73 patches. The menu's edge stays on the list in view |
 
 ## Wave 0 on the test card (build 2)
 
@@ -762,3 +763,10 @@ All three are the real seats; there are no stand-ins.
   - J4 unchanged (top level, no edge after an eject; BACK → edge on GANDER1); J5, J10, J11, J12 hold.
   - 3 of 3 clean quits (plus 4 test quits), J15 at 0.80 (13 px short of the edges), J14 header 0 differing pixels, zoom saved in 0.49 s / 0.41 s, CPU 4.17 % (O 4.17 %), `throttled=0x0`.
   - `soundconfig.xml`: Mixxx rewrites it on quit, and it alternates between two line orders of the same content (`52be287b…` and `99034d59…`; the only difference is where the Headphones `<output>` line sits). The routing is unchanged. Copies, hashes and diffs: `deploy/ui-redesign-20261117/acceptance-P/soundconfig/` (untracked). Corrected after round 9 Fable: an earlier version of this line said it was "byte-equal to build O's again"; that held at 02:29 but not after acceptance P's quits.
+
+## Council round 9 (2026-11-23, at `27693c2`, build P) and wave J17
+
+- **Scores:** Claude Fable 5.2 high **9** (no blockers); GPT-6.1 Sol xhigh **9** (no blockers); Claude Opus 5.5 xhigh **8** (one blocker, found in source and not capped). Reports: `deploy/ui-redesign-20261117/council/round9-*.md`.
+- **Opus's blocker, confirmed on the card by the leader** (build P, shots `deploy/ui-redesign-20261117/acceptance-P/shots/o9-*.png`, x 483 samples): GANDER1 BROWSE → ☰ (edge on TRACKS) → A - MAIN PLAYLIST → ☰ (edge on the playlist) → a tap on the empty part of the open menu (**no edge**) → ✕, ☰ (**edge on TRACKS** while the table shows the playlist). The empty-area press clears the current row (upstream focus-in, since the menu was built); J16's restore then picked TRACKS whatever the list. The leader's J16 brief asked for TRACKS: a brief error.
+- **Wave J17** (`mixxx-menu-current-row.patch`): in the touch menu a focus-in keeps the current row; the sidebar remembers the path of the last current row, and J16's restore edges the row whose list is in view (TRACKS only when Tracks is in view; nothing if no row of that level matches). Fixture 31 checks, 10 fail without the patch. J16's focus-in check no longer requires the clear.
+- **Record fixes from round 9:** the `soundconfig.xml` sentence (`fb7e225`, Fable). Opus minors: brief item 12 says "after round 9" for a round 8 correction (in the R9 brief only); build P's install began at 02:27 (step 0), not 02:25.

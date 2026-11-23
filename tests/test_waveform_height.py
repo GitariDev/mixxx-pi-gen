@@ -23,10 +23,11 @@ the skin group MixpiWaveRow (the Decks page's main waveform rows) takes the
 pregain knob only for its height; every other waveform (the Loop panel's,
 in the bottom strip) keeps total_gain. The sound is unchanged.
 
-mixxx-waveform-height-gain.patch (wave J15, owner 2026-11-22: "Let's set
-the gain to around .80"): the main waveforms draw at kMainWaveformGain = 0.80
-x that height, so the loudest peaks (levels are capped at 255) stop at 80 % of
-the half height. The Loop panel's waveform and the overview strips are
+mixxx-waveform-height-gain.patch (wave J15; owner 2026-11-22: "Let's set
+the gain to around .80", then 2026-11-23: "The loudest tracks should stop 10%
+from the edge"): the main waveforms draw at kMainWaveformGain = 0.90 x that
+height, so the loudest peaks (levels are capped at 255) stop at 90 % of the
+half height. The Loop panel's waveform and the overview strips are
 unchanged.
 
 The native checks are in tests/native/waveform_height_test.cpp, built by
@@ -134,7 +135,7 @@ class WaveformHeightPatchTests(unittest.TestCase):
 
 
 class WaveformHeightGainPatchTests(unittest.TestCase):
-    """Wave J15: the main waveforms at 0.80 x the J13 height."""
+    """Wave J15: the main waveforms at 0.90 x the J13 height."""
 
     def test_gain_patch_changes_only_the_header(self):
         text = GAIN_PATCH.read_text()
@@ -147,7 +148,7 @@ class WaveformHeightGainPatchTests(unittest.TestCase):
 
     def test_main_waveforms_take_the_owners_gain(self):
         header = added(HEADER, GAIN_PATCH)
-        self.assertIn('constexpr double kMainWaveformGain = 0.80;', header)
+        self.assertIn('constexpr double kMainWaveformGain = 0.90;', header)
         self.assertIn('return mainWaveform ? pregain * kMainWaveformGain : totalGain;', header)
         self.assertEqual(float(re.search(r'kMainWaveformGain = ([0-9.]+);', header)[1]), RUNNER.MAIN_GAIN)
 
@@ -313,11 +314,11 @@ class MeasurementScriptTests(unittest.TestCase):
         self.assertEqual(self.script.pixel_peaks([1, 9, 5, 2, 3, 4, 8, 1, 2, 1, 0, 0]), [5, 9, 8, 1])
 
     def test_option_a_at_the_owners_gain(self):
-        # Wave J15: --a-gain 0.8 is the build; a level of 255 stops at 0.8.
-        rows = {row['track_id']: row for row in self.script.measure(self.db, self.analysis, 0.8, 2.0)}
-        self.assertAlmostEqual(rows[1]['A']['max'], 0.8)
+        # Wave J15: --a-gain 0.9 is the build; a level of 255 stops at 0.9.
+        rows = {row['track_id']: row for row in self.script.measure(self.db, self.analysis, 0.9, 2.0)}
+        self.assertAlmostEqual(rows[1]['A']['max'], 0.9)
         self.assertEqual(rows[1]['A']['edge_pct'], 0.0)
-        self.assertAlmostEqual(rows[2]['A']['max'], 0.8 * 0.4)
+        self.assertAlmostEqual(rows[2]['A']['max'], 0.9 * 0.4)
 
     def test_today_option_a_and_option_b_heights(self):
         rows = {row['track_id']: row for row in self.script.measure(self.db, self.analysis, 1.0, 2.0)}
@@ -361,12 +362,12 @@ class WaveformHeightNativeTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r'(?m)^PASS ', output)), 34)  # focus 4 + 2 x 8, overlay 4 + 2 x 5
         self.assertIn('RESULT focus PASS', output)
         self.assertIn('RESULT overlay PASS', output)
-        # Levels 64 128 200 255 in a 128 px row: the main waveform at 0.80
+        # Levels 64 128 200 255 in a 128 px row: the main waveform at 0.90
         # of the stored level (wave J15), the Loop panel's at ReplayGain
         # 0.377 of it.
-        self.assertIn('HEIGHTS focus deck 1 rg 0.377 pregain 1 main: 12.85 25.70 40.16 51.20', output)
+        self.assertIn('HEIGHTS focus deck 1 rg 0.377 pregain 1 main: 14.46 28.91 45.18 57.60', output)
         self.assertIn('HEIGHTS focus deck 1 rg 0.377 pregain 1 loop panel: 6.06 12.11 18.92 24.13', output)
-        self.assertIn('HEIGHTS focus deck 2 rg 0.377 pregain 2 main: 25.70 51.40 80.31 102.40', output)
+        self.assertIn('HEIGHTS focus deck 2 rg 0.377 pregain 2 main: 28.91 57.83 90.35 115.20', output)
         self.assertRegex(output, r'(?m)^VIEWER focus channel 1 main 1 in .*/MixpiWaveforms/MixpiWaveRow$')
         self.assertRegex(output, r'(?m)^VIEWER focus channel 1 main 0 in .*/MixpiFocusedOverview$')
 
@@ -376,12 +377,12 @@ class WaveformHeightNativeTests(unittest.TestCase):
         output = self.output(self.baseline)
         for mode in RUNNER.MODES:
             for name in ('%s: both main waveforms are told apart as main' % mode,
-                         '%s deck 1: the main waveform\'s height is pregain x VisualGain_0 x 0.80 x '
+                         '%s deck 1: the main waveform\'s height is pregain x VisualGain_0 x 0.90 x '
                          'halfBreadth / 255 x level (ReplayGain left out)' % mode,
-                         '%s deck 2: a level of 255 stops at 0.80 of the half height, '
+                         '%s deck 2: a level of 255 stops at 0.90 of the half height, '
                          'short of the edge' % mode,
                          '%s deck 1: the pregain knob still scales the main waveform (x2)' % mode,
-                         '%s deck 2: a track with no ReplayGain is drawn at 0.80 of its '
+                         '%s deck 2: a track with no ReplayGain is drawn at 0.90 of its '
                          'stored level' % mode):
                 self.assertRegex(output, r'(?m)^FAIL ' + re.escape(name))
         # What stock Mixxx already does still holds without the patch.
@@ -401,12 +402,12 @@ class WaveformHeightNativeTests(unittest.TestCase):
         self.assertIn('HEIGHTS focus deck 1 rg 0.377 pregain 1 main: 16.06 32.13 50.20 64.00', output)
         for mode in RUNNER.MODES:
             for channel in (1, 2):
-                for name in ('the main waveform\'s height is pregain x VisualGain_0 x 0.80 x '
+                for name in ('the main waveform\'s height is pregain x VisualGain_0 x 0.90 x '
                              'halfBreadth / 255 x level (ReplayGain left out)',
-                             'a level of 255 stops at 0.80 of the half height, short of the edge',
+                             'a level of 255 stops at 0.90 of the half height, short of the edge',
                              'the pregain knob still scales the main waveform (x2)',
                              'the pregain knob still scales the main waveform (x0.5)',
-                             'a track with no ReplayGain is drawn at 0.80 of its stored level'):
+                             'a track with no ReplayGain is drawn at 0.90 of its stored level'):
                     self.assertRegex(output, r'(?m)^FAIL ' + re.escape(
                         '%s deck %d: %s' % (mode, channel, name)))
             # J13's choice of viewers holds without the gain patch.

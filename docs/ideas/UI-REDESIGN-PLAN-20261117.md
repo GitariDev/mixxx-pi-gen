@@ -984,3 +984,8 @@ Recorded only; no work has started. The owner: "You can add these to the note's 
 - Build N (J14) was built and not installed; build O (J14 + J15) was installed on the card on 2026-11-22 at 23:23-23:27.
 - **Build P** (J16, the fix for council round 8's spec 2e finding) is made under the same "Alright keep going!" for this round; no new design, and the owner is told in the round report.
 - **Build Q** (J17, the fix for council round 9's spec 2a/2e finding, confirmed on the card) is made under the same "Alright keep going!"; no new design. The owner was asked in the round 9 report whether to approve each fix build in person; no answer yet.
+
+### 12.18 Owner notes after build Q (2026-11-23)
+
+- **Waveform gain:** on "The loudest tracks now stop 20 % short of the edge": "The loudest tracks should stop 10% from the edge, can we bump it up a little bit more?" On "0.80 … or 0.90 for your 'about 10 % away'?": "Let's do a very focused change on this. Once done we can merge this commit, settle this thread and continue on with the 3 band build with the comments I left there." So `kMainWaveformGain` goes from 0.80 to 0.90 in `mixxx-waveform-height-gain.patch` (the owner's number, in place; one constant), with its tests. On the owner's library the loudest-mastered quarter's 99th percentile goes from 0.79 to 0.89 of the half height, and nothing reaches the edge (`deploy/ui-redesign-20261117/wave-J15/summary-J15.txt`).
+- **The eject before ☰ was ever shown:** "Show me this then we can decide how to fix it. But if we disconnect a drive then open the sources we should show the top menu where the sources edit button is visible." Shown on the card first; no fix until the owner decides.

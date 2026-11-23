@@ -6,11 +6,11 @@ index bffe96b..57c2409 100644
  // keep total_gain.
  namespace mixpi {
  
-+/// MixPi (spec 2h, wave J15; owner: "Let's set the gain to around .80"): the
++/// MixPi (spec 2h, wave J15; owner: "should stop 10% from the edge"): the
 +/// decks' main waveforms draw at this share of the pregain-only height, so the
-+/// loudest peaks (the analyser caps levels at 255) stop short of the edge.
++/// loudest peaks (the analyser caps levels at 255) stop 10 % short of the edge.
 +/// The Loop panel's waveform, the overview strips and the sound are unchanged.
-+constexpr double kMainWaveformGain = 0.80;
++constexpr double kMainWaveformGain = 0.90;
 +
  /// The skin group that holds each deck's main waveform (wave_row in
  /// mixpi-performance.py); tests/test_waveform_height.py keeps the two names

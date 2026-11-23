@@ -17,7 +17,7 @@
 // every viewer takes total_gain, as stock Mixxx does, and the checks about
 // the main waveforms fail.
 // Wave J15 (mixxx-waveform-height-gain.patch): a main waveform's gain is the
-// pregain knob x MIXPI_EXPECTED_MAIN_GAIN (0.80, given by the runner, not
+// pregain knob x MIXPI_EXPECTED_MAIN_GAIN (0.90, given by the runner, not
 // read from the patch), so its checks fail on the stack without that patch.
 #include <QApplication>
 #include <QDomDocument>

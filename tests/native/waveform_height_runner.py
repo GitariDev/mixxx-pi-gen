@@ -14,7 +14,7 @@ then absent, every viewer takes total_gain as in stock Mixxx, and the checks
 about the main waveforms must fail.
 
 Wave J15: mixxx-waveform-height-gain.patch (after mixxx-waveform-height.patch)
-draws the main waveforms at kMainWaveformGain (0.80) x the J13 height. The
+draws the main waveforms at kMainWaveformGain (0.90) x the J13 height. The
 fixture is compiled with the gain the main waveforms are expected to take
 (MIXPI_EXPECTED_MAIN_GAIN, --expected-gain); --without-gain builds the stack
 without the gain patch, so the J15 checks must fail there.
@@ -38,7 +38,7 @@ FILES = ROOT / 'stage3/01-install-packages/files'
 PATCH = 'mixxx-waveform-height.patch'
 GAIN_PATCH = 'mixxx-waveform-height-gain.patch'
 # The owner's main waveform gain (wave J15), the value the fixture expects.
-MAIN_GAIN = 0.80
+MAIN_GAIN = 0.90
 MODES = ('focus', 'overlay')
 
 

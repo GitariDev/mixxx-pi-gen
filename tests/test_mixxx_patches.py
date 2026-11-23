@@ -99,6 +99,7 @@ class PackageRecipeTests(unittest.TestCase):
             "mixxx-waveform-height.patch",
             "mixxx-waveform-height-gain.patch",
             "mixxx-menu-place-fix.patch",
+            "mixxx-menu-current-row.patch",
         ])
         subprocess.run(["bash", "-n", str(RECIPE)], check=True)
         for name in patch_names():
@@ -109,6 +110,7 @@ class PackageRecipeTests(unittest.TestCase):
 # check expands them). Every other patch must apply to pristine upstream on
 # its own, and every listed patch must actually need its prerequisites.
 PREREQUISITES = {
+    "mixxx-menu-current-row.patch": ["mixxx-menu-place-fix.patch"],
     "mixxx-media-lists.patch": ["mixxx-media-handover.patch"],
     "mixxx-sources-menu.patch": ["mixxx-sources-edit-done.patch"],
     "mixxx-media-agreed.patch": ["mixxx-media-screen-fixes.patch", "mixxx-media-lists.patch"],

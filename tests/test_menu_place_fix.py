@@ -58,7 +58,12 @@ class MenuPlaceFixPatchTests(unittest.TestCase):
                                          '--mixxx-print-patches'], text=True).split()
         if PATCH.name not in names:
             self.skipTest(PATCH.name + ' is not registered yet')
-        self.assertEqual(names[-1], PATCH.name)
+        if 'mixxx-menu-current-row.patch' in names:
+            # Wave J17: the current-row patch comes right after it, last.
+            index = names.index(PATCH.name)
+            self.assertEqual(names[index:index + 2], [PATCH.name, 'mixxx-menu-current-row.patch'])
+        else:
+            self.assertEqual(names[-1], PATCH.name)
         for prerequisite in ('mixxx-sources-open-edge.patch', 'mixxx-media-open-inside.patch',
                              'mixxx-eject-folders-view.patch'):
             self.assertLess(names.index(prerequisite), names.index(PATCH.name))

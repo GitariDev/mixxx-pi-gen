@@ -480,15 +480,25 @@ def decks(compact=False, size=None):
 # colors."); they are set here so the choice holds whatever the base skin says.
 THREE_BAND_COLOURS = (('SignalLowColor', '#004ee4'), ('SignalMidColor', '#c95a00'),
                       ('SignalHighColor', '#f6e9d3'))
+# Mixxx keeps the three band colours only beside a valid SignalColor
+# (WaveformSignalColors::setup; without one it replaces all three with its own
+# defaults). Pioneered's is used when the base skin gives none.
+THREE_BAND_SIGNAL_COLOUR = '#32323c'
 
 
 def three_band_colours(visual):
     """Set the three band colours on the waveform template (the decks' main
-    waveforms and the Loop panel's are copies of it)."""
+    waveforms and the Loop panel's are copies of it), and a SignalColor when
+    the template has none, so Mixxx does not replace them."""
     for tag, colour in THREE_BAND_COLOURS:
         for old in visual.findall(tag):
             visual.remove(old)
         prop(visual, tag, colour)
+    signal = [e for e in visual.findall('SignalColor') if (e.text or '').strip()]
+    if not signal:
+        for old in visual.findall('SignalColor'):
+            visual.remove(old)
+        prop(visual, 'SignalColor', THREE_BAND_SIGNAL_COLOUR)
     return visual
 
 

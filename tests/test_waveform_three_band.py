@@ -11,30 +11,32 @@ The owner's choices (docs/ideas/rnd-waveform-three-band-20261122/OWNER-DECISIONS
 - J13/J15's height: the main waveforms draw at pregain x kMainWaveformGain
   (0.90), so the loudest tracks stop 10 % from the edge.
 
-How Mixxx 2.5.6 draws it:
+How Mixxx 2.5.6 draws it, and what mixxx-waveform-three-band.patch changes:
 - WaveformWidgetRenderer::getGain(applyCompensation) doubles m_gain for the
-  renderers that ask for it: allshader Filtered (and the textured ones) do,
-  allshader RGB does not. Doubled at 0.90, a band would sit on the edge in
-  about a quarter of a typical track's columns (tools/performance/
-  waveform-three-band-heights.py on the card's library). So
-  mixxx-waveform-three-band.patch has the main waveforms skip the doubling
-  (mixpi::heightCompensation); every other waveform keeps it.
-- [MixPi],waveform_colours (util/mixpiwaveformcolours.h, owned by
-  CoreServices) switches [Waveform],WaveformType between 17 and 19 through
-  WaveformWidgetFactory::setWidgetTypeFromHandle, which re-creates every
-  scrolling waveform through createWaveformWidget, where J13 marks the main
-  rows again.
-- mixpi-touch-defaults sets WaveformType 19 once ([MixPi] ThreeBandDefault 1
-  records it), so the card opens in 3-BAND after the update and a later RGB
-  choice is kept.
-- mixpi-performance.py sets the three colours on the waveform template, so the
-  main rows and the Loop panel's waveform carry them.
+  renderers that ask for it: allshader Filtered (and the textured and
+  software ones) do, allshader RGB does not. Doubled at 0.90, a band would
+  sit on the edge in about a quarter of a typical track's columns
+  (tools/performance/waveform-three-band-heights.py on the card's library).
+  So the all-shader Filtered renderer alone does not ask for the doubling on
+  a main row (mixpi::filteredHeightCompensation); getGain and every other
+  renderer are as in Mixxx.
+- [MixPi],waveform_colours (util/mixpiwaveformcolours.h) is owned by the main
+  window, made after the waveform factory and deleted before it. A request
+  from any thread is applied on the GUI thread, through
+  WaveformWidgetFactory::mixpiSwitchTo; the control shows the type the factory
+  runs (mixpiAppliedType) and follows mixpiWidgetTypeChanged.
+- Three-band by default, once: CoreServices calls
+  MixpiWaveformColours::defaultOnce when mixxx.cfg has been read, before the
+  factory reads the type; [MixPi],ThreeBandDefault records it once the factory
+  has taken type 19. mixpi-touch-defaults has no part in it, so the default
+  holds however Mixxx is started and an old binary never gets it.
+- mixpi-performance.py sets the three colours (and a SignalColor when the base
+  has none) on the waveform template, so the main rows and the Loop panel's
+  waveform carry them.
 
 The native checks are in tests/native/waveform_three_band_test.cpp, built by
 tests/native/waveform_three_band_runner.py.
 """
-import importlib.machinery
-import importlib.util
 from pathlib import Path
 import re
 import subprocess
@@ -51,6 +53,10 @@ PATCH = RUNNER.PATCH_DIR / RUNNER.PATCH
 HEADER = 'src/util/mixpiwaveformcolours.h'
 GAIN_HEADER = 'src/waveform/mixpiwaveformgain.h'
 RENDERER = 'src/waveform/renderers/waveformwidgetrenderer.h'
+FILTERED = 'src/waveform/renderers/allshader/waveformrendererfiltered.cpp'
+FACTORY = 'src/waveform/waveformwidgetfactory.cpp'
+MAIN_WINDOW = 'src/mixxxmainwindow.cpp'
+VIEWER = 'src/widget/wwaveformviewer.cpp'
 SEEDER = ROOT / 'stage3/02-desktop/files/bin/mixpi-touch-defaults'
 TEST = ROOT / 'tests/native/waveform_three_band_test.cpp'
 COLOURS = {'SignalLowColor': '#004ee4', 'SignalMidColor': '#c95a00', 'SignalHighColor': '#f6e9d3'}
@@ -84,22 +90,17 @@ def waveform_types():
     return {name: index for index, name in enumerate(names)}
 
 
-def seeder():
-    loader = importlib.machinery.SourceFileLoader('mixpi_touch_defaults', str(SEEDER))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
-
-
 class ThreeBandPatchTests(unittest.TestCase):
-    def test_patch_files_and_only_one_changed_line(self):
+    def test_patch_files_and_removed_lines(self):
         text = PATCH.read_text()
         self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) b/\S+$', text, re.MULTILINE)),
-                         ['src/coreservices.cpp', 'src/coreservices.h', HEADER, GAIN_HEADER, RENDERER])
+                         ['src/coreservices.cpp', MAIN_WINDOW, 'src/mixxxmainwindow.h', HEADER, GAIN_HEADER,
+                          FILTERED, FACTORY, 'src/waveform/waveformwidgetfactory.h', VIEWER])
         self.assertIn('--- /dev/null\n+++ b/' + HEADER, text)
         removed = [line for line in text.splitlines() if line.startswith('-') and not line.startswith('---')]
-        self.assertEqual(removed, ['-        return applyCompensation ? m_gain * 2.f : m_gain;'])
+        self.assertEqual(removed, [
+            '-    getGains(&allGain, true, &bandGain[0], &bandGain[1], &bandGain[2]);',
+            '-                this,'])
 
     def test_patch_is_registered_last_after_its_prerequisites(self):
         names = subprocess.check_output(['bash', str(ROOT / 'stage3/01-install-packages/01-run.sh'),
@@ -113,39 +114,66 @@ class ThreeBandPatchTests(unittest.TestCase):
         types = waveform_types()
         self.assertEqual(types['AllShaderRGBWaveform'], 17)
         self.assertEqual(types['AllShaderFilteredWaveform'], 19)
+        self.assertEqual(types['EmptyWaveform'], 0)
         header = added(HEADER)
         self.assertIn('static constexpr int kRgbType = 17;', header)
         self.assertIn('static constexpr int kThreeBandType = 19;', header)
         self.assertIn('QStringLiteral("waveform_colours")', header)
-        self.assertIn('ConfigKey(QStringLiteral("[Waveform]"), QStringLiteral("WaveformType"))', header)
-        # Confirmed only after the factory switched; anything but 0 and 1 refused.
-        self.assertRegex(header, r'if \(!m_applyType \|\| !m_applyType\(type\)\) \{\s*return;')
         self.assertIn('if (value != kRgb && value != kThreeBand) {', header)
 
-    def test_main_waveforms_skip_the_doubled_height(self):
-        gain = added(GAIN_HEADER)
-        self.assertIn('return applyCompensation && !mainWaveform ? 2.0 : 1.0;', gain)
-        self.assertIn('return m_gain * mixpi::heightCompensation(m_mixpiMainWaveform, applyCompensation);',
-                      added(RENDERER))
-        self.assertIn('#include "waveform/mixpiwaveformgain.h"', added(RENDERER))
-        # Stock: Filtered asks for the doubled gain and RGB does not.
-        filtered = pinned_bytes('src/waveform/renderers/allshader/waveformrendererfiltered.cpp').decode()
-        rgb = pinned_bytes('src/waveform/renderers/allshader/waveformrendererrgb.cpp').decode()
-        self.assertIn('getGains(&allGain, true, &bandGain[0], &bandGain[1], &bandGain[2]);', filtered)
-        self.assertIn('getGains(&allGain, false, &lowGain, &midGain, &highGain);', rgb)
-        base = pinned_bytes('src/waveform/renderers/waveformrenderersignalbase.cpp').decode()
-        self.assertIn('m_waveformRenderer->getGain(applyCompensation)', base)
+    def test_a_request_is_applied_on_the_gui_thread_only(self):
+        header = added(HEADER)
+        # Not a direct connection: Qt queues a request from another thread to
+        # the setting's own thread (review: Sol 1, Fable M1).
+        self.assertNotIn('DirectConnection', header)
+        self.assertRegex(header, r'connectValueChangeRequest\(\s*this, \[this\]\(double value\) '
+                                 r'\{ request\(value\); \}\);')
+        self.assertIn('if (QThread::currentThread() != thread()) {', header)
+        # The factory is reached through the two calls the main window hands
+        # over, never through Singleton::instance().
+        self.assertNotIn('instance()', header)
+        self.assertNotIn('WaveformWidgetFactory', added('src/coreservices.cpp'))
 
-    def test_core_services_switches_every_waveform_through_the_factory(self):
-        core = added('src/coreservices.cpp')
-        self.assertIn('std::make_unique<MixpiWaveformColours>(pConfig, [](int type) {', core)
-        self.assertIn('pFactory->findHandleIndexFromType(', core)
-        self.assertIn('return handle >= 0 && pFactory->setWidgetTypeFromHandle(handle);', core)
-        self.assertIn('m_pWaveformColours.reset();', core)
-        factory = pinned_bytes('src/waveform/waveformwidgetfactory.cpp').decode()
-        switch = factory[factory.index('bool WaveformWidgetFactory::setWidgetTypeFromHandle'):]
+    def test_the_setting_lives_only_while_the_factory_does(self):
+        text = PATCH.read_text()
+        window = text[text.index('diff --git a/' + MAIN_WINDOW + ' '):text.index('diff --git a/src/mixxxmainwindow.h ')]
+        # Made after the factory has its config, on the GUI thread ...
+        made = window.index('+        m_pMixpiWaveformColours = new MixpiWaveformColours(')
+        self.assertLess(window.index(' WaveformWidgetFactory::instance()->setConfig(m_pCoreServices->getSettings());'), made)
+        # ... and deleted before the factory.
+        deleted = window.index('+    delete m_pMixpiWaveformColours;')
+        self.assertLess(made, deleted)
+        self.assertLess(deleted, window.index('\n     WaveformWidgetFactory::destroy();'))
+        added_window = added(MAIN_WINDOW)
+        self.assertIn('return static_cast<int>(pFactory->mixpiAppliedType());', added_window)
+        self.assertIn('return pFactory->mixpiSwitchTo(static_cast<WaveformWidgetType::Type>(type));', added_window)
+        # The row follows every change of the type (the skin has loaded,
+        # Mixxx's own Preferences).
+        self.assertIn('&WaveformWidgetFactory::mixpiWidgetTypeChanged,', added_window)
+        self.assertIn('[this] { m_pMixpiWaveformColours->sync(); });', added_window)
+        # Stock: the factory is made in the main window's initialize and
+        # destroyed in its destructor; the skin is parsed after both lines.
+        stock = pinned_bytes(MAIN_WINDOW).decode()
+        self.assertLess(stock.index('WaveformWidgetFactory::instance()->setConfig('),
+                        stock.index('emit skinLoaded();'))
+
+    def test_the_row_shows_what_the_factory_runs(self):
+        header = added(HEADER)
+        self.assertIn('m_pColours->setAndConfirm(valueForType(appliedType()));', header)
+        self.assertEqual(header.count('setAndConfirm('), 1)
+        # The factory is the only writer of the type after the default.
+        self.assertEqual(header.count('setValue(typeKey()'), 1)
+        factory = added(FACTORY)
+        self.assertIn('if (!holder.m_waveformWidget || holder.m_waveformWidget->getType() != m_configType) {',
+                      factory)
+        self.assertIn('return mixpiAppliedType() == type;', factory)
+        self.assertEqual(factory.count('emit mixpiWidgetTypeChanged();'), 2)
+        # Stock: a widget that cannot start falls back to the empty one, and
+        # the switch re-creates each waveform with its track, zoom and marker.
+        stock = pinned_bytes(FACTORY).decode()
+        self.assertIn('widget = new EmptyWaveformWidget(viewer->getGroup(), viewer);', stock)
+        switch = stock[stock.index('bool WaveformWidgetFactory::setWidgetTypeFromHandle'):]
         switch = switch[:switch.index('\n}\n')]
-        # The switch re-creates each waveform with its track, zoom and play marker ...
         for line in ('createWaveformWidget(m_type, holder.m_waveformViewer);', 'widget->setTrack(pTrack);',
                      'viewer->setZoom(previousZoom);', 'setWidgetType(handle.m_type);'):
             self.assertIn(line, switch)
@@ -153,12 +181,56 @@ class ThreeBandPatchTests(unittest.TestCase):
         j13 = (RUNNER.PATCH_DIR / 'mixxx-waveform-height.patch').read_text()
         self.assertIn('+            widget->setMixpiMainWaveform(mixpi::isMainWaveform(viewer));', j13)
         # setWidgetType writes [Waveform],WaveformType to mixxx.cfg.
-        self.assertIn('ConfigKey("[Waveform]", "WaveformType"), *pCurrentType);', factory)
+        self.assertIn('ConfigKey("[Waveform]", "WaveformType"), *pCurrentType);', stock)
+
+    def test_the_default_is_set_in_mixxx_before_the_factory_reads_the_type(self):
+        text = PATCH.read_text()
+        core = text[text.index('diff --git a/src/coreservices.cpp '):text.index('diff --git a/' + MAIN_WINDOW + ' ')]
+        self.assertLess(core.index(' UserSettingsPointer pConfig = m_pSettingsManager->settings();'),
+                        core.index('+    MixpiWaveformColours::defaultOnce(pConfig);'))
+        header = added(HEADER)
+        self.assertRegex(header, r'if \(!pSettings->exists\(defaultDoneKey\(\)\)\) \{\s*'
+                                 r'pSettings->setValue\(typeKey\(\), kThreeBandType\);')
+        self.assertIn('ConfigKey(QStringLiteral("[MixPi]"), QStringLiteral("ThreeBandDefault"))', header)
+        self.assertIn('ConfigKey(QStringLiteral("[Waveform]"), QStringLiteral("WaveformType"))', header)
+        # The seeder has no part in it: an old binary never gets the default,
+        # and a config the seeder cannot parse cannot lose it.
+        seeder = SEEDER.read_text()
+        for word in ('WaveformType', 'ThreeBandDefault', 'Waveform'):
+            self.assertNotIn(word, seeder)
+
+    def test_only_the_filtered_renderer_skips_the_doubled_height_on_main_rows(self):
+        self.assertIn('return rgbStacked || !mainWaveform;', added(GAIN_HEADER))
+        filtered = added(FILTERED)
+        self.assertIn('#include "waveform/mixpiwaveformgain.h"', filtered)
+        self.assertEqual(RUNNER.filtered_choice(filtered),
+                         'mixpi::filteredHeightCompensation( m_waveformRenderer->isMixpiMainWaveform(), m_bRgbStacked)')
+        # getGain is Mixxx's own, and so is what every other renderer asks it.
+        self.assertNotIn('diff --git a/' + RENDERER + ' ', PATCH.read_text())
+        self.assertIn('return applyCompensation ? m_gain * 2.f : m_gain;', pinned_bytes(RENDERER).decode())
+        self.assertEqual(RUNNER.filtered_choice(pinned_bytes(FILTERED).decode()), 'true')
+        for path, line in (
+                ('src/waveform/renderers/allshader/waveformrendererrgb.cpp',
+                 'getGains(&allGain, false, &lowGain, &midGain, &highGain);'),
+                ('src/waveform/renderers/waveformrendererrgb.cpp',
+                 'getGains(&allGain, true, &lowGain, &midGain, &highGain);'),
+                ('src/waveform/renderers/allshader/waveformrenderertextured.cpp',
+                 'getGains(&allGain, true, &lowGain, &midGain, &highGain);'),
+                ('src/waveform/renderers/waveformrenderersignalbase.cpp',
+                 'm_waveformRenderer->getGain(applyCompensation)')):
+            self.assertIn(line, pinned_bytes(path).decode(), path)
+
+    def test_a_passthrough_connection_ends_with_its_waveform_widget(self):
+        # Review, Sol 8: with the viewer as context, each switch left one more.
+        viewer = PATCH.read_text()
+        viewer = viewer[viewer.index('diff --git a/' + VIEWER + ' '):]
+        self.assertRegex(viewer, r' +&WWaveformViewer::passthroughChanged,\n-\s+this,\n\+\s+pWidget,\n')
 
     def test_the_overview_strips_have_their_own_type(self):
-        factory = pinned_bytes('src/waveform/waveformwidgetfactory.cpp').decode()
+        factory = pinned_bytes(FACTORY).decode()
         self.assertNotIn('Overview', factory[factory.index('bool WaveformWidgetFactory::setWidgetTypeFromHandle'):
                                              factory.index('void WaveformWidgetFactory::setDefaultZoom')])
+        self.assertNotIn('Overview', added(FACTORY))
 
 
 class ThreeBandSkinTests(unittest.TestCase):
@@ -178,6 +250,9 @@ class ThreeBandSkinTests(unittest.TestCase):
                 for tag, colour in COLOURS.items():
                     with self.subTest(loop_display=loop_display, tag=tag):
                         self.assertEqual([e.text for e in visual.findall(tag)], [colour])
+                # Mixxx keeps them only beside a valid SignalColor; the test base
+                # skin has none (review, Fable m5).
+                self.assertEqual([e.text for e in visual.findall('SignalColor')], ['#32323c'], loop_display)
 
     def test_colours_replace_whatever_the_base_skin_says(self):
         module = HEIGHT_RUNNER.load('mixpi-performance')
@@ -186,6 +261,19 @@ class ThreeBandSkinTests(unittest.TestCase):
         self.assertEqual({tag: [e.text for e in visual.findall(tag)] for tag in COLOURS},
                          {tag: [colour] for tag, colour in COLOURS.items()})
         self.assertEqual(visual.findtext('BgColor'), '#000')
+        self.assertEqual([e.text for e in visual.findall('SignalColor')], ['#32323c'])
+
+    def test_a_signal_colour_of_the_base_skin_is_kept(self):
+        module = HEIGHT_RUNNER.load('mixpi-performance')
+        visual = ET.fromstring('<Visual><SignalColor>#123456</SignalColor></Visual>')
+        module.three_band_colours(visual)
+        self.assertEqual([e.text for e in visual.findall('SignalColor')], ['#123456'])
+        # Mixxx: the band colours are replaced unless SignalColor is valid too.
+        colours = pinned_bytes('src/waveform/renderers/waveformsignalcolors.cpp').decode()
+        self.assertIn('if (m_signalColor.isValid() && filteredColorValid) {\n        return true;', colours)
+        blank = ET.fromstring('<Visual><SignalColor> </SignalColor></Visual>')
+        module.three_band_colours(blank)
+        self.assertEqual([e.text for e in blank.findall('SignalColor')], ['#32323c'])
 
     def advanced_rows(self, root):
         pane = next(e for e in root.iter('WidgetGroup') if e.findtext('ObjectName') == 'MixpiAdvancedSettings')
@@ -215,47 +303,6 @@ class ThreeBandSkinTests(unittest.TestCase):
             self.assertIn('<IsEqual>1</IsEqual>', ''.join(buttons[1][2]))
 
 
-class ThreeBandDefaultTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.config = Path(self.temp.name) / '.mixxx/mixxx.cfg'
-        self.seeder = seeder()
-
-    def test_a_new_card_starts_in_three_band(self):
-        self.seeder.seed(self.config)
-        text = self.config.read_text()
-        self.assertIn('[Waveform]\nWaveformType 19\n', text)
-        self.assertIn('[MixPi]\nThreeBandDefault 1\n', text)
-
-    def test_the_update_switches_a_saved_rgb_once_and_keeps_the_rest(self):
-        self.config.parent.mkdir()
-        source = ('[Config]\nResizableSkin Pioneered\n\n[Library]\nRowHeight 34\n'
-                  'Font Sans Serif,-1,17,5,50,0,0,0,0,0\n\n[MixPi]\nRamCacheMB 1024\n\n'
-                  '[Waveform]\nDefaultZoom 3\nWaveformType 17\nZoomSynchronization 0\n')
-        self.config.write_text(source)
-        self.seeder.seed(self.config)
-        expected = source.replace('WaveformType 17', 'WaveformType 19').replace(
-            '[MixPi]\nRamCacheMB 1024\n', '[MixPi]\nThreeBandDefault 1\nRamCacheMB 1024\n')
-        self.assertEqual(self.config.read_text(), expected)
-
-    def test_a_later_rgb_choice_is_kept(self):
-        self.seeder.seed(self.config)
-        chosen = self.config.read_text().replace('WaveformType 19', 'WaveformType 17')
-        self.config.write_text(chosen)
-        before = self.config.stat().st_mtime_ns
-        self.seeder.seed(self.config)
-        self.seeder.seed(self.config)
-        self.assertEqual(self.config.read_text(), chosen)
-        self.assertEqual(self.config.stat().st_mtime_ns, before)
-
-    def test_a_config_without_a_waveform_type_gets_one(self):
-        self.config.parent.mkdir()
-        self.config.write_text('[Waveform]\nDefaultZoom 3\n')
-        self.seeder.seed(self.config)
-        self.assertIn('[Waveform]\nWaveformType 19\nDefaultZoom 3\n', self.config.read_text())
-
-
 @unittest.skipUnless(qt_available(), 'Qt6 development dependencies required')
 class ThreeBandNativeTests(unittest.TestCase):
     @classmethod
@@ -271,7 +318,7 @@ class ThreeBandNativeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, mode + result.stdout[-4000:] + result.stderr[-3000:])
         output = self.output(self.patched)
         names = checks()
-        self.assertGreaterEqual(len(names), 17)
+        self.assertGreaterEqual(len(names), 30)
         for name in names:
             self.assertRegex(output, r'(?m)^PASS ' + re.escape(name))
         self.assertNotIn('FAIL ', output)
@@ -289,10 +336,19 @@ class ThreeBandNativeTests(unittest.TestCase):
                      'RGB asks the waveform factory for type 17 (all-shader RGB)',
                      '3-BAND is saved in mixxx.cfg in under 1 s',
                      'values other than 0 and 1 are refused and change nothing',
-                     'a saved WaveformType 17 shows as RGB (0)',
+                     'and the setting shows what the waveforms run, 3-BAND, not what was asked',
+                     'waveforms running type 17 show as RGB (0)',
+                     'a saved 19 the factory could not apply does not show as 3-BAND',
+                     'a repeated WaveformType key ends as one line with 19',
+                     'the update switches a saved RGB to 3-BAND',
+                     'the RGB choice is kept at restart 2',
+                     'it reaches the waveform factory on the GUI thread',
+                     'rapid opposing writes from a worker thread run in the order written and end in the last value',
                      'a main waveform\'s loudest band stops at kMainWaveformGain (0.90) of the edge in 3-BAND',
                      'the pregain knob still scales the 3-BAND height (0.5 to 0.45)'):
             self.assertRegex(output, r'(?m)^FAIL ' + re.escape(name))
+        # Stock Mixxx's own getGain, asked what stock Filtered asks: doubled.
+        self.assertIn('HEIGHTS main-filtered 1.800 main-rgb 0.900 loop-filtered 0.760 loop-rgb 0.380', output)
         # What stock Mixxx already does still holds without the patch.
         self.assertRegex(output, r'(?m)^PASS the Loop panel\'s waveform keeps Mixxx\'s doubled Filtered height')
         self.assertRegex(output, r'(?m)^PASS the Loop panel\'s RGB waveform keeps total_gain, as before')

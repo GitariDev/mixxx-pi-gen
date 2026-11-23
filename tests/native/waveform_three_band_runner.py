@@ -1,21 +1,36 @@
 """Three-band waveforms: compile the shipped setting and height rule with real Qt and run each check.
 
-Production code, from the patched stack: util/mixpiwaveformcolours.h
-(Settings › Advanced, Waveform colours: [MixPi],waveform_colours),
-waveform/mixpiwaveformgain.h (heightCompensation: the main waveforms skip the
-Filtered renderer's doubled height), preferences/configobject.{h,cpp} (the
-save on change and its timing) and the control framework (control,
-controlobject, controlproxy, controlpotmeter, controlpushbutton,
-controlbehavior). The waveform factory's switch
-(WaveformWidgetFactory::setWidgetTypeFromHandle) is a recording double;
-tests/test_waveform_three_band.py checks the CoreServices wiring to it.
+Production code, from the patched stack:
+- util/mixpiwaveformcolours.h (Settings › Advanced, Waveform colours:
+  [MixPi],waveform_colours, and the one-time three-band default).
+- waveform/renderers/waveformwidgetrenderer.h: the real
+  WaveformWidgetRenderer::getGain, its main-row flag and m_gain. The class's
+  three out-of-line members (constructor, destructor, resizeRenderer) and the
+  headers it only names types from (marks, colours, the waveform data) are
+  test doubles; nothing about the gain is.
+- waveform/mixpiwaveformgain.h (waveformHeightGain, filteredHeightCompensation).
+- The all-shader Filtered renderer's own argument to getGains, cut out of the
+  stack's waveform/renderers/allshader/waveformrendererfiltered.cpp
+  (filtered_choice) and compiled into the fixture, so the fixture asks
+  getGain what the shipped renderer asks. In the baseline that argument is
+  Mixxx's `true` and the real getGain doubles the height.
+- preferences/configobject.{h,cpp} (Mixxx's own parser, the save on change and
+  its timing) and the control framework (control, controlobject,
+  controlproxy, controlpotmeter, controlpushbutton, controlbehavior).
 
-Modes (each its own process and folder): setting, refused, start, height.
---baseline builds the stack without mixxx-waveform-three-band.patch; the
-setting and heightCompensation are then absent and the same checks must fail.
+The waveform factory (WaveformWidgetFactory::mixpiAppliedType and
+mixpiSwitchTo) is a recording double; tests/test_waveform_three_band.py
+checks the main window's wiring to it as text. The real switch of GL widgets
+is checked on the card (HANDOFF.md).
+
+Modes (each its own process and folder): setting, refused, start, default,
+thread, height. --baseline builds the stack without
+mixxx-waveform-three-band.patch; the setting and the height rule are then
+absent and the same checks must fail.
 """
 import argparse
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -28,7 +43,47 @@ from native.agreed_controls_runner import DOUBLES, PINNED_FILES
 ROOT = Path(__file__).resolve().parents[2]
 NATIVE = ROOT / 'tests/native'
 PATCH = 'mixxx-waveform-three-band.patch'
-MODES = ('setting', 'refused', 'start', 'height')
+MODES = ('setting', 'refused', 'start', 'default', 'thread', 'height')
+FILTERED = 'src/waveform/renderers/allshader/waveformrendererfiltered.cpp'
+# Real headers the renderer header needs, and the Filtered renderer's source.
+RENDERER_FILES = [
+    'waveform/renderers/waveformwidgetrenderer.h', 'waveform/renderers/waveformrendererabstract.h',
+    'track/track_decl.h', 'util/class.h',
+    'waveform/renderers/allshader/waveformrendererfiltered.cpp',
+]
+# Headers waveformwidgetrenderer.h only takes type names from.
+RENDERER_DOUBLES = {
+    'waveform/renderers/waveformmark.h': '''#pragma once
+#include <QBrush>
+#include <QList>
+#include <QPoint>
+#include <QPointF>
+#include <QSharedPointer>
+#include <QString>
+#include <cmath>
+#include <memory>
+#include "util/assert.h"
+#include "util/math.h"
+class WaveformMark;
+typedef QSharedPointer<WaveformMark> WaveformMarkPointer;
+class Cue;
+typedef std::shared_ptr<Cue> CuePointer;
+''',
+    'waveform/renderers/waveformsignalcolors.h': '#pragma once\nclass WaveformSignalColors {};\n',
+    'waveform/waveform.h': '''#pragma once
+#include <QSharedPointer>
+class Waveform;
+typedef QSharedPointer<const Waveform> ConstWaveformPointer;
+''',
+}
+
+
+def filtered_choice(source):
+    """What the all-shader Filtered renderer passes getGains as applyCompensation."""
+    found = re.findall(r'getGains\(\s*&allGain,\s*(.+?),\s*&bandGain\[0\]', source, re.DOTALL)
+    if len(found) != 1:
+        raise RuntimeError('expected one getGains call in the Filtered renderer, found %d' % len(found))
+    return ' '.join(found[0].split())
 
 
 def stack(target, baseline):
@@ -36,15 +91,19 @@ def stack(target, baseline):
     if not baseline and PATCH not in names:
         subprocess.run(['git', 'apply', str(PATCH_DIR / PATCH)], cwd=target, check=True, timeout=15)
         names.append(PATCH)
-    populate_pinned(target, ['src/' + name for name in PINNED_FILES])
+    populate_pinned(target, ['src/' + name for name in PINNED_FILES + RENDERER_FILES])
     return names
 
 
 def build(target, baseline):
     support = target / 'interfaces'
-    for name, text in DOUBLES.items():
+    for name, text in {**DOUBLES, **RENDERER_DOUBLES}.items():
         (support / name).parent.mkdir(parents=True, exist_ok=True)
         (support / name).write_text(text)
+    choice = filtered_choice((target / FILTERED).read_text())
+    print('FILTERED ASKS', choice, flush=True)
+    (support / 'mixpi_filtered_choice.h').write_text(
+        '#pragma once\n#define MIXPI_FILTERED_ASKS (' + choice + ')\n')
     includes = ['-I' + str(support), '-I' + str(target / 'src'), '-I' + str(NATIVE)]
     for header in ('control/control.h', 'control/controlobject.h', 'control/controlproxy.h',
                    'control/controlpotmeter.h', 'control/controlpushbutton.h'):

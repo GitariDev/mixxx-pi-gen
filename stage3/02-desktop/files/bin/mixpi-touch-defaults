@@ -1,8 +1,5 @@
 #!/usr/bin/python3
-"""Seed missing touch defaults before Mixxx starts; retain every saved choice.
-
-One exception, once: the three-band waveform default (three_band_once).
-"""
+"""Seed missing touch defaults before Mixxx starts; retain every saved choice."""
 import argparse
 import os
 from pathlib import Path
@@ -31,44 +28,6 @@ def add_missing(source, section, defaults):
     return source[:match.end()] + "\n" + "".join(missing) + block.lstrip("\r\n") + source[end:]
 
 
-def set_value(source, section, key, value):
-    """Set KEY in [SECTION] to VALUE, replacing a saved value."""
-    sections = list(re.finditer(r"(?m)^\[([^\]\r\n]+)\][ \t]*\r?$", source))
-    matches = [match for match in sections if match.group(1) == section]
-    if len(matches) != 1:
-        return add_missing(source, section, {key: value})
-    match = matches[0]
-    following = [item.start() for item in sections if item.start() > match.start()]
-    end = following[0] if following else len(source)
-    block = source[match.end():end]
-    line = re.compile(r"(?m)^" + re.escape(key) + r"(?:[ \t][^\r\n]*)?$")
-    if not line.search(block):
-        return add_missing(source, section, {key: value})
-    return source[:match.end()] + line.sub(f"{key} {value}", block, count=1) + source[end:]
-
-
-def three_band_once(source):
-    """Three-band waveforms (owner, 2026-11-23: three-band by default, a setting
-    in Settings > Advanced). Once, the decks' waveforms are switched to 3-BAND,
-    Mixxx's Filtered waveform ([Waveform] WaveformType 19); [MixPi]
-    ThreeBandDefault 1 records that, so a later choice of RGB in Settings is kept."""
-    if not re.search(r"(?m)^ThreeBandDefault(?:[ \t]|\r?$)", section_block(source, "MixPi")):
-        source = set_value(source, "Waveform", "WaveformType", "19")
-        source = add_missing(source, "MixPi", {"ThreeBandDefault": "1"})
-    return source
-
-
-def section_block(source, section):
-    sections = list(re.finditer(r"(?m)^\[([^\]\r\n]+)\][ \t]*\r?$", source))
-    matches = [match for match in sections if match.group(1) == section]
-    if len(matches) > 1:
-        raise ValueError(f"Duplicate [{section}] sections; keep configuration unchanged")
-    if not matches:
-        return ""
-    following = [item.start() for item in sections if item.start() > matches[0].start()]
-    return source[matches[0].end():following[0] if following else len(source)]
-
-
 def seed(config):
     existed = os.path.lexists(config)
     source = config.read_text() if existed else ""
@@ -82,7 +41,6 @@ def seed(config):
         result = add_missing(result, "Library", {"MixPiBootstrapLibrary": "1"})
         # Elapsed time only; a tap on the readout shows the remaining time.
         result = add_missing(result, "Controls", {"PositionDisplay": "0"})
-    result = three_band_once(result)
     if result == source:
         return
     config.parent.mkdir(parents=True, exist_ok=True)

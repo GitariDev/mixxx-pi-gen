@@ -797,3 +797,10 @@ All three are the real seats; there are no stand-ins.
   - BLOCKED, check 14: a controller write needs a mapping change.
   - For the owner to judge on the Pi: rows unpainted about 0.2 s after a switch; 3-BAND reads lower than RGB on most music (by design).
 - **Next:** the owner reviews on the Pi; council round 11 after that (owner, plan 12.19).
+
+## Wave J18, build S and acceptance S (2026-11-24, `deploy/test-image-20261124s/`, `deploy/ui-redesign-20261117/acceptance-S/ACCEPTANCE.md`)
+
+- **J18** (`08196b8`, plan 12.20, the owner's "the smaller bottom bar currently isn't 3 band"): the overview strips follow Waveform colours (Filtered overview in Pioneered's colours with 3-BAND, RGB with RGB); the overview status text keeps #007de1 (leader's call while the owner was away). Native gate 403/403, 0 skips (`gates/uiJ18-08196b8.log`); Mac suite 994 OK, 188 skipped.
+- **Build S** (20th pi-gen run): `woverview.cpp` compiled clean on its first compile; export finished on R's export-only resume after the known loop-device race. Card updated 20:06-20:08 EAT; `WaveformOverviewType 0`.
+- **Acceptance S: 7 PASS of 7.** Strips three-band on Decks and Tracks pages; live switch both ways; RGB strip pixel-equal to R's; status text unchanged; kept through restarts. The GL texture warning now shows 1-2 per switch even with no loop.
+- **Left for the owner:** 3-BAND with SO MUCH, SO MUCH and I Hate Crew Love loaded and stopped. The 3-BAND strip reads mostly cream with blue and orange at the edges.

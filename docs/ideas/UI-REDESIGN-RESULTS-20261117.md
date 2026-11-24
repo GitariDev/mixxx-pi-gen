@@ -786,3 +786,14 @@ All three are the real seats; there are no stand-ins.
 - **Scores:** GPT-6.1 Sol xhigh **9**, Claude Fable 5.2 high **9**, Claude Opus 5.5 xhigh **9**; no blockers, no caps. Reports: `deploy/ui-redesign-20261117/council/round10-*.md`.
 - **Minor record items** (Fable and Opus): build B run 1's wording, the J17 fixture count (27), build Q's yes in plan 12.17, and the eject-before-☰ case listed — fixed in `8d3e922`; build Q's install start 04:26 — fixed here. No build needed.
 - **Open for the owner:** the eject-before-☰ case (This Pi's tile edged with an empty table; fixture only); whether fix builds need a yes each; the 0.80 vs "about 10%" waveform gain; the three-band colour pick in the R&D thread.
+
+## Build R and acceptance R (2026-11-24, `deploy/test-image-20261124r/`, `deploy/ui-redesign-20261117/acceptance-R/ACCEPTANCE.md`)
+
+- **Three-band merged:** `rnd/waveform-three-band-20261122` fast-forwarded into `feat/pi-performance-target` at `a16e093` (owner's yes, plan 12.19); Mac suite 988 OK, 188 skipped; native gate 397/397 (R&D). The R&D branch, worktree and thread are closed.
+- **Build R** (19th pi-gen run, `a16e093`, 74 patches: 72 as Q, height-gain 0.80→0.90, three-band new). Run 1 stopped by the Mac-space guard (another job filled the Mac; `RUN1-STOPPED.md`); the space watcher's stop was fixed (`logs/stop-build.sh`). Run 2: exit 0 in 21 m 35 s; the four three-band files compiled with no warning; only `skin.xml` changed against Q. Two archive packages drifted (bluez-firmware, rpi-eeprom); no apt on the card.
+- **Card:** updated in place 17:26-17:28 EAT (`buildR-update/UPDATE-LOG.md`); `WaveformType 19`, `ThreeBandDefault 1` after the start.
+- **Acceptance R: 12 PASS, 1 FAIL, 1 BLOCKED** (the handoff's 14 checks). Colours exact; heights from screenshots: loud track 0.91 in both styles (the 0.90 cap), Loop panel never taller than RGB; 30.0 fps in both styles at 30, 60.0 at 60; CPU 27.3 % RGB / 27.5 % 3-BAND; audio recorded through switches without a gap.
+  - FAIL, check 8: two Qt "QOpenGLTexturePrivate::destroy() called without a current context" warnings per switch once a loop is set (no audio, memory or paint effect).
+  - BLOCKED, check 14: a controller write needs a mapping change.
+  - For the owner to judge on the Pi: rows unpainted about 0.2 s after a switch; 3-BAND reads lower than RGB on most music (by design).
+- **Next:** the owner reviews on the Pi; council round 11 after that (owner, plan 12.19).

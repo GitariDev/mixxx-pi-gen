@@ -989,3 +989,11 @@ Recorded only; no work has started. The owner: "You can add these to the note's 
 
 - **Waveform gain:** on "The loudest tracks now stop 20 % short of the edge": "The loudest tracks should stop 10% from the edge, can we bump it up a little bit more?" On "0.80 … or 0.90 for your 'about 10 % away'?": "Let's do a very focused change on this. Once done we can merge this commit, settle this thread and continue on with the 3 band build with the comments I left there." So `kMainWaveformGain` goes from 0.80 to 0.90 in `mixxx-waveform-height-gain.patch` (the owner's number, in place; one constant), with its tests. On the owner's library the loudest-mastered quarter's 99th percentile goes from 0.79 to 0.89 of the half height, and nothing reaches the edge (`deploy/ui-redesign-20261117/wave-J15/summary-J15.txt`).
 - **The eject before ☰ was ever shown:** "Show me this then we can decide how to fix it. But if we disconnect a drive then open the sources we should show the top menu where the sources edit button is visible." Shown on the card first; no fix until the owner decides.
+
+### 12.19 Owner's yes for the three-band merge and build R (2026-11-24)
+
+Asked by the new main-climb orchestrator after the R&D handoff (`docs/ideas/rnd-waveform-three-band-20261122/HANDOFF.md`):
+- **Merge:** fast-forward `feat/pi-performance-target` from `fd1e940` to `a16e093`, local only: "Yes, fast-forward (Recommended)".
+- **Mac space:** delete the old 10 Nov VM disk snapshots: "Let's do 1 and keep a habit of doing cleanup when we are done testing." Five `deploy/recovery-20261110/vm-*/private/*.disk` files were deleted; the forensic `vm-preservation-20261110T0812Z/private-snapshot/` was kept. Cleanup is now the last step of every build and test round.
+- **Build R, card update and the 14 three-band card checks:** "Build, install, test (Recommended)".
+- **Council:** acceptance only; "Let's do 1. we can run the round after I review myself on the pi."

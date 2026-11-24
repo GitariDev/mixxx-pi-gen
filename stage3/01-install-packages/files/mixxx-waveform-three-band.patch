@@ -109,10 +109,10 @@ index 4f66e14..494a3c5 100644
      parented_ptr<WMainMenuBar> m_pMenuBar;
 diff --git a/src/util/mixpiwaveformcolours.h b/src/util/mixpiwaveformcolours.h
 new file mode 100644
-index 0000000..de4dd01
+index 0000000..02d6e6b
 --- /dev/null
 +++ b/src/util/mixpiwaveformcolours.h
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,207 @@
 +#pragma once
 +
 +#include <QMetaObject>
@@ -154,7 +154,17 @@ index 0000000..de4dd01
 +///   shader support). The skin binds the 3-BAND button's enabled state to it,
 +///   so the choice looks unavailable instead of doing nothing (owner,
 +///   2026-11-23: "Show it unavailable"). RGB is always enabled.
-+/// - The overview strips have their own type and do not change.
++/// - The overview strips follow the row (owner, 2026-11-24): at every sync,
++///   Mixxx's overview type [Waveform],WaveformOverviewType becomes Filtered
++///   (0, the three bands in the overview's SignalLowColor, SignalMidColor and
++///   SignalHighColor) when the waveforms run type 19, otherwise RGB (2). An
++///   overview type picked in Mixxx's Preferences is replaced at the next sync.
++///   The value is written to mixxx.cfg, so it holds at the next start and
++///   Mixxx's Preferences shows it, and forced onto Mixxx's read-only control
++///   of the same name, which the overviews follow live. That control is made
++///   by Mixxx's Preferences (DlgPrefWaveform) after the first sync and before
++///   the skin, from mixxx.cfg; until then only mixxx.cfg is written. A value
++///   that is already right is not written again.
 +class MixpiWaveformColours : public QObject {
 +  public:
 +    static constexpr int kRgb = 0;
@@ -162,6 +172,9 @@ index 0000000..de4dd01
 +    // WaveformWidgetType::AllShaderRGBWaveform and AllShaderFilteredWaveform.
 +    static constexpr int kRgbType = 17;
 +    static constexpr int kThreeBandType = 19;
++    // WOverview::Type::Filtered and WOverview::Type::RGB.
++    static constexpr int kOverviewFiltered = 0;
++    static constexpr int kOverviewRgb = 2;
 +
 +    /// The waveform factory, as this setting uses it. Called on the GUI
 +    /// thread only.
@@ -223,11 +236,17 @@ index 0000000..de4dd01
 +    void sync() {
 +        m_pThreeBandAvailable->forceSet(
 +                m_waveforms.canDraw && m_waveforms.canDraw(kThreeBandType) ? 1 : 0);
-+        m_pColours->setAndConfirm(valueForType(appliedType()));
++        const int type = appliedType();
++        m_pColours->setAndConfirm(valueForType(type));
++        syncOverview(overviewTypeFor(type));
 +    }
 +
 +    static int valueForType(int type) {
 +        return type == kThreeBandType ? kThreeBand : kRgb;
++    }
++
++    static int overviewTypeFor(int type) {
++        return type == kThreeBandType ? kOverviewFiltered : kOverviewRgb;
 +    }
 +
 +    static int typeForValue(int value) {
@@ -242,7 +261,25 @@ index 0000000..de4dd01
 +        return ConfigKey(QStringLiteral("[MixPi]"), QStringLiteral("ThreeBandDefault"));
 +    }
 +
++    static ConfigKey overviewTypeKey() {
++        return ConfigKey(QStringLiteral("[Waveform]"), QStringLiteral("WaveformOverviewType"));
++    }
++
 +  private:
++    /// The overview strips follow the row: mixxx.cfg always, Mixxx's
++    /// read-only control when it exists (forced, as Mixxx's Preferences
++    /// sets it). Called from sync() only, so on the GUI thread.
++    void syncOverview(int overviewType) {
++        if (m_pSettings->getValue<int>(overviewTypeKey(), -1) != overviewType) {
++            m_pSettings->setValue(overviewTypeKey(), overviewType);
++        }
++        ControlObject* pOverviewType =
++                ControlObject::getControl(overviewTypeKey(), ControlFlag::NoWarnIfMissing);
++        if (pOverviewType && pOverviewType->get() != overviewType) {
++            pOverviewType->forceSet(overviewType);
++        }
++    }
++
 +    int appliedType() const {
 +        return m_waveforms.appliedType ? m_waveforms.appliedType() : 0;
 +    }
@@ -407,6 +444,51 @@ index 349669a..248782b 100644
  
    public slots:
      void slotSkinLoaded();
+diff --git a/src/widget/woverview.cpp b/src/widget/woverview.cpp
+index 683810c..8c79d9f 100644
+--- a/src/widget/woverview.cpp
++++ b/src/widget/woverview.cpp
+@@ -128,6 +128,15 @@ void WOverview::setup(const QDomNode& node, const SkinContext& context) {
+     m_passthroughOverlayColor = m_signalColors.getPassthroughOverlayColor();
+     m_playedOverlayColor = m_signalColors.getPlayedOverlayColor();
+     m_lowColor = m_signalColors.getLowColor();
++    // MixPi three-band overviews: the status text ("Loading track...",
++    // "Ready to play, analyzing...", "Finalizing...") is drawn in
++    // MixpiStatusTextColor when the skin gives a valid one, so it keeps its
++    // colour when the skin's SignalLowColor changes for the Filtered overview
++    // (leader, 2026-11-24). Without one it is SignalLowColor, as in Mixxx.
++    m_mixpiStatusTextColor = context.selectColor(node, QStringLiteral("MixpiStatusTextColor"));
++    m_mixpiStatusTextColor = m_mixpiStatusTextColor.isValid()
++            ? WSkinColor::getCorrectColor(m_mixpiStatusTextColor).toRgb()
++            : m_lowColor;
+     m_dimBrightThreshold = m_signalColors.getDimBrightThreshold();
+ 
+     m_labelBackgroundColor = context.selectColor(node, "LabelBackgroundColor");
+@@ -1567,9 +1576,9 @@ void WOverview::drawNextPixmapPartRGB(QPainter* pPainter,
+ 
+ void WOverview::paintText(const QString& text, QPainter* pPainter) {
+     PainterScope painterScope(pPainter);
+-    m_lowColor.setAlphaF(0.5f);
++    m_mixpiStatusTextColor.setAlphaF(0.5f);
+     QPen lowColorPen(
+-            QBrush(m_lowColor), 1.25 * m_scaleFactor, Qt::SolidLine, Qt::RoundCap);
++            QBrush(m_mixpiStatusTextColor), 1.25 * m_scaleFactor, Qt::SolidLine, Qt::RoundCap);
+     pPainter->setPen(lowColorPen);
+     QFont font = pPainter->font();
+     QFontMetrics fm(font);
+diff --git a/src/widget/woverview.h b/src/widget/woverview.h
+index f28e78a..395b7ae 100644
+--- a/src/widget/woverview.h
++++ b/src/widget/woverview.h
+@@ -217,6 +217,8 @@ class WOverview : public WWidget, public TrackDropTarget {
+     QColor m_passthroughOverlayColor;
+     QColor m_playedOverlayColor;
+     QColor m_lowColor;
++    // MixPi: the colour of the overview's status text (paintText).
++    QColor m_mixpiStatusTextColor;
+     int m_dimBrightThreshold;
+     parented_ptr<QLabel> m_pPassthroughLabel;
+ 
 diff --git a/src/widget/wwaveformviewer.cpp b/src/widget/wwaveformviewer.cpp
 index 9e672f1..840bf94 100644
 --- a/src/widget/wwaveformviewer.cpp

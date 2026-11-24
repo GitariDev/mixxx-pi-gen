@@ -480,6 +480,13 @@ def decks(compact=False, size=None):
 # colors."); they are set here so the choice holds whatever the base skin says.
 THREE_BAND_COLOURS = (('SignalLowColor', '#004ee4'), ('SignalMidColor', '#c95a00'),
                       ('SignalHighColor', '#f6e9d3'))
+# The overview strips follow the same row (owner, 2026-11-24): with 3-BAND
+# Mixxx draws them as its Filtered overview, in the same three colours.
+# Mixxx draws the overview's status text ("Loading track...") in
+# SignalLowColor; the three-band patch reads MixpiStatusTextColor first, so
+# the text keeps Pioneered's overview colour in both styles (leader,
+# 2026-11-24, while the owner was away).
+OVERVIEW_STATUS_TEXT_COLOUR = '#007de1'
 # Mixxx keeps the three band colours only beside a valid SignalColor
 # (WaveformSignalColors::setup; without one it replaces all three with its own
 # defaults). Pioneered's is used when the base skin gives none.
@@ -488,8 +495,9 @@ THREE_BAND_SIGNAL_COLOUR = '#32323c'
 
 def three_band_colours(visual):
     """Set the three band colours on the waveform template (the decks' main
-    waveforms and the Loop panel's are copies of it), and a SignalColor when
-    the template has none, so Mixxx does not replace them."""
+    waveforms and the Loop panel's are copies of it) or the overview template,
+    and a SignalColor when the template has none, so Mixxx does not replace
+    them."""
     for tag, colour in THREE_BAND_COLOURS:
         for old in visual.findall(tag):
             visual.remove(old)
@@ -500,6 +508,16 @@ def three_band_colours(visual):
             visual.remove(old)
         prop(visual, 'SignalColor', THREE_BAND_SIGNAL_COLOUR)
     return visual
+
+
+def three_band_overview(overview):
+    """The overview template (every overview strip is a copy of it): the
+    status text keeps its colour, then the three band colours as on the
+    waveform template."""
+    for old in overview.findall('MixpiStatusTextColor'):
+        overview.remove(old)
+    prop(overview, 'MixpiStatusTextColor', OVERVIEW_STATUS_TEXT_COLOUR)
+    return three_band_colours(overview)
 
 
 def wave_row(channel, visual):
@@ -1555,6 +1573,7 @@ def build(skin, loop_display='focus'):
     if visual is None or overview is None or library is None or library.find('.//LibrarySidebar/TouchNavigation') is None:
         raise ValueError('Expected pinned waveforms and patched touch library')
     three_band_colours(visual)
+    three_band_overview(overview)
     root = node('skin')
     root.append(manifest)
     prop(root,'ObjectName','Mixxx')

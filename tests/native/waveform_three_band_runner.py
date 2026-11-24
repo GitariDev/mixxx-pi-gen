@@ -3,7 +3,10 @@
 Production code, from the patched stack:
 - util/mixpiwaveformcolours.h (Settings › Advanced, Waveform colours:
   [MixPi],waveform_colours, the read-only
-  [MixPi],waveform_three_band_available, and the one-time three-band default).
+  [MixPi],waveform_three_band_available, the one-time three-band default, and
+  the overview type that follows the row: [Waveform],WaveformOverviewType in
+  mixxx.cfg and on the read-only control Mixxx's Preferences makes, here made
+  the same way).
 - waveform/renderers/waveformwidgetrenderer.h: the real
   WaveformWidgetRenderer::getGain, its main-row flag and m_gain. The class's
   three out-of-line members (constructor, destructor, resizeRenderer) and the
@@ -27,7 +30,7 @@ checks the main window's wiring to it as text. The real switch of GL widgets
 is checked on the card (HANDOFF.md).
 
 Modes (each its own process and folder): setting, refused, start, default,
-thread, height. --baseline builds the stack without
+thread, height, overview. --baseline builds the stack without
 mixxx-waveform-three-band.patch; the setting and the height rule are then
 absent and the same checks must fail.
 """
@@ -46,7 +49,7 @@ from native.agreed_controls_runner import DOUBLES, PINNED_FILES
 ROOT = Path(__file__).resolve().parents[2]
 NATIVE = ROOT / 'tests/native'
 PATCH = 'mixxx-waveform-three-band.patch'
-MODES = ('setting', 'refused', 'start', 'default', 'thread', 'height')
+MODES = ('setting', 'refused', 'start', 'default', 'thread', 'height', 'overview')
 FILTERED = 'src/waveform/renderers/allshader/waveformrendererfiltered.cpp'
 # Real headers the renderer header needs, and the Filtered renderer's source.
 RENDERER_FILES = [

@@ -7,7 +7,11 @@ The owner's choices (docs/ideas/rnd-waveform-three-band-20261122/OWNER-DECISIONS
 - A setting in Settings › Advanced, "Waveform colours", RGB or 3-BAND, the
   row under Read ahead; three-band by default after the next build; the Loop
   panel's waveform follows the setting (Mixxx's waveform type covers every
-  scrolling waveform); the overview strips stay as they are.
+  scrolling waveform).
+- 2026-11-24, owner: the overview strips follow the setting too (Mixxx's
+  Filtered overview in the same three colours with 3-BAND, the RGB overview
+  with RGB). Leader, the same day, while the owner was away: the overview's
+  status text keeps its colour (MixpiStatusTextColor).
 - After the reviews: the Loop panel's three-band waveform draws at the same
   height as RGB there ("Same height as RGB"); a start that cannot draw 3-BAND
   shows the choice disabled ("Show it unavailable"); a third waveform type
@@ -41,7 +45,16 @@ How Mixxx 2.5.6 draws it, and what mixxx-waveform-three-band.patch changes:
   holds however Mixxx is started and an old binary never gets it.
 - mixpi-performance.py sets the three colours (and a SignalColor when the base
   has none) on the waveform template, so the main rows and the Loop panel's
-  waveform carry them.
+  waveform carry them, and on the overview template, so every overview strip
+  does, with MixpiStatusTextColor #007de1 (Pioneered's overview colour).
+- The overview type follows the row: MixpiWaveformColours::sync writes
+  [Waveform],WaveformOverviewType (0 Filtered with type 19, otherwise 2 RGB)
+  to mixxx.cfg and forces it onto Mixxx's read-only control of that name when
+  it exists; nothing is written when the value is already right. Mixxx's
+  Preferences makes that control after the first sync, from mixxx.cfg, and
+  every WOverview follows it live. The RGB overview draws with
+  SignalRGB*Color only; its status text is the one use of SignalLowColor, so
+  WOverview reads MixpiStatusTextColor first (falling back to SignalLowColor).
 
 The native checks are in tests/native/waveform_three_band_test.cpp, built by
 tests/native/waveform_three_band_runner.py.
@@ -60,6 +73,8 @@ from native import waveform_height_runner as HEIGHT_RUNNER
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = RUNNER.PATCH_DIR / RUNNER.PATCH
 HEADER = 'src/util/mixpiwaveformcolours.h'
+OVERVIEW = 'src/widget/woverview.cpp'
+OVERVIEW_HEADER = 'src/widget/woverview.h'
 GAIN_HEADER = 'src/waveform/mixpiwaveformgain.h'
 RENDERER = 'src/waveform/renderers/waveformwidgetrenderer.h'
 FILTERED = 'src/waveform/renderers/allshader/waveformrendererfiltered.cpp'
@@ -71,6 +86,7 @@ QSS = ROOT / 'stage3/01-install-packages/files/mixpi-performance.qss'
 AVAILABLE = '[MixPi],waveform_three_band_available'
 TEST = ROOT / 'tests/native/waveform_three_band_test.cpp'
 COLOURS = {'SignalLowColor': '#004ee4', 'SignalMidColor': '#c95a00', 'SignalHighColor': '#f6e9d3'}
+STATUS_TEXT = '#007de1'
 
 
 def added(path):
@@ -106,11 +122,14 @@ class ThreeBandPatchTests(unittest.TestCase):
         text = PATCH.read_text()
         self.assertEqual(sorted(re.findall(r'^diff --git a/(\S+) b/\S+$', text, re.MULTILINE)),
                          ['src/coreservices.cpp', MAIN_WINDOW, 'src/mixxxmainwindow.h', HEADER, GAIN_HEADER,
-                          FILTERED, FACTORY, 'src/waveform/waveformwidgetfactory.h', VIEWER])
+                          FILTERED, FACTORY, 'src/waveform/waveformwidgetfactory.h',
+                          OVERVIEW, OVERVIEW_HEADER, VIEWER])
         self.assertIn('--- /dev/null\n+++ b/' + HEADER, text)
         removed = [line for line in text.splitlines() if line.startswith('-') and not line.startswith('---')]
         self.assertEqual(removed, [
             '-    getGains(&allGain, true, &bandGain[0], &bandGain[1], &bandGain[2]);',
+            '-    m_lowColor.setAlphaF(0.5f);',
+            '-            QBrush(m_lowColor), 1.25 * m_scaleFactor, Qt::SolidLine, Qt::RoundCap);',
             '-                this,'])
 
     def test_patch_is_registered_last_after_its_prerequisites(self):
@@ -174,7 +193,7 @@ class ThreeBandPatchTests(unittest.TestCase):
 
     def test_the_row_shows_what_the_factory_runs(self):
         header = added(HEADER)
-        self.assertIn('m_pColours->setAndConfirm(valueForType(appliedType()));', header)
+        self.assertIn('const int type = appliedType();\n        m_pColours->setAndConfirm(valueForType(type));', header)
         self.assertEqual(header.count('setAndConfirm('), 1)
         # The factory is the only writer of the type after the default.
         self.assertEqual(header.count('setValue(typeKey()'), 1)
@@ -263,11 +282,98 @@ class ThreeBandPatchTests(unittest.TestCase):
         viewer = viewer[viewer.index('diff --git a/' + VIEWER + ' '):]
         self.assertRegex(viewer, r' +&WWaveformViewer::passthroughChanged,\n-\s+this,\n\+\s+pWidget,\n')
 
-    def test_the_overview_strips_have_their_own_type(self):
+    def test_the_factory_does_not_switch_the_overviews_the_setting_does(self):
         factory = pinned_bytes(FACTORY).decode()
         self.assertNotIn('Overview', factory[factory.index('bool WaveformWidgetFactory::setWidgetTypeFromHandle'):
                                              factory.index('void WaveformWidgetFactory::setDefaultZoom')])
         self.assertNotIn('Overview', added(FACTORY))
+
+    def test_the_overview_type_follows_the_row(self):
+        # Owner, 2026-11-24: "the smaller bottom bar currently isn't 3 band".
+        header = added(HEADER)
+        self.assertIn('static constexpr int kOverviewFiltered = 0;', header)
+        self.assertIn('static constexpr int kOverviewRgb = 2;', header)
+        self.assertIn('return type == kThreeBandType ? kOverviewFiltered : kOverviewRgb;', header)
+        self.assertIn('ConfigKey(QStringLiteral("[Waveform]"), QStringLiteral("WaveformOverviewType"))', header)
+        # At every sync, from the type the factory runs.
+        self.assertRegex(header, r'const int type = appliedType\(\);\s*'
+                                 r'm_pColours->setAndConfirm\(valueForType\(type\)\);\s*'
+                                 r'syncOverview\(overviewTypeFor\(type\)\);')
+        self.assertEqual(header.count('syncOverview('), 2)
+        # mixxx.cfg always, only when the value differs ...
+        self.assertRegex(header, r'if \(m_pSettings->getValue<int>\(overviewTypeKey\(\), -1\) != overviewType\) \{\s*'
+                                 r'm_pSettings->setValue\(overviewTypeKey\(\), overviewType\);')
+        # ... and Mixxx's read-only control, forced, when it exists.
+        self.assertRegex(header, r'ControlObject::getControl\(overviewTypeKey\(\), ControlFlag::NoWarnIfMissing\);\s*'
+                                 r'if \(pOverviewType && pOverviewType->get\(\) != overviewType\) \{\s*'
+                                 r'pOverviewType->forceSet\(overviewType\);')
+        self.assertIn("An\n///   overview type picked in Mixxx's Preferences is replaced at the next sync.", header)
+
+    def test_mixxx_makes_the_overview_control_after_the_first_sync(self):
+        # Stock: WOverview::Type is Filtered 0, HSV 1, RGB 2; the overviews
+        # follow [Waveform],WaveformOverviewType live.
+        woverview = pinned_bytes(OVERVIEW).decode()
+        types = pinned_bytes(OVERVIEW_HEADER).decode()
+        self.assertRegex(types, r'enum class Type \{\s*Filtered,\s*HSV,\s*RGB,\s*\};')
+        self.assertIn('m_pTypeControl->connectValueChanged(this, &WOverview::slotTypeControlChanged);', woverview)
+        # The control is Mixxx's Preferences' own: read-only, from mixxx.cfg.
+        dialog = pinned_bytes('src/preferences/dialog/dlgprefwaveform.cpp').decode()
+        made = dialog[dialog.index('DlgPrefWaveform::DlgPrefWaveform('):dialog.index('// Populate waveform options.')]
+        for line in ('m_pTypeControl = std::make_unique<ControlPushButton>(kOverviewTypeCfgKey);',
+                     'm_pTypeControl->setReadOnly();',
+                     'm_pConfig->getValue<WOverview::Type>(kOverviewTypeCfgKey, WOverview::Type::RGB);',
+                     'm_pTypeControl->forceSet(cfgTypeIndex);'):
+            self.assertIn(line, made)
+        self.assertIn('new DlgPrefWaveform(this, m_pConfig, pLibrary)',
+                      pinned_bytes('src/preferences/dialog/dlgpreferences.cpp').decode())
+        # forceSet skips the read-only handler.
+        control = pinned_bytes('src/control/controlobject.h').decode()
+        self.assertRegex(control, r'inline void forceSet\(double value\) \{\s*setAndConfirm\(value\);')
+        # The main window: the setting (and its first sync) is made before
+        # Mixxx's Preferences, which is made before the skin.
+        text = PATCH.read_text()
+        window = text[text.index('diff --git a/' + MAIN_WINDOW + ' '):text.index('diff --git a/src/mixxxmainwindow.h ')]
+        self.assertIn('+        m_pMixpiWaveformColours = new MixpiWaveformColours(', window)
+        self.assertLess(window.index('+        m_pMixpiWaveformColours = new MixpiWaveformColours('),
+                        window.index('     connect(this,\n             &MixxxMainWindow::skinLoaded,'))
+        stock = pinned_bytes(MAIN_WINDOW).decode()
+        initialize = stock[stock.index('void MixxxMainWindow::initialize() {'):]
+        self.assertLess(initialize.index('            &MixxxMainWindow::skinLoaded,'),
+                        initialize.index('m_pPrefDlg = new DlgPreferences('))
+        self.assertLess(initialize.index('WaveformWidgetFactory::instance()->startVSync('),
+                        initialize.index('m_pPrefDlg = new DlgPreferences('))
+        self.assertLess(initialize.index('m_pPrefDlg = new DlgPreferences('),
+                        initialize.index('if (!loadConfiguredSkin()) {'))
+
+    def test_the_rgb_overview_keeps_its_look(self):
+        # Stock: the RGB overview draws with SignalRGB*Color only; the band
+        # colours are the Filtered (and HSV) overview's, and SignalLowColor is
+        # also the status text's.
+        woverview = pinned_bytes(OVERVIEW).decode()
+        rgb = woverview[woverview.index('void WOverview::drawNextPixmapPartRGB('):
+                        woverview.index('void WOverview::paintText(')]
+        self.assertNotRegex(rgb, r'get(Low|Mid|High)Color\(\)|m_lowColor')
+        self.assertEqual(re.findall(r'getRgb(?:Low|Mid|High)Color', rgb),
+                         ['getRgbLowColor', 'getRgbMidColor', 'getRgbHighColor'])
+        self.assertEqual(woverview.count('m_lowColor'), 3)
+        self.assertIn('m_lowColor = m_signalColors.getLowColor();', woverview)
+        self.assertIn('    m_lowColor.setAlphaF(0.5f);', woverview[woverview.index('void WOverview::paintText('):])
+
+    def test_the_status_text_colour_is_read_with_a_fallback(self):
+        # Leader, 2026-11-24: the status text keeps its colour.
+        overview = added(OVERVIEW)
+        self.assertRegex(overview, r'm_mixpiStatusTextColor = context\.selectColor\(node, '
+                                   r'QStringLiteral\("MixpiStatusTextColor"\)\);\s*'
+                                   r'm_mixpiStatusTextColor = m_mixpiStatusTextColor\.isValid\(\)\s*'
+                                   r'\? WSkinColor::getCorrectColor\(m_mixpiStatusTextColor\)\.toRgb\(\)\s*'
+                                   r': m_lowColor;')
+        self.assertIn('    m_mixpiStatusTextColor.setAlphaF(0.5f);', overview)
+        self.assertIn('QBrush(m_mixpiStatusTextColor), 1.25 * m_scaleFactor', overview)
+        self.assertIn('QColor m_mixpiStatusTextColor;', added(OVERVIEW_HEADER))
+        # The fallback, m_lowColor, is still SignalLowColor (stock line kept).
+        text = PATCH.read_text()
+        section = text[text.index('diff --git a/' + OVERVIEW + ' '):text.index('diff --git a/' + OVERVIEW_HEADER + ' ')]
+        self.assertIn('\n     m_lowColor = m_signalColors.getLowColor();\n+', section)
 
 
 class ThreeBandSkinTests(unittest.TestCase):
@@ -290,6 +396,29 @@ class ThreeBandSkinTests(unittest.TestCase):
                 # Mixxx keeps them only beside a valid SignalColor; the test base
                 # skin has none (review, Fable m5).
                 self.assertEqual([e.text for e in visual.findall('SignalColor')], ['#32323c'], loop_display)
+
+    def test_every_overview_strip_has_the_owners_colours_and_the_status_text_colour(self):
+        for loop_display, root in self.roots.items():
+            overviews = list(root.iter('Overview'))
+            # The Decks page's two strips and the browse page's two.
+            self.assertEqual(len(overviews), 4, loop_display)
+            self.assertEqual(sorted(o.findtext('Channel') for o in overviews), ['1', '1', '2', '2'])
+            for overview in overviews:
+                with self.subTest(loop_display=loop_display, channel=overview.findtext('Channel')):
+                    for tag, colour in COLOURS.items():
+                        self.assertEqual([e.text for e in overview.findall(tag)], [colour])
+                    self.assertEqual([e.text for e in overview.findall('MixpiStatusTextColor')], [STATUS_TEXT])
+                    self.assertEqual([e.text for e in overview.findall('SignalColor')], ['#32323c'])
+
+    def test_the_overview_template_keeps_a_base_signal_colour_and_one_status_colour(self):
+        module = HEIGHT_RUNNER.load('mixpi-performance')
+        overview = ET.fromstring('<Overview><SignalColor>#222</SignalColor><SignalLowColor>#007de1</SignalLowColor>'
+                                 '<MixpiStatusTextColor>#fff</MixpiStatusTextColor></Overview>')
+        module.three_band_overview(overview)
+        self.assertEqual([e.text for e in overview.findall('SignalColor')], ['#222'])
+        self.assertEqual([e.text for e in overview.findall('MixpiStatusTextColor')], [STATUS_TEXT])
+        self.assertEqual({tag: [e.text for e in overview.findall(tag)] for tag in COLOURS},
+                         {tag: [colour] for tag, colour in COLOURS.items()})
 
     def test_colours_replace_whatever_the_base_skin_says(self):
         module = HEIGHT_RUNNER.load('mixpi-performance')
@@ -400,7 +529,7 @@ class ThreeBandNativeTests(unittest.TestCase):
         self.assertNotIn('FAIL ', output)
         self.assertIn('HEIGHTS main-filtered 0.900 main-rgb 0.900 loop-filtered 0.380 loop-rgb 0.380', output)
         saves = re.findall(r'MEASURE .* in mixxx.cfg on disk ms: (-?\d+)', output)
-        self.assertEqual(len(saves), 2)
+        self.assertEqual(len(saves), 3)
         for measured in saves:
             self.assertTrue(0 <= int(measured) < 1000, measured)
 
@@ -427,7 +556,15 @@ class ThreeBandNativeTests(unittest.TestCase):
                      'the availability follows the factory\'s handle for type 19 (sync)',
                      'a write to [MixPi],waveform_three_band_available is ignored (read-only)',
                      'the Loop panel\'s 3-BAND waveform draws at total_gain (0.38), not Mixxx\'s doubled 0.76',
-                     'the Loop panel\'s 3-BAND and RGB waveforms reach the same height'):
+                     'the Loop panel\'s 3-BAND and RGB waveforms reach the same height',
+                     'at the first sync, before the overview control exists, 3-BAND writes overview type 0 '
+                     '(Filtered) to mixxx.cfg',
+                     'RGB (type 17) sets the overview control and mixxx.cfg to 2 (RGB)',
+                     '3-BAND (type 19) sets the overview control and mixxx.cfg to 0 (Filtered)',
+                     'a third waveform type sets the overview control and mixxx.cfg to 2 (RGB)',
+                     'an overview type picked in Mixxx\'s Preferences is replaced at the next sync',
+                     'a sync with the overview type already right writes nothing to mixxx.cfg or the control',
+                     'a write from a worker thread changes the overview type on the GUI thread only'):
             self.assertRegex(output, r'(?m)^FAIL ' + re.escape(name))
         # Stock Mixxx's own getGain, asked what stock Filtered asks: doubled.
         self.assertIn('HEIGHTS main-filtered 1.800 main-rgb 0.900 loop-filtered 0.760 loop-rgb 0.380', output)

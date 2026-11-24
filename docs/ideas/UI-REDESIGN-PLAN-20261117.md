@@ -997,3 +997,12 @@ Asked by the new main-climb orchestrator after the R&D handoff (`docs/ideas/rnd-
 - **Mac space:** delete the old 10 Nov VM disk snapshots: "Let's do 1 and keep a habit of doing cleanup when we are done testing." Five `deploy/recovery-20261110/vm-*/private/*.disk` files were deleted; the forensic `vm-preservation-20261110T0812Z/private-snapshot/` was kept. Cleanup is now the last step of every build and test round.
 - **Build R, card update and the 14 three-band card checks:** "Build, install, test (Recommended)".
 - **Council:** acceptance only; "Let's do 1. we can run the round after I review myself on the pi."
+
+### 12.20 Owner: the overview strips follow the setting (2026-11-24)
+
+- **Request:** "So the smaller bottom bar currently isn't 3 band. Please update that quickly for me to come back and review." The smaller bottom bar is the overview strips: the full-track strips under each deck's info row on the Decks page, also on the browse page.
+- **So (wave J18):** the overview strips follow Settings › Advanced, "Waveform colours". With 3-BAND they draw Mixxx's Filtered overview in Pioneered's three colours (low #004ee4, mid #c95a00, high #f6e9d3). With RGB they draw the RGB overview as before.
+  - This replaces the R&D answer that the overview strips stay as they are.
+  - An overview type picked in Mixxx's own Preferences is replaced at the next sync of the row.
+- **Status text colour (leader's call, the owner was away and had said not to ask):** Mixxx draws the overview's status text ("Loading track...", "Ready to play, analyzing...", "Finalizing...") in the overview's low-band colour. The colour change would have darkened that text in both styles. The text keeps its old #007de1 through a new optional skin property, `MixpiStatusTextColor`; a skin without it behaves as stock Mixxx. The owner can change this at review.
+- Ships in the next build after J18 (build S); card check 2 in the three-band HANDOFF covers it.

@@ -8,6 +8,9 @@
 // MIXPI_THREE_BAND_BASELINE (the stack without the patch) the setting, the
 // default, the availability control and the three-band height rule (main
 // rows and the Loop panel) are absent and every check about them fails.
+// The overview strips follow the setting (owner, 2026-11-24): the overview
+// mode checks Mixxx's overview type in mixxx.cfg and on its read-only control,
+// made as Mixxx's Preferences makes it.
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -25,6 +28,8 @@
 #include <vector>
 
 #include "control/controlobject.h"
+#include "control/controlproxy.h"
+#include "control/controlpushbutton.h"
 #include "mixpi_filtered_choice.h"
 #include "preferences/usersettings.h"
 #include "waveform/mixpiwaveformgain.h"
@@ -117,6 +122,11 @@ QString savedType(const QString& path) {
 const ConfigKey kColours("[MixPi]", "waveform_colours");
 const ConfigKey kAvailable("[MixPi]", "waveform_three_band_available");
 const ConfigKey kTypeKey("[Waveform]", "WaveformType");
+const ConfigKey kOverviewKey("[Waveform]", "WaveformOverviewType");
+// WOverview::Type: Filtered, HSV, RGB.
+constexpr int kOverviewFiltered = 0;
+constexpr int kOverviewHsv = 1;
+constexpr int kOverviewRgb = 2;
 // A type Mixxx picks by itself when the saved one cannot be drawn.
 constexpr int kFallbackType = 6;
 
@@ -343,6 +353,111 @@ int start(const QString& directory) {
     return failures ? 1 : 0;
 }
 
+// The overview type control as Mixxx's Preferences makes it (DlgPrefWaveform's
+// constructor, after the setting's first sync and before the skin): read-only,
+// three states, from mixxx.cfg with RGB as the default.
+std::unique_ptr<ControlPushButton> preferencesOverviewControl(const UserSettingsPointer& pConfig) {
+    auto pControl = std::make_unique<ControlPushButton>(kOverviewKey);
+    pControl->setStates(3);
+    pControl->setReadOnly();
+    int type = pConfig->getValue<int>(kOverviewKey, kOverviewRgb);
+    if (type < kOverviewFiltered || type > kOverviewRgb) {
+        type = kOverviewRgb;
+        pConfig->setValue(kOverviewKey, type);
+    }
+    pControl->forceSet(type);
+    return pControl;
+}
+
+double overviewControl() {
+    return ControlObject::exists(kOverviewKey) ? ControlObject::get(kOverviewKey) : -100.0;
+}
+
+QString savedOverview(const QString& path) {
+    return savedLines(path, "WaveformOverviewType ");
+}
+
+int overview(const QString& directory) {
+    App app(directory, kThreeBandCfg);
+    // The first sync runs before Mixxx's Preferences has made the control.
+    check(!ControlObject::exists(kOverviewKey) &&
+                    app.pConfig->getValueString(kOverviewKey) == QStringLiteral("0"),
+            QStringLiteral("at the first sync, before the overview control exists, 3-BAND writes overview type 0 (Filtered) to mixxx.cfg"));
+    const qint64 saved = waitFor(3000, [&] { return savedOverview(app.path) == "WaveformOverviewType 0"; });
+    measure(QStringLiteral("overview type 0 in mixxx.cfg on disk"), saved);
+    check(saved >= 0 && saved < 1000,
+            QStringLiteral("the overview type is saved in mixxx.cfg in under 1 s"));
+    const auto pControl = preferencesOverviewControl(app.pConfig);
+    check(overviewControl() == kOverviewFiltered,
+            QStringLiteral("Mixxx's Preferences, made after the first sync, starts the overview control at 0 (Filtered)"));
+
+    // An overview strip follows the control live (WOverview's proxy).
+    QObject strip;
+    ControlProxy proxy(kOverviewKey);
+    std::vector<double> seen;
+    int seenOffGuiThread = 0;
+    proxy.connectValueChanged(
+            &strip,
+            [&](double value) {
+                seen.push_back(value);
+                if (QThread::currentThread() != QCoreApplication::instance()->thread()) {
+                    ++seenOffGuiThread;
+                }
+            },
+            Qt::DirectConnection);
+
+    choose(0);
+    check(overviewControl() == kOverviewRgb && app.pConfig->getValueString(kOverviewKey) == QStringLiteral("2"),
+            QStringLiteral("RGB (type 17) sets the overview control and mixxx.cfg to 2 (RGB)"));
+    check(seen == std::vector<double>{kOverviewRgb},
+            QStringLiteral("an overview strip sees the change to RGB at once"));
+    check(waitFor(3000, [&] { return savedOverview(app.path) == "WaveformOverviewType 2"; }) >= 0,
+            QStringLiteral("and the overview type 2 is the one saved"));
+
+    choose(1);
+    check(overviewControl() == kOverviewFiltered &&
+                    app.pConfig->getValueString(kOverviewKey) == QStringLiteral("0"),
+            QStringLiteral("3-BAND (type 19) sets the overview control and mixxx.cfg to 0 (Filtered)"));
+
+    // A third type picked in Mixxx's Preferences: the row lights RGB, and so
+    // do the overviews.
+    app.factory.applied = kFallbackType;
+    app.sync();
+    check(overviewControl() == kOverviewRgb && app.pConfig->getValueString(kOverviewKey) == QStringLiteral("2"),
+            QStringLiteral("a third waveform type sets the overview control and mixxx.cfg to 2 (RGB)"));
+    app.factory.applied = 0;
+    app.sync();
+    check(overviewControl() == kOverviewRgb,
+            QStringLiteral("empty waveforms leave the overviews RGB"));
+
+    // An overview type picked in Mixxx's Preferences (slotSetWaveformOverviewType)
+    // is replaced at the next sync.
+    app.factory.applied = 19;
+    app.pConfig->setValue(kOverviewKey, kOverviewHsv);
+    pControl->forceSet(kOverviewHsv);
+    app.sync();
+    check(overviewControl() == kOverviewFiltered &&
+                    app.pConfig->getValueString(kOverviewKey) == QStringLiteral("0"),
+            QStringLiteral("an overview type picked in Mixxx's Preferences is replaced at the next sync"));
+
+    // Nothing is written when the value is already right.
+    const quint64 changesBefore = app.pConfig->changeCount();
+    const std::size_t seenBefore = seen.size();
+    app.sync();
+    app.sync();
+    check(overviewControl() == kOverviewFiltered && app.pConfig->changeCount() == changesBefore &&
+                    seen.size() == seenBefore,
+            QStringLiteral("a sync with the overview type already right writes nothing to mixxx.cfg or the control"));
+
+    // A write from a worker thread changes the overviews on the GUI thread.
+    chooseFromWorker({0});
+    const bool unchangedOnWorker = overviewControl() == kOverviewFiltered;
+    check(unchangedOnWorker && waitFor(3000, [&] { return overviewControl() == kOverviewRgb; }) >= 0 &&
+                    seenOffGuiThread == 0 && !seen.empty() && seen.back() == kOverviewRgb,
+            QStringLiteral("a write from a worker thread changes the overview type on the GUI thread only"));
+    return failures ? 1 : 0;
+}
+
 // The one-time default, with the file Mixxx's own parser read.
 bool defaultedOnce(const QString& directory, const QByteArray& cfg) {
     App app(directory, cfg);
@@ -542,6 +657,7 @@ int main(int argc, char** argv) {
             {QStringLiteral("default"), defaultOnce},
             {QStringLiteral("thread"), thread},
             {QStringLiteral("height"), height},
+            {QStringLiteral("overview"), overview},
     };
     if (!modes.contains(mode)) {
         std::fprintf(stderr, "unknown mode %s\n", argv[1]);

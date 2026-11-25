@@ -1,5 +1,7 @@
 # Handoff to the main climb: three-band main waveforms (owner pick)
 
+> **Status at 2026-11-25 (main climb).** Merged into `feat/pi-performance-target` at `a16e093` (owner's yes, plan 12.19). Since then: build R compiled the patch and ran on the card (acceptance R, 12 PASS, 1 FAIL, 1 BLOCKED); J18 and build S (acceptance S, 7 of 7); J19 and build T, built but **not yet on the card** (card unreachable 2026-11-25). The native gate runs on VM b with every mode (`deploy/ui-redesign-20261117/gates/uiJ19-7c933e3.log`, 404 OK, 0 skips). The paragraphs below up to "What is proven" are the R&D snapshot of 2026-11-23; where they say "not compiled", "not run on VM b" or "nothing on the card", the records above supersede them. J19's card check (check 2) is the one still open.
+
 Branch `rnd/waveform-three-band-20261122`, on `fd1e940` (kMainWaveformGain 0.90). Not pushed, not merged; the main climb's orchestrator integrates it.
 
 This version answers two adversarial reviews of `589144d` (Sol 5/10, Fable 7/10; `deploy/rnd-waveform-three-band-20261122/review/` in the main checkout) and carries the owner's three answers to the review questions (2026-11-23, below). **Nothing here has run on the card.** The full Mixxx build has not been compiled with this patch yet; see "What is proven".

@@ -277,6 +277,13 @@ The owner read council round 2 (all three seats at 6) and decided the following.
 - **The header's 1 px bottom line** (listed item 4): the owner chooses to add it or leave it, after seeing the comparison `deploy/ui-redesign-20261117/header-line-choice-20261122/01-header-line-A-without-B-with.png`. Owner: "Show me so I can choose to keep or remove it." **Chosen: B, add the line** (owner, pointing at "add the line (B)": "this"). The empty part of the header gets the sections' 1 px `#2c333d` bottom line, full width to the scroll bar, and the header keeps its height (wave J14).
 - **Package updates.** Owner: "Absolutely do that. Thanks!" The card got the Debian updates on 2026-11-22 (28 packages; no bootloader change). Build M's image takes the same current packages (stage0 runs `dist-upgrade`).
 
+## 2i. Owner items after build Q: three-band waveforms (2026-11-24/25)
+
+This replaces 2h's "three-band colours … not part of this build" and 2h's "the overview strips, the Loop panel … keep their look" for the waveforms only. The owner's words and the design are in plan 12.19-12.21 and `docs/ideas/rnd-waveform-three-band-20261122/OWNER-DECISIONS.md` / `HANDOFF.md`:
+- **Settings › Advanced** gets one row, **Waveform colours: RGB / 3-BAND** (this replaces "Advanced: no change" for that row). 3-BAND is on by default once; the main waveforms draw Mixxx's Filtered waveform in Pioneered's colours (low #004ee4, mid #c95a00, high #f6e9d3); the Loop panel follows at the RGB height (12.19).
+- **The overview strips follow the row** (12.20): 3-BAND colours with 3-BAND, RGB as before with RGB; the status text keeps #007de1.
+- **In 3-BAND the overview strips are one-sided ("half")** from the bottom edge, Mixxx's band order (12.21). RGB strips stay mirrored.
+
 ## 3. Not part of build C
 
 - **G5 extras:** the owner suggested an outline in the fill colour when active and thinner outlines on inactive buttons, then said "What we have now is acceptable". This is noted only.

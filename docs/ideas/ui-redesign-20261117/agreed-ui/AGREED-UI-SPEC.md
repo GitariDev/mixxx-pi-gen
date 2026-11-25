@@ -279,10 +279,10 @@ The owner read council round 2 (all three seats at 6) and decided the following.
 
 ## 2i. Owner items after build Q: three-band waveforms (2026-11-24/25)
 
-This replaces 2h's "three-band colours … not part of this build" and 2h's "the overview strips, the Loop panel … keep their look" for the waveforms only. The owner's words and the design are in plan 12.19-12.21 and `docs/ideas/rnd-waveform-three-band-20261122/OWNER-DECISIONS.md` / `HANDOFF.md`:
-- **Settings › Advanced** gets one row, **Waveform colours: RGB / 3-BAND** (this replaces "Advanced: no change" for that row). 3-BAND is on by default once; the main waveforms draw Mixxx's Filtered waveform in Pioneered's colours (low #004ee4, mid #c95a00, high #f6e9d3); the Loop panel follows at the RGB height (12.19).
+This replaces 2h's "three-band colours … not part of this build" and 2h's "the overview strips, the Loop panel … keep their look" for the waveforms only. The owner's words and the design are in plan 12.19-12.22 and `docs/ideas/rnd-waveform-three-band-20261122/OWNER-DECISIONS.md` / `HANDOFF.md`:
+- **Settings › Advanced** gets one row, **Waveform colours: RGB / 3-BAND** (this replaces "Advanced: no change" for that row). 3-BAND is on by default once; the main waveforms draw Mixxx's Filtered waveform in DiggaOS's colours (low #3d6bff, mid #ff4f9a, high #eef1ff, DiggaOS's dark deck screen; owner 2026-11-25, 12.22; Pioneered's #004ee4, #c95a00, #f6e9d3 before); the Loop panel follows at the RGB height (12.19).
 - **The overview strips follow the row** (12.20): 3-BAND colours with 3-BAND, RGB as before with RGB; the status text keeps #007de1.
-- **In 3-BAND the overview strips are one-sided ("half")** from the bottom edge, Mixxx's band order (12.21). RGB strips stay mirrored.
+- **In 3-BAND the overview strips are one-sided ("half") and filled like a CDJ's** (12.21, 12.22): each band a bar up from the bottom edge, in Mixxx's band order, and once the track is analysed the tallest bar reaches the strip's top edge, whatever Mixxx's Normalize says. Layered as DiggaOS's overview: the low body at full height, mids at 0.72 and highs at 0.42 of theirs, all from the bottom. RGB strips stay mirrored, at Mixxx's scale.
 
 ## 3. Not part of build C
 

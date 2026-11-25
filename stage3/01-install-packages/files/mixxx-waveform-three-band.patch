@@ -445,10 +445,10 @@ index 349669a..248782b 100644
    public slots:
      void slotSkinLoaded();
 diff --git a/src/widget/woverview.cpp b/src/widget/woverview.cpp
-index 683810c..593ef2b 100644
+index 683810c..d683987 100644
 --- a/src/widget/woverview.cpp
 +++ b/src/widget/woverview.cpp
-@@ -128,6 +128,21 @@ void WOverview::setup(const QDomNode& node, const SkinContext& context) {
+@@ -128,6 +128,41 @@ void WOverview::setup(const QDomNode& node, const SkinContext& context) {
      m_passthroughOverlayColor = m_signalColors.getPassthroughOverlayColor();
      m_playedOverlayColor = m_signalColors.getPlayedOverlayColor();
      m_lowColor = m_signalColors.getLowColor();
@@ -467,10 +467,30 @@ index 683810c..593ef2b 100644
 +    // (drawNextPixmapPartLMH). RGB and HSV, and Filtered without it, are
 +    // drawn as in Mixxx.
 +    m_mixpiOverviewHalf = context.selectBool(node, QStringLiteral("MixpiOverviewHalf"), false);
++    // MixPi band scale (owner, 2026-11-25: "please used the colors from
++    // DiggaOS on the 3 bands"; the layering is DiggaOS's, leader): in the half
++    // overview the low, mid and high bars are this share of their left +
++    // right height, "low,mid,high", each 0 to 1. DiggaOS draws "lows as the
++    // body, mids over them, highs as the bright core" (1,0.72,0.42). Without
++    // the property, or with a bad one, 1,1,1: every bar its full height.
++    const QStringList bandScale = context.selectString(node, QStringLiteral("MixpiOverviewBandScale"))
++                                          .split(QLatin1Char(','));
++    if (bandScale.size() == 3) {
++        float scale[3];
++        bool valid = true;
++        for (int band = 0; band < 3; ++band) {
++            bool ok = false;
++            scale[band] = bandScale[band].trimmed().toFloat(&ok);
++            valid = valid && ok && scale[band] >= 0.0f && scale[band] <= 1.0f;
++        }
++        for (int band = 0; valid && band < 3; ++band) {
++            m_mixpiOverviewBandScale[band] = scale[band];
++        }
++    }
      m_dimBrightThreshold = m_signalColors.getDimBrightThreshold();
  
      m_labelBackgroundColor = context.selectColor(node, "LabelBackgroundColor");
-@@ -439,6 +454,10 @@ void WOverview::slotTypeControlChanged(double v) {
+@@ -439,6 +474,10 @@ void WOverview::slotTypeControlChanged(double v) {
      m_type = type;
      m_pWaveform.clear();
      m_waveformSourceImage = QImage();
@@ -481,7 +501,7 @@ index 683810c..593ef2b 100644
      slotWaveformSummaryUpdated();
  }
  
-@@ -708,6 +727,20 @@ void WOverview::drawEndOfTrackBackground(QPainter* pPainter) {
+@@ -708,6 +747,20 @@ void WOverview::drawEndOfTrackBackground(QPainter* pPainter) {
  void WOverview::drawAxis(QPainter* pPainter) {
      PainterScope painterScope(pPainter);
      pPainter->setPen(QPen(m_axesColor, m_scaleFactor));
@@ -502,7 +522,31 @@ index 683810c..593ef2b 100644
      if (m_orientation == Qt::Horizontal) {
          pPainter->drawLine(0, height() / 2, width(), height() / 2);
      } else {
-@@ -735,6 +768,17 @@ void WOverview::drawWaveformPixmap(QPainter* pPainter) {
+@@ -728,6 +781,23 @@ void WOverview::drawWaveformPixmap(QPainter* pPainter) {
+                     widgetFactory->getVisualGain(WaveformWidgetFactory::All));
+             diffGain = 255.0f - (255.0f / visualGain);
+         }
++        // MixPi CDJ fill (owner, 2026-11-25: "I want the small waveforms not
++        // to be half the height, but have the waveform cut in half like on a
++        // CDJ"): once the track's summary is drawn, the half overview is
++        // always normalized to its own tallest bar, whatever Normalize says,
++        // as a CDJ's wave preview fills its strip. Mixxx's peak (getAll)
++        // would not do: the summary's bands are their own filters' maxima,
++        // apart from filtered.all, so a bar can be taller than 2 * peak (cut
++        // off) or shorter (filtered.all and high are stored as level^0.632,
++        // low and mid as the level); the tallest bar drawn is the one that
++        // must reach the top.
++        // Before the summary is complete, as above (Mixxx's Normalize waits
++        // for the peak too).
++        const bool mixpiFill = m_mixpiOverviewHalf && m_type == Type::Filtered &&
++                m_pixmapDone && m_mixpiOverviewTallestBar > 2;
++        if (mixpiFill) {
++            diffGain = 255.0f - m_mixpiOverviewTallestBar / 2.0f;
++        }
+ 
+         if (m_diffGain != diffGain || m_waveformImageScaled.isNull()) {
+             QRect sourceRect(0,
+@@ -735,6 +805,22 @@ void WOverview::drawWaveformPixmap(QPainter* pPainter) {
                      m_waveformSourceImage.width(),
                      m_waveformSourceImage.height() -
                              2 * static_cast<int>(diffGain));
@@ -516,11 +560,16 @@ index 683810c..593ef2b 100644
 +                // a column of left + right = 2 * peak. With the visual gain
 +                // g both show 510 / g rows: 255 / g a side, or 510 / g up.
 +                sourceRect.moveTop(2 * static_cast<int>(diffGain));
++                if (mixpiFill) {
++                    // The CDJ fill shows the tallest bar's rows exactly: it
++                    // reaches the strip's top row, every bar fits.
++                    sourceRect.setTop(m_waveformSourceImage.height() - m_mixpiOverviewTallestBar);
++                }
 +            }
              QImage croppedImage = m_waveformSourceImage.copy(sourceRect);
              if (m_orientation == Qt::Vertical) {
                  // Rotate pixmap
-@@ -1443,6 +1487,45 @@ void WOverview::drawNextPixmapPartLMH(QPainter* pPainter,
+@@ -1443,6 +1529,56 @@ void WOverview::drawNextPixmapPartLMH(QPainter* pPainter,
      QPen highColorPen(QBrush(highColor), 1);
  
      int currentCompletion = 0;
@@ -531,11 +580,19 @@ index 683810c..593ef2b 100644
 +        // peaks and troughs get twice the rows. Low, then mid, then high over
 +        // them, in their colours, as Mixxx draws them. The painter's origin
 +        // is the image's centre row (drawNextPixmapPart), the bottom edge is
-+        // height / 2 below it.
++        // height / 2 below it. Each bar is its band's share of that height
++        // (MixpiOverviewBandScale, DiggaOS's layering), and the tallest bar
++        // drawn is kept for the CDJ fill (drawWaveformPixmap); a new image
++        // starts at the first column.
 +        const int bottom = m_waveformSourceImage.height() / 2;
-+        const auto drawBar = [&](int x, int barHeight, const QColor& color) {
++        if (m_actualCompletion == 0) {
++            m_mixpiOverviewTallestBar = 0;
++        }
++        const auto drawBar = [&](int x, int band, int level, const QColor& color) {
++            const int barHeight = qRound(m_mixpiOverviewBandScale[band] * level);
 +            if (barHeight > 0) {
 +                pPainter->fillRect(QRect(x, bottom - barHeight, 1, barHeight), color);
++                m_mixpiOverviewTallestBar = math_max(m_mixpiOverviewTallestBar, barHeight);
 +            }
 +        };
 +        for (currentCompletion = m_actualCompletion;
@@ -543,14 +600,17 @@ index 683810c..593ef2b 100644
 +                currentCompletion += 2) {
 +            const int x = currentCompletion / 2;
 +            drawBar(x,
++                    0,
 +                    pWaveform->getLow(currentCompletion) +
 +                            pWaveform->getLow(currentCompletion + 1),
 +                    lowColor);
 +            drawBar(x,
++                    1,
 +                    pWaveform->getMid(currentCompletion) +
 +                            pWaveform->getMid(currentCompletion + 1),
 +                    midColor);
 +            drawBar(x,
++                    2,
 +                    pWaveform->getHigh(currentCompletion) +
 +                            pWaveform->getHigh(currentCompletion + 1),
 +                    highColor);
@@ -566,7 +626,7 @@ index 683810c..593ef2b 100644
      for (currentCompletion = m_actualCompletion;
              currentCompletion < nextCompletion;
              currentCompletion += 2) {
-@@ -1567,9 +1650,9 @@ void WOverview::drawNextPixmapPartRGB(QPainter* pPainter,
+@@ -1567,9 +1703,9 @@ void WOverview::drawNextPixmapPartRGB(QPainter* pPainter,
  
  void WOverview::paintText(const QString& text, QPainter* pPainter) {
      PainterScope painterScope(pPainter);
@@ -579,10 +639,10 @@ index 683810c..593ef2b 100644
      QFont font = pPainter->font();
      QFontMetrics fm(font);
 diff --git a/src/widget/woverview.h b/src/widget/woverview.h
-index f28e78a..e8e8241 100644
+index f28e78a..cd5a15a 100644
 --- a/src/widget/woverview.h
 +++ b/src/widget/woverview.h
-@@ -217,6 +217,10 @@ class WOverview : public WWidget, public TrackDropTarget {
+@@ -217,6 +217,14 @@ class WOverview : public WWidget, public TrackDropTarget {
      QColor m_passthroughOverlayColor;
      QColor m_playedOverlayColor;
      QColor m_lowColor;
@@ -590,6 +650,10 @@ index f28e78a..e8e8241 100644
 +    QColor m_mixpiStatusTextColor;
 +    // MixPi: the skin's MixpiOverviewHalf, a one-sided Filtered overview.
 +    bool m_mixpiOverviewHalf = false;
++    // MixPi: the skin's MixpiOverviewBandScale (low, mid, high), half only.
++    float m_mixpiOverviewBandScale[3] = {1.0f, 1.0f, 1.0f};
++    // MixPi: the half overview's tallest bar so far, in image rows.
++    int m_mixpiOverviewTallestBar = 0;
      int m_dimBrightThreshold;
      parented_ptr<QLabel> m_pPassthroughLabel;
  

@@ -33,8 +33,11 @@ Production code, from the patched stack:
   renamed StockOverview (overview_stock.inc), are the reference for "as in
   Mixxx". The members they use, the track, its waveform summary,
   WaveformSignalColors, ScopedTimer and the factory's normalize and visual
-  gain are doubles; WOverview::setup's reading of MixpiOverviewHalf is
-  checked as text in tests/test_waveform_three_band.py.
+  gain are doubles; WOverview::setup's reading of MixpiOverviewHalf and
+  MixpiOverviewBandScale is checked as text in
+  tests/test_waveform_three_band.py. The same mode checks J20's CDJ fill
+  (the strip normalized to its tallest bar) and band scale (owner
+  2026-11-25).
 
 The waveform factory (WaveformWidgetFactory::mixpiAppliedType,
 mixpiSwitchTo and findHandleIndexFromType, which the availability control

@@ -14,7 +14,11 @@
 // "the half waveform on the smaller views ... keeping the 3 band") draws
 // summaries with WOverview's own drawing functions, cut out of the stack
 // (overview_shipped.inc), beside the same functions from stock Mixxx
-// (overview_stock.inc, class StockOverview).
+// (overview_stock.inc, class StockOverview). The owner's next words, the
+// same day ("have the waveform cut in half like on a CDJ"; "please used the
+// colors from DiggaOS on the 3 bands"): the half mode also checks the CDJ fill
+// (the strip normalized to its tallest bar once the summary is drawn) and
+// MixpiOverviewBandScale (DiggaOS's layering, 1, 0.72, 0.42).
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -28,6 +32,8 @@
 #include <QSharedPointer>
 #include <QThread>
 #include <QTimer>
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -153,8 +159,10 @@ struct MixpiOverviewFixture : QWidget {
     QImage m_waveformImageScaled;
     WaveformSignalColors m_signalColors;
     QColor m_axesColor;
-    // The patch's member; stock Mixxx's functions do not read it.
+    // The patch's members; stock Mixxx's functions do not read them.
     bool m_mixpiOverviewHalf = false;
+    float m_mixpiOverviewBandScale[3] = {1.0f, 1.0f, 1.0f};
+    int m_mixpiOverviewTallestBar = 0;
 };
 
 #define MIXPI_OVERVIEW_FUNCTIONS                                                          \
@@ -803,9 +811,10 @@ QSharedPointer<Waveform> typical() {
     });
 }
 
-const QRgb kLow = QColor(QStringLiteral("#004ee4")).rgb();
-const QRgb kMid = QColor(QStringLiteral("#c95a00")).rgb();
-const QRgb kHigh = QColor(QStringLiteral("#f6e9d3")).rgb();
+// DiggaOS's dark deck colours, the skin's (owner, 2026-11-25).
+const QRgb kLow = QColor(QStringLiteral("#3d6bff")).rgb();
+const QRgb kMid = QColor(QStringLiteral("#ff4f9a")).rgb();
+const QRgb kHigh = QColor(QStringLiteral("#eef1ff")).rgb();
 const QRgb kAxes = QColor(245, 245, 245).rgb();
 
 template<typename Overview>
@@ -813,7 +822,8 @@ std::unique_ptr<Overview> overviewOf(OverviewType type,
         bool half,
         const QSharedPointer<Waveform>& pWaveform,
         QSize size = QSize(kColumns, 202),
-        Qt::Orientation orientation = Qt::Horizontal) {
+        Qt::Orientation orientation = Qt::Horizontal,
+        std::array<float, 3> bandScale = {1.0f, 1.0f, 1.0f}) {
     auto pOverview = std::make_unique<Overview>();
     pOverview->m_signalColors.lowColor = QColor(kLow);
     pOverview->m_signalColors.midColor = QColor(kMid);
@@ -825,6 +835,7 @@ std::unique_ptr<Overview> overviewOf(OverviewType type,
     pOverview->m_axesColor = QColor(kAxes);
     pOverview->m_type = type;
     pOverview->m_mixpiOverviewHalf = half;
+    std::copy(bandScale.begin(), bandScale.end(), pOverview->m_mixpiOverviewBandScale);
     pOverview->m_orientation = orientation;
     pOverview->resize(size);
     // drawNextPixmapPart makes the image trackSamples / 2 + 1 columns wide.
@@ -887,17 +898,19 @@ bool halfFirstColumn(const QImage& image) {
             rows(image, 0, 430, 489, kMid) && rows(image, 0, 490, 509, kHigh);
 }
 
-bool sameAsStock(OverviewType type, bool half) {
+bool sameAsStock(OverviewType type, bool half, std::array<float, 3> bandScale = {1.0f, 1.0f, 1.0f}) {
     const auto pWaveform = typical();
-    const auto pShipped = overviewOf<WOverview>(type, half, pWaveform);
+    const auto pShipped = overviewOf<WOverview>(
+            type, half, pWaveform, QSize(kColumns, 202), Qt::Horizontal, bandScale);
     const auto pStock = overviewOf<StockOverview>(type, false, pWaveform);
     const bool source = !pStock->m_waveformSourceImage.isNull() &&
             pShipped->m_waveformSourceImage == pStock->m_waveformSourceImage;
     const bool normalized = scaled(*pShipped, true) == scaled(*pStock, true);
+    const bool plain = scaled(*pShipped, false) == scaled(*pStock, false);
     const bool gained = scaled(*pShipped, false, 2.0) == scaled(*pStock, false, 2.0);
     pShipped->resize(kColumns, 40);
     pStock->resize(kColumns, 40);
-    return source && normalized && gained && axis(*pShipped) == axis(*pStock);
+    return source && normalized && plain && gained && axis(*pShipped) == axis(*pStock);
 }
 
 int half(const QString&) {
@@ -925,24 +938,20 @@ int half(const QString&) {
                 QStringLiteral("a band at full scale on both sides fills the image's whole height (510 rows)"));
     }
     {
-        // Normalized, the loudest value 100: diffGain 154, 202 rows shown.
-        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true, typical());
-        const QImage image = scaled(*pOverview, true);
-        check(image.size() == QSize(kColumns, 202) && rows(image, 0, 0, 1, 0) &&
-                        rows(image, 0, 2, 121, kLow) && rows(image, 0, 182, 201, kHigh) &&
-                        rows(image, 3, 0, 191, 0) && rows(image, 3, 192, 201, kHigh),
-                QStringLiteral("normalized, the half overview cuts 2 x 154 rows from the top only: the bars stand on the strip's bottom row"));
-        // Visual gain 2, not normalized: diffGain 127, 256 rows shown.
-        pOverview->resize(kColumns, 256);
-        const QImage gained = scaled(*pOverview, false, 2.0);
-        check(gained.height() == 256 && rows(gained, 0, 0, 55, 0) && rows(gained, 0, 56, 175, kLow) &&
-                        rows(gained, 0, 236, 255, kHigh) && rows(gained, 1, 176, 235, kLow),
-                QStringLiteral("with the visual gain 2 the half overview shows 256 rows up from the bottom edge, at Mixxx's scale"));
-        const auto pStock = overviewOf<StockOverview>(OverviewType::Filtered, false, typical(),
-                QSize(kColumns, 256));
-        const QImage stock = scaled(*pStock, false, 2.0);
-        check(drawnRows(gained, 0) == 200 && drawnRows(stock, 0) == 201,
-                QStringLiteral("at the same scale the half bar is as long as Mixxx's mirrored one (200 rows; Mixxx's 201 has its centre row)"));
+        // The CDJ fill (owner, 2026-11-25): the summary is complete, its
+        // tallest bar is column 0's low, 200 rows: those 200 rows are shown,
+        // Normalize on or off, at any visual gain.
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true, typical(),
+                QSize(kColumns, 200));
+        const QImage plain = scaled(*pOverview, false);
+        check(plain.size() == QSize(kColumns, 200) && rows(plain, 0, 0, 119, kLow) &&
+                        rows(plain, 0, 120, 179, kMid) && rows(plain, 0, 180, 199, kHigh) &&
+                        rows(plain, 1, 0, 119, 0) && rows(plain, 1, 120, 179, kLow) &&
+                        rows(plain, 3, 0, 189, 0) && rows(plain, 3, 190, 199, kHigh),
+                QStringLiteral("with MixpiOverviewHalf and Normalize off, a finished summary's tallest bar reaches the strip's top row, every bar on the bottom row"));
+        check(scaled(*pOverview, true) == plain && scaled(*pOverview, false, 2.0) == plain &&
+                        scaled(*pOverview, false, 0.5) == plain,
+                QStringLiteral("the CDJ fill is the same with Normalize on, and at the visual gains 2 and 0.5"));
         pOverview->resize(kColumns, 40);
         const QImage line = axis(*pOverview);
         check(rows(line, 0, 39, 39, kAxes) && rows(line, kColumns - 1, 39, 39, kAxes) &&
@@ -950,17 +959,120 @@ int half(const QString&) {
                 QStringLiteral("in the half overview the axis line is the strip's bottom row, not its middle"));
     }
     {
+        // A band louder than filtered.all (Mixxx's peak): low 120 + 120, all
+        // 100. Mixxx's normalize would show 2 x 101 rows and cut the bar.
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true,
+                summary({{120, 120, 0, 0, 0, 0, 100}}), QSize(kColumns, 240));
+        const QImage image = scaled(*pOverview, false);
+        check(image.height() == 240 && rows(image, 0, 0, 239, kLow) && rows(image, 1, 0, 219, 0) &&
+                        rows(image, 1, 220, 239, kLow),
+                QStringLiteral("no bar is cut: a low band louder than filtered.all (120 + 120, all 100) fills the strip from the bottom to the top row"));
+    }
+    {
+        // A band quieter than filtered.all: low 60 + 60, all 200 (all is
+        // stored as level^0.632, low as the level). Mixxx's normalize would
+        // show 402 rows, the bar at 30 % of the strip.
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true,
+                summary({{60, 60, 0, 0, 0, 0, 200}}), QSize(kColumns, 120));
+        const QImage image = scaled(*pOverview, true);
+        check(image.height() == 120 && rows(image, 0, 0, 119, kLow),
+                QStringLiteral("a low band quieter than filtered.all (60 + 60, all 200) still reaches the top row, normalized"));
+    }
+    {
+        // Before the summary is complete, J19's crop: half the summary drawn,
+        // as during analysis (onTrackAnalyzerProgress).
+        const auto pWaveform = typical();
+        pWaveform->completion = kColumns;
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true, pWaveform,
+                QSize(kColumns, 510));
+        const bool drawn = pOverview->drawNextPixmapPart() && !pOverview->m_pixmapDone;
+        const QImage whole = scaled(*pOverview, true);
+        check(drawn && whole.height() == 510 && rows(whole, 0, 0, 309, 0) &&
+                        rows(whole, 0, 310, 429, kLow) && rows(whole, 0, 490, 509, kHigh),
+                QStringLiteral("before the summary is complete the half overview keeps J19's crop: normalized at the visual gain 1, all 510 rows"));
+        // Visual gain 2: diffGain 127, 256 rows shown.
+        pOverview->resize(kColumns, 256);
+        const QImage gained = scaled(*pOverview, false, 2.0);
+        check(gained.height() == 256 && rows(gained, 0, 0, 55, 0) && rows(gained, 0, 56, 175, kLow) &&
+                        rows(gained, 0, 236, 255, kHigh) && rows(gained, 1, 176, 235, kLow),
+                QStringLiteral("before the summary is complete, with the visual gain 2 the half overview shows 256 rows up from the bottom edge, at Mixxx's scale"));
+        const auto pStock = overviewOf<StockOverview>(OverviewType::Filtered, false, typical(),
+                QSize(kColumns, 256));
+        const QImage stock = scaled(*pStock, false, 2.0);
+        check(drawnRows(gained, 0) == 200 && drawnRows(stock, 0) == 201,
+                QStringLiteral("at the same scale the half bar is as long as Mixxx's mirrored one (200 rows; Mixxx's 201 has its centre row)"));
+        // The rest comes: the fill applies.
+        pWaveform->completion = pWaveform->getDataSize();
+        pOverview->drawNextPixmapPart();
+        pOverview->resize(kColumns, 200);
+        const QImage filled = scaled(*pOverview, false, 2.0);
+        check(pOverview->m_pixmapDone && rows(filled, 0, 0, 119, kLow) && rows(filled, 0, 180, 199, kHigh),
+                QStringLiteral("when the analysis ends the half overview fills to its tallest bar"));
+    }
+    {
         // A vertical overview: the cropped image is transposed, the bottom
         // edge is the right edge.
         const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true, typical(),
-                QSize(202, kColumns), Qt::Vertical);
+                QSize(200, kColumns), Qt::Vertical);
         const QImage image = scaled(*pOverview, true);
         pOverview->resize(40, kColumns);
         const QImage line = axis(*pOverview);
-        check(image.size() == QSize(202, kColumns) && rows(image, 0, 0, 1, 0, true) &&
-                        rows(image, 0, 2, 121, kLow, true) && rows(image, 0, 182, 201, kHigh, true) &&
+        check(image.size() == QSize(200, kColumns) && rows(image, 0, 0, 119, kLow, true) &&
+                        rows(image, 0, 180, 199, kHigh, true) && rows(image, 3, 0, 189, 0, true) &&
                         rows(line, 39, 0, kColumns - 1, kAxes) && rows(line, 38, 0, kColumns - 1, 0),
-                QStringLiteral("a vertical half overview draws its bars and its axis from the right edge"));
+                QStringLiteral("a vertical half overview draws its bars and its axis from the right edge, filled to the left edge"));
+    }
+    {
+        // DiggaOS's layering (MixpiOverviewBandScale 1,0.72,0.42): column 0
+        // low 200, mid 80 x 0.72 = 57.6 (58), high 20 x 0.42 = 8.4 (8);
+        // column 1 low 80, mid 20 x 0.72 = 14.4 (14), high 5 x 0.42 = 2.1 (2);
+        // column 3 high 10 x 0.42 = 4.2 (4). All from the bottom edge.
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true, typical(),
+                QSize(kColumns, 200), Qt::Horizontal, {1.0f, 0.72f, 0.42f});
+        const QImage& image = pOverview->m_waveformSourceImage;
+        check(rows(image, 0, 0, 309, 0) && rows(image, 0, 310, 451, kLow) && rows(image, 0, 452, 501, kMid) &&
+                        rows(image, 0, 502, 509, kHigh) && rows(image, 1, 0, 429, 0) &&
+                        rows(image, 1, 430, 495, kLow) && rows(image, 1, 496, 507, kMid) &&
+                        rows(image, 1, 508, 509, kHigh) && rows(image, 3, 0, 505, 0) &&
+                        rows(image, 3, 506, 509, kHigh),
+                QStringLiteral("with the band scale 1, 0.72, 0.42 the bars are low 200, mid 58 and high 8 rows from the bottom edge (column 0), low 80, mid 14, high 2 (column 1)"));
+        const QImage filled = scaled(*pOverview, false);
+        check(rows(filled, 0, 0, 141, kLow) && rows(filled, 0, 192, 199, kHigh),
+                QStringLiteral("with the band scale the low body still reaches the top row"));
+        // Only the highs, at full scale: the tallest drawn bar is 510 x 0.42
+        // = 214.2, 214 rows; the fill shows those.
+        const auto pHighs = overviewOf<WOverview>(OverviewType::Filtered, true,
+                summary({{0, 0, 0, 0, 255, 255, 255}}), QSize(kColumns, 214), Qt::Horizontal,
+                {1.0f, 0.72f, 0.42f});
+        const QImage highs = scaled(*pHighs, false);
+        check(highs.height() == 214 && rows(highs, 0, 0, 213, kHigh) && rows(highs, 1, 0, 193, 0),
+                QStringLiteral("the CDJ fill follows the tallest bar as drawn, after the band scale (highs 510 x 0.42 = 214 rows reach the top)"));
+        const auto pDefault = overviewOf<WOverview>(OverviewType::Filtered, true, typical());
+        check(halfFirstColumn(pDefault->m_waveformSourceImage) &&
+                        pDefault->m_waveformSourceImage ==
+                                overviewOf<WOverview>(OverviewType::Filtered, true, typical(),
+                                        QSize(kColumns, 202), Qt::Horizontal, {1.0f, 1.0f, 1.0f})
+                                        ->m_waveformSourceImage,
+                QStringLiteral("the default band scale (1, 1, 1) draws J19's bars: low 200, mid 80, high 20 at their full height"));
+        check(sameAsStock(OverviewType::RGB, true, {1.0f, 0.72f, 0.42f}) &&
+                        sameAsStock(OverviewType::HSV, true, {1.0f, 0.72f, 0.42f}) &&
+                        sameAsStock(OverviewType::Filtered, false, {1.0f, 0.72f, 0.42f}),
+                QStringLiteral("the band scale is the half Filtered overview's only: RGB, HSV and Filtered without MixpiOverviewHalf are Mixxx's with it"));
+    }
+    {
+        // A new image starts its tallest bar again: a quieter summary (low
+        // 30 + 30 the tallest) redrawn after a switch to RGB and back fills
+        // the strip.
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true, typical(),
+                QSize(kColumns, 60));
+        auto pTrack = std::make_shared<Track>();
+        pTrack->summary = summary({{30, 30, 0, 0, 0, 0, 30}});
+        pOverview->m_pCurrentTrack = pTrack;
+        pOverview->slotTypeControlChanged(static_cast<double>(OverviewType::RGB));
+        pOverview->slotTypeControlChanged(static_cast<double>(OverviewType::Filtered));
+        const QImage image = scaled(*pOverview, false);
+        check(pOverview->m_mixpiOverviewTallestBar == 60 && rows(image, 0, 0, 59, kLow),
+                QStringLiteral("a redrawn image fills to its own tallest bar, not an earlier one"));
     }
     check(sameAsStock(OverviewType::Filtered, false),
             QStringLiteral("without MixpiOverviewHalf the Filtered overview is Mixxx's, pixel for pixel"));

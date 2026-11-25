@@ -476,10 +476,13 @@ def decks(compact=False, size=None):
 
 # Settings › Advanced, Waveform colours: 3-BAND (Mixxx's Filtered waveform,
 # type 19) draws bass, mids and highs over each other in these colours. The
-# owner chose Pioneered's own (three-band R&D, 2026-11-23: "Those are good
-# colors."); they are set here so the choice holds whatever the base skin says.
-THREE_BAND_COLOURS = (('SignalLowColor', '#004ee4'), ('SignalMidColor', '#c95a00'),
-                      ('SignalHighColor', '#f6e9d3'))
+# owner first chose Pioneered's own (three-band R&D, 2026-11-23), then, on
+# 2026-11-25: "for the 3 band colors, please used the colors from DiggaOS on
+# the 3 bands." These are DiggaOS's dark deck screen's (apps/dome/src/styles/
+# tokens.css, --deck-wave-low, -mid, -high), as the Pi's decks are dark. They
+# are set here so the choice holds whatever the base skin says.
+THREE_BAND_COLOURS = (('SignalLowColor', '#3d6bff'), ('SignalMidColor', '#ff4f9a'),
+                      ('SignalHighColor', '#eef1ff'))
 # The overview strips follow the same row (owner, 2026-11-24): with 3-BAND
 # Mixxx draws them as its Filtered overview, in the same three colours.
 # Mixxx draws the overview's status text ("Loading track...") in
@@ -491,8 +494,16 @@ OVERVIEW_STATUS_TEXT_COLOUR = '#007de1'
 # ... keeping the 3 band." With MixpiOverviewHalf the three-band patch draws
 # the Filtered overview one-sided, each band up from the strip's bottom edge,
 # left + right high, in the same three colours; the RGB overview is drawn as
-# in Mixxx.
+# in Mixxx. Then, 2026-11-25: "I want the small waveforms not to be half the
+# height, but have the waveform cut in half like on a CDJ." The patch fills
+# the one-sided strip to its track's tallest bar, like a CDJ's wave preview.
 OVERVIEW_HALF = 'true'
+# DiggaOS draws its overview "lows as the body, mids over them, highs as the
+# bright core" (apps/dome/src/audio/Waveform.tsx: mids 0.72, highs 0.42 of
+# their height). MixpiOverviewBandScale does the same on the half strips, from
+# the bottom edge (leader, 2026-11-25, with the owner's DiggaOS colours);
+# without it every bar is its full height.
+OVERVIEW_BAND_SCALE = '1,0.72,0.42'
 # Mixxx keeps the three band colours only beside a valid SignalColor
 # (WaveformSignalColors::setup; without one it replaces all three with its own
 # defaults). Pioneered's is used when the base skin gives none.
@@ -518,10 +529,12 @@ def three_band_colours(visual):
 
 def three_band_overview(overview):
     """The overview template (every overview strip is a copy of it): the
-    status text keeps its colour, the Filtered overview is one-sided, then
-    the three band colours as on the waveform template."""
+    status text keeps its colour, the Filtered overview is one-sided and
+    layered as DiggaOS's, then the three band colours as on the waveform
+    template."""
     for tag, value in (('MixpiStatusTextColor', OVERVIEW_STATUS_TEXT_COLOUR),
-                       ('MixpiOverviewHalf', OVERVIEW_HALF)):
+                       ('MixpiOverviewHalf', OVERVIEW_HALF),
+                       ('MixpiOverviewBandScale', OVERVIEW_BAND_SCALE)):
         for old in overview.findall(tag):
             overview.remove(old)
         prop(overview, tag, value)

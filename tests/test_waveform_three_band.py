@@ -2,8 +2,11 @@
 
 The owner's choices (docs/ideas/rnd-waveform-three-band-20261122/OWNER-DECISIONS.md):
 - Direction A Overlay: Mixxx's all-shader Filtered waveform (type 19) draws
-  bass, mids and highs over each other, in Pioneered's own colours (low
-  #004ee4, mid #c95a00, high #f6e9d3).
+  bass, mids and highs over each other, at first in Pioneered's own colours
+  (low #004ee4, mid #c95a00, high #f6e9d3); since 2026-11-25 ("please used
+  the colors from DiggaOS on the 3 bands") in DiggaOS's dark deck colours
+  (low #3d6bff, mid #ff4f9a, high #eef1ff), on every three-band waveform and
+  overview strip.
 - A setting in Settings › Advanced, "Waveform colours", RGB or 3-BAND, the
   row under Read ahead; three-band by default after the next build; the Loop
   panel's waveform follows the setting (Mixxx's waveform type covers every
@@ -64,6 +67,14 @@ How Mixxx 2.5.6 draws it, and what mixxx-waveform-three-band.patch changes:
   scale, the bottom row kept), and the axis line is the bottom row. RGB and
   HSV, and Filtered without the property, are Mixxx's. A type switch redraws
   the image from the track's first column, also during analysis.
+- 2026-11-25, owner: "I want the small waveforms not to be half the height,
+  but have the waveform cut in half like on a CDJ." Once the summary is drawn
+  the half strip is normalized to its tallest bar whatever Normalize says
+  (the CDJ fill: that bar reaches the top row, none is cut); Mixxx's own peak
+  (filtered.all) is not the bands' height. Before, J19's crop. The overview
+  template also carries MixpiOverviewBandScale "1,0.72,0.42" (DiggaOS's
+  layering: lows the body, mids 0.72, highs 0.42 of their height, from the
+  bottom edge); without it every bar is its full height.
 
 The native checks are in tests/native/waveform_three_band_test.cpp, built by
 tests/native/waveform_three_band_runner.py.
@@ -95,7 +106,11 @@ SEEDER = ROOT / 'stage3/02-desktop/files/bin/mixpi-touch-defaults'
 QSS = ROOT / 'stage3/01-install-packages/files/mixpi-performance.qss'
 AVAILABLE = '[MixPi],waveform_three_band_available'
 TEST = ROOT / 'tests/native/waveform_three_band_test.cpp'
-COLOURS = {'SignalLowColor': '#004ee4', 'SignalMidColor': '#c95a00', 'SignalHighColor': '#f6e9d3'}
+# DiggaOS's dark deck screen (apps/dome/src/styles/tokens.css), owner 2026-11-25.
+COLOURS = {'SignalLowColor': '#3d6bff', 'SignalMidColor': '#ff4f9a', 'SignalHighColor': '#eef1ff'}
+# Pioneered's, the colours before.
+OLD_COLOURS = ('#004ee4', '#c95a00', '#f6e9d3')
+BAND_SCALE = '1,0.72,0.42'
 STATUS_TEXT = '#007de1'
 
 
@@ -407,7 +422,7 @@ class ThreeBandPatchTests(unittest.TestCase):
         self.assertLess(setup.index('m_mixpiStatusTextColor = context.selectColor('),
                         setup.index('m_mixpiOverviewHalf = '))
         self.assertIn('bool m_mixpiOverviewHalf = false;', added(OVERVIEW_HEADER))
-        self.assertEqual(overview.count('m_mixpiOverviewHalf'), 4)
+        self.assertEqual(overview.count('m_mixpiOverviewHalf'), 5)
         # Mixxx calls the LMH part for the Filtered type only; the dispatch,
         # the HSV and RGB parts and the overlays are stock.
         for marker in ('bool WOverview::drawNextPixmapPart() {',
@@ -435,6 +450,49 @@ class ThreeBandPatchTests(unittest.TestCase):
         switch = block(overview, 'void WOverview::slotTypeControlChanged(double v) {')
         self.assertRegex(switch, r'm_waveformSourceImage = QImage\(\);\n(\s*//.*\n)*'
                                  r'\s*m_actualCompletion = 0;\n\s*slotWaveformSummaryUpdated\(\);\n\}$')
+
+    def test_the_half_overview_fills_to_its_tallest_bar_like_a_cdj(self):
+        # Owner, 2026-11-25: "have the waveform cut in half like on a CDJ".
+        overview = patched(OVERVIEW)
+        stock = pinned_bytes(OVERVIEW).decode()
+        crop = block(overview, 'void WOverview::drawWaveformPixmap(QPainter* pPainter) {')
+        # Mixxx's choice of diffGain is kept as it is; the fill comes after it,
+        # for the half Filtered overview once the summary is drawn, whatever
+        # Normalize says.
+        stock_crop = block(stock, 'void WOverview::drawWaveformPixmap(QPainter* pPainter) {')
+        choice = stock_crop[stock_crop.index('        float diffGain;'):stock_crop.index('        if (m_diffGain != diffGain')]
+        self.assertIn(choice.rstrip('\n'), crop)
+        self.assertRegex(crop, r'const bool mixpiFill = m_mixpiOverviewHalf && m_type == Type::Filtered &&\s*'
+                               r'm_pixmapDone && m_mixpiOverviewTallestBar > 2;\s*'
+                               r'if \(mixpiFill\) \{\s*diffGain = 255\.0f - m_mixpiOverviewTallestBar / 2\.0f;\s*\}')
+        self.assertLess(crop.index('diffGain = 255.0f - (255.0f / visualGain);'), crop.index('const bool mixpiFill'))
+        self.assertNotRegex(crop[crop.index('const bool mixpiFill'):crop.index('if (mixpiFill) {')], r'normalize')
+        # The source rows are the tallest bar's, up from the bottom row.
+        self.assertRegex(crop, r'sourceRect\.moveTop\(2 \* static_cast<int>\(diffGain\)\);\s*'
+                               r'if \(mixpiFill\) \{\s*(//.*\n\s*)*'
+                               r'sourceRect\.setTop\(m_waveformSourceImage\.height\(\) - m_mixpiOverviewTallestBar\);')
+        # The tallest bar is the drawn bars' (after the band scale), from the
+        # first column of each image.
+        lmh = block(overview, 'void WOverview::drawNextPixmapPartLMH(QPainter* pPainter,')
+        self.assertRegex(lmh, r'if \(m_actualCompletion == 0\) \{\s*m_mixpiOverviewTallestBar = 0;\s*\}')
+        self.assertIn('const int barHeight = qRound(m_mixpiOverviewBandScale[band] * level);', lmh)
+        self.assertIn('m_mixpiOverviewTallestBar = math_max(m_mixpiOverviewTallestBar, barHeight);', lmh)
+        self.assertEqual(re.findall(r'drawBar\(x,\s*(\d),', lmh), ['0', '1', '2'])
+        header = added(OVERVIEW_HEADER)
+        self.assertIn('float m_mixpiOverviewBandScale[3] = {1.0f, 1.0f, 1.0f};', header)
+        self.assertIn('int m_mixpiOverviewTallestBar = 0;', header)
+
+    def test_the_band_scale_is_the_skins_three_numbers_or_none(self):
+        # DiggaOS's layering (leader, 2026-11-25), read in setup.
+        setup = block(patched(OVERVIEW), 'void WOverview::setup(')
+        self.assertIn('context.selectString(node, QStringLiteral("MixpiOverviewBandScale"))', setup)
+        self.assertIn('.split(QLatin1Char(\',\'));', setup)
+        self.assertIn('if (bandScale.size() == 3) {', setup)
+        self.assertIn('valid = valid && ok && scale[band] >= 0.0f && scale[band] <= 1.0f;', setup)
+        self.assertRegex(setup, r'for \(int band = 0; valid && band < 3; \+\+band\) \{\s*'
+                                r'm_mixpiOverviewBandScale\[band\] = scale\[band\];')
+        self.assertLess(setup.index('m_mixpiOverviewHalf = '), setup.index('MixpiOverviewBandScale'))
+        self.assertEqual(setup.count('m_mixpiOverviewBandScale'), 1)
 
 
 class ThreeBandSkinTests(unittest.TestCase):
@@ -470,19 +528,39 @@ class ThreeBandSkinTests(unittest.TestCase):
                         self.assertEqual([e.text for e in overview.findall(tag)], [colour])
                     self.assertEqual([e.text for e in overview.findall('MixpiStatusTextColor')], [STATUS_TEXT])
                     self.assertEqual([e.text for e in overview.findall('MixpiOverviewHalf')], ['true'])
+                    self.assertEqual([e.text for e in overview.findall('MixpiOverviewBandScale')], [BAND_SCALE])
                     self.assertEqual([e.text for e in overview.findall('SignalColor')], ['#32323c'])
-            # The scrolling waveforms are not overviews: no half property.
+            # The scrolling waveforms are not overviews: no half property and
+            # no band scale (colours only, owner 2026-11-25).
             self.assertEqual([v for v in root.iter('Visual') if v.find('MixpiOverviewHalf') is not None], [])
+            self.assertEqual([v for v in root.iter('Visual') if v.find('MixpiOverviewBandScale') is not None], [])
+
+    def test_no_three_band_view_keeps_pioneereds_band_colours(self):
+        # Owner, 2026-11-25: "please used the colors from DiggaOS on the 3 bands".
+        for loop_display, root in self.roots.items():
+            views = list(root.iter('Visual')) + list(root.iter('Overview'))
+            self.assertEqual(len(views), (4 if loop_display == 'focus' else 2) + 4, loop_display)
+            for view in views:
+                text = ET.tostring(view).decode().lower()
+                for colour in OLD_COLOURS:
+                    self.assertNotIn(colour, text, (loop_display, view.tag))
+                self.assertEqual({tag: view.findtext(tag) for tag in COLOURS}, COLOURS)
+        module = HEIGHT_RUNNER.load('mixpi-performance')
+        self.assertEqual(dict(module.THREE_BAND_COLOURS), COLOURS)
+        self.assertEqual(module.OVERVIEW_STATUS_TEXT_COLOUR, STATUS_TEXT)
+        self.assertEqual(module.OVERVIEW_BAND_SCALE, BAND_SCALE)
 
     def test_the_overview_template_keeps_a_base_signal_colour_and_one_status_colour(self):
         module = HEIGHT_RUNNER.load('mixpi-performance')
         overview = ET.fromstring('<Overview><SignalColor>#222</SignalColor><SignalLowColor>#007de1</SignalLowColor>'
                                  '<MixpiStatusTextColor>#fff</MixpiStatusTextColor>'
-                                 '<MixpiOverviewHalf>false</MixpiOverviewHalf></Overview>')
+                                 '<MixpiOverviewHalf>false</MixpiOverviewHalf>'
+                                 '<MixpiOverviewBandScale>1,1,1</MixpiOverviewBandScale></Overview>')
         module.three_band_overview(overview)
         self.assertEqual([e.text for e in overview.findall('SignalColor')], ['#222'])
         self.assertEqual([e.text for e in overview.findall('MixpiStatusTextColor')], [STATUS_TEXT])
         self.assertEqual([e.text for e in overview.findall('MixpiOverviewHalf')], ['true'])
+        self.assertEqual([e.text for e in overview.findall('MixpiOverviewBandScale')], [BAND_SCALE])
         self.assertEqual({tag: [e.text for e in overview.findall(tag)] for tag in COLOURS},
                          {tag: [colour] for tag, colour in COLOURS.items()})
 
@@ -638,14 +716,31 @@ class ThreeBandNativeTests(unittest.TestCase):
                      'a band\'s bar is left + right high: low 30 + 50, mid 20 + 0, high 0 + 5',
                      'a silent column draws nothing in the half overview',
                      'a band at full scale on both sides fills the image\'s whole height (510 rows)',
-                     'normalized, the half overview cuts 2 x 154 rows from the top only: the bars stand on the '
-                     'strip\'s bottom row',
-                     'with the visual gain 2 the half overview shows 256 rows up from the bottom edge, at Mixxx\'s '
-                     'scale',
+                     'before the summary is complete, with the visual gain 2 the half overview shows 256 rows up '
+                     'from the bottom edge, at Mixxx\'s scale',
                      'at the same scale the half bar is as long as Mixxx\'s mirrored one (200 rows; Mixxx\'s 201 '
                      'has its centre row)',
                      'in the half overview the axis line is the strip\'s bottom row, not its middle',
-                     'a vertical half overview draws its bars and its axis from the right edge',
+                     'a vertical half overview draws its bars and its axis from the right edge, filled to the left '
+                     'edge',
+                     # The CDJ fill and DiggaOS's layering (owner, 2026-11-25).
+                     'with MixpiOverviewHalf and Normalize off, a finished summary\'s tallest bar reaches the '
+                     'strip\'s top row, every bar on the bottom row',
+                     'the CDJ fill is the same with Normalize on, and at the visual gains 2 and 0.5',
+                     'no bar is cut: a low band louder than filtered.all (120 + 120, all 100) fills the strip from '
+                     'the bottom to the top row',
+                     'a low band quieter than filtered.all (60 + 60, all 200) still reaches the top row, normalized',
+                     'before the summary is complete the half overview keeps J19\'s crop: normalized at the visual '
+                     'gain 1, all 510 rows',
+                     'when the analysis ends the half overview fills to its tallest bar',
+                     'with the band scale 1, 0.72, 0.42 the bars are low 200, mid 58 and high 8 rows from the '
+                     'bottom edge (column 0), low 80, mid 14, high 2 (column 1)',
+                     'with the band scale the low body still reaches the top row',
+                     'the CDJ fill follows the tallest bar as drawn, after the band scale (highs 510 x 0.42 = 214 '
+                     'rows reach the top)',
+                     'the default band scale (1, 1, 1) draws J19\'s bars: low 200, mid 80, high 20 at their full '
+                     'height',
+                     'a redrawn image fills to its own tallest bar, not an earlier one',
                      'switching an analysed track\'s overview from RGB to 3-BAND redraws it one-sided',
                      'a switch while the track is still analysed redraws the new type from the track\'s first '
                      'column'):
@@ -660,7 +755,9 @@ class ThreeBandNativeTests(unittest.TestCase):
         for name in ('without MixpiOverviewHalf the Filtered overview is Mixxx\'s, pixel for pixel',
                      'the RGB overview with MixpiOverviewHalf is Mixxx\'s, pixel for pixel',
                      'the HSV overview with MixpiOverviewHalf is Mixxx\'s, pixel for pixel',
-                     'and switching back to RGB redraws Mixxx\'s RGB overview'):
+                     'and switching back to RGB redraws Mixxx\'s RGB overview',
+                     'the band scale is the half Filtered overview\'s only: RGB, HSV and Filtered without '
+                     'MixpiOverviewHalf are Mixxx\'s with it'):
             self.assertRegex(output, r'(?m)^PASS ' + re.escape(name))
 
 

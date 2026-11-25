@@ -487,6 +487,12 @@ THREE_BAND_COLOURS = (('SignalLowColor', '#004ee4'), ('SignalMidColor', '#c95a00
 # the text keeps Pioneered's overview colour in both styles (leader,
 # 2026-11-24, while the owner was away).
 OVERVIEW_STATUS_TEXT_COLOUR = '#007de1'
+# The owner, 2026-11-25: "Let's try the half waveform on the smaller views
+# ... keeping the 3 band." With MixpiOverviewHalf the three-band patch draws
+# the Filtered overview one-sided, each band up from the strip's bottom edge,
+# left + right high, in the same three colours; the RGB overview is drawn as
+# in Mixxx.
+OVERVIEW_HALF = 'true'
 # Mixxx keeps the three band colours only beside a valid SignalColor
 # (WaveformSignalColors::setup; without one it replaces all three with its own
 # defaults). Pioneered's is used when the base skin gives none.
@@ -512,11 +518,13 @@ def three_band_colours(visual):
 
 def three_band_overview(overview):
     """The overview template (every overview strip is a copy of it): the
-    status text keeps its colour, then the three band colours as on the
-    waveform template."""
-    for old in overview.findall('MixpiStatusTextColor'):
-        overview.remove(old)
-    prop(overview, 'MixpiStatusTextColor', OVERVIEW_STATUS_TEXT_COLOUR)
+    status text keeps its colour, the Filtered overview is one-sided, then
+    the three band colours as on the waveform template."""
+    for tag, value in (('MixpiStatusTextColor', OVERVIEW_STATUS_TEXT_COLOUR),
+                       ('MixpiOverviewHalf', OVERVIEW_HALF)):
+        for old in overview.findall(tag):
+            overview.remove(old)
+        prop(overview, tag, value)
     return three_band_colours(overview)
 
 

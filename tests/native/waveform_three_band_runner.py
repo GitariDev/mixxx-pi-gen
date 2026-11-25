@@ -23,6 +23,19 @@ Production code, from the patched stack:
   its timing) and the control framework (control, controlobject,
   controlproxy, controlpotmeter, controlpushbutton, controlbehavior).
 
+- The overview's drawing (half mode, owner 2026-11-25): WOverview's
+  slotWaveformSummaryUpdated, slotTypeControlChanged, drawAxis,
+  drawWaveformPixmap, drawNextPixmapPart and its LMH, HSV and RGB parts, cut
+  verbatim out of the stack's src/widget/woverview.cpp (overview_shipped.inc),
+  with its Type enum from woverview.h (moc'd, for slotTypeControlChanged's
+  QMetaEnum check), real QPainter/QImage, util/colorcomponents and
+  util/painterscope. The same functions from the pinned stock woverview.cpp,
+  renamed StockOverview (overview_stock.inc), are the reference for "as in
+  Mixxx". The members they use, the track, its waveform summary,
+  WaveformSignalColors, ScopedTimer and the factory's normalize and visual
+  gain are doubles; WOverview::setup's reading of MixpiOverviewHalf is
+  checked as text in tests/test_waveform_three_band.py.
+
 The waveform factory (WaveformWidgetFactory::mixpiAppliedType,
 mixpiSwitchTo and findHandleIndexFromType, which the availability control
 follows) is a recording double; tests/test_waveform_three_band.py
@@ -30,7 +43,7 @@ checks the main window's wiring to it as text. The real switch of GL widgets
 is checked on the card (HANDOFF.md).
 
 Modes (each its own process and folder): setting, refused, start, default,
-thread, height, overview. --baseline builds the stack without
+thread, height, overview, half. --baseline builds the stack without
 mixxx-waveform-three-band.patch; the setting and the height rule are then
 absent and the same checks must fail.
 """
@@ -42,14 +55,15 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from native.library_interface_runner import (PATCH_DIR, populate_pinned, qt_flags,
+from native.library_interface_runner import (PATCH_DIR, pinned_bytes, populate_pinned, qt_flags,
                                              qt_environment, moc_path, reconstruct)
+from native.key_widget_runner import block
 from native.agreed_controls_runner import DOUBLES, PINNED_FILES
 
 ROOT = Path(__file__).resolve().parents[2]
 NATIVE = ROOT / 'tests/native'
 PATCH = 'mixxx-waveform-three-band.patch'
-MODES = ('setting', 'refused', 'start', 'default', 'thread', 'height', 'overview')
+MODES = ('setting', 'refused', 'start', 'default', 'thread', 'height', 'overview', 'half')
 FILTERED = 'src/waveform/renderers/allshader/waveformrendererfiltered.cpp'
 # Real headers the renderer header needs, and the Filtered renderer's source.
 RENDERER_FILES = [
@@ -57,6 +71,23 @@ RENDERER_FILES = [
     'track/track_decl.h', 'util/class.h',
     'waveform/renderers/allshader/waveformrendererfiltered.cpp',
 ]
+OVERVIEW = 'src/widget/woverview.cpp'
+OVERVIEW_HEADER = 'src/widget/woverview.h'
+# Real files the overview's drawing uses (woverview.* are pinned stock when
+# no patch of the stack touches them, the baseline).
+OVERVIEW_FILES = ['widget/woverview.cpp', 'widget/woverview.h', 'analyzer/analyzerprogress.h', 'util/painterscope.h', 'util/colorcomponents.h',
+                  'util/colorcomponents.cpp']
+# The overview functions the half mode runs, as they start in woverview.cpp.
+OVERVIEW_FUNCTIONS = (
+    'void WOverview::slotWaveformSummaryUpdated() {',
+    'void WOverview::slotTypeControlChanged(double v) {',
+    'void WOverview::drawAxis(QPainter* pPainter) {',
+    'void WOverview::drawWaveformPixmap(QPainter* pPainter) {',
+    'bool WOverview::drawNextPixmapPart() {',
+    'void WOverview::drawNextPixmapPartHSV(QPainter* pPainter,',
+    'void WOverview::drawNextPixmapPartLMH(QPainter* pPainter,',
+    'void WOverview::drawNextPixmapPartRGB(QPainter* pPainter,',
+)
 # Headers waveformwidgetrenderer.h only takes type names from.
 RENDERER_DOUBLES = {
     'waveform/renderers/waveformmark.h': '''#pragma once
@@ -75,7 +106,20 @@ typedef QSharedPointer<WaveformMark> WaveformMarkPointer;
 class Cue;
 typedef std::shared_ptr<Cue> CuePointer;
 ''',
-    'waveform/renderers/waveformsignalcolors.h': '#pragma once\nclass WaveformSignalColors {};\n',
+    # The renderer only names it; the overview's drawing reads these six.
+    'waveform/renderers/waveformsignalcolors.h': '''#pragma once
+#include <QColor>
+class WaveformSignalColors {
+  public:
+    QColor getLowColor() const { return lowColor; }
+    QColor getMidColor() const { return midColor; }
+    QColor getHighColor() const { return highColor; }
+    QColor getRgbLowColor() const { return rgbLowColor; }
+    QColor getRgbMidColor() const { return rgbMidColor; }
+    QColor getRgbHighColor() const { return rgbHighColor; }
+    QColor lowColor, midColor, highColor, rgbLowColor, rgbMidColor, rgbHighColor;
+};
+''',
     'waveform/waveform.h': '''#pragma once
 #include <QSharedPointer>
 class Waveform;
@@ -92,12 +136,24 @@ def filtered_choice(source):
     return ' '.join(found[0].split())
 
 
+def overview_functions(source, name='WOverview'):
+    """OVERVIEW_FUNCTIONS cut out of a woverview.cpp, as members of name."""
+    return '\n\n'.join(block(source, marker) for marker in OVERVIEW_FUNCTIONS).replace(
+        'WOverview::', name + '::') + '\n'
+
+
+def overview_type(header):
+    """WOverview::Type from woverview.h, in a Q_GADGET for its QMetaEnum."""
+    return ('#pragma once\n#include <QObject>\nstruct MixpiOverviewTypes {\n    Q_GADGET\n  public:\n    '
+            + block(header, 'enum class Type {') + ';\n    Q_ENUM(Type)\n};\n')
+
+
 def stack(target, baseline):
     names, _ = reconstruct(target, exclude=(PATCH,) if baseline else ())
     if not baseline and PATCH not in names:
         subprocess.run(['git', 'apply', str(PATCH_DIR / PATCH)], cwd=target, check=True, timeout=15)
         names.append(PATCH)
-    populate_pinned(target, ['src/' + name for name in PINNED_FILES + RENDERER_FILES])
+    populate_pinned(target, ['src/' + name for name in PINNED_FILES + RENDERER_FILES + OVERVIEW_FILES])
     return names
 
 
@@ -110,7 +166,13 @@ def build(target, baseline):
     print('FILTERED ASKS', choice, flush=True)
     (support / 'mixpi_filtered_choice.h').write_text(
         '#pragma once\n#define MIXPI_FILTERED_ASKS (' + choice + ')\n')
+    (support / 'overview_shipped.inc').write_text(overview_functions((target / OVERVIEW).read_text()))
+    (support / 'overview_stock.inc').write_text(
+        overview_functions(pinned_bytes(OVERVIEW).decode(), 'StockOverview'))
+    (support / 'mixpi_overview_type.h').write_text(overview_type((target / OVERVIEW_HEADER).read_text()))
     includes = ['-I' + str(support), '-I' + str(target / 'src'), '-I' + str(NATIVE)]
+    subprocess.run([moc_path(), *includes, str(support / 'mixpi_overview_type.h'),
+                    '-o', str(support / 'moc_mixpi_overview_type.cpp')], check=True, timeout=30)
     for header in ('control/control.h', 'control/controlobject.h', 'control/controlproxy.h',
                    'control/controlpotmeter.h', 'control/controlpushbutton.h'):
         path = target / 'src' / header
@@ -120,7 +182,8 @@ def build(target, baseline):
     sources = [target / 'src' / name for name in
                ('preferences/configobject.cpp', 'control/control.cpp', 'control/controlobject.cpp',
                 'control/controlproxy.cpp', 'control/controlpotmeter.cpp',
-                'control/controlpushbutton.cpp', 'control/controlbehavior.cpp')]
+                'control/controlpushbutton.cpp', 'control/controlbehavior.cpp',
+                'util/colorcomponents.cpp')] + [support / 'moc_mixpi_overview_type.cpp']
     binary = target / 'waveform-three-band-test'
     command = ['c++', '-std=c++20', '-Wall', '-Wextra', *includes,
                *(['-DMIXPI_THREE_BAND_BASELINE=1'] if baseline else []),

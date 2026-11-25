@@ -10,6 +10,7 @@ This version answers two adversarial reviews of `589144d` (Sol 5/10, Fable 7/10;
 - **Three-band by default** after the next build; RGB is one tap away.
 - **The Loop panel's waveform follows the setting** (Mixxx's waveform type covers every scrolling waveform).
 - **The overview strips follow the setting too** (owner, 2026-11-24, wave J18: "So the smaller bottom bar currently isn't 3 band. Please update that quickly for me to come back and review."). This replaces the earlier "the overview strips stay as they are". With 3-BAND they draw Mixxx's Filtered overview in the same three colours; with RGB they draw the RGB overview as before.
+- **The overview strips are one-sided in 3-BAND** (owner, 2026-11-25, wave J19: "Let's try the half waveform on the smaller views, that should help with the blending as well as clearer peaks and trophs. Similar to how it was on the original mixxx but keeping the 3 band."). RGB stays mirrored.
 - **The overview's status text keeps its colour** (leader's call on 2026-11-24, while the owner was away). The text is "Loading track...", "Ready to play, analyzing..." and "Finalizing...".
 - **The Loop panel's 3-BAND waveform is as tall as RGB there** ("Same height as RGB"): total_gain, not Mixxx's doubled Filtered height.
 - **A start that cannot draw 3-BAND shows the choice disabled** ("Show it unavailable").
@@ -19,11 +20,11 @@ This version answers two adversarial reviews of `589144d` (Sol 5/10, Fable 7/10;
 ## What changed
 | File | Change |
 |---|---|
-| `stage3/01-install-packages/files/mixxx-waveform-three-band.patch` (**last** in `MIXXX_PATCHES`) | See "How it works". Touches `coreservices.cpp`, `mixxxmainwindow.{h,cpp}`, `util/mixpiwaveformcolours.h` (new), `waveform/mixpiwaveformgain.h`, `waveform/renderers/allshader/waveformrendererfiltered.cpp`, `waveform/waveformwidgetfactory.{h,cpp}`, `widget/woverview.{h,cpp}` (J18), `widget/wwaveformviewer.cpp`. |
+| `stage3/01-install-packages/files/mixxx-waveform-three-band.patch` (**last** in `MIXXX_PATCHES`) | See "How it works". Touches `coreservices.cpp`, `mixxxmainwindow.{h,cpp}`, `util/mixpiwaveformcolours.h` (new), `waveform/mixpiwaveformgain.h`, `waveform/renderers/allshader/waveformrendererfiltered.cpp`, `waveform/waveformwidgetfactory.{h,cpp}`, `widget/woverview.{h,cpp}` (J18; J19 the half overview), `widget/wwaveformviewer.cpp`. |
 | `stage3/01-install-packages/01-run.sh` | the patch, after `mixxx-menu-current-row.patch` |
-| `stage3/01-install-packages/files/mixpi-performance.py` | the Advanced row; the 3-BAND button's `enabled` is bound to `[MixPi],waveform_three_band_available` (as the Audio buffer buttons are to `buffer_available`); `three_band_colours()` sets the three colours on the waveform template, and a `SignalColor` when the base skin has none (Mixxx drops the band colours without one). J18: `three_band_overview()` does the same on the overview template and adds `MixpiStatusTextColor` #007de1 |
+| `stage3/01-install-packages/files/mixpi-performance.py` | the Advanced row; the 3-BAND button's `enabled` is bound to `[MixPi],waveform_three_band_available` (as the Audio buffer buttons are to `buffer_available`); `three_band_colours()` sets the three colours on the waveform template, and a `SignalColor` when the base skin has none (Mixxx drops the band colours without one). J18: `three_band_overview()` does the same on the overview template and adds `MixpiStatusTextColor` #007de1; J19: and `MixpiOverviewHalf` true |
 | `stage3/02-desktop/files/bin/mixpi-touch-defaults` | **unchanged from before the R&D** (the default moved into Mixxx) |
-| `tests/test_waveform_three_band.py`, `tests/native/waveform_three_band_{runner.py,test.cpp}` | patch, skin and native checks (J18: the `overview` native mode, and the overview skin and source checks) |
+| `tests/test_waveform_three_band.py`, `tests/native/waveform_three_band_{runner.py,test.cpp}` | patch, skin and native checks (J18: the `overview` native mode, and the overview skin and source checks; J19: the `half` native mode) |
 | `tests/test_mixxx_patches.py`, `tests/test_menu_current_row.py` | registry line; prerequisites (height-gain and zoom-setting patches); only this patch may follow menu-current-row |
 | `tools/performance/required-native.py` | `test_waveform_three_band` in the required gate |
 | `tools/performance/waveform-three-band-heights.py` | the "A Loop panel" row is at total_gain; the old 2 × total_gain row stays as "A-stock Loop" |
@@ -53,6 +54,14 @@ This version answers two adversarial reviews of `589144d` (Sol 5/10, Fable 7/10;
   - The RGB overview draws with `SignalRGB*Color` only, which Pioneered does not set, so Mixxx's red, green and blue apply as before.
   - Mixxx draws the overview's status text in `SignalLowColor`. The patch makes `WOverview` read `MixpiStatusTextColor` first, and the generator sets it to #007de1, the old `SignalLowColor`. So the text looks as before in both styles.
   - A skin without the property behaves as stock Mixxx.
+- **Half overview in 3-BAND (J19).** The generator sets `MixpiOverviewHalf` true on the overview template; `WOverview::setup` reads it (default false). With it, and only while the overview type is Filtered (3-BAND), the overview is one-sided:
+  - In each column each band is one bar from the bottom edge up, `left + right` high (0 to 510, the overview image's height). That is the length of Mixxx's mirrored line from -left to +right, on one side, so peaks and troughs get twice the rows.
+  - Mixxx's order and colours: low, then mid over it, then high on top. A silent column draws nothing.
+  - **Scale.** Mixxx crops `diffGain` rows from the top and the bottom of the image for Normalize (the loudest left or right value fills the strip) or the visual gain. The half overview crops `2 × diffGain` from the top only: the same scale, and the bottom row stays the baseline.
+  - **Axis.** Pioneered sets no `AxesColor`, so Mixxx draws a #f5f5f5 line across the middle of every strip, under the waveform. In the half overview it is drawn along the bottom row instead, in the pen's width, so it does not cut every bar.
+  - **Unchanged:** the played overlay, the end-of-track background and frame, the analyzer overlay, marks, mark ranges and labels all span the strip's whole height as before. A vertical overview (none in this skin) is the same picture turned: bars and axis from the right edge.
+  - **Type switch.** A switch between RGB and 3-BAND clears the image and draws it again from the track's first column. Mixxx kept the old image's progress, so a switch while a track was still being analysed left the part analysed before the switch empty; the patch starts again at column 0.
+  - The RGB and HSV overviews, and Filtered without the property, are Mixxx's, pixel for pixel (native `half` mode).
 
 ## Install, start and rollback
 - **Binary and skin ship together.** The default is in the binary; the row is in the generated skin.
@@ -79,6 +88,16 @@ This version answers two adversarial reviews of `589144d` (Sol 5/10, Fable 7/10;
   - **Checked only as text against the pinned source:** `WOverview`'s live follow of the control, `DlgPrefWaveform` making the control after the first sync, the RGB overview drawing with `SignalRGB*Color` only, and the `MixpiStatusTextColor` read with its fallback.
   - **Not compiled until build S:** `woverview.{h,cpp}` with the patch.
   - **Not seen until the card:** the Filtered overview's look.
+- **J19, the half overview:**
+  - **Native `half` mode, VM b:** passes. It runs WOverview's own drawing functions, cut out of the stack (`slotWaveformSummaryUpdated`, `slotTypeControlChanged`, `drawAxis`, `drawWaveformPixmap`, `drawNextPixmapPart` and its LMH, HSV and RGB parts), with real QPainter and QImage. Beside them, the same functions from stock Mixxx are the reference.
+  - Pixel checks: a column with low left = right = 100 fills the 200 rows above the bottom edge and nothing above; mid and high are drawn over low, each from the bottom; full scale fills all 510 rows; a silent column draws nothing.
+  - Crop checks: normalized (loudest 100) the scaled strip keeps the bars on its bottom row; with visual gain 2 the half bar is 200 rows, as long as Mixxx's mirrored one (201 with its centre row). The axis is the bottom row; a vertical overview is the same from the right edge.
+  - RGB and HSV with the property, and Filtered without it, equal stock pixel for pixel (source image, normalized and gained crops, axis).
+  - A switch from RGB to 3-BAND redraws the analysed track one-sided, and back gives stock RGB. A switch during analysis redraws from the first column.
+  - The baseline (stock `woverview.cpp`) fails every half check and passes the "equals stock" ones.
+  - **Checked only as text:** `setup` reading `MixpiOverviewHalf` with default false; the dispatch, HSV and RGB parts, played overlay, analyzer overlay and paint order unchanged from stock.
+  - **Not compiled until build T:** `woverview.cpp` with the J19 change.
+  - **Not seen until the card:** the half overview's look and whether the cream highs still dominate.
 
 ## Numbers, and what they are
 - **Main rows, 3-BAND, modelled on the card's library** (`tools/performance/waveform-three-band-heights.py`; pregain 1, VisualGain 1, flat EQ): tallest band median 0.36 of the half height, 99th percentile 0.83, at most 0.90, no column at the edge (RGB outline: 0.58 / 0.89 / 0.90). A pregain above 1, an EQ boost or a VisualGain above 1 draws past 0.90 in both styles.
@@ -90,7 +109,7 @@ This version answers two adversarial reviews of `589144d` (Sol 5/10, Fable 7/10;
 ## Card checklist (none done: the card is the main climb's)
 Before: back up `~/.mixxx/mixxx.cfg` and the Mixxx logs (each start keeps only 10).
 1. **Default applied.** After the install and a start by `systemctl --user restart mixpi-mixxx.service`: `grep -A3 -E '^\[(Waveform|MixPi)\]' ~/.mixxx/mixxx.cfg` shows `WaveformType 19` and `ThreeBandDefault 1`. The same on a clean first start with no `mixxx.cfg`.
-2. **Decks page.** Both main waveforms in blue / orange / cream. **Overview strips in 3-BAND colours; RGB after choosing RGB** (Decks page and browse page, both decks). The status text ("Loading track...", "Ready to play, analyzing...") is the same blue as before in both styles. `grep WaveformOverviewType ~/.mixxx/mixxx.cfg` shows 0 in 3-BAND and 2 after RGB.
+2. **Decks page.** Both main waveforms in blue / orange / cream. **Overview strips in 3-BAND are one-sided from the bottom in the three colours; RGB mirrored as before** (Decks page and browse page, both decks). In 3-BAND the light axis line is along each strip's bottom edge, not across the middle; in RGB it is in the middle as before. Switch RGB → 3-BAND → RGB with a track loaded on each deck: each strip redraws whole in the new style (no empty start), and the played overlay, hot cue marks and loop range sit where they did. The status text ("Loading track...", "Ready to play, analyzing...") is the same blue as before in both styles. `grep WaveformOverviewType ~/.mixxx/mixxx.cfg` shows 0 in 3-BAND and 2 after RGB.
 3. **Measured height, not by eye.** A screenshot of a loud track in 3-BAND: the tallest band at 0.90 of the half height on both main rows. The same measurement after switching to RGB and back (the main-row flag survives re-creation). Repeat with two tracks of different ReplayGain at the same pregain: same height.
 4. **The row.** Settings › Advanced has four rows (Waveform FPS, Read ahead, Waveform colours, Mixxx preferences), 3-BAND lit. Layout checked at 800×480 and 800×444.
    - **3-BAND is enabled on the Pi.** The 3-BAND button has the normal look (solid border, not dim text on a dashed border) and takes a tap, whichever choice is lit. If a controller or the developer tools are at hand: `[MixPi],waveform_three_band_available` reads 1. A disabled 3-BAND on the Pi means the factory has no handle for type 19: stop and report.

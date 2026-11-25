@@ -445,10 +445,10 @@ index 349669a..248782b 100644
    public slots:
      void slotSkinLoaded();
 diff --git a/src/widget/woverview.cpp b/src/widget/woverview.cpp
-index 683810c..8c79d9f 100644
+index 683810c..593ef2b 100644
 --- a/src/widget/woverview.cpp
 +++ b/src/widget/woverview.cpp
-@@ -128,6 +128,15 @@ void WOverview::setup(const QDomNode& node, const SkinContext& context) {
+@@ -128,6 +128,21 @@ void WOverview::setup(const QDomNode& node, const SkinContext& context) {
      m_passthroughOverlayColor = m_signalColors.getPassthroughOverlayColor();
      m_playedOverlayColor = m_signalColors.getPlayedOverlayColor();
      m_lowColor = m_signalColors.getLowColor();
@@ -461,10 +461,112 @@ index 683810c..8c79d9f 100644
 +    m_mixpiStatusTextColor = m_mixpiStatusTextColor.isValid()
 +            ? WSkinColor::getCorrectColor(m_mixpiStatusTextColor).toRgb()
 +            : m_lowColor;
++    // MixPi half overview (owner, 2026-11-25: "the half waveform on the
++    // smaller views ... keeping the 3 band"): with MixpiOverviewHalf true the
++    // Filtered overview draws one-sided, from the bottom edge
++    // (drawNextPixmapPartLMH). RGB and HSV, and Filtered without it, are
++    // drawn as in Mixxx.
++    m_mixpiOverviewHalf = context.selectBool(node, QStringLiteral("MixpiOverviewHalf"), false);
      m_dimBrightThreshold = m_signalColors.getDimBrightThreshold();
  
      m_labelBackgroundColor = context.selectColor(node, "LabelBackgroundColor");
-@@ -1567,9 +1576,9 @@ void WOverview::drawNextPixmapPartRGB(QPainter* pPainter,
+@@ -439,6 +454,10 @@ void WOverview::slotTypeControlChanged(double v) {
+     m_type = type;
+     m_pWaveform.clear();
+     m_waveformSourceImage = QImage();
++    // MixPi: the new type's image starts again at the track's first column,
++    // also while the track is still being analysed. Mixxx kept the progress
++    // of the old image, so the part drawn before the switch stayed empty.
++    m_actualCompletion = 0;
+     slotWaveformSummaryUpdated();
+ }
+ 
+@@ -708,6 +727,20 @@ void WOverview::drawEndOfTrackBackground(QPainter* pPainter) {
+ void WOverview::drawAxis(QPainter* pPainter) {
+     PainterScope painterScope(pPainter);
+     pPainter->setPen(QPen(m_axesColor, m_scaleFactor));
++    if (m_mixpiOverviewHalf && m_type == Type::Filtered) {
++        // MixPi half overview: the zero line is the bars' baseline, the
++        // bottom edge (the right edge of a vertical overview, see
++        // drawWaveformPixmap), in the pen's width, inside the strip. Across
++        // the middle it would cut every bar.
++        if (m_orientation == Qt::Horizontal) {
++            pPainter->fillRect(QRectF(0, height() - m_scaleFactor, width(), m_scaleFactor),
++                    m_axesColor);
++        } else {
++            pPainter->fillRect(QRectF(width() - m_scaleFactor, 0, m_scaleFactor, height()),
++                    m_axesColor);
++        }
++        return;
++    }
+     if (m_orientation == Qt::Horizontal) {
+         pPainter->drawLine(0, height() / 2, width(), height() / 2);
+     } else {
+@@ -735,6 +768,17 @@ void WOverview::drawWaveformPixmap(QPainter* pPainter) {
+                     m_waveformSourceImage.width(),
+                     m_waveformSourceImage.height() -
+                             2 * static_cast<int>(diffGain));
++            if (m_mixpiOverviewHalf && m_type == Type::Filtered) {
++                // MixPi half overview: the baseline is the image's bottom
++                // row, so the same height is cut from the top only (2 *
++                // diffGain) and the scale is Mixxx's. Normalized, diffGain
++                // is 254 - peak (the loudest left or right value): Mixxx
++                // shows peak + 1 rows each side of the centre, the half
++                // overview 2 * (peak + 1) rows above the baseline, room for
++                // a column of left + right = 2 * peak. With the visual gain
++                // g both show 510 / g rows: 255 / g a side, or 510 / g up.
++                sourceRect.moveTop(2 * static_cast<int>(diffGain));
++            }
+             QImage croppedImage = m_waveformSourceImage.copy(sourceRect);
+             if (m_orientation == Qt::Vertical) {
+                 // Rotate pixmap
+@@ -1443,6 +1487,45 @@ void WOverview::drawNextPixmapPartLMH(QPainter* pPainter,
+     QPen highColorPen(QBrush(highColor), 1);
+ 
+     int currentCompletion = 0;
++    if (m_mixpiOverviewHalf) {
++        // MixPi half overview: in each column each band is one bar up from
++        // the bottom edge, left + right high (0 to 510, the image's height):
++        // the length of Mixxx's line from -left to +right, on one side, so
++        // peaks and troughs get twice the rows. Low, then mid, then high over
++        // them, in their colours, as Mixxx draws them. The painter's origin
++        // is the image's centre row (drawNextPixmapPart), the bottom edge is
++        // height / 2 below it.
++        const int bottom = m_waveformSourceImage.height() / 2;
++        const auto drawBar = [&](int x, int barHeight, const QColor& color) {
++            if (barHeight > 0) {
++                pPainter->fillRect(QRect(x, bottom - barHeight, 1, barHeight), color);
++            }
++        };
++        for (currentCompletion = m_actualCompletion;
++                currentCompletion < nextCompletion;
++                currentCompletion += 2) {
++            const int x = currentCompletion / 2;
++            drawBar(x,
++                    pWaveform->getLow(currentCompletion) +
++                            pWaveform->getLow(currentCompletion + 1),
++                    lowColor);
++            drawBar(x,
++                    pWaveform->getMid(currentCompletion) +
++                            pWaveform->getMid(currentCompletion + 1),
++                    midColor);
++            drawBar(x,
++                    pWaveform->getHigh(currentCompletion) +
++                            pWaveform->getHigh(currentCompletion + 1),
++                    highColor);
++            // Evaluate waveform ratio peak, as below.
++            m_waveformPeak = math_max3(
++                    m_waveformPeak,
++                    static_cast<float>(pWaveform->getAll(currentCompletion)),
++                    static_cast<float>(pWaveform->getAll(currentCompletion + 1)));
++        }
++        m_actualCompletion = nextCompletion;
++        return;
++    }
+     for (currentCompletion = m_actualCompletion;
+             currentCompletion < nextCompletion;
+             currentCompletion += 2) {
+@@ -1567,9 +1650,9 @@ void WOverview::drawNextPixmapPartRGB(QPainter* pPainter,
  
  void WOverview::paintText(const QString& text, QPainter* pPainter) {
      PainterScope painterScope(pPainter);
@@ -477,15 +579,17 @@ index 683810c..8c79d9f 100644
      QFont font = pPainter->font();
      QFontMetrics fm(font);
 diff --git a/src/widget/woverview.h b/src/widget/woverview.h
-index f28e78a..395b7ae 100644
+index f28e78a..e8e8241 100644
 --- a/src/widget/woverview.h
 +++ b/src/widget/woverview.h
-@@ -217,6 +217,8 @@ class WOverview : public WWidget, public TrackDropTarget {
+@@ -217,6 +217,10 @@ class WOverview : public WWidget, public TrackDropTarget {
      QColor m_passthroughOverlayColor;
      QColor m_playedOverlayColor;
      QColor m_lowColor;
 +    // MixPi: the colour of the overview's status text (paintText).
 +    QColor m_mixpiStatusTextColor;
++    // MixPi: the skin's MixpiOverviewHalf, a one-sided Filtered overview.
++    bool m_mixpiOverviewHalf = false;
      int m_dimBrightThreshold;
      parented_ptr<QLabel> m_pPassthroughLabel;
  

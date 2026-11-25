@@ -10,7 +10,11 @@
 // rows and the Loop panel) are absent and every check about them fails.
 // The overview strips follow the setting (owner, 2026-11-24): the overview
 // mode checks Mixxx's overview type in mixxx.cfg and on its read-only control,
-// made as Mixxx's Preferences makes it.
+// made as Mixxx's Preferences makes it. The half mode (owner, 2026-11-25:
+// "the half waveform on the smaller views ... keeping the 3 band") draws
+// summaries with WOverview's own drawing functions, cut out of the stack
+// (overview_shipped.inc), beside the same functions from stock Mixxx
+// (overview_stock.inc, class StockOverview).
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -18,6 +22,10 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QImage>
+#include <QMetaEnum>
+#include <QPainter>
+#include <QSharedPointer>
 #include <QThread>
 #include <QTimer>
 #include <cmath>
@@ -27,11 +35,16 @@
 #include <set>
 #include <vector>
 
+#include "analyzer/analyzerprogress.h"
 #include "control/controlobject.h"
 #include "control/controlproxy.h"
 #include "control/controlpushbutton.h"
 #include "mixpi_filtered_choice.h"
+#include "mixpi_overview_type.h"
 #include "preferences/usersettings.h"
+#include "util/colorcomponents.h"
+#include "util/math.h"
+#include "util/painterscope.h"
 #include "waveform/mixpiwaveformgain.h"
 #include "waveform/renderers/waveformwidgetrenderer.h"
 #ifndef MIXPI_THREE_BAND_BASELINE
@@ -49,6 +62,125 @@ WaveformWidgetRenderer::WaveformWidgetRenderer(const QString& group)
 WaveformWidgetRenderer::~WaveformWidgetRenderer() = default;
 void WaveformWidgetRenderer::resizeRenderer(int, int, float) {
 }
+
+// What WOverview's drawing functions use, as doubles. A waveform summary:
+// per column a left (even index) and a right (odd index) value of each band.
+class Waveform {
+  public:
+    std::vector<unsigned char> low, mid, high, all;
+    int completion = 0;
+    double getAudioVisualRatio() const {
+        return 1.0;
+    }
+    int getCompletion() const {
+        return completion;
+    }
+    int getDataSize() const {
+        return static_cast<int>(all.size());
+    }
+    unsigned char getLow(int i) const {
+        return low[i];
+    }
+    unsigned char getMid(int i) const {
+        return mid[i];
+    }
+    unsigned char getHigh(int i) const {
+        return high[i];
+    }
+    unsigned char getAll(int i) const {
+        return all[i];
+    }
+};
+
+class Track {
+  public:
+    ConstWaveformPointer summary;
+    ConstWaveformPointer getWaveformSummary() const {
+        return summary;
+    }
+};
+
+// The overview's two preferences: Normalize and the visual gain.
+class WaveformWidgetFactory {
+  public:
+    enum FilterIndex { All = 0, Low = 1, Mid = 2, High = 3, FilterCount = 4 };
+    static WaveformWidgetFactory* instance() {
+        static WaveformWidgetFactory factory;
+        return &factory;
+    }
+    int isOverviewNormalized() const {
+        return normalized;
+    }
+    double getVisualGain(FilterIndex) const {
+        return visualGain;
+    }
+    bool normalized = false;
+    double visualGain = 1.0;
+};
+
+class ScopedTimer {
+  public:
+    explicit ScopedTimer(QStringView) {
+    }
+};
+
+// WOverview's members the drawing functions use, as in woverview.h.
+struct MixpiOverviewFixture : QWidget {
+    using Type = MixpiOverviewTypes::Type;
+    int length() {
+        return m_orientation == Qt::Horizontal ? width() : height();
+    }
+    ConstWaveformPointer getWaveform() const {
+        return m_pWaveform;
+    }
+    double getTrackSamples() const {
+        return m_trackLoaded ? m_trackSamples : 0.0;
+    }
+    Type m_type = Type::RGB;
+    int m_actualCompletion = 0;
+    bool m_pixmapDone = false;
+    float m_waveformPeak = -1.0;
+    float m_diffGain = 0;
+    qreal m_devicePixelRatio = 1.0;
+    Qt::Orientation m_orientation = Qt::Horizontal;
+    double m_scaleFactor = 1.0;
+    AnalyzerProgress m_analyzerProgress = kAnalyzerProgressUnknown;
+    bool m_trackLoaded = true;
+    double m_trackSamples = 0.0;
+    TrackPointer m_pCurrentTrack;
+    ConstWaveformPointer m_pWaveform;
+    QImage m_waveformSourceImage;
+    QImage m_waveformImageScaled;
+    WaveformSignalColors m_signalColors;
+    QColor m_axesColor;
+    // The patch's member; stock Mixxx's functions do not read it.
+    bool m_mixpiOverviewHalf = false;
+};
+
+#define MIXPI_OVERVIEW_FUNCTIONS                                                          \
+    void slotWaveformSummaryUpdated();                                                    \
+    void slotTypeControlChanged(double v);                                                \
+    void drawAxis(QPainter* pPainter);                                                    \
+    void drawWaveformPixmap(QPainter* pPainter);                                          \
+    bool drawNextPixmapPart();                                                            \
+    void drawNextPixmapPartHSV(QPainter*, ConstWaveformPointer, const int nextCompletion); \
+    void drawNextPixmapPartLMH(QPainter*, ConstWaveformPointer, const int nextCompletion); \
+    void drawNextPixmapPartRGB(QPainter*, ConstWaveformPointer, const int nextCompletion);
+
+// The stack's functions (the patch's, or stock in the baseline).
+class WOverview : public MixpiOverviewFixture {
+  public:
+    MIXPI_OVERVIEW_FUNCTIONS
+};
+
+// Stock Mixxx 2.5.6's functions.
+class StockOverview : public MixpiOverviewFixture {
+  public:
+    MIXPI_OVERVIEW_FUNCTIONS
+};
+
+#include "overview_shipped.inc"
+#include "overview_stock.inc"
 
 namespace {
 int failures = 0;
@@ -638,6 +770,240 @@ int height(const QString&) {
     return failures ? 1 : 0;
 }
 
+// The half overview (owner, 2026-11-25). Summaries of 8 columns, drawn with
+// the skin's three-band colours (and Mixxx's default RGB ones) at 1 px a
+// column, so the scaled image is the cropped one, row for row.
+constexpr int kColumns = 8;
+using OverviewType = MixpiOverviewTypes::Type;
+
+struct Column {
+    unsigned char lowLeft, lowRight, midLeft, midRight, highLeft, highRight, all;
+};
+
+QSharedPointer<Waveform> summary(std::vector<Column> columns) {
+    columns.resize(kColumns, Column{10, 10, 0, 0, 0, 0, 10});
+    auto pWaveform = QSharedPointer<Waveform>::create();
+    for (const Column& column : columns) {
+        pWaveform->low.insert(pWaveform->low.end(), {column.lowLeft, column.lowRight});
+        pWaveform->mid.insert(pWaveform->mid.end(), {column.midLeft, column.midRight});
+        pWaveform->high.insert(pWaveform->high.end(), {column.highLeft, column.highRight});
+        pWaveform->all.insert(pWaveform->all.end(), {column.all, column.all});
+    }
+    pWaveform->completion = pWaveform->getDataSize();
+    return pWaveform;
+}
+
+// The loudest left or right value is 100 (normalized: diffGain 154).
+QSharedPointer<Waveform> typical() {
+    return summary({
+            {100, 100, 40, 40, 10, 10, 100}, // low 200, mid 80, high 20
+            {30, 50, 20, 0, 0, 5, 60},       // low 80, mid 20, high 5
+            {0, 0, 0, 0, 0, 0, 0},           // silence
+            {0, 0, 0, 0, 7, 3, 20},          // highs only, 10
+    });
+}
+
+const QRgb kLow = QColor(QStringLiteral("#004ee4")).rgb();
+const QRgb kMid = QColor(QStringLiteral("#c95a00")).rgb();
+const QRgb kHigh = QColor(QStringLiteral("#f6e9d3")).rgb();
+const QRgb kAxes = QColor(245, 245, 245).rgb();
+
+template<typename Overview>
+std::unique_ptr<Overview> overviewOf(OverviewType type,
+        bool half,
+        const QSharedPointer<Waveform>& pWaveform,
+        QSize size = QSize(kColumns, 202),
+        Qt::Orientation orientation = Qt::Horizontal) {
+    auto pOverview = std::make_unique<Overview>();
+    pOverview->m_signalColors.lowColor = QColor(kLow);
+    pOverview->m_signalColors.midColor = QColor(kMid);
+    pOverview->m_signalColors.highColor = QColor(kHigh);
+    // WaveformSignalColors' defaults.
+    pOverview->m_signalColors.rgbLowColor = QColor(Qt::red);
+    pOverview->m_signalColors.rgbMidColor = QColor(Qt::green);
+    pOverview->m_signalColors.rgbHighColor = QColor(Qt::blue);
+    pOverview->m_axesColor = QColor(kAxes);
+    pOverview->m_type = type;
+    pOverview->m_mixpiOverviewHalf = half;
+    pOverview->m_orientation = orientation;
+    pOverview->resize(size);
+    // drawNextPixmapPart makes the image trackSamples / 2 + 1 columns wide.
+    pOverview->m_trackSamples = 2.0 * (kColumns - 1);
+    auto pTrack = std::make_shared<Track>();
+    pTrack->summary = pWaveform;
+    pOverview->m_pCurrentTrack = pTrack;
+    // A track whose summary is complete is drawn at once.
+    pOverview->slotWaveformSummaryUpdated();
+    return pOverview;
+}
+
+// drawWaveformPixmap as paintEvent calls it; returns the scaled image.
+template<typename Overview>
+QImage scaled(Overview& overview, bool normalized, double visualGain = 1.0) {
+    WaveformWidgetFactory::instance()->normalized = normalized;
+    WaveformWidgetFactory::instance()->visualGain = visualGain;
+    QImage target(overview.size(), QImage::Format_ARGB32_Premultiplied);
+    target.fill(Qt::transparent);
+    QPainter painter(&target);
+    overview.drawWaveformPixmap(&painter);
+    return overview.m_waveformImageScaled;
+}
+
+template<typename Overview>
+QImage axis(Overview& overview) {
+    QImage target(overview.size(), QImage::Format_ARGB32_Premultiplied);
+    target.fill(Qt::transparent);
+    QPainter painter(&target);
+    overview.drawAxis(&painter);
+    return target;
+}
+
+// Rows first..last of column x (or, transposed, columns first..last of row
+// x) are all the colour; 0 is transparent.
+bool rows(const QImage& image, int x, int first, int last, QRgb colour, bool transposed = false) {
+    if (image.isNull()) {
+        return false;
+    }
+    for (int y = first; y <= last; ++y) {
+        const QRgb pixel = transposed ? image.pixel(y, x) : image.pixel(x, y);
+        if (colour == 0 ? qAlpha(pixel) != 0 : pixel != colour) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int drawnRows(const QImage& image, int x) {
+    int count = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        count += qAlpha(image.pixel(x, y)) != 0;
+    }
+    return count;
+}
+
+// Column 0 of typical() in a half overview's 510-row source image.
+bool halfFirstColumn(const QImage& image) {
+    return image.height() == 510 && rows(image, 0, 0, 309, 0) && rows(image, 0, 310, 429, kLow) &&
+            rows(image, 0, 430, 489, kMid) && rows(image, 0, 490, 509, kHigh);
+}
+
+bool sameAsStock(OverviewType type, bool half) {
+    const auto pWaveform = typical();
+    const auto pShipped = overviewOf<WOverview>(type, half, pWaveform);
+    const auto pStock = overviewOf<StockOverview>(type, false, pWaveform);
+    const bool source = !pStock->m_waveformSourceImage.isNull() &&
+            pShipped->m_waveformSourceImage == pStock->m_waveformSourceImage;
+    const bool normalized = scaled(*pShipped, true) == scaled(*pStock, true);
+    const bool gained = scaled(*pShipped, false, 2.0) == scaled(*pStock, false, 2.0);
+    pShipped->resize(kColumns, 40);
+    pStock->resize(kColumns, 40);
+    return source && normalized && gained && axis(*pShipped) == axis(*pStock);
+}
+
+int half(const QString&) {
+    {
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true, typical());
+        const QImage& image = pOverview->m_waveformSourceImage;
+        check(image.height() == 510 && drawnRows(image, 0) == 200 && rows(image, 0, 0, 309, 0) &&
+                        qAlpha(image.pixel(0, 509)) != 0,
+                QStringLiteral("in 3-BAND with MixpiOverviewHalf, low left = right = 100 fills the 200 rows above the bottom edge, nothing above"));
+        check(halfFirstColumn(image),
+                QStringLiteral("the bands keep Mixxx's order and colours: low (200), mid (80) over it, high (20) on top, all from the bottom"));
+        check(rows(image, 1, 0, 429, 0) && rows(image, 1, 430, 489, kLow) &&
+                        rows(image, 1, 490, 504, kMid) && rows(image, 1, 505, 509, kHigh),
+                QStringLiteral("a band's bar is left + right high: low 30 + 50, mid 20 + 0, high 0 + 5"));
+        check(rows(image, 2, 0, 509, 0),
+                QStringLiteral("a silent column draws nothing in the half overview"));
+        check(rows(image, 3, 0, 499, 0) && rows(image, 3, 500, 509, kHigh),
+                QStringLiteral("a column with only highs draws only its high bar (10 rows)"));
+    }
+    {
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true,
+                summary({{255, 255, 255, 0, 0, 255, 255}}));
+        const QImage& image = pOverview->m_waveformSourceImage;
+        check(rows(image, 0, 0, 254, kLow) && rows(image, 0, 255, 509, kHigh),
+                QStringLiteral("a band at full scale on both sides fills the image's whole height (510 rows)"));
+    }
+    {
+        // Normalized, the loudest value 100: diffGain 154, 202 rows shown.
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true, typical());
+        const QImage image = scaled(*pOverview, true);
+        check(image.size() == QSize(kColumns, 202) && rows(image, 0, 0, 1, 0) &&
+                        rows(image, 0, 2, 121, kLow) && rows(image, 0, 182, 201, kHigh) &&
+                        rows(image, 3, 0, 191, 0) && rows(image, 3, 192, 201, kHigh),
+                QStringLiteral("normalized, the half overview cuts 2 x 154 rows from the top only: the bars stand on the strip's bottom row"));
+        // Visual gain 2, not normalized: diffGain 127, 256 rows shown.
+        pOverview->resize(kColumns, 256);
+        const QImage gained = scaled(*pOverview, false, 2.0);
+        check(gained.height() == 256 && rows(gained, 0, 0, 55, 0) && rows(gained, 0, 56, 175, kLow) &&
+                        rows(gained, 0, 236, 255, kHigh) && rows(gained, 1, 176, 235, kLow),
+                QStringLiteral("with the visual gain 2 the half overview shows 256 rows up from the bottom edge, at Mixxx's scale"));
+        const auto pStock = overviewOf<StockOverview>(OverviewType::Filtered, false, typical(),
+                QSize(kColumns, 256));
+        const QImage stock = scaled(*pStock, false, 2.0);
+        check(drawnRows(gained, 0) == 200 && drawnRows(stock, 0) == 201,
+                QStringLiteral("at the same scale the half bar is as long as Mixxx's mirrored one (200 rows; Mixxx's 201 has its centre row)"));
+        pOverview->resize(kColumns, 40);
+        const QImage line = axis(*pOverview);
+        check(rows(line, 0, 39, 39, kAxes) && rows(line, kColumns - 1, 39, 39, kAxes) &&
+                        rows(line, 0, 0, 38, 0) && rows(line, kColumns - 1, 0, 38, 0),
+                QStringLiteral("in the half overview the axis line is the strip's bottom row, not its middle"));
+    }
+    {
+        // A vertical overview: the cropped image is transposed, the bottom
+        // edge is the right edge.
+        const auto pOverview = overviewOf<WOverview>(OverviewType::Filtered, true, typical(),
+                QSize(202, kColumns), Qt::Vertical);
+        const QImage image = scaled(*pOverview, true);
+        pOverview->resize(40, kColumns);
+        const QImage line = axis(*pOverview);
+        check(image.size() == QSize(202, kColumns) && rows(image, 0, 0, 1, 0, true) &&
+                        rows(image, 0, 2, 121, kLow, true) && rows(image, 0, 182, 201, kHigh, true) &&
+                        rows(line, 39, 0, kColumns - 1, kAxes) && rows(line, 38, 0, kColumns - 1, 0),
+                QStringLiteral("a vertical half overview draws its bars and its axis from the right edge"));
+    }
+    check(sameAsStock(OverviewType::Filtered, false),
+            QStringLiteral("without MixpiOverviewHalf the Filtered overview is Mixxx's, pixel for pixel"));
+    check(sameAsStock(OverviewType::RGB, true),
+            QStringLiteral("the RGB overview with MixpiOverviewHalf is Mixxx's, pixel for pixel"));
+    check(sameAsStock(OverviewType::HSV, true),
+            QStringLiteral("the HSV overview with MixpiOverviewHalf is Mixxx's, pixel for pixel"));
+    {
+        // The Waveform colours row switches the type live (J18).
+        const auto pWaveform = typical();
+        const auto pOverview = overviewOf<WOverview>(OverviewType::RGB, true, pWaveform);
+        const auto pRgb = overviewOf<StockOverview>(OverviewType::RGB, false, pWaveform);
+        const bool rgbFirst = pOverview->m_waveformSourceImage == pRgb->m_waveformSourceImage;
+        pOverview->slotTypeControlChanged(static_cast<double>(OverviewType::Filtered));
+        check(rgbFirst && halfFirstColumn(pOverview->m_waveformSourceImage) &&
+                        pOverview->m_waveformSourceImage ==
+                                overviewOf<WOverview>(OverviewType::Filtered, true, pWaveform)
+                                        ->m_waveformSourceImage,
+                QStringLiteral("switching an analysed track's overview from RGB to 3-BAND redraws it one-sided"));
+        pOverview->slotTypeControlChanged(static_cast<double>(OverviewType::RGB));
+        check(pOverview->m_waveformSourceImage == pRgb->m_waveformSourceImage,
+                QStringLiteral("and switching back to RGB redraws Mixxx's RGB overview"));
+    }
+    {
+        // A switch while the track is still being analysed: half the summary
+        // is there and drawn, then the rest comes (onTrackAnalyzerProgress
+        // calls drawNextPixmapPart).
+        const auto pWaveform = typical();
+        pWaveform->completion = kColumns;
+        const auto pOverview = overviewOf<WOverview>(OverviewType::RGB, true, pWaveform);
+        const bool firstHalf = pOverview->drawNextPixmapPart() && pOverview->m_actualCompletion == kColumns;
+        pOverview->slotTypeControlChanged(static_cast<double>(OverviewType::Filtered));
+        pWaveform->completion = pWaveform->getDataSize();
+        pOverview->drawNextPixmapPart();
+        check(firstHalf && halfFirstColumn(pOverview->m_waveformSourceImage) &&
+                        pOverview->m_waveformSourceImage ==
+                                overviewOf<WOverview>(OverviewType::Filtered, true, typical())
+                                        ->m_waveformSourceImage,
+                QStringLiteral("a switch while the track is still analysed redraws the new type from the track's first column"));
+    }
+    return failures ? 1 : 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -658,6 +1024,7 @@ int main(int argc, char** argv) {
             {QStringLiteral("thread"), thread},
             {QStringLiteral("height"), height},
             {QStringLiteral("overview"), overview},
+            {QStringLiteral("half"), half},
     };
     if (!modes.contains(mode)) {
         std::fprintf(stderr, "unknown mode %s\n", argv[1]);

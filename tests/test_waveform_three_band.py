@@ -55,6 +55,15 @@ How Mixxx 2.5.6 draws it, and what mixxx-waveform-three-band.patch changes:
   every WOverview follows it live. The RGB overview draws with
   SignalRGB*Color only; its status text is the one use of SignalLowColor, so
   WOverview reads MixpiStatusTextColor first (falling back to SignalLowColor).
+- 2026-11-25, owner: "Let's try the half waveform on the smaller views ...
+  keeping the 3 band." The overview template carries MixpiOverviewHalf true;
+  WOverview::setup reads it, and only the Filtered overview (3-BAND) then
+  draws one-sided: per column each band one bar up from the bottom edge,
+  left + right high, low, mid and high in Mixxx's order. The crop for the
+  normalize or visual gain cuts 2 x diffGain from the top only (Mixxx's
+  scale, the bottom row kept), and the axis line is the bottom row. RGB and
+  HSV, and Filtered without the property, are Mixxx's. A type switch redraws
+  the image from the track's first column, also during analysis.
 
 The native checks are in tests/native/waveform_three_band_test.cpp, built by
 tests/native/waveform_three_band_runner.py.
@@ -67,6 +76,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from native.library_interface_runner import qt_available, pinned_bytes
+from native.key_widget_runner import block
 from native import waveform_three_band_runner as RUNNER
 from native import waveform_height_runner as HEIGHT_RUNNER
 
@@ -95,6 +105,17 @@ def added(path):
     end = text.find('\ndiff --git', start + 1)
     return '\n'.join(line[1:] for line in text[start:end if end > 0 else None].splitlines()
                      if line.startswith('+') and not line.startswith('+++'))
+
+
+def patched(path):
+    """A file as the patch leaves it (no other patch of the stack touches the
+    overview)."""
+    with tempfile.TemporaryDirectory() as folder:
+        target = Path(folder) / path
+        target.parent.mkdir(parents=True)
+        target.write_bytes(pinned_bytes(path))
+        subprocess.run(['git', 'apply', '--include=' + path, str(PATCH)], cwd=folder, check=True, timeout=15)
+        return target.read_text()
 
 
 def checks():
@@ -375,6 +396,46 @@ class ThreeBandPatchTests(unittest.TestCase):
         section = text[text.index('diff --git a/' + OVERVIEW + ' '):text.index('diff --git a/' + OVERVIEW_HEADER + ' ')]
         self.assertIn('\n     m_lowColor = m_signalColors.getLowColor();\n+', section)
 
+    def test_the_half_overview_is_the_skins_choice_and_only_filtered_draws_it(self):
+        # Owner, 2026-11-25: "the half waveform on the smaller views".
+        overview = patched(OVERVIEW)
+        stock = pinned_bytes(OVERVIEW).decode()
+        setup = block(overview, 'void WOverview::setup(')
+        self.assertEqual(re.findall(r'm_mixpiOverviewHalf = .*', setup),
+                         ['m_mixpiOverviewHalf = context.selectBool(node, '
+                          'QStringLiteral("MixpiOverviewHalf"), false);'])
+        self.assertLess(setup.index('m_mixpiStatusTextColor = context.selectColor('),
+                        setup.index('m_mixpiOverviewHalf = '))
+        self.assertIn('bool m_mixpiOverviewHalf = false;', added(OVERVIEW_HEADER))
+        self.assertEqual(overview.count('m_mixpiOverviewHalf'), 4)
+        # Mixxx calls the LMH part for the Filtered type only; the dispatch,
+        # the HSV and RGB parts and the overlays are stock.
+        for marker in ('bool WOverview::drawNextPixmapPart() {',
+                       'void WOverview::drawNextPixmapPartHSV(QPainter* pPainter,',
+                       'void WOverview::drawNextPixmapPartRGB(QPainter* pPainter,',
+                       'void WOverview::drawPlayedOverlay(QPainter* pPainter) {',
+                       'void WOverview::drawAnalyzerProgress(QPainter* pPainter) {',
+                       'void WOverview::paintEvent(QPaintEvent* pEvent) {'):
+            self.assertEqual(block(overview, marker), block(stock, marker), marker)
+        self.assertIn('    if (m_type == Type::Filtered) {\n        drawNextPixmapPartLMH(', overview)
+        lmh = block(overview, 'void WOverview::drawNextPixmapPartLMH(QPainter* pPainter,')
+        end = '        return;\n    }\n'
+        half = lmh[lmh.index('    if (m_mixpiOverviewHalf) {'):lmh.index(end) + len(end)]
+        self.assertEqual(lmh.replace(half, ''), block(stock, 'void WOverview::drawNextPixmapPartLMH(QPainter* pPainter,'))
+        self.assertIn('pPainter->fillRect(QRect(x, bottom - barHeight, 1, barHeight), color);', half)
+        self.assertLess(half.index('lowColor);'), half.index('midColor);'))
+        self.assertLess(half.index('midColor);'), half.index('highColor);'))
+        for marker in ('void WOverview::drawWaveformPixmap(QPainter* pPainter) {',
+                       'void WOverview::drawAxis(QPainter* pPainter) {'):
+            self.assertEqual(block(overview, marker).count('if (m_mixpiOverviewHalf && m_type == Type::Filtered) {'),
+                             1, marker)
+        crop = block(overview, 'void WOverview::drawWaveformPixmap(QPainter* pPainter) {')
+        self.assertIn('sourceRect.moveTop(2 * static_cast<int>(diffGain));', crop)
+        # A type switch draws the new image from the track's first column.
+        switch = block(overview, 'void WOverview::slotTypeControlChanged(double v) {')
+        self.assertRegex(switch, r'm_waveformSourceImage = QImage\(\);\n(\s*//.*\n)*'
+                                 r'\s*m_actualCompletion = 0;\n\s*slotWaveformSummaryUpdated\(\);\n\}$')
+
 
 class ThreeBandSkinTests(unittest.TestCase):
     @classmethod
@@ -408,15 +469,20 @@ class ThreeBandSkinTests(unittest.TestCase):
                     for tag, colour in COLOURS.items():
                         self.assertEqual([e.text for e in overview.findall(tag)], [colour])
                     self.assertEqual([e.text for e in overview.findall('MixpiStatusTextColor')], [STATUS_TEXT])
+                    self.assertEqual([e.text for e in overview.findall('MixpiOverviewHalf')], ['true'])
                     self.assertEqual([e.text for e in overview.findall('SignalColor')], ['#32323c'])
+            # The scrolling waveforms are not overviews: no half property.
+            self.assertEqual([v for v in root.iter('Visual') if v.find('MixpiOverviewHalf') is not None], [])
 
     def test_the_overview_template_keeps_a_base_signal_colour_and_one_status_colour(self):
         module = HEIGHT_RUNNER.load('mixpi-performance')
         overview = ET.fromstring('<Overview><SignalColor>#222</SignalColor><SignalLowColor>#007de1</SignalLowColor>'
-                                 '<MixpiStatusTextColor>#fff</MixpiStatusTextColor></Overview>')
+                                 '<MixpiStatusTextColor>#fff</MixpiStatusTextColor>'
+                                 '<MixpiOverviewHalf>false</MixpiOverviewHalf></Overview>')
         module.three_band_overview(overview)
         self.assertEqual([e.text for e in overview.findall('SignalColor')], ['#222'])
         self.assertEqual([e.text for e in overview.findall('MixpiStatusTextColor')], [STATUS_TEXT])
+        self.assertEqual([e.text for e in overview.findall('MixpiOverviewHalf')], ['true'])
         self.assertEqual({tag: [e.text for e in overview.findall(tag)] for tag in COLOURS},
                          {tag: [colour] for tag, colour in COLOURS.items()})
 
@@ -564,13 +630,38 @@ class ThreeBandNativeTests(unittest.TestCase):
                      'a third waveform type sets the overview control and mixxx.cfg to 2 (RGB)',
                      'an overview type picked in Mixxx\'s Preferences is replaced at the next sync',
                      'a sync with the overview type already right writes nothing to mixxx.cfg or the control',
-                     'a write from a worker thread changes the overview type on the GUI thread only'):
+                     'a write from a worker thread changes the overview type on the GUI thread only',
+                     'in 3-BAND with MixpiOverviewHalf, low left = right = 100 fills the 200 rows above the bottom '
+                     'edge, nothing above',
+                     'the bands keep Mixxx\'s order and colours: low (200), mid (80) over it, high (20) on top, '
+                     'all from the bottom',
+                     'a band\'s bar is left + right high: low 30 + 50, mid 20 + 0, high 0 + 5',
+                     'a silent column draws nothing in the half overview',
+                     'a band at full scale on both sides fills the image\'s whole height (510 rows)',
+                     'normalized, the half overview cuts 2 x 154 rows from the top only: the bars stand on the '
+                     'strip\'s bottom row',
+                     'with the visual gain 2 the half overview shows 256 rows up from the bottom edge, at Mixxx\'s '
+                     'scale',
+                     'at the same scale the half bar is as long as Mixxx\'s mirrored one (200 rows; Mixxx\'s 201 '
+                     'has its centre row)',
+                     'in the half overview the axis line is the strip\'s bottom row, not its middle',
+                     'a vertical half overview draws its bars and its axis from the right edge',
+                     'switching an analysed track\'s overview from RGB to 3-BAND redraws it one-sided',
+                     'a switch while the track is still analysed redraws the new type from the track\'s first '
+                     'column'):
             self.assertRegex(output, r'(?m)^FAIL ' + re.escape(name))
         # Stock Mixxx's own getGain, asked what stock Filtered asks: doubled.
         self.assertIn('HEIGHTS main-filtered 1.800 main-rgb 0.900 loop-filtered 0.760 loop-rgb 0.380', output)
         # What stock Mixxx already does still holds without the patch.
         self.assertRegex(output, r'(?m)^PASS the Stacked type \(the same renderer class\) keeps Mixxx\'s doubled height')
         self.assertRegex(output, r'(?m)^PASS the Loop panel\'s RGB waveform keeps total_gain, as before')
+        # The fixture's stock reference is stock: the stack without the patch
+        # draws as it does.
+        for name in ('without MixpiOverviewHalf the Filtered overview is Mixxx\'s, pixel for pixel',
+                     'the RGB overview with MixpiOverviewHalf is Mixxx\'s, pixel for pixel',
+                     'the HSV overview with MixpiOverviewHalf is Mixxx\'s, pixel for pixel',
+                     'and switching back to RGB redraws Mixxx\'s RGB overview'):
+            self.assertRegex(output, r'(?m)^PASS ' + re.escape(name))
 
 
 if __name__ == '__main__':

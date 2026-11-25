@@ -1006,3 +1006,14 @@ Asked by the new main-climb orchestrator after the R&D handoff (`docs/ideas/rnd-
   - An overview type picked in Mixxx's own Preferences is replaced at the next sync of the row.
 - **Status text colour (leader's call, the owner was away and had said not to ask):** Mixxx draws the overview's status text ("Loading track...", "Ready to play, analyzing...", "Finalizing...") in the overview's low-band colour. The colour change would have darkened that text in both styles. The text keeps its old #007de1 through a new optional skin property, `MixpiStatusTextColor`; a skin without it behaves as stock Mixxx. The owner can change this at review.
 - Ships in the next build after J18 (build S); card check 2 in the three-band HANDOFF covers it.
+
+### 12.21 Owner: half (one-sided) overview strips in 3-BAND (2026-11-25)
+
+- **Request:** "Let's try the half waveform on the smaller views, that should help with the blending as well as clearer peaks and trophs. Similar to how it was on the original mixxx but keeping the 3 band." The smaller views are the overview strips (Decks page and browse page, both decks).
+- **So (wave J19, the leader's design):** in 3-BAND only, the overview strips draw one-sided, anchored to the bottom edge. In each column each band is one bar up from the bottom, as high as its left + right values (0 to 510 rows of the overview image): the same total length as Mixxx's mirrored Filtered overview, now on one side, so peaks and troughs get twice the pixels.
+  - Mixxx's band order and colours are kept: low, then mid over it, then high on top, in Pioneered's three colours. This "keeps the 3 band". The leader chose Mixxx's overlay order; if the cream highs still dominate, two alternatives to try later are stacked bands (each band on top of the one below) or the largest band first in each column.
+  - The RGB overview (and HSV) is drawn exactly as before, mirrored.
+  - Opt-in: a new optional skin property on the overview, `MixpiOverviewHalf` (true/false, default false). The generator sets it on the overview template, so all four strips carry it. A skin without it draws the Filtered overview as stock Mixxx.
+  - Normalize and the visual gain keep Mixxx's scale: the same number of rows is cut, all from the top, so the bottom row stays the baseline. The light axis line (Pioneered sets no `AxesColor`, so Mixxx's default #f5f5f5 applies) is the bottom row in the half overview instead of the middle.
+  - A switch between RGB and 3-BAND redraws the strip from the track's first column, also while the track is still being analysed.
+- Ships in build T; card check 2 in the three-band HANDOFF covers it.

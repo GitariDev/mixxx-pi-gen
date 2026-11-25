@@ -4,7 +4,7 @@
 - **D1, the direction: A Overlay** (stock Mixxx Filtered: bass, mids and highs drawn over each other, height-matched so the main rows skip Filtered's ×2).
   - On `50-owner-choice.png` (oc-1): "I like image 2, where the base is blue, the mids are orange and the white. This is good!" Image 2 is A Overlay.
   - On `20-compare-scene1-decks-page.png` (oc-3): "I like A."
-- **D2, the colours: Pioneered's own** low #004ee4, mid #c95a00, high #f6e9d3 (the skin's SignalLowColor, SignalMidColor and SignalHighColor).
+- **D2, the colours (superseded 2026-11-25 by plan 12.22: "please used the colors from DiggaOS on the 3 bands"; now DiggaOS's low #3d6bff, mid #ff4f9a, high #eef1ff): Pioneered's own** low #004ee4, mid #c95a00, high #f6e9d3 (the skin's SignalLowColor, SignalMidColor and SignalHighColor).
   - On `30-stock-options-at-J15.png` (oc-2): "I like the last image here. Those are good colors." The last image there is A Overlay in Pioneered's colours, height-matched.
 - **A setting** (oc-4, on round 1): "Additonally, this should be a setting, we can put it in the advanced settings menu or the interface settings menu if possible. Let me know."
 - **Height** (main climb, fd1e940): "The loudest tracks should stop 10% from the edge": kMainWaveformGain is 0.90. At 0.90, A's tallest band reaches 0.90 at most on the library, with no column at the edge (`43-heights-on-library-gain-0.90.txt`).
